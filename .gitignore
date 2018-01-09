@@ -1,0 +1,5 @@
+buildcpu/
+buildgpu/
+tools/
+errorcorrector_cpu
+errorcorrector_gpu
