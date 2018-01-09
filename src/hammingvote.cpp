@@ -35,8 +35,6 @@ void hamming_vote_global_init(){
 std::string cpu_hamming_vote(const std::string& subject, 
 				std::vector<std::string>& queries, 
 				const std::vector<AlignResult>& alignments,
-				const std::vector<int>& overlapErrors, 
-				const std::vector<int>& overlapSizes,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
 				double maxErrorRate,

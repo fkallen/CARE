@@ -90,7 +90,7 @@ int ErrorGraph::addNewNode(const char base)
 }
 
 // insert alignment nTimes into the graph
-void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScores, int overlapError, int overlapSize, double maxErrorRate, const int nTimes)
+void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScores, double maxErrorRate, const int nTimes)
 {
 
 	assert(!(useQscores && !qualityScores));
@@ -98,8 +98,8 @@ void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScor
 	insertCalls++;
 	totalInsertedAlignments += nTimes;
 
-	const double weight = 1 - std::sqrt(overlapError / (overlapSize * maxErrorRate));
-	//std::cout << "overlapError : " << overlapError << " overlapSize : " << overlapSize << " maxErrorRate : " << maxErrorRate << " weight : " << weight << std::endl;
+	const double weight = 1 - std::sqrt(alignment.arc.nOps / (alignment.arc.overlap * maxErrorRate));
+	//std::cout << "overlapError : " << alignment.arc.nOps << " overlapSize : " << alignment.arc.overlap << " maxErrorRate : " << maxErrorRate << " weight : " << weight << std::endl;
 
 	int last_a = alignment.arc.subject_begin_incl + alignment.arc.overlap;
 

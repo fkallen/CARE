@@ -122,7 +122,7 @@ struct ErrorGraph {
 	int addNewNode(const char base);
 
 	// insert alignment into graph
-	void insertAlignment(AlignResult& alignment, const char* qualityScores, int overlapError, int overlapSize, double maxErrorRate, const int nTimes = 1);
+	void insertAlignment(AlignResult& alignment, const char* qualityScores, double maxErrorRate, const int nTimes = 1);
 
 	// insert edge (from --weight--> to)
 	// to == -1 means it is unknown if to is already in the graph

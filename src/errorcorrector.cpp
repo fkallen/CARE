@@ -116,7 +116,7 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 		overlapSizes.push_back(100);
 	}
 
-	std::string corrected = cpu_hamming_vote(subject, queries, ar, overlapErrors, overlapSizes, "", {}, 1.0, 1, 1, false, {}, false);
+	std::string corrected = cpu_hamming_vote(subject, queries, ar, "", {}, 1.0, 1, 1, false, {}, false);
 
 	std::cout << corrected << std::endl;
 
@@ -1026,8 +1026,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						std::string correctedQuery = cpu_hamming_vote(queryStrings[i], 
 												candidateStrings, 
 												insertedAlignments,
-												insertednMismatches, 
-												insertedOverlaps,
 												*queryQualities[i], 
 												candidatequals,
 												MAX_MISMATCH_RATIO,
@@ -1167,18 +1165,15 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							auto& res = insertedAlignments[j];
 							split_subs(res, queryStrings[i]);
 
-							int nMismatch = insertednMismatches[j];	
-							int overlap = insertedOverlaps[j];
-
 							if(forwardRead[j]){
 								for(int f = 0; f < insertedFreqs[j]; f++){
 									auto qual = readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]);
-									errorgraph.insertAlignment(res, qual->c_str(), nMismatch, overlap, MAX_MISMATCH_RATIO, 1);
+									errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
 								}
 							}else{
 								for(int f = 0; f < insertedFreqs[j]; f++){
 									auto qual = readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]);
-									errorgraph.insertAlignment(res, qual->c_str(), nMismatch, overlap, MAX_MISMATCH_RATIO, 1);
+									errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
 								}
 							}
 							qualindex += insertedFreqs[j];
