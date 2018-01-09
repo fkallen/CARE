@@ -73,100 +73,14 @@ struct AlignOp {
 	}
 };
 
-#if 0
-struct AlignResultCompact{
-	int score;
-	int subject_begin_incl;
-	int subject_end_excl;
-	int query_begin_incl;
-	int query_end_excl;
-	int nOps;
-	bool isNormalized;
-	bool isValid;
-};
-
-/*
-	Result of alignment
-	score: alignment score
-	subject_begin_incl , subject_end_excl : The overlapping region of query and candidate, relative to query
-	query_begin_incl , query_end_excl : The overlapping region of query and candidate, relative to candidate
-	operations : the actual alignment
-*/
-struct AlignResult{
-	int score;
-	int subject_begin_incl;
-	int subject_end_excl;
-	int query_begin_incl;
-	int query_end_excl;
-	bool isNormalized;
-	bool isValid;
-	std::vector<AlignOp> operations;
-
-	bool operator==(const AlignResult& other) const{
-		if(score != other.score) return false;
-		if(subject_begin_incl != other.subject_begin_incl) return false;
-		if(subject_end_excl != other.subject_end_excl) return false;
-		if(query_begin_incl != other.query_begin_incl) return false;
-		if(query_end_excl != other.query_end_excl) return false;
-		if(isNormalized != other.isNormalized) return false;
-		if(isValid != other.isValid) return false;
-		if(operations != other.operations) return false;
-		return true;
-	}
-
-	bool operator!=(const AlignResult& other) const{
-		return !(*this == other);
-	}
-
-	void writeOpsToStream(std::ostream& stream){
-		for(size_t i = 0; i < operations.size()-1; i++)
-			stream << operations[i] << '\n';
-		stream << operations.back();
-	}
-
-	void setOpsAndDataFromAlignResultCompact(const AlignResultCompact& cudaresult, const AlignOp* h_ops, bool opsAreReversed){
-		setDataFromAlignResultCompact(cudaresult);
-
-		setOpsFromAlignResultCompact(cudaresult, h_ops, opsAreReversed);
-	}
-
-	void setDataFromAlignResultCompact(const AlignResultCompact& cudaresult){
-		// set alignment score
-		score = cudaresult.score;
-
-		// set overlap region
-		subject_begin_incl = cudaresult.subject_begin_incl;
-		subject_end_excl = cudaresult.subject_end_excl;
-		query_begin_incl = cudaresult.query_begin_incl;
-		query_end_excl = cudaresult.query_end_excl;
-		isNormalized = cudaresult.isNormalized;
-		isValid = cudaresult.isValid;
-	}
-
-	void setOpsFromAlignResultCompact(const AlignResultCompact& cudaresult, const AlignOp* h_ops, bool opsAreReversed){
-		// reserve space for operations
-		operations.resize(cudaresult.nOps);
-		// set operations
-		if(opsAreReversed)
-			std::reverse_copy(h_ops,
-				  	h_ops + cudaresult.nOps,
-				  	operations.begin());
-		else
-			std::copy(h_ops,
-				  	h_ops + cudaresult.nOps,
-				  	operations.begin());
-	}
-};
-
-#else
 
 struct AlignResultCompact{
 	int score;
 	int subject_begin_incl;
-	int subject_end_excl;
 	int query_begin_incl;
-	int query_end_excl;
-	int nOps;
+	int overlap;
+	int shift;
+	int nOps; //edit distance / number of operations
 	bool isNormalized;
 	bool isValid;
 };
@@ -179,9 +93,9 @@ struct AlignResult{
 	bool operator==(const AlignResult& other) const{
 		if(arc.score != other.arc.score) return false;
 		if(arc.subject_begin_incl != other.arc.subject_begin_incl) return false;
-		if(arc.subject_end_excl != other.arc.subject_end_excl) return false;
 		if(arc.query_begin_incl != other.arc.query_begin_incl) return false;
-		if(arc.query_end_excl != other.arc.query_end_excl) return false;
+		if(arc.overlap != other.arc.overlap) return false;
+		if(arc.shift != other.arc.shift) return false;
 		if(arc.nOps != other.arc.nOps) return false;
 		if(arc.isNormalized != other.arc.isNormalized) return false;
 		if(arc.isValid != other.arc.isValid) return false;
@@ -194,7 +108,7 @@ struct AlignResult{
 	}
 
 	void writeOpsToStream(std::ostream& stream){
-		for(int i = 0; i < arc.nOps-1; i++)
+		for(size_t i = 0; operations.size() != 0 && i < operations.size()-1; i++)
 			stream << operations[i] << '\n';
 		stream << operations.back();
 	}
@@ -224,7 +138,7 @@ struct AlignResult{
 	}
 };
 
-#endif
+
 
 
 

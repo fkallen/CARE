@@ -51,12 +51,14 @@ AlignResult cpu_shifted_hamming_distance_internal(const char* subject, const cha
 		}		
 	}
 
-	result.arc.score = bestShift;
+	result.arc.score = bestScore;
 	result.arc.subject_begin_incl = std::max(0, bestShift);
-	result.arc.subject_end_excl = result.arc.subject_begin_incl + overlapsize;
 	result.arc.query_begin_incl = queryoverlapbegin_incl;
-	result.arc.query_end_excl = queryoverlapend_excl;
+	result.arc.overlap = overlapsize;
+	result.arc.shift = bestShift;
+	result.arc.nOps = bestScore;
 	result.arc.isNormalized = false;
+
 	return result;
 }
 
@@ -392,13 +394,14 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 				}		
 			}
 
-			result.score = bestShift;
+			result.score = bestScore;
 			result.subject_begin_incl = max(0, bestShift);
-			result.subject_end_excl = result.subject_begin_incl + overlapsize;
 			result.query_begin_incl = queryoverlapbegin_incl;
-			result.query_end_excl = queryoverlapend_excl;
-			result.nOps = opnr;
+			result.overlap = overlapsize;
+			result.shift = bestShift;
+			result.nOps = bestScore;
 			result.isNormalized = false;
+
 			*my_result_out = result;
 		}
 	}
@@ -450,7 +453,7 @@ void call_cuda_shifted_hamming_distance_kernel_async(AlignResultCompact* result_
 					int maxQueryLength,
 					cudaStream_t stream){
 
-	dim3 block(std::min(512, 32 * SDIV(maxQueryLength+1, 32)), 1, 1);
+	dim3 block(std::min(128, 32 * SDIV(maxQueryLength+1, 32)), 1, 1);
 	dim3 grid(nqueries, 1, 1);
 
 	size_t smem = cuda_shifted_hamming_distance_getSharedMemSize(maxSubjectLength, maxQueryLength);

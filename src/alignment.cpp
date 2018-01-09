@@ -36,8 +36,10 @@ std::tuple<BestAlignment_t,int,int> get_best_alignment(const AlignResult& fwdAli
 				int querylength, int candidatelength,
 				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO){
 
-	const int overlap = fwdAlignment.arc.subject_end_excl - fwdAlignment.arc.subject_begin_incl;
-	const int revcomploverlap = revcmplAlignment.arc.subject_end_excl - revcmplAlignment.arc.subject_begin_incl;
+	const int overlap = fwdAlignment.arc.overlap;
+	const int revcomploverlap = revcmplAlignment.arc.overlap;
+	const int fwdMismatches = fwdAlignment.arc.nOps;
+	const int revcmplMismatches = revcmplAlignment.arc.nOps;
 
 	BestAlignment_t retval = BestAlignment_t::None;
 	int retoverlap = 0;
@@ -52,55 +54,38 @@ std::tuple<BestAlignment_t,int,int> get_best_alignment(const AlignResult& fwdAli
 	// choose longest overlap
 	if(overlap > revcomploverlap){
 		if(overlap >= MIN_OVERLAP){
-			int nMismatch = std::count_if(fwdAlignment.operations.cbegin(), fwdAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE 
-					|| op.type == ALIGNTYPE_INSERT 
-					|| op.type == ALIGNTYPE_DELETE;
-			});
-			if((double)nMismatch / overlap < MAX_MISMATCH_RATIO){
+			if((double)fwdMismatches / overlap < MAX_MISMATCH_RATIO){
 				retval = BestAlignment_t::Forward;
 				retoverlap = overlap;
-				retnmismatch = nMismatch;
+				retnmismatch = fwdMismatches;
 			}
 		}
 	}else if(overlap < revcomploverlap){
 		if(revcomploverlap >= MIN_OVERLAP){
-			int nMismatch = std::count_if(revcmplAlignment.operations.cbegin(), revcmplAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			if((double)nMismatch / overlap < MAX_MISMATCH_RATIO){
+			if((double)revcmplMismatches / overlap < MAX_MISMATCH_RATIO){
 				retval = BestAlignment_t::ReverseComplement;
 				retoverlap = revcomploverlap;
-				retnmismatch = nMismatch;
+				retnmismatch = revcmplMismatches;
 			}
 		}
 	}else{
 		if(overlap >= MIN_OVERLAP){
 			// overlaps are of equal size, choose lowest mismatch ratio
-			const int nMismatch = std::count_if(fwdAlignment.operations.cbegin(), fwdAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			const int revcomplnMismatch = std::count_if(revcmplAlignment.operations.cbegin(), revcmplAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			const double ratio = (double)nMismatch / overlap;
-			const double revcomplratio = (double)revcomplnMismatch / revcomploverlap;
+
+			const double ratio = (double)fwdMismatches / overlap;
+			const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
 
 			if(ratio < revcomplratio){
 				if(ratio < MAX_MISMATCH_RATIO){
 					retval = BestAlignment_t::Forward;
 					retoverlap = overlap;
-					retnmismatch = nMismatch;
+					retnmismatch = fwdMismatches;
 				}				
 			}else{
 				if(revcomplratio < MAX_MISMATCH_RATIO){
 					retval = BestAlignment_t::ReverseComplement;
 					retoverlap = revcomploverlap;
-					retnmismatch = revcomplnMismatch;
+					retnmismatch = revcmplMismatches;
 				}
 			}
 		}
@@ -110,28 +95,20 @@ std::tuple<BestAlignment_t,int,int> get_best_alignment(const AlignResult& fwdAli
 
 	if(fwdAlignment.arc.isValid && overlap >= MIN_OVERLAP){
 		if(revcmplAlignment.arc.isValid && revcomploverlap >= MIN_OVERLAP){
-			const int nMismatch = std::count_if(fwdAlignment.operations.cbegin(), fwdAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			const int revcomplnMismatch = std::count_if(revcmplAlignment.operations.cbegin(), revcmplAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			const double ratio = (double)nMismatch / overlap;
-			const double revcomplratio = (double)revcomplnMismatch / revcomploverlap;
+			const double ratio = (double)fwdMismatches / overlap;
+			const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
 
 			if(ratio < revcomplratio){
 				if(ratio < MAX_MISMATCH_RATIO){
 					retval = BestAlignment_t::Forward;
 					retoverlap = overlap;
-					retnmismatch = nMismatch;
+					retnmismatch = fwdMismatches;
 				}			
 			}else if(revcomplratio < ratio){
 				if(revcomplratio < MAX_MISMATCH_RATIO){
 					retval = BestAlignment_t::ReverseComplement;
 					retoverlap = revcomploverlap;
-					retnmismatch = revcomplnMismatch;
+					retnmismatch = revcmplMismatches;
 				}
 			}else{
 				if(ratio < MAX_MISMATCH_RATIO){
@@ -139,35 +116,27 @@ std::tuple<BestAlignment_t,int,int> get_best_alignment(const AlignResult& fwdAli
 					if(overlap > revcomploverlap){
 						retval = BestAlignment_t::Forward;
 						retoverlap = overlap;
-						retnmismatch = nMismatch;
+						retnmismatch = fwdMismatches;
 					}else{
 						retval = BestAlignment_t::ReverseComplement;
 						retoverlap = revcomploverlap;
-						retnmismatch = revcomplnMismatch;
+						retnmismatch = revcmplMismatches;
 					}
 				}
 			}
 		}else{
-			int nMismatch = std::count_if(fwdAlignment.operations.cbegin(), fwdAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			if((double)nMismatch / overlap < MAX_MISMATCH_RATIO){
+			if((double)fwdMismatches / overlap < MAX_MISMATCH_RATIO){
 				retval = BestAlignment_t::Forward;
 				retoverlap = overlap;
-				retnmismatch = nMismatch;
+				retnmismatch = fwdMismatches;
 			}
 		}
 	}else{
 		if(revcmplAlignment.arc.isValid && revcomploverlap >= MIN_OVERLAP){
-			int nMismatch = std::count_if(revcmplAlignment.operations.cbegin(), revcmplAlignment.operations.cend(),
-						      [](const AlignOp& op){
-				return op.type == ALIGNTYPE_SUBSTITUTE || op.type == ALIGNTYPE_INSERT || op.type == ALIGNTYPE_DELETE;
-			});
-			if((double)nMismatch / revcomploverlap < MAX_MISMATCH_RATIO){
+			if((double)revcmplMismatches / revcomploverlap < MAX_MISMATCH_RATIO){
 				retval = BestAlignment_t::ReverseComplement;
 				retoverlap = revcomploverlap;
-				retnmismatch = nMismatch;
+				retnmismatch = revcmplMismatches;
 			}
 		}
 	}

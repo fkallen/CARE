@@ -71,31 +71,6 @@ std::vector<std::vector<AlignResult>> SemiGlobalAligner::cuda_alignment(const Al
 		alignments[outputindex].resize(nqueriesForThisSubject);
 
 		for(int j = 0; j < nqueriesForThisSubject; j++){
-
-			/*const auto& currentResult = mybuffers.h_results.get()[candidateIndex];
-
-			// set alignment score
-			alignments[outputindex][j].score = currentResult.score;
-
-			// set overlap region
-			alignments[outputindex][j].subject_begin_incl = currentResult.subject_begin_incl;
-			alignments[outputindex][j].subject_end_excl = currentResult.subject_end_excl;
-			alignments[outputindex][j].query_begin_incl = currentResult.query_begin_incl;
-			alignments[outputindex][j].query_end_excl = currentResult.query_end_excl;
-
-			// reserve space for operations
-			alignments[outputindex][j].operations.resize(currentResult.nOps);
-			// set operations
-			std::reverse_copy(mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment,
-					  mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment 
-								+ currentResult.nOps,
-					  alignments[outputindex][j].operations.begin());
-
-			alignments[outputindex][j].isNormalized = currentResult.isNormalized;
-			alignments[outputindex][j].isValid = currentResult.isValid;
-
-			candidateIndex++;*/
-
 			const auto& currentResult = mybuffers.h_results.get()[candidateIndex];
 			alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
 										mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment, 
@@ -173,31 +148,6 @@ std::vector<std::vector<AlignResult>> ShiftedHammingDistance::cuda_alignment(con
 		alignments[outputindex].resize(nqueriesForThisSubject);
 
 		for(int j = 0; j < nqueriesForThisSubject; j++){
-
-			/*const auto& currentResult = mybuffers.h_results.get()[candidateIndex];
-
-			// set alignment score
-			alignments[outputindex][j].score = currentResult.score;
-
-			// set overlap region
-			alignments[outputindex][j].subject_begin_incl = currentResult.subject_begin_incl;
-			alignments[outputindex][j].subject_end_excl = currentResult.subject_end_excl;
-			alignments[outputindex][j].query_begin_incl = currentResult.query_begin_incl;
-			alignments[outputindex][j].query_end_excl = currentResult.query_end_excl;
-
-			// reserve space for operations
-			alignments[outputindex][j].operations.resize(currentResult.nOps);
-			// set operations
-			std::reverse_copy(mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment,
-					  mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment 
-								+ currentResult.nOps,
-					  alignments[outputindex][j].operations.begin());
-
-			alignments[outputindex][j].isNormalized = currentResult.isNormalized;
-			alignments[outputindex][j].isValid = currentResult.isValid;
-
-			candidateIndex++;*/
-
 			const auto& currentResult = mybuffers.h_results.get()[candidateIndex];
 			alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
 										mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment, 

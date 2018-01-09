@@ -101,7 +101,7 @@ void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScor
 	const double weight = 1 - std::sqrt(overlapError / (overlapSize * maxErrorRate));
 	//std::cout << "overlapError : " << overlapError << " overlapSize : " << overlapSize << " maxErrorRate : " << maxErrorRate << " weight : " << weight << std::endl;
 
-	int last_a = alignment.arc.subject_end_excl;
+	int last_a = alignment.arc.subject_begin_incl + alignment.arc.overlap;
 
 	normalizeAlignment(alignment); //returns immediatly if already normalized (e.g. by previous insert)
 
@@ -130,7 +130,7 @@ void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScor
 				}else{					
 					double qweight = weight;
 					if(useQscores){
-						if(qindex < alignment.arc.query_end_excl){
+						if(qindex < alignment.arc.query_begin_incl + alignment.arc.overlap){
 							qweight *= qscore_to_graph_weight[(unsigned char)qualityScores[qindex]];
 						}
 					}
@@ -147,7 +147,7 @@ void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScor
 				}else{
 					double qweight = weight;
 					if(useQscores){
-						if(qindex < alignment.arc.query_end_excl){
+						if(qindex < alignment.arc.query_begin_incl + alignment.arc.overlap){
 							qweight *= qscore_to_graph_weight[(unsigned char)qualityScores[qindex]];
 						}
 					}
@@ -499,7 +499,7 @@ void ErrorGraph::normalizeAlignment(AlignResult& alignment) const{
 
 std::vector<ErrorGraph::LinkOperation> ErrorGraph::makeLinkOperations(const AlignResult& alignment) const{
 	int cur_a = alignment.arc.subject_begin_incl;
-	int last_a = alignment.arc.subject_end_excl;
+	int last_a = cur_a + alignment.arc.overlap; 
 
 	std::vector<LinkOperation> linkOps;
 

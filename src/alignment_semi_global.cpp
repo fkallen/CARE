@@ -113,8 +113,8 @@ AlignResult cpu_semi_global_align_internal(const char* r1_, const char* r2_, int
 	AlignResult alignresult;
 	std::vector<AlignOp> operations;
 
-	alignresult.arc.subject_end_excl = currow;
-	alignresult.arc.query_end_excl = curcol;
+	const int subject_end_excl = currow;
+
 	alignresult.arc.score = maximum;
 	alignresult.arc.isNormalized = false;
 
@@ -156,6 +156,10 @@ AlignResult cpu_semi_global_align_internal(const char* r1_, const char* r2_, int
 	alignresult.arc.subject_begin_incl = currow;
 	alignresult.arc.query_begin_incl = curcol;
 	alignresult.arc.isValid = true;
+	alignresult.arc.overlap = subject_end_excl - alignresult.arc.subject_begin_incl;
+	alignresult.arc.shift = alignresult.arc.subject_begin_incl == 0 ? -alignresult.arc.query_begin_incl : alignresult.arc.subject_begin_incl;
+	alignresult.arc.nOps = operations.size();
+	alignresult.arc.isNormalized = false;
 
 	return alignresult;
 }
@@ -444,8 +448,7 @@ void cuda_semi_global_align_kernel(AlignResultCompact* result_out, AlignOp* ops_
 					result.score = *bestrowscore;
 				}
 			
-				result.query_end_excl = curcol;
-				result.subject_end_excl = currow;
+				const int subject_end_excl = currow;
 
 				//printf("currow %d, curcol %d\n", currow, curcol);
 
@@ -515,11 +518,13 @@ void cuda_semi_global_align_kernel(AlignResultCompact* result_out, AlignOp* ops_
 						printf("alignment backtrack error");
 					}
 				}
-				result.isValid = isValid;
-				result.nOps = nOps;
 				result.subject_begin_incl = currow;
 				result.query_begin_incl = curcol;
+				result.overlap = subject_end_excl - result.subject_begin_incl;
+				result.shift = result.subject_begin_incl == 0 ? -result.query_begin_incl : result.subject_begin_incl;
+				result.nOps = nOps;
 				result.isNormalized = false;
+				result.isValid = isValid;
 
 				*my_result_out = result;
 			}
@@ -895,8 +900,7 @@ printf("warpscores\n");
 				result.score = *bestrowscore;
 			}
 			
-			result.query_end_excl = curcol;
-			result.subject_end_excl = currow;
+			const int subject_end_excl = currow;
 
 			int nOps = 0;
 			bool isValid = 0;
@@ -965,11 +969,14 @@ printf("warpscores\n");
 					printf("alignment backtrack error");
 				}
 			}
-			result.isValid = isValid;
-			result.nOps = nOps;
+
 			result.subject_begin_incl = currow;
 			result.query_begin_incl = curcol;
+			result.overlap = subject_end_excl - result.subject_begin_incl;
+			result.shift = result.subject_begin_incl == 0 ? -result.query_begin_incl : result.subject_begin_incl;
+			result.nOps = nOps;
 			result.isNormalized = false;
+			result.isValid = isValid;
 
 			*my_result_out = result;
 		}

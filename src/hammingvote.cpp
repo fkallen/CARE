@@ -50,7 +50,7 @@ std::string cpu_hamming_vote(const std::string& subject,
 
 	std::vector<double> defaultWeightsPerQuery(queries.size());
 	for(size_t i = 0; i < queries.size(); i++)
-		defaultWeightsPerQuery[i] = 1.0 - std::sqrt(overlapErrors[i] / (overlapSizes[i] * maxErrorRate));
+		defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].arc.nOps / (alignments[i].arc.overlap * maxErrorRate));
 
 	std::string result = subject;
 
@@ -76,7 +76,7 @@ std::string cpu_hamming_vote(const std::string& subject,
 
 		//count query bases which overlap with subject[i]
 		for(size_t j = 0; j < queries.size(); j++){
-			if(alignments[j].arc.subject_begin_incl <= int(i) && int(i) < alignments[j].arc.subject_end_excl){
+			if(alignments[j].arc.subject_begin_incl <= int(i) && int(i) < alignments[j].arc.subject_begin_incl + alignments[j].arc.overlap){
 				readcount++;
 				const int baseindex = i - alignments[j].arc.score;
 				double qweight = defaultWeightsPerQuery[j];
@@ -132,7 +132,9 @@ std::string cpu_hamming_vote(const std::string& subject,
 			
 			//if(readcount >= int(min_bases_for_candidate_correction_factor * double(queries.size()+1))){
 				for(size_t j = 0; j < queries.size(); j++){
-					if(correctThisQuery[j] && alignments[j].arc.subject_begin_incl <= int(i) && int(i) < alignments[j].arc.subject_end_excl){
+					if(correctThisQuery[j] 
+						&& alignments[j].arc.subject_begin_incl <= int(i) 
+						&& int(i) < alignments[j].arc.subject_begin_incl + alignments[j].arc.overlap){
 						const int baseindex = i - alignments[j].arc.score;
 						origbaseweight = 0.0;
 						switch(queries[j][baseindex]){
