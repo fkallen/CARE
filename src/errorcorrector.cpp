@@ -912,10 +912,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			
 						int candidatelength = candidateReads[i][j]->getNbases();
 
-						BestAlignment_t best;
-						int overlap, nMismatch;
-			
-						std::tie(best, overlap, nMismatch) = get_best_alignment(res, revcomplres, 
+						BestAlignment_t best = get_best_alignment(res, revcomplres, 
 													querylength, candidatelength,
 													MAX_MISMATCH_RATIO, MIN_OVERLAP, 
 													MIN_OVERLAP_RATIO);
@@ -1122,10 +1119,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			
 						int candidatelength = candidateReads[i][j]->getNbases();
 
-						BestAlignment_t best;
-						int overlap, nMismatch;
-			
-						std::tie(best, overlap, nMismatch) = getBestAlignment(res, revcomplres, 
+						BestAlignment_t best = get_best_alignment(res, revcomplres, 
 													querylength, candidatelength,
 													MAX_MISMATCH_RATIO, MIN_OVERLAP, 
 													MIN_OVERLAP_RATIO);
@@ -1135,14 +1129,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		
 							for(int f = 0; f < frequencies[i][j]; f++){
 								auto qual = candidateQualities[i][qualindex + f];
-								errorgraph.insertAlignment(res, qual->c_str(), nMismatch, overlap, MAX_MISMATCH_RATIO, 1);
+								errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
 							}				
 						}else if(best == BestAlignment_t::ReverseComplement){
 							split_subs(revcomplres, seq);
 
 							for(int f = 0; f < frequencies[i][j]; f++){
 								auto qual = revcomplcandidateQualities[i][qualindex + f];
-								errorgraph.insertAlignment(revcomplres, qual->c_str(), nMismatch, overlap, MAX_MISMATCH_RATIO, 1);
+								errorgraph.insertAlignment(revcomplres, qual->c_str(), MAX_MISMATCH_RATIO, 1);
 							}
 						}else{
 							; //both alignments are bad	

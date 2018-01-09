@@ -437,11 +437,7 @@ int split_subs(AlignResult& alignment, const char* subject);
 
 
 // Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments
-
-//first tuple entry is 0 if fwdAlignment, 1 if revcmplAlignment, -1 if none
-//second tuple entry is overlapsize
-//third tuple entry is number of mismatches in overlap
-std::tuple<BestAlignment_t,int,int> get_best_alignment(const AlignResult& fwdAlignment, const AlignResult& revcmplAlignment, 
+BestAlignment_t get_best_alignment(const AlignResult& fwdAlignment, const AlignResult& revcmplAlignment, 
 				int querylength, int candidatelength,
 				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO);
 
