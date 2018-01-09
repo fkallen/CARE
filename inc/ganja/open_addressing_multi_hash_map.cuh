@@ -22,6 +22,8 @@ struct OpenAddressingMultiHashMap {
     static constexpr index_t bits_for_key = bits_key;
     static constexpr index_t bits_for_val = bits_val;
 
+	static_assert(sizeof(std::atomic<index_t>) == sizeof(index_t),"");
+
     atomic_t * data;
     funct_t hash_func;
     probe_t prob_func;
@@ -100,6 +102,31 @@ struct OpenAddressingMultiHashMap {
         for (index_t iters = 0; iters < probe_length; ++iters) {
 
             entry_t probed = data[index].load(std::memory_order_relaxed);
+
+            if (probed == entry_t::get_empty())
+                return result;
+
+            if (probed.get_key() == key)
+                result.push_back(probed.get_val());
+
+            index = prob_func(index, iters, key) % capacity;
+        }
+
+        return result;
+    }
+
+    std::vector<index_t> get_unsafe(
+        const index_t& key) const {
+
+        std::vector<index_t> result;
+        index_t index = hash_func(key) % capacity;
+
+        if (key >= entry_t::mask_key)
+            return result;
+
+        for (index_t iters = 0; iters < probe_length; ++iters) {
+
+            entry_t probed = *((entry_t*)&data[index]);
 
             if (probed == entry_t::get_empty())
                 return result;
