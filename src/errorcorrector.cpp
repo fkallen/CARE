@@ -912,10 +912,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			
 						int candidatelength = candidateReads[i][j]->getNbases();
 
-						BestAlignment_t best = get_best_alignment(res, revcomplres, 
-													querylength, candidatelength,
-													MAX_MISMATCH_RATIO, MIN_OVERLAP, 
-													MIN_OVERLAP_RATIO);					
+						BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
+											querylength, candidatelength,
+											MAX_MISMATCH_RATIO, MIN_OVERLAP, 
+											MIN_OVERLAP_RATIO);					
 
 						if(best == BestAlignment_t::Forward){
 							const Sequence* seq = candidateReads[i][j];
@@ -1596,43 +1596,6 @@ void ErrorCorrector::getMultipleAlignments(int threadId, const std::vector<const
 
 		alignments = aligner->cuda_alignment(mybuffers, activeBatches, max_ops_per_alignment, 
 				numberOfRealSubjects, totalNumberOfAlignments, maximumQueryLength, maximumCandidateLength);
-		
-
-		/*for(int i = 0; i < queries.size(); i++){
-
-			const auto& query = queries[i];
-			const char* qdata = (const char*) query->begin();
-			int qbases = query->getNbases();
-
-			for(int j = 0; j < candidates[i].size(); j++){
-				const auto& c = candidates[i][j];
-				const char* cdata = (const char*)c->begin();
-				int cbases = c->getNbases();
-
-				AlignResult rtemp = aligner->cpu_alignment(qdata, cdata, qbases, cbases, query->isCompressed(), c->isCompressed());
-
-				if(alignments[i][j] != rtemp){
-					std::lock_guard<std::mutex> l(writelock);
-					std::cout << query->toString() << std::endl;
-					std::cout << c->toString() << std::endl;
-					std::cout << alignments[i][j].score << "  |  " << rtemp.score << std::endl;
-					std::cout << alignments[i][j].subject_begin_incl << "  |  " << rtemp.subject_begin_incl << std::endl;
-					std::cout << alignments[i][j].subject_end_excl << "  |  " << rtemp.subject_end_excl << std::endl;
-					std::cout << alignments[i][j].query_begin_incl << "  |  " << rtemp.query_begin_incl << std::endl;
-					std::cout << alignments[i][j].query_end_excl << "  |  " << rtemp.query_end_excl << std::endl;
-					std::cout << alignments[i][j].isNormalized << "  |  " << rtemp.isNormalized << std::endl;
-					std::cout << "cuda ops" << std::endl;					
-					alignments[i][j].writeOpsToStream(std::cout);
-					std::cout << std::endl;
-					std::cout << "cpu ops" << std::endl;
-					rtemp.writeOpsToStream(std::cout);
-					std::cout << std::endl;
-					exit(0);
-				}
-			}
-		}*/
-
-
 
 	}else{ // use cpu for alignment
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <tuple>
+#include <math.h>
 
 // split substitutions in alignment into deletion + insertion
 int split_subs(AlignResult& alignment, const char* subject){
@@ -28,23 +29,23 @@ int split_subs(AlignResult& alignment, const char* subject){
 
 
 // Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments.
-BestAlignment_t get_best_alignment(const AlignResult& fwdAlignment, const AlignResult& revcmplAlignment, 
+BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment, 
 				int querylength, int candidatelength,
 				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO){
 
-	const int overlap = fwdAlignment.arc.overlap;
-	const int revcomploverlap = revcmplAlignment.arc.overlap;
-	const int fwdMismatches = fwdAlignment.arc.nOps;
-	const int revcmplMismatches = revcmplAlignment.arc.nOps;
+	const int overlap = fwdAlignment.overlap;
+	const int revcomploverlap = revcmplAlignment.overlap;
+	const int fwdMismatches = fwdAlignment.nOps;
+	const int revcmplMismatches = revcmplAlignment.nOps;
 
 	BestAlignment_t retval = BestAlignment_t::None;
 
-	MIN_OVERLAP = std::max(int(querylength * MIN_OVERLAP_RATIO), MIN_OVERLAP);
+	MIN_OVERLAP = int(querylength * MIN_OVERLAP_RATIO) > MIN_OVERLAP ? int(querylength * MIN_OVERLAP_RATIO) : MIN_OVERLAP;
 
 	//find alignment with lowest mismatch ratio. if both have same ratio choose alignment with longer overlap	
 
-	if(fwdAlignment.arc.isValid && overlap >= MIN_OVERLAP){
-		if(revcmplAlignment.arc.isValid && revcomploverlap >= MIN_OVERLAP){
+	if(fwdAlignment.isValid && overlap >= MIN_OVERLAP){
+		if(revcmplAlignment.isValid && revcomploverlap >= MIN_OVERLAP){
 			const double ratio = (double)fwdMismatches / overlap;
 			const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
 
@@ -72,7 +73,7 @@ BestAlignment_t get_best_alignment(const AlignResult& fwdAlignment, const AlignR
 			}
 		}
 	}else{
-		if(revcmplAlignment.arc.isValid && revcomploverlap >= MIN_OVERLAP){
+		if(revcmplAlignment.isValid && revcomploverlap >= MIN_OVERLAP){
 			if((double)revcmplMismatches / revcomploverlap < MAX_MISMATCH_RATIO){
 				retval = BestAlignment_t::ReverseComplement;
 			}
