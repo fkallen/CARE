@@ -76,7 +76,7 @@ std::string cpu_hamming_vote(const std::string& subject,
 		for(size_t j = 0; j < queries.size(); j++){
 			if(alignments[j].arc.subject_begin_incl <= int(i) && int(i) < alignments[j].arc.subject_begin_incl + alignments[j].arc.overlap){
 				readcount++;
-				const int baseindex = i - alignments[j].arc.score;
+				const int baseindex = i - alignments[j].arc.shift;
 				double qweight = defaultWeightsPerQuery[j];
 				if(useQScores)
 					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]];
@@ -133,7 +133,7 @@ std::string cpu_hamming_vote(const std::string& subject,
 					if(correctThisQuery[j] 
 						&& alignments[j].arc.subject_begin_incl <= int(i) 
 						&& int(i) < alignments[j].arc.subject_begin_incl + alignments[j].arc.overlap){
-						const int baseindex = i - alignments[j].arc.score;
+						const int baseindex = i - alignments[j].arc.shift;
 						origbaseweight = 0.0;
 						switch(queries[j][baseindex]){
 							case 'A': origbaseweight = weights[0]; break;
@@ -252,7 +252,7 @@ void hamming_vote_kernel(char* subject, int subjectbytes, int subjectlength, boo
 		for(int j = 0; j < ncandidates; j++){
 			if(alignments[j].subject_begin_incl <= i && i < alignments[j].subject_end_excl){
 				readcount++;
-				const int baseindex = i - alignments[j].score;
+				const int baseindex = i - alignments[j].shift;
 				double qweight = defaultWeightPerCandidate[j];
 				if(useQScores)
 					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]]; //TODO
@@ -310,7 +310,7 @@ void hamming_vote_kernel(char* subject, int subjectbytes, int subjectlength, boo
 		if(correctQueries){
 			for(size_t j = 0; j < queries.size(); j++){
 				if(correctThisQuery[j] && alignments[j].subject_begin_incl <= i && i < alignments[j].subject_end_excl){
-					const int baseindex = i - alignments[j].score;
+					const int baseindex = i - alignments[j].shift;
 					const char* query = queries + queryBytesPrefixSum[j];
 					const char querybase = candidateIsEncoded[j] ? cuda_encoded_accessor(query, queryLengths[j], baseindex) 
 											: cuda_ordinary_accessor(query, baseindex);

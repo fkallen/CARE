@@ -13,9 +13,9 @@ cthreads=8
 
 #input file
 #inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655_1M.fastq
-#inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
+inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
 #inputfile=/ssd/fkallenb/eccomparison/correcteddatasets2/readscorrected.fq
-inputfile=/ssd/fkallenb/eccomparison/datasets/C.elegans_SRX218989.fastq
+#inputfile=/ssd/fkallenb/eccomparison/datasets/C.elegans_SRX218989.fastq
 
 #output path. this is used as temporary storage, too
 outdir=/ssd/fkallenb/eccomparison/correcteddatasets2/
@@ -49,11 +49,11 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=3
+batchsize=10
 
 #properties of good alignment
 #overlap must contain minimum of 80% matches
-maxmismatchratio=0.10
+maxmismatchratio=0.20
 #minimum overlap size
 minalignmentoverlap=35
 #minimum relative overlap size
@@ -62,7 +62,7 @@ minalignmentoverlapratio=0.35
 #correction parameters
 #during the voting phase, if at a fixed position in the read base B from the original read occurs N times and base D occurs M times,
 #then B is corrected into D if  M-N >= aa*pow(xx,N)
-xx=$(echo 'scale=2; 15/10' | bc)
+xx=$(echo 'scale=2; 12/10' | bc)
 aa=$(echo 'scale=2; 10/10' | bc)
 
 

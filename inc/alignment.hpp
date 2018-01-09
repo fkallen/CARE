@@ -113,6 +113,17 @@ struct AlignResult{
 		stream << operations.back();
 	}
 
+	void writeArcToStream(std::ostream& stream){
+		stream << "score: " << arc.score << '\n';
+		stream << "subject_begin_incl: " << arc.subject_begin_incl << '\n';
+		stream << "query_begin_incl: " << arc.query_begin_incl << '\n';
+		stream << "overlap: " << arc.overlap << '\n';
+		stream << "shift: " << arc.shift << '\n';
+		stream << "nOps: " << arc.nOps << '\n';
+		stream << "isNormalized: " << arc.isNormalized << '\n';
+		stream << "isValid: " << arc.isValid << '\n';
+	}
+
 	void setOpsAndDataFromAlignResultCompact(const AlignResultCompact& cudaresult, const AlignOp* h_ops, bool opsAreReversed){
 		setDataFromAlignResultCompact(cudaresult);
 

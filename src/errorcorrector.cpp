@@ -915,8 +915,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						BestAlignment_t best = get_best_alignment(res, revcomplres, 
 													querylength, candidatelength,
 													MAX_MISMATCH_RATIO, MIN_OVERLAP, 
-													MIN_OVERLAP_RATIO);
-						
+													MIN_OVERLAP_RATIO);					
 
 						if(best == BestAlignment_t::Forward){
 							const Sequence* seq = candidateReads[i][j];

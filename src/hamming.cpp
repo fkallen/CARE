@@ -56,7 +56,7 @@ AlignResult cpu_shifted_hamming_distance_internal(const char* subject, const cha
 	result.arc.query_begin_incl = queryoverlapbegin_incl;
 	result.arc.overlap = overlapsize;
 	result.arc.shift = bestShift;
-	result.arc.nOps = bestScore;
+	result.arc.nOps = result.operations.size();
 	result.arc.isNormalized = false;
 
 	return result;
@@ -399,7 +399,7 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 			result.query_begin_incl = queryoverlapbegin_incl;
 			result.overlap = overlapsize;
 			result.shift = bestShift;
-			result.nOps = bestScore;
+			result.nOps = opnr;
 			result.isNormalized = false;
 
 			*my_result_out = result;
