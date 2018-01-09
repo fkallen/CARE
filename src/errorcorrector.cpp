@@ -902,8 +902,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					std::vector<std::uint64_t> insertedCandidateIds;
 					std::vector<int> insertedFreqs;
 					std::vector<bool> forwardRead;
-					std::vector<int> insertednMismatches;
-					std::vector<int> insertedOverlaps;
 
 					const int querylength = queries[i]->getNbases();
 
@@ -932,8 +930,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
 							insertedFreqs.push_back(frequencies[i][j]);
 							forwardRead.push_back(true);
-							insertednMismatches.push_back(nMismatch);
-							insertedOverlaps.push_back(overlap);
 						}else if(best == BestAlignment_t::ReverseComplement){
 							const Sequence* seq = candidateReads[i][j];
 							const Sequence* revseq = revComplcandidateReads[i][j];
@@ -944,8 +940,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
 							insertedFreqs.push_back(frequencies[i][j]);
 							forwardRead.push_back(false);
-							insertednMismatches.push_back(nMismatch);
-							insertedOverlaps.push_back(overlap);
 						}else{
 							bad++; //both alignments are bad	
 						}
@@ -989,9 +983,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
  
 							int candidateIdIndex = 0;
 
-							for(size_t j = 0; j < insertedOverlaps.size(); j++){
-								if(insertedOverlaps[j] >= int(CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR * queries[i]->getNbases())
-									&& double(insertednMismatches[j]) / insertedOverlaps[j] <= CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO){
+							for(size_t j = 0; j < insertedAlignments.size(); j++){
+								if(insertedAlignments[j].arc.overlap >= int(CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR * queries[i]->getNbases())
+									&& double(insertedAlignments[j].arc.nOps) / insertedAlignments[j].arc.overlap 
+											<= CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO){
 									for(int f = 0; f < insertedFreqs[j]; f++){
 										const int candidateId = insertedCandidateIds[candidateIdIndex];
 										const int batchlockindex = candidateId / maxReadsPerLock;
