@@ -52,8 +52,7 @@ deletionscore=-100
 batchsize=10
 
 #properties of good alignment
-#overlap must contain minimum of 80% matches
-maxmismatchratio=0.20
+maxmismatchratio=0.10
 #minimum overlap size
 minalignmentoverlap=35
 #minimum relative overlap size

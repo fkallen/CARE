@@ -58,8 +58,8 @@ constexpr std::uint64_t progressThreshold = 5000;
 constexpr double HASHMAP_LOAD_FACTOR = 0.8;
 
 constexpr bool CORRECT_CANDIDATE_READS_TOO = true;
-constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 1.0;
-constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.01;
+constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 0.99;
+constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.00;
 
 
 ErrorCorrector::ErrorCorrector()

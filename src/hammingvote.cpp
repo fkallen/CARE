@@ -46,37 +46,49 @@ std::string cpu_hamming_vote(const std::string& subject,
 
 	const bool correctQueries = correctQueries_;
 
+	// min and max shift of queries which will be corrected
+	int minshift = subject.length();
+	int maxshift = -subject.length();
+	for(size_t i = 0; i < alignments.size(); i++){
+		if(correctQueries && correctThisQuery[i]){
+			minshift = minshift > alignments[i].arc.shift ? alignments[i].arc.shift : minshift;
+			maxshift = maxshift > alignments[i].arc.shift ? alignments[i].arc.shift : maxshift;
+		}
+	}
+	//std::cout << "minshift " << minshift << " maxshift " << maxshift << std::endl;
+
 	std::vector<double> defaultWeightsPerQuery(queries.size());
 	for(size_t i = 0; i < queries.size(); i++)
 		defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].arc.nOps / (alignments[i].arc.overlap * maxErrorRate));
 
 	std::string result = subject;
+	
+	int startindex = std::min(minshift, 0);
+	int endindex = std::max(subject.length(), subject.length() + maxshift);
 
-	for(size_t i = 0; i < subject.length(); i++){
+	for(int i = startindex; i < endindex; i++){
 		// weights for bases A C G T N
 		std::array<double, 5> weights{0,0,0,0,0};
-
-		//number of reads overlapping with subject at position i ( including subject )
-		int readcount = 1;
-
+		
 		//count subject base
-		double qw = 1.0;
-		if(useQScores)
-			qw *= qscore_to_graph_weight2[(unsigned char)subjectqualityScores[i]];
-		switch(subject[i]){
-			case 'A': weights[0] += qw; break;
-			case 'C': weights[1] += qw; break;
-			case 'G': weights[2] += qw; break;
-			case 'T': weights[3] += qw; break;
-			case 'N': weights[4] += qw; break;
-			default: break;
+		if(i >= 0 && i < int(subject.length())){
+			double qw = 1.0;
+			if(useQScores)
+				qw *= qscore_to_graph_weight2[(unsigned char)subjectqualityScores[i]];
+			switch(subject[i]){
+				case 'A': weights[0] += qw; break;
+				case 'C': weights[1] += qw; break;
+				case 'G': weights[2] += qw; break;
+				case 'T': weights[3] += qw; break;
+				case 'N': weights[4] += qw; break;
+				default: break;
+			}
 		}
 
-		//count query bases which overlap with subject[i]
+		//count query bases
 		for(size_t j = 0; j < queries.size(); j++){
-			if(alignments[j].arc.subject_begin_incl <= int(i) && int(i) < alignments[j].arc.subject_begin_incl + alignments[j].arc.overlap){
-				readcount++;
-				const int baseindex = i - alignments[j].arc.shift;
+			const int baseindex = i - alignments[j].arc.shift;
+			if(baseindex >= alignments[j].arc.query_begin_incl && baseindex < alignments[j].arc.query_begin_incl + alignments[j].arc.overlap){
 				double qweight = defaultWeightsPerQuery[j];
 				if(useQScores)
 					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]];
@@ -127,13 +139,11 @@ std::string cpu_hamming_vote(const std::string& subject,
 
 		//correct queries too if wanted
 		if(correctQueries){
-			
-			//if(readcount >= int(min_bases_for_candidate_correction_factor * double(queries.size()+1))){
-				for(size_t j = 0; j < queries.size(); j++){
-					if(correctThisQuery[j] 
-						&& alignments[j].arc.subject_begin_incl <= int(i) 
-						&& int(i) < alignments[j].arc.subject_begin_incl + alignments[j].arc.overlap){
-						const int baseindex = i - alignments[j].arc.shift;
+			for(size_t j = 0; j < queries.size(); j++){
+				if(correctThisQuery[j]){
+					const int baseindex = i - alignments[j].arc.shift;
+
+					if(baseindex >= 0 && baseindex < int(queries[j].length())){
 						origbaseweight = 0.0;
 						switch(queries[j][baseindex]){
 							case 'A': origbaseweight = weights[0]; break;
@@ -148,7 +158,7 @@ std::string cpu_hamming_vote(const std::string& subject,
 						}
 					}
 				}
-			//}
+			}
 		}
 
 	}
