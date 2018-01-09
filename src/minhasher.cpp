@@ -108,6 +108,7 @@ std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidates(const std::s
 		std::uint64_t key = bandHashValues[map] & hv_bitmask;
 
 		std::vector<uint64_t> entries = minhashTables[map]->get(key);
+//		std::vector<uint64_t> entries = minhashTables[map]->get_unsafe(key);
 		for(const auto x : entries){
 			int increment = (x & 1) ? 1 : -1;
 			std::uint64_t readnum = (x >> 1);
