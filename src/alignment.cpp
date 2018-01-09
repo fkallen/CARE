@@ -26,8 +26,6 @@ int split_subs(AlignResult& alignment, const char* subject){
 	return splitted_subs;
 };
 
-
-
 // Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments.
 BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment, 
 				int querylength, int candidatelength,

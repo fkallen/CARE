@@ -1080,30 +1080,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							}
 						}
 					}else if(aligner->type == AlignerType::SemiGlobal){
-
-						// errorgraph expects substitutions to be modeled as deletion + insertion
-						// split substitutions in alignment into deletion + insertion
-						auto split_subs = [](AlignResult& alignment, const std::string& query) -> int{
-							auto& ops = alignment.operations;
-							int splitted_subs = 0;
-							for(auto it = ops.begin(); it != ops.end(); it++){
-								if(it->type == ALIGNTYPE_SUBSTITUTE){
-									AlignOp del = *it;
-									del.base = query[it->position];
-									del.type = ALIGNTYPE_DELETE;
-
-									AlignOp ins = *it;
-									ins.type = ALIGNTYPE_INSERT;
-	
-									it = ops.erase(it);
-									it = ops.insert(it, del);
-									it = ops.insert(it, ins);
-									splitted_subs++;
-								}
-							}
-							return splitted_subs;
-						};
-
 #if 0
 					const int querylength = queries[i]->getNbases();
 					const std::string seq = queries[i]->toString();
@@ -1151,7 +1127,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						int qualindex = 0;
 						for(size_t j = 0; j < insertedAlignments.size(); j++){
 							auto& res = insertedAlignments[j];
-							split_subs(res, queryStrings[i]);
+							split_subs(res, queryStrings[i].c_str());
 
 							if(forwardRead[j]){
 								for(int f = 0; f < insertedFreqs[j]; f++){
