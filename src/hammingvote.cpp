@@ -44,9 +44,13 @@ std::string cpu_hamming_vote(const std::string& subject,
 				const std::vector<bool> correctThisQuery,
 				bool correctQueries_){
 
+	constexpr int estimatedCoverage = 200;
+	constexpr int coverageThreshold = estimatedCoverage / 3;
+	
+
 	const bool correctQueries = correctQueries_;
 
-	// min and max shift of queries which will be corrected
+	// min and max shift of queries which will be consensusBase
 	int minshift = subject.length();
 	int maxshift = -subject.length();
 	for(size_t i = 0; i < alignments.size(); i++){
@@ -69,6 +73,7 @@ std::string cpu_hamming_vote(const std::string& subject,
 	for(int i = startindex; i < endindex; i++){
 		// weights for bases A C G T N
 		std::array<double, 5> weights{0,0,0,0,0};
+		std::array<double, 5> counts{0,0,0,0,0};
 		
 		//count subject base
 		if(i >= 0 && i < int(subject.length())){
@@ -76,11 +81,11 @@ std::string cpu_hamming_vote(const std::string& subject,
 			if(useQScores)
 				qw *= qscore_to_graph_weight2[(unsigned char)subjectqualityScores[i]];
 			switch(subject[i]){
-				case 'A': weights[0] += qw; break;
-				case 'C': weights[1] += qw; break;
-				case 'G': weights[2] += qw; break;
-				case 'T': weights[3] += qw; break;
-				case 'N': weights[4] += qw; break;
+				case 'A': weights[0] += qw; counts[0]++; break;
+				case 'C': weights[1] += qw; counts[1]++; break;
+				case 'G': weights[2] += qw; counts[2]++; break;
+				case 'T': weights[3] += qw; counts[3]++; break;
+				case 'N': weights[4] += qw; counts[4]++; break;
 				default: break;
 			}
 		}
@@ -88,16 +93,17 @@ std::string cpu_hamming_vote(const std::string& subject,
 		//count query bases
 		for(size_t j = 0; j < queries.size(); j++){
 			const int baseindex = i - alignments[j].arc.shift;
-			if(baseindex >= alignments[j].arc.query_begin_incl && baseindex < alignments[j].arc.query_begin_incl + alignments[j].arc.overlap){
+			//if(baseindex >= alignments[j].arc.query_begin_incl && baseindex < alignments[j].arc.query_begin_incl + alignments[j].arc.overlap){
+			if(baseindex >= 0 && baseindex < int(queries[j].length())){
 				double qweight = defaultWeightsPerQuery[j];
 				if(useQScores)
 					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]];
 				switch(queries[j][baseindex]){
-					case 'A': weights[0] += qweight; break;
-					case 'C': weights[1] += qweight; break;
-					case 'G': weights[2] += qweight; break;
-					case 'T': weights[3] += qweight; break;
-					case 'N': weights[4] += qweight; break;
+					case 'A': weights[0] += qweight; counts[0]++; break;
+					case 'C': weights[1] += qweight; counts[1]++; break;
+					case 'G': weights[2] += qweight; counts[2]++; break;
+					case 'T': weights[3] += qweight; counts[3]++; break;
+					case 'N': weights[4] += qweight; counts[4]++; break;
 					default: break;
 				}
 			}
@@ -105,61 +111,59 @@ std::string cpu_hamming_vote(const std::string& subject,
 
 		//find final count of subject base
 		double origbaseweight = 0;
-		switch(subject[i]){
-			case 'A': origbaseweight = weights[0]; break;
-			case 'C': origbaseweight = weights[1]; break;
-			case 'G': origbaseweight = weights[2]; break;
-			case 'T': origbaseweight = weights[3]; break;
-			case 'N': origbaseweight = weights[4]; break;
-			default: break;
-		}
+		int origcount = 0;
+		if(i >= 0 && i < int(subject.length()))
+			switch(subject[i]){
+				case 'A': origbaseweight = weights[0]; origcount = counts[0]; break;
+				case 'C': origbaseweight = weights[1]; origcount = counts[1]; break;
+				case 'G': origbaseweight = weights[2]; origcount = counts[2]; break;
+				case 'T': origbaseweight = weights[3]; origcount = counts[3]; break;
+				case 'N': origbaseweight = weights[4]; origcount = counts[4]; break;
+				default: break;
+			}
 
-		double maxweight = 0;
+		double consensusWeight = 0;
 		int maxindex = 4;
+		double columnWeight = 0;
 		for(int k = 0; k < 5; k++){
-			if(weights[k] > maxweight){
-				maxweight = weights[k];
+			columnWeight += weights[k];
+			if(weights[k] > consensusWeight){
+				consensusWeight = weights[k];
 				maxindex = k;
 			}
 		}
 
-		char corrected = ' ';
+		char consensusBase = ' ';
 		switch(maxindex){
-			case 0: corrected = 'A'; break;
-			case 1: corrected = 'C'; break;
-			case 2: corrected = 'G'; break;
-			case 3: corrected = 'T'; break;
-			case 4: corrected = 'N'; break;
+			case 0: consensusBase = 'A'; break;
+			case 1: consensusBase = 'C'; break;
+			case 2: consensusBase = 'G'; break;
+			case 3: consensusBase = 'T'; break;
+			case 4: consensusBase = 'N'; break;
+			default: break;
 		}
 
-		//if this is true, correct
-		if((maxweight - origbaseweight) >= alpha * std::pow(x, origbaseweight) ){
-			result[i] = corrected;
-		}
+		double restweight = (columnWeight - consensusWeight);
+		if(origcount <= coverageThreshold && (consensusWeight - restweight) >= alpha * std::pow(x, restweight)){
+		//if((consensusWeight - origbaseweight) >= alpha * std::pow(x, origbaseweight) ){
+			// we correct this position
+			if(i >= 0 && i < int(subject.length()))
+				result[i] = consensusBase;
 
-		//correct queries too if wanted
-		if(correctQueries){
-			for(size_t j = 0; j < queries.size(); j++){
-				if(correctThisQuery[j]){
-					const int baseindex = i - alignments[j].arc.shift;
+			if(correctQueries){
+				for(size_t j = 0; j < queries.size(); j++){
+					if(correctThisQuery[j]){
+						const int baseindex = i - alignments[j].arc.shift;
 
-					if(baseindex >= 0 && baseindex < int(queries[j].length())){
-						origbaseweight = 0.0;
-						switch(queries[j][baseindex]){
-							case 'A': origbaseweight = weights[0]; break;
-							case 'C': origbaseweight = weights[1]; break;
-							case 'G': origbaseweight = weights[2]; break;
-							case 'T': origbaseweight = weights[3]; break;
-							case 'N': origbaseweight = weights[4]; break;
-							default: break;
-						}
-						if((maxweight - origbaseweight) >= alpha * std::pow(x, origbaseweight) ){
-							queries[j][baseindex] = corrected;
+						if(baseindex >= 0 && baseindex < int(queries[j].length())){
+							queries[j][baseindex] = consensusBase;
 						}
 					}
 				}
 			}
 		}
+
+
 
 	}
 
@@ -291,29 +295,29 @@ void hamming_vote_kernel(char* subject, int subjectbytes, int subjectlength, boo
 			default: break;
 		}
 
-		double maxweight = 0;
+		double consensusWeight = 0;
 		int maxindex = 4;
 
 		#pragma unroll
 		for(int k = 0; k < 5; k++){
-			if(weights[k] > maxweight){
-				maxweight = weights[k];
+			if(weights[k] > consensusWeight){
+				consensusWeight = weights[k];
 				maxindex = k;
 			}
 		}
 
-		char corrected = ' ';
+		char consensusBase = ' ';
 		switch(maxindex){
-			case 0: corrected = 'A'; break;
-			case 1: corrected = 'C'; break;
-			case 2: corrected = 'G'; break;
-			case 3: corrected = 'T'; break;
-			case 4: corrected = 'N'; break;
+			case 0: consensusBase = 'A'; break;
+			case 1: consensusBase = 'C'; break;
+			case 2: consensusBase = 'G'; break;
+			case 3: consensusBase = 'T'; break;
+			case 4: consensusBase = 'N'; break;
 		}
 
 		//if this is true, correct
-		if((maxweight - origbaseweight) >= alpha * pow(x, origbaseweight) ){
-			subject[i] = corrected; //TODO write encoded
+		if((consensusWeight - origbaseweight) >= alpha * pow(x, origbaseweight) ){
+			subject[i] = consensusBase; //TODO write encoded
 		}
 
 		//correct queries too if wanted
@@ -333,8 +337,8 @@ void hamming_vote_kernel(char* subject, int subjectbytes, int subjectlength, boo
 						case 'N': origbaseweight = weights[4]; break;
 						default: break;
 					}
-					if((maxweight - origbaseweight) >= alpha * std::pow(x, origbaseweight) ){
-						query[baseindex] = corrected; //TODO write encoded
+					if((consensusWeight - origbaseweight) >= alpha * std::pow(x, origbaseweight) ){
+						query[baseindex] = consensusBase; //TODO write encoded
 					}
 				}
 			}
