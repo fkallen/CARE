@@ -723,9 +723,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	// the readnums of candidates for each query
 	std::vector<std::vector<std::pair<std::uint64_t, int>>> candidateIds(batchsize);
 
-	// the initial number of candidates per query returned by minhasher
-	std::vector<int> initialNumberOfCandidates(batchsize);
-	std::vector<int> numberOfCorrectionCandidates(batchsize);
 	// the candidate sequences from candidateReadsWithFrequency
 	std::vector<std::vector<const Sequence*>> candidateReads(batchsize);
 	std::vector<std::vector<const Sequence*>> revComplcandidateReads(batchsize);
@@ -758,8 +755,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			queries.resize(actualBatchSize);
 			queryStrings.resize(actualBatchSize);
 			candidateIds.resize(actualBatchSize);
-			initialNumberOfCandidates.resize(actualBatchSize);
-			numberOfCorrectionCandidates.resize(actualBatchSize);
 			candidateReads.resize(actualBatchSize);
 			revComplcandidateReads.resize(actualBatchSize);
 			frequencies.resize(actualBatchSize);
@@ -775,7 +770,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		if(CORRECT_CANDIDATE_READS_TOO){
 			int batchlockindex = readnum / maxReadsPerLock;
 			//assert lock ids are good
-			for(std::uint32_t i = 0; i < actualBatchSize; i++){
+			/*for(std::uint32_t i = 0; i < actualBatchSize; i++){
 				if(std::uint32_t(batchlockindex) != (readnum + i) / maxReadsPerLock){
 					std::lock_guard<std::mutex> lg(writelock);
 					std::cout << "threads : " << nThreads << '\n'
@@ -790,7 +785,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					assert(std::uint32_t(batchlockindex) == (readnum + i) / maxReadsPerLock);
 				}
 				
-			}
+			}*/
 			std::unique_lock<std::mutex> lock(locksForProcessedFlags[batchlockindex]);
 			for(std::uint32_t i = 0; i < actualBatchSize; i++){
 				if(readIsProcessedVector[readnum + i] == 0){
@@ -810,8 +805,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		// fetch the reads of current batch from the readstorage
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
 			if(activeBatches[i]){
-					queries[i] = readStorage.fetchSequence_ptr(readnum + i);
-					queryQualities[i] = readStorage.fetchQuality_ptr(readnum + i);
+				queries[i] = readStorage.fetchSequence_ptr(readnum + i);
+				queryQualities[i] = readStorage.fetchQuality_ptr(readnum + i);
 			}
 		}
 
@@ -825,8 +820,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			if(activeBatches[i]){
 				queryStrings[i] = queries[i]->toString();
 				candidateIds[i] = minhasher.getCandidates(queryStrings[i]);
-				initialNumberOfCandidates[i] = candidateIds[i].size();
-				processedCandidates += initialNumberOfCandidates[i];
 			}
 		}
 
@@ -841,19 +834,13 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		// map minhash ids to sequences
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
 			if(activeBatches[i]){
-				if (initialNumberOfCandidates[i] >= MINIMUM_POSSIBLE_CANDIDATES) {
-					sequenceToIdsMaps[i] = mapMinhashResultsToSequences(
-											candidateIds[i],
-											candidateReads[i],
-											revComplcandidateReads[i],
-											candidateQualities[i],
-											revcomplcandidateQualities[i],
-											frequencies[i]);
-
-					numberOfCorrectionCandidates[i] = candidateIds[i].size();					
-				}else{
-					numberOfCorrectionCandidates[i] = 0;
-				}
+				sequenceToIdsMaps[i] = mapMinhashResultsToSequences(
+										candidateIds[i],
+										candidateReads[i],
+										revComplcandidateReads[i],
+										candidateQualities[i],
+										revcomplcandidateQualities[i],
+										frequencies[i]);
 			}
 		}
 
@@ -908,297 +895,272 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #if 1
 		// perform error correction
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
-			if(activeBatches[i]){
-				if(numberOfCorrectionCandidates[i] >= CANDIDATES_CORRECTION_THRESHOLD){
-								
-					assert(alignmentResults[i].size() == candidateReadsAndRevcompls[i].size());
+			if(activeBatches[i]){								
+				assert(alignmentResults[i].size() == candidateReadsAndRevcompls[i].size());
 
-					// for each candidate, compare its alignment to the alignment of the reverse complement. 
-					// find the best of both, if any, and
-					// save the best alignment + additional data in these vectors
-					std::vector<AlignResult> insertedAlignments;
-					std::vector<const Sequence*> insertedSequences;
-					std::vector<std::uint64_t> insertedCandidateIds;
-					std::vector<int> insertedFreqs;
-					std::vector<bool> forwardRead;
+				// for each candidate, compare its alignment to the alignment of the reverse complement. 
+				// find the best of both, if any, and
+				// save the best alignment + additional data in these vectors
+				std::vector<AlignResult> insertedAlignments;
+				std::vector<const Sequence*> insertedSequences;
+				std::vector<std::uint64_t> insertedCandidateIds;
+				std::vector<int> insertedFreqs;
+				std::vector<bool> forwardRead;
 
-					const int querylength = queries[i]->getNbases();
+				const int querylength = queries[i]->getNbases();
 
-					int bad = 0;
-					for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
-						auto& res = alignmentResults[i][j];	
-						auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
+				int bad = 0;
+				for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
+					auto& res = alignmentResults[i][j];	
+					auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
+		
+					int candidatelength = candidateReads[i][j]->getNbases();
+
+					BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
+										querylength, candidatelength,
+										MAX_MISMATCH_RATIO, MIN_OVERLAP, 
+										MIN_OVERLAP_RATIO);					
+
+					if(best == BestAlignment_t::Forward){
+						const Sequence* seq = candidateReads[i][j];
+						const auto ids = sequenceToIdsMaps[i][seq];
 			
-						int candidatelength = candidateReads[i][j]->getNbases();
+						insertedAlignments.push_back(std::move(res));
+						insertedSequences.push_back(seq);
+						insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
+						insertedFreqs.push_back(frequencies[i][j]);
+						forwardRead.push_back(true);
+					}else if(best == BestAlignment_t::ReverseComplement){
+						const Sequence* seq = candidateReads[i][j];
+						const Sequence* revseq = revComplcandidateReads[i][j];
+						const auto ids = sequenceToIdsMaps[i][seq];
+			
+						insertedAlignments.push_back(std::move(revcomplres));
+						insertedSequences.push_back(revseq);
+						insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
+						insertedFreqs.push_back(frequencies[i][j]);
+						forwardRead.push_back(false);
+					}else{
+						bad++; //both alignments are bad	
+					}
+				}
 
-						BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
-											querylength, candidatelength,
-											MAX_MISMATCH_RATIO, MIN_OVERLAP, 
-											MIN_OVERLAP_RATIO);					
+				// Now, use the good alignments for error correction
+				// With SHD, alignments cannot have indels. use quick majority vote for correction.
+				// SHD also allows for the correction of candidates, too.
+				// In Semi Global Alignment, indels can appear. use errorgraph for correction.
+				if(aligner->type == AlignerType::ShiftedHamming){
+					std::vector<std::string> candidateStrings;
+					for(const auto& seq : insertedSequences)
+						candidateStrings.push_back(seq->toString());
 
-						if(best == BestAlignment_t::Forward){
-							const Sequence* seq = candidateReads[i][j];
-							const auto ids = sequenceToIdsMaps[i][seq];
-				
-							insertedAlignments.push_back(std::move(res));
-							insertedSequences.push_back(seq);
-							insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
-							insertedFreqs.push_back(frequencies[i][j]);
-							forwardRead.push_back(true);
-						}else if(best == BestAlignment_t::ReverseComplement){
-							const Sequence* seq = candidateReads[i][j];
-							const Sequence* revseq = revComplcandidateReads[i][j];
-							const auto ids = sequenceToIdsMaps[i][seq];
-				
-							insertedAlignments.push_back(std::move(revcomplres));
-							insertedSequences.push_back(revseq);
-							insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
-							insertedFreqs.push_back(frequencies[i][j]);
-							forwardRead.push_back(false);
+					std::vector<std::string> candidatequals;
+
+					int qualindex = 0;
+					for(size_t j = 0; j < insertedAlignments.size(); j++){
+						if(forwardRead[j]){
+							for(int f = 0; f < insertedFreqs[j]; f++){
+								candidatequals.push_back(*readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]));
+							}
 						}else{
-							bad++; //both alignments are bad	
+							for(int f = 0; f < insertedFreqs[j]; f++){
+								candidatequals.push_back(
+									*readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]));
+							}
 						}
+						qualindex += insertedFreqs[j];
 					}
 
-					// Now, use the good alignments for error correction
-					// With SHD, alignments cannot have indels. use quick majority vote for correction.
-					// SHD also allows for the correction of candidates, too.
-					// In Semi Global Alignment, indels can appear. use errorgraph for correction.
-					if(aligner->type == AlignerType::ShiftedHamming){
-						std::vector<std::string> candidateStrings;
-						for(const auto& seq : insertedSequences)
-							candidateStrings.push_back(seq->toString());
+					std::vector<bool> correctThisCandidateSequence(insertedAlignments.size(), false);
+					std::vector<bool> saveThisCandidate;
+					if(CORRECT_CANDIDATE_READS_TOO){
 
-						std::vector<std::string> candidatequals;
+						// we want to correct every candidate sequence which overlaps 
+						// with the query by at least CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR * 100 percent
+						// and has nMismatchesInOverlap / overlapsize <= CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO
+						// mark every candidate id with these sequences as processed, if possible.
+						// set flag in correctThisCandidate to true for the corresponding candidate sequence
 
-						int qualindex = 0;
+						int candidateIdIndex = 0;
+
 						for(size_t j = 0; j < insertedAlignments.size(); j++){
-							if(forwardRead[j]){
+							if(insertedAlignments[j].arc.overlap >= int(CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR * queries[i]->getNbases())
+								&& double(insertedAlignments[j].arc.nOps) / insertedAlignments[j].arc.overlap 
+										<= CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO){
 								for(int f = 0; f < insertedFreqs[j]; f++){
-									candidatequals.push_back(*readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]));
+									const int candidateId = insertedCandidateIds[candidateIdIndex];
+									const int batchlockindex = candidateId / maxReadsPerLock;
+									if(readIsProcessedVector[candidateId] == 0){
+										std::unique_lock<std::mutex> lock(locksForProcessedFlags[batchlockindex]);
+										if(readIsProcessedVector[candidateId] == 0){
+											readIsProcessedVector[candidateId] = 1; // we will process this read
+											lock.unlock();
+											correctThisCandidateSequence[j] = true; // correct this sequence
+											// later, write candidate with this sequence to file
+											saveThisCandidate.push_back(true); 
+
+											nCorrectedCandidates++;
+										}else{
+											lock.unlock();
+											saveThisCandidate.push_back(false);
+										}
+									}else{
+										saveThisCandidate.push_back(false);
+									}
+									candidateIdIndex++;
 								}
 							}else{
 								for(int f = 0; f < insertedFreqs[j]; f++){
-									candidatequals.push_back(
-										*readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]));
-								}
-							}
-							qualindex += insertedFreqs[j];
-						}
-
-						std::vector<bool> correctThisCandidateSequence(insertedAlignments.size(), false);
-						std::vector<bool> saveThisCandidate;
-						if(CORRECT_CANDIDATE_READS_TOO){
-
-							// we want to correct every candidate sequence which overlaps 
-							// with the query by at least CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR * 100 percent
-							// and has nMismatchesInOverlap / overlapsize <= CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO
-							// mark every candidate id with these sequences as processed, if possible.
-							// set flag in correctThisCandidate to true for the corresponding candidate sequence
- 
-							int candidateIdIndex = 0;
-
-							for(size_t j = 0; j < insertedAlignments.size(); j++){
-								if(insertedAlignments[j].arc.overlap >= int(CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR * queries[i]->getNbases())
-									&& double(insertedAlignments[j].arc.nOps) / insertedAlignments[j].arc.overlap 
-											<= CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO){
-									for(int f = 0; f < insertedFreqs[j]; f++){
-										const int candidateId = insertedCandidateIds[candidateIdIndex];
-										const int batchlockindex = candidateId / maxReadsPerLock;
-										if(readIsProcessedVector[candidateId] == 0){
-											std::unique_lock<std::mutex> lock(locksForProcessedFlags[batchlockindex]);
-											if(readIsProcessedVector[candidateId] == 0){
-												readIsProcessedVector[candidateId] = 1; // we will process this read
-												lock.unlock();
-												correctThisCandidateSequence[j] = true; // correct this sequence
-												// later, write candidate with this sequence to file
-												saveThisCandidate.push_back(true); 
-
-												nCorrectedCandidates++;
-											}else{
-												lock.unlock();
-												saveThisCandidate.push_back(false);
-											}
-										}else{
-											saveThisCandidate.push_back(false);
-										}
-										candidateIdIndex++;
-									}
-								}else{
-									for(int f = 0; f < insertedFreqs[j]; f++){
-										saveThisCandidate.push_back(false);
-										candidateIdIndex++;
-									}
-								}
-							}
-						}
-
-						std::string correctedQuery = cpu_hamming_vote(queryStrings[i], 
-												candidateStrings, 
-												insertedAlignments,
-												*queryQualities[i], 
-												candidatequals,
-												MAX_MISMATCH_RATIO,
-												graphalpha, 
-												graphx,
-												useQualityScores,
-												correctThisCandidateSequence,
-												CORRECT_CANDIDATE_READS_TOO);
-
-						assert(correctedQuery.size() == queryStrings[i].size());
-
-						//bool correctedAndChanged = (queries[i]->operator!=(correctedQuery));
-
-						std::string header = *readStorage.fetchHeader_ptr(readnum + i);
-
-						if(CORRECT_CANDIDATE_READS_TOO)
-							resultstringstream << (readnum + i) << ' ';
-
-						/*resultstringstream << header << " corrected, changed : " << correctedAndChanged
-						  << ", " << numberOfCorrectionCandidates[i] << " candidates \n"
-						  << correctedQuery << '\n';*/
-
-						resultstringstream << header << '\n'
-						  << correctedQuery << '\n';
-
-						if(inputfileformat == Fileformat::FASTQ)
-							resultstringstream << '+' << '\n' << *(queryQualities[i]) << '\n';
-
-						nBufferedResults++;
-
-						if(CORRECT_CANDIDATE_READS_TOO){
-							int candidateIdIndex = 0;
-							for(size_t j = 0; j < insertedAlignments.size(); j++){
-								for(int f = 0; f < insertedFreqs[j]; f++){
-									if(saveThisCandidate[candidateIdIndex]){
-										auto& s = candidateStrings[j];
-										const int candidateId = insertedCandidateIds[candidateIdIndex];
-
-										std::string header = *readStorage.fetchHeader_ptr(candidateId);
-										resultstringstream << (candidateId) << ' ';
-
-										resultstringstream << header << '\n'
-										  << s << '\n';
-
-										if(inputfileformat == Fileformat::FASTQ){
-											if(forwardRead[j])
-												resultstringstream << '+' << '\n' << candidatequals[candidateIdIndex]
-												 << '\n';
-											else{ 
-												// candidatequals contains reverse complement scores. fetch fwd scores. 
-												auto qualptr = readStorage.fetchQuality_ptr(candidateId);
-												resultstringstream << '+' << '\n' << *qualptr
-												 << '\n';
-											}
-										}
-
-										nBufferedResults++;
-									}
+									saveThisCandidate.push_back(false);
 									candidateIdIndex++;
 								}
 							}
 						}
-					}else if(aligner->type == AlignerType::SemiGlobal){
-#if 0
-					const int querylength = queries[i]->getNbases();
-					const std::string seq = queries[i]->toString();
-					ErrorGraph errorgraph(seq.c_str(), seq.length(), queryQualities[i]->c_str(), useQualityScores);
-
-					int qualindex = 0;
-					int bad = 0;
-					for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
-						auto& res = alignmentResults[i][j];	
-						//auto& revcomplres = alignmentResults[i][2*j+1];
-						auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
-			
-						int candidatelength = candidateReads[i][j]->getNbases();
-
-						BestAlignment_t best = get_best_alignment(res, revcomplres, 
-													querylength, candidatelength,
-													MAX_MISMATCH_RATIO, MIN_OVERLAP, 
-													MIN_OVERLAP_RATIO);
-
-						if(best == BestAlignment_t::Forward){
-							split_subs(res, seq);
-		
-							for(int f = 0; f < frequencies[i][j]; f++){
-								auto qual = candidateQualities[i][qualindex + f];
-								errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
-							}				
-						}else if(best == BestAlignment_t::ReverseComplement){
-							split_subs(revcomplres, seq);
-
-							for(int f = 0; f < frequencies[i][j]; f++){
-								auto qual = revcomplcandidateQualities[i][qualindex + f];
-								errorgraph.insertAlignment(revcomplres, qual->c_str(), MAX_MISMATCH_RATIO, 1);
-							}
-						}else{
-							; //both alignments are bad	
-							bad++;
-						}
-
-						qualindex += frequencies[i][j];
 					}
-#endif
 
-						ErrorGraph errorgraph(queryStrings[i].c_str(), queryStrings[i].length(), queryQualities[i]->c_str(), useQualityScores);
+					std::string correctedQuery = cpu_hamming_vote(queryStrings[i], 
+											candidateStrings, 
+											insertedAlignments,
+											*queryQualities[i], 
+											candidatequals,
+											MAX_MISMATCH_RATIO,
+											graphalpha, 
+											graphx,
+											useQualityScores,
+											correctThisCandidateSequence,
+											CORRECT_CANDIDATE_READS_TOO);
 
-						int qualindex = 0;
-						for(size_t j = 0; j < insertedAlignments.size(); j++){
-							auto& res = insertedAlignments[j];
-							split_subs(res, queryStrings[i].c_str());
+					assert(correctedQuery.size() == queryStrings[i].size());
 
-							if(forwardRead[j]){
-								for(int f = 0; f < insertedFreqs[j]; f++){
-									auto qual = readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]);
-									errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
-								}
-							}else{
-								for(int f = 0; f < insertedFreqs[j]; f++){
-									auto qual = readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]);
-									errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
-								}
-							}
-							qualindex += insertedFreqs[j];
-						}
+					//bool correctedAndChanged = (queries[i]->operator!=(correctedQuery));
 
-						errorgraph.readid = readnum + i;
-
-						// let the graph to its work
-						CorrectedRead correctedQuery = errorgraph.getCorrectedRead(graphalpha, graphx);
-
-						//bool correctedAndChanged = (queries[i]->operator!=(correctedQuery.sequence));
-						std::string header = *readStorage.fetchHeader_ptr(readnum + i);
-
-						/*resultstringstream	<< header << " corrected, changed : " << correctedAndChanged
-						  << ", " << numberOfCorrectionCandidates[i] << " candidates, "
-						  << correctedQuery.probability << " probability" << '\n'
-						  << correctedQuery.sequence << '\n';*/
-
-						resultstringstream << header << '\n'
-						  << correctedQuery.sequence << '\n';
-
-
-						if(inputfileformat == Fileformat::FASTQ)
-							resultstringstream << '+' << '\n' << *(queryQualities[i]) << '\n';
-
-						nBufferedResults++;
-
-					}else{
-						; // code should not reach this
-					}
-				}else{	// no correction
-
-					if(CORRECT_CANDIDATE_READS_TOO && aligner->type == AlignerType::ShiftedHamming)
-						resultstringstream << (readnum + i) << ' ';
 					std::string header = *readStorage.fetchHeader_ptr(readnum + i);
-					resultstringstream	<< header << '\n'
-					  << queryStrings[i] << '\n';
+
+					if(CORRECT_CANDIDATE_READS_TOO)
+						resultstringstream << (readnum + i) << ' ';
+
+					resultstringstream << header << '\n'
+					  << correctedQuery << '\n';
 
 					if(inputfileformat == Fileformat::FASTQ)
 						resultstringstream << '+' << '\n' << *(queryQualities[i]) << '\n';
 
 					nBufferedResults++;
+
+					if(CORRECT_CANDIDATE_READS_TOO){
+						int candidateIdIndex = 0;
+						for(size_t j = 0; j < insertedAlignments.size(); j++){
+							for(int f = 0; f < insertedFreqs[j]; f++){
+								if(saveThisCandidate[candidateIdIndex]){
+									auto& s = candidateStrings[j];
+									const int candidateId = insertedCandidateIds[candidateIdIndex];
+
+									std::string header = *readStorage.fetchHeader_ptr(candidateId);
+									resultstringstream << (candidateId) << ' ';
+
+									resultstringstream << header << '\n'
+									  << s << '\n';
+
+									if(inputfileformat == Fileformat::FASTQ){
+										if(forwardRead[j])
+											resultstringstream << '+' << '\n' << candidatequals[candidateIdIndex]
+											 << '\n';
+										else{ 
+											// candidatequals contains reverse complement scores. fetch fwd scores. 
+											auto qualptr = readStorage.fetchQuality_ptr(candidateId);
+											resultstringstream << '+' << '\n' << *qualptr
+											 << '\n';
+										}
+									}
+
+									nBufferedResults++;
+								}
+								candidateIdIndex++;
+							}
+						}
+					}
+				}else if(aligner->type == AlignerType::SemiGlobal){
+#if 0
+				const int querylength = queries[i]->getNbases();
+				const std::string seq = queries[i]->toString();
+				ErrorGraph errorgraph(seq.c_str(), seq.length(), queryQualities[i]->c_str(), useQualityScores);
+
+				int qualindex = 0;
+				int bad = 0;
+				for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
+					auto& res = alignmentResults[i][j];	
+					//auto& revcomplres = alignmentResults[i][2*j+1];
+					auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
+		
+					int candidatelength = candidateReads[i][j]->getNbases();
+
+					BestAlignment_t best = get_best_alignment(res, revcomplres, 
+												querylength, candidatelength,
+												MAX_MISMATCH_RATIO, MIN_OVERLAP, 
+												MIN_OVERLAP_RATIO);
+
+					if(best == BestAlignment_t::Forward){
+						split_subs(res, seq);
+	
+						for(int f = 0; f < frequencies[i][j]; f++){
+							auto qual = candidateQualities[i][qualindex + f];
+							errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
+						}				
+					}else if(best == BestAlignment_t::ReverseComplement){
+						split_subs(revcomplres, seq);
+
+						for(int f = 0; f < frequencies[i][j]; f++){
+							auto qual = revcomplcandidateQualities[i][qualindex + f];
+							errorgraph.insertAlignment(revcomplres, qual->c_str(), MAX_MISMATCH_RATIO, 1);
+						}
+					}else{
+						; //both alignments are bad	
+						bad++;
+					}
+
+					qualindex += frequencies[i][j];
+				}
+#endif
+
+					ErrorGraph errorgraph(queryStrings[i].c_str(), queryStrings[i].length(), queryQualities[i]->c_str(), useQualityScores);
+
+					int qualindex = 0;
+					for(size_t j = 0; j < insertedAlignments.size(); j++){
+						auto& res = insertedAlignments[j];
+						split_subs(res, queryStrings[i].c_str());
+
+						if(forwardRead[j]){
+							for(int f = 0; f < insertedFreqs[j]; f++){
+								auto qual = readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]);
+								errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
+							}
+						}else{
+							for(int f = 0; f < insertedFreqs[j]; f++){
+								auto qual = readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]);
+								errorgraph.insertAlignment(res, qual->c_str(), MAX_MISMATCH_RATIO, 1);
+							}
+						}
+						qualindex += insertedFreqs[j];
+					}
+
+					errorgraph.readid = readnum + i;
+
+					// let the graph to its work
+					CorrectedRead correctedQuery = errorgraph.getCorrectedRead(graphalpha, graphx);
+
+					//bool correctedAndChanged = (queries[i]->operator!=(correctedQuery.sequence));
+					std::string header = *readStorage.fetchHeader_ptr(readnum + i);
+
+					resultstringstream << header << '\n'
+					  << correctedQuery.sequence << '\n';
+
+					if(inputfileformat == Fileformat::FASTQ)
+						resultstringstream << '+' << '\n' << *(queryQualities[i]) << '\n';
+
+					nBufferedResults++;
+
+				}else{
+					; // code should not reach this
 				}
 			}
 		}
