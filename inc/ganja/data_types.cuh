@@ -84,6 +84,11 @@ struct KeyValuePair_t {
     }
 
     HOSTDEVICEQUALIFIER INLINEQUALIFIER
+    static const index_t get_empty_payload() {
+        return ~(index_t(0));
+    }
+
+    HOSTDEVICEQUALIFIER INLINEQUALIFIER
     bool operator==(
         const data_t& other) const {
         return payload == other.payload;

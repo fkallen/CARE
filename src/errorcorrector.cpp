@@ -58,7 +58,7 @@ constexpr std::uint64_t progressThreshold = 5000;
 constexpr double HASHMAP_LOAD_FACTOR = 0.8;
 
 constexpr bool CORRECT_CANDIDATE_READS_TOO = true;
-constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 0.99;
+constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 1.00;
 constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.00;
 
 
@@ -352,11 +352,30 @@ void ErrorCorrector::correct(const std::string& filename)
 	std::cout << "begin insert" << std::endl;
 
 	TIMERSTARTCPU(INSERT);
-	insertFile(filename);
+#if 1
+	std::string mapfilename = filename;
+	size_t lastslashpos = mapfilename.find_last_of("/"); 
+	if(lastslashpos != std::string::npos)
+		mapfilename = mapfilename.substr(lastslashpos + 1); 
+	if(!minhasher.loadTablesFromFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map")){
+		insertFile(filename, true);
+		//transform does not work yet
+		//TIMERSTARTCPU(MAP_TRANSFORM);
+		//minhasher.transform();
+		//TIMERSTOPCPU(MAP_TRANSFORM);
+		minhasher.saveTablesToFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map");
+		std::cout << "saved map to file " << (outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map") << std::endl;
+	}else{
+		insertFile(filename, false);
+		std::cout << "loaded map from file " << (outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map") << std::endl;
+	}
+#else
+	insertFile(filename, true);
+#endif
 	TIMERSTOPCPU(INSERT);
 
 	std::cout << "end insert" << std::endl;
-	//exit(0);
+
 
 #ifdef __NVCC__
 	for(int i = 0; i < nCorrectorThreads; i++){
@@ -398,7 +417,7 @@ void ErrorCorrector::correct(const std::string& filename)
 }
 
 
-void ErrorCorrector::insertFile(const std::string& filename)
+void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 {
 
 #if 0
@@ -451,7 +470,7 @@ void ErrorCorrector::insertFile(const std::string& filename)
 				const Read& read = pair.first;
 				const std::uint32_t& readnum = pair.second;
 
-				minhasher.insertSequence(read.sequence, readnum);
+				if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
 
 				readStorage.insertRead(readnum, read);
 

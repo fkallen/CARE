@@ -13,8 +13,7 @@ Minhasher::Minhasher() : Minhasher(MinhashParameters{1,1})
 
 Minhasher::Minhasher(const MinhashParameters& parameters) 
 		: minparams(parameters), load(0.0), minhashtime(0), maptime(0)
-{
-
+{  
 }
 
 void Minhasher::init(){
@@ -108,7 +107,7 @@ std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidates(const std::s
 		std::uint64_t key = bandHashValues[map] & hv_bitmask;
 
 		std::vector<uint64_t> entries = minhashTables[map]->get(key);
-//		std::vector<uint64_t> entries = minhashTables[map]->get_unsafe(key);
+//		std::vector<uint64_t> entries = minhashTables[map]->get_unsafe(key); 
 		for(const auto x : entries){
 			int increment = (x & 1) ? 1 : -1;
 			std::uint64_t readnum = (x >> 1);
@@ -172,6 +171,26 @@ void Minhasher::bandhashfunc(const std::uint64_t* minhashSignature, std::uint64_
 	// xor the minhash hash values that belong to the same band
 	for (int map = 0; map < minparams.maps; map++) {
 		bandHashValues[map] ^= minhashSignature[map];
+	}
+}
+
+void Minhasher::saveTablesToFile(std::string filename) const{
+	for (int i = 0; i < minparams.maps; ++i) {
+		minhashTables[i]->saveToFile(filename+std::to_string(i));
+	}
+}
+
+bool Minhasher::loadTablesFromFile(std::string filename){
+	bool success = true;
+	for (int i = 0; i < minparams.maps && success; ++i) {
+		success &= minhashTables[i]->loadFromFile(filename+std::to_string(i));
+	}
+	return success;
+}
+
+void Minhasher::transform(){
+	for (int i = 0; i < minparams.maps; ++i) {
+		minhashTables[i]->transform();
 	}
 }
 

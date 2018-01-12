@@ -74,6 +74,12 @@ struct Minhasher {
 
 	std::vector<std::pair<std::uint64_t, int>> getCandidates(const std::string& sequence) const;
 
+	void saveTablesToFile(std::string filename) const;
+
+	bool loadTablesFromFile(std::string filename);
+
+	void transform();
+
 
 
 private:

@@ -729,7 +729,7 @@ private:
 
 	enum class Fileformat {FASTA, FASTQ};
 
-	void insertFile(const std::string& filename);
+	void insertFile(const std::string& filename, bool buildHashmap);
 
 	void errorcorrectFile(const std::string& filename);
 

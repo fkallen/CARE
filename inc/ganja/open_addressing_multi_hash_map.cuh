@@ -8,6 +8,10 @@
 #include "data_types.cuh"
 #include "atomic_helpers.cuh"
 
+#include <fstream>
+#include <memory>
+#include <cassert>
+
 template <
     typename index_t,
     index_t bits_key,
@@ -19,20 +23,36 @@ struct OpenAddressingMultiHashMap {
     typedef KeyValuePair_t<index_t,bits_key,bits_val> entry_t;
     typedef std::atomic<entry_t> atomic_t;
 
+    struct internal_elem{
+	index_t count;
+	index_t key;
+	index_t* values;
+    };
+
+    struct compact_map{
+	std::unique_ptr<internal_elem[]> data;
+	std::unique_ptr<index_t[]> valuebuffer;
+	index_t nData = 0;
+	index_t nValuebuffer = 0;
+    };
+
     static constexpr index_t bits_for_key = bits_key;
     static constexpr index_t bits_for_val = bits_val;
 
-	static_assert(sizeof(std::atomic<index_t>) == sizeof(index_t),"");
+    static_assert(sizeof(std::atomic<index_t>) == sizeof(index_t),"");
 
-    atomic_t * data;
+    std::unique_ptr<atomic_t[]> data;
     funct_t hash_func;
     probe_t prob_func;
     index_t capacity;
     index_t probe_length;
     std::atomic<index_t> size = {0};
 
+    compact_map transformedData;
+    bool isTransformer = false;
+
     OpenAddressingMultiHashMap(){
-	data = nullptr;
+	data.reset();
     }
 
     OpenAddressingMultiHashMap(const OpenAddressingMultiHashMap& other):
@@ -42,7 +62,7 @@ struct OpenAddressingMultiHashMap {
 				probe_length(other.capacity)
 {
 
-	data = new atomic_t[capacity];
+	data.reset(new atomic_t[capacity]);
 
 	//std::copy ( other.data , other.data + other.capacity, data );
 
@@ -58,14 +78,12 @@ struct OpenAddressingMultiHashMap {
                                     probe_length(capacity_)
  {
 
-        data = new atomic_t[capacity];
+	data.reset(new atomic_t[capacity]);
 
         clear();
     }
 
     ~OpenAddressingMultiHashMap() {
-
-        delete [] data;
     }
 
     void clear(){
@@ -81,9 +99,9 @@ struct OpenAddressingMultiHashMap {
 	prob_func = other.prob_func;
 
 	if(other.capacity > capacity){
-		delete [] data;
 		capacity = other.capacity;
-		data = new atomic_t[capacity];
+		data.reset();
+		data.reset(new atomic_t[capacity]);
 	}
 	//std::copy ( other.data , other.data + other.capacity, data );
 
@@ -93,81 +111,266 @@ struct OpenAddressingMultiHashMap {
     std::vector<index_t> get(
         const index_t& key) const {
 
+        if(!isTransformer){
+		return get_nontransformed(key);
+	}else{
+		return get_transformed(key);
+	}
+    }
+
+    std::vector<index_t> get_nontransformed(
+        const index_t& key) const {
+
         std::vector<index_t> result;
-        index_t index = hash_func(key) % capacity;
+	if(!isTransformer){
+		index_t index = hash_func(key) % capacity;
 
-        if (key >= entry_t::mask_key)
-            return result;
+		if (key >= entry_t::mask_key)
+		    return result;
 
-        for (index_t iters = 0; iters < probe_length; ++iters) {
+		for (index_t iters = 0; iters < probe_length; ++iters) {
 
-            entry_t probed = data[index].load(std::memory_order_relaxed);
+		    entry_t probed = data[index].load(std::memory_order_relaxed);
 
-            if (probed == entry_t::get_empty())
-                return result;
+		    if (probed == entry_t::get_empty())
+		        return result;
 
-            if (probed.get_key() == key)
-                result.push_back(probed.get_val());
+		    if (probed.get_key() == key)
+		        result.push_back(probed.get_val());
 
-            index = prob_func(index, iters, key) % capacity;
-        }
+		    index = prob_func(index, iters, key) % capacity;
+		}
+	}
 
         return result;
     }
 
-    std::vector<index_t> get_unsafe(
+    std::vector<index_t> get_transformed(
         const index_t& key) const {
 
-        std::vector<index_t> result;
-        index_t index = hash_func(key) % capacity;
+	if(isTransformer){
+		index_t index = hash_func(key) % transformedData.nData;
 
-        if (key >= entry_t::mask_key)
-            return result;
+		if (key >= entry_t::mask_key)
+		    return {};
 
-        for (index_t iters = 0; iters < probe_length; ++iters) {
+		for (index_t iters = 0; iters < transformedData.nData; ++iters) {
 
-            entry_t probed = *((entry_t*)&data[index]);
+		    const auto& probed = transformedData.data[index];
 
-            if (probed == entry_t::get_empty())
-                return result;
+		    if (probed.key == key){
+			std::vector<index_t> result {probed.values, probed.values + probed.count};
+			//for(index_t elem : result)
+			//	elem = ((entry_t*)&elem)->get_val();
+		        return result;
+		    }
 
-            if (probed.get_key() == key)
-                result.push_back(probed.get_val());
+		    index = (index + 1) % transformedData.nData;
+		}
+	}
 
-            index = prob_func(index, iters, key) % capacity;
-        }
-
-        return result;
+        return {};
     }
 
     bool add(
         const index_t key,
         const index_t val) {
 
-        if (key >= entry_t::mask_key || val >= entry_t::mask_val)
-            return false;
+	if(!isTransformer){
 
-        entry_t nil = entry_t::get_empty(), entry; entry.set_pair(key, val);
-        index_t index = hash_func(key) % capacity;
+		if (key >= entry_t::mask_key || val >= entry_t::mask_val)
+		    return false;
 
-        for (index_t iters = 0; iters < probe_length; ++iters) {
+		entry_t nil = entry_t::get_empty(), entry; entry.set_pair(key, val);
+		index_t index = hash_func(key) % capacity;
 
-            const entry_t pair = data[index].load(std::memory_order_relaxed);
+		for (index_t iters = 0; iters < probe_length; ++iters) {
 
-            if (pair == nil) {
-                std::atomic_compare_exchange_strong(&data[index], &nil, entry);
+		    const entry_t pair = data[index].load(std::memory_order_relaxed);
 
-                if (nil == entry_t::get_empty())
-                    return ++size;
-                else
-                    nil = entry_t::get_empty();
-            }
+		    if (pair == nil) {
+		        std::atomic_compare_exchange_strong(&data[index], &nil, entry);
 
-            index = prob_func(index, iters, key) % capacity;
-        }
+		        if (nil == entry_t::get_empty()){
+			    //probingDistance[index] = iters;
+		            return ++size;
+			}
+		        else
+		            nil = entry_t::get_empty();
+		    }
+
+		    index = prob_func(index, iters, key) % capacity;
+		}
+	}
 
         return false;
     }
+
+    void saveToFile(std::string filename) const{
+	std::ofstream out(filename, std::ios::binary);
+	out.write(reinterpret_cast<const char*>(&capacity), sizeof(index_t));
+	out.write(reinterpret_cast<const char*>(&probe_length), sizeof(index_t));
+	out.write(reinterpret_cast<const char*>(&size), sizeof(std::atomic<index_t>));
+	out.write(reinterpret_cast<const char*>(&transformedData.nData), sizeof(index_t));
+	out.write(reinterpret_cast<const char*>(&transformedData.nValuebuffer), sizeof(index_t));
+	out.write(reinterpret_cast<const char*>(&isTransformer), sizeof(bool));
+	for(index_t i = 0; i < capacity; i++){
+		out.write(reinterpret_cast<const char*>(&data[i]), sizeof(atomic_t));
+	}
+	for(index_t i = 0; i < transformedData.nData; i++){
+		out.write(reinterpret_cast<const char*>(&(transformedData.data[i].count)), sizeof(index_t));
+		out.write(reinterpret_cast<const char*>(&(transformedData.data[i].key)), sizeof(index_t));
+	}
+	for(index_t i = 0; i < transformedData.nValuebuffer; i++){
+		out.write(reinterpret_cast<const char*>(&(transformedData.valuebuffer[i])), sizeof(index_t));
+	}
+    }
+
+    bool loadFromFile(std::string filename){
+	std::ifstream in(filename, std::ios::binary);
+	if(in){
+		in.read(reinterpret_cast<char*>(&capacity), sizeof(index_t));
+		in.read(reinterpret_cast<char*>(&probe_length), sizeof(index_t));
+		in.read(reinterpret_cast<char*>(&size), sizeof(std::atomic<index_t>));
+		in.read(reinterpret_cast<char*>(&transformedData.nData), sizeof(index_t));
+		in.read(reinterpret_cast<char*>(&transformedData.nValuebuffer), sizeof(index_t));
+		in.read(reinterpret_cast<char*>(&isTransformer), sizeof(bool));
+
+		data.reset();
+		data.reset(new atomic_t[capacity]);
+		transformedData.data.reset(new internal_elem[transformedData.nData]);
+		transformedData.valuebuffer.reset(new index_t[transformedData.nValuebuffer]);
+
+		index_t* ptr = transformedData.valuebuffer.get();
+
+		for(index_t i = 0; i < capacity; i++){
+			in.read(reinterpret_cast<char*>(&data[i]), sizeof(atomic_t));
+		}
+		for(index_t i = 0; i < transformedData.nData; i++){
+			in.read(reinterpret_cast<char*>(&(transformedData.data[i].count)), sizeof(index_t));
+			in.read(reinterpret_cast<char*>(&(transformedData.data[i].key)), sizeof(index_t));
+			transformedData.data[i].values = ptr;
+			ptr += transformedData.data[i].count;
+		}
+		for(index_t i = 0; i < transformedData.nValuebuffer; i++){
+			in.read(reinterpret_cast<char*>(&(transformedData.valuebuffer[i])), sizeof(index_t));
+		}
+		return true;
+	}
+	return false;
+    }
+
+	void transform(){
+		if(isTransformer) return;
+
+		std::unique_ptr<atomic_t[]> copy = std::make_unique<atomic_t[]>(capacity);
+		std::memcpy(&copy[0], &data[0], sizeof(atomic_t) * capacity);
+
+		entry_t* workingdata = (entry_t*)&copy[0];
+
+		TIMERSTARTCPU(partition_and_sort);
+		//send all empty slots to the back
+		entry_t* empty_begin = std::partition(&workingdata[0], &workingdata[capacity], [](auto a){return a != entry_t::get_empty();});
+
+		index_t nNonEmptySlots = empty_begin - workingdata;
+
+		//sort non empty slots by key
+		std::sort((index_t*)&workingdata[0], (index_t*)&empty_begin, [](index_t entry_a, index_t entry_b){
+			return ((entry_t*)&entry_a)->get_key() < ((entry_t*)&entry_b)->get_key();
+		});
+
+		TIMERSTOPCPU(partition_and_sort);
+
+		
+
+		transformedData.valuebuffer.reset(new index_t[nNonEmptySlots]);
+
+		TIMERSTARTCPU(copynonemptyslots);
+
+		std::memcpy(transformedData.valuebuffer.get(), (index_t*)workingdata, sizeof(index_t) * nNonEmptySlots);
+
+		TIMERSTOPCPU(copynonemptyslots);
+
+		index_t uniqueCount = 0;
+		entry_t previousElem = entry_t::get_empty();
+
+		TIMERSTARTCPU(countuniquekeys);
+		for(index_t i = 0; i < nNonEmptySlots; i++){
+			entry_t entry = *((entry_t*)&transformedData.valuebuffer[i]);
+
+			if(entry.get_key() != previousElem.get_key())
+				uniqueCount++;
+
+			previousElem = entry;
+		}
+		TIMERSTOPCPU(countuniquekeys);
+
+		/*TIMERSTARTCPU(stable_sort);
+		//stable_sort non empty slots by bucket in new table
+		std::stable_sort(transformedData.valuebuffer.get(), 
+				 transformedData.valuebuffer.get() + nNonEmptySlots, 
+				 [=](index_t entry_a, index_t entry_b){
+				 	return ((entry_t*)&entry_a)->get_key() % uniqueCount < ((entry_t*)&entry_b)->get_key() % uniqueCount;
+				 }
+		);
+		TIMERSTOPCPU(stable_sort);*/
+
+		transformedData.data.reset(new internal_elem[uniqueCount]());
+		transformedData.nData = uniqueCount;
+		transformedData.nValuebuffer = nNonEmptySlots;
+
+		TIMERSTARTCPU(setbucketpointers);
+
+		index_t previousKey = ((entry_t*)&transformedData.valuebuffer[0])->get_key();
+		index_t hv = previousKey % uniqueCount;
+		for(index_t i = 0; i < nNonEmptySlots; i++){
+			entry_t entry = *((entry_t*)&transformedData.valuebuffer[i]);
+			if(previousKey != entry.get_key()){
+				index_t hash = entry.get_key() % uniqueCount;
+				while(transformedData.data[hash].key != entry_t::get_empty_payload()){
+					hash = (hash + 1) % uniqueCount;
+				}
+				transformedData.data[hash].values = &transformedData.valuebuffer[i];
+				transformedData.data[hash].key = entry.get_key();
+				transformedData.data[hash].count++;
+
+				hv = hash;		
+			}else{
+				transformedData.data[hv].count++;
+			}
+			transformedData.valuebuffer[i] = entry.get_val();
+			previousKey = entry.get_key();
+		}
+
+		TIMERSTOPCPU(setbucketpointers);
+
+		TIMERSTARTCPU(check);
+		// check transformed data
+		for(size_t i = 0; i < uniqueCount; i++){
+			index_t key = transformedData.data[i].key;
+
+			auto origValues = get_nontransformed(key);
+
+			if(origValues.size() != transformedData.data[i].count)
+				throw std::runtime_error("expected count: " + std::to_string(origValues.size())+ ", is :" + std::to_string(transformedData.data[i].count));
+
+			std::sort(origValues.begin(), origValues.end());
+			std::vector<index_t> newValues(transformedData.data[i].values, transformedData.data[i].values + transformedData.data[i].count);
+			//for(index_t elem : newValues)
+			//	elem = ((entry_t*)&elem)->get_val();
+			std::sort(newValues.begin(), newValues.end());
+
+			for(index_t j = 0; j < origValues.size(); j++){
+				
+				if(newValues[j] != origValues[j])
+					throw std::runtime_error("expected value: " + std::to_string(origValues[j])+ ", is :" + std::to_string(newValues[j]));
+			}
+		}
+		TIMERSTOPCPU(check);
+
+		capacity = 0;
+		isTransformer = true;
+	}
 
 };
 
