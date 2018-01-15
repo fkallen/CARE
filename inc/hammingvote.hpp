@@ -19,5 +19,15 @@ std::string cpu_hamming_vote(const std::string& subject,
 				const std::vector<bool> correctThisQuery,
 				bool correctQueries_);
 
+int cpu_hamming_vote_new(std::string& subject, 
+				std::vector<std::string>& queries, 
+				const std::vector<AlignResult>& alignments,
+				const std::string& subjectqualityScores, 
+				const std::vector<std::string>& queryqualityScores,
+				double maxErrorRate,
+				bool useQScores,
+				std::vector<bool>& correctedQueries,
+				bool correctQueries_);
+
 
 #endif

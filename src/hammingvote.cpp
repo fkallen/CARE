@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <limits>
+#include <cassert>
 
 constexpr double min_bases_for_candidate_correction_factor = 0.0;
 
@@ -30,6 +32,255 @@ void hamming_vote_global_init(){
 	for(int i = 0; i < 256; i++){
 		qscore_to_graph_weight2[i] = std::max(MIN_GRAPH_WEIGHT, 1.0 - qscore_to_error_prob2[i]);
 	}
+}
+
+int cpu_hamming_vote_new(std::string& subject, 
+				std::vector<std::string>& queries, 
+				const std::vector<AlignResult>& alignments,
+				const std::string& subjectqualityScores, 
+				const std::vector<std::string>& queryqualityScores,
+				double maxErrorRate,
+				bool useQScores,
+				std::vector<bool>& correctedQueries,
+				bool correctQueries_){
+
+	constexpr int estimatedCoverage = 21;
+	constexpr double errorrate = 0.03;
+	constexpr double errorratefactor = 3; //e.g. as in 1-3*e
+	constexpr double m = 0.42;
+	constexpr int candidate_correction_new_cols = 0;
+	constexpr int k = 16;
+	
+
+	const bool correctQueries = correctQueries_;
+	int status = 0;
+
+	int startindex = 0;
+	int endindex = subject.length();
+	std::vector<double> defaultWeightsPerQuery(queries.size());
+	for(size_t i = 0; i < alignments.size(); i++){
+		startindex = alignments[i].arc.shift < startindex ? alignments[i].arc.shift : startindex;
+		int queryEndsAt = queryqualityScores[i].length() + alignments[i].arc.shift;
+		endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
+		defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].arc.nOps / (alignments[i].arc.overlap * maxErrorRate));
+		correctedQueries[i] = false;
+	}
+
+	int columnsToCheck = endindex - startindex;
+
+	// the column index range for the subject begins at max(-leftOfSubjectBegin,0);
+	std::vector<char> consensus(columnsToCheck);
+	std::vector<double> support(columnsToCheck);
+	std::vector<int> coverage(columnsToCheck);
+	std::vector<int> origWeights(columnsToCheck);
+	const int subjectColumnsBegin_incl = std::max(-startindex,0);
+	const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + subject.length();
+	int columnindex = 0;
+
+	for(int i = startindex; i < endindex; i++){
+		// weights for bases A C G T N
+		double weights[5]{0,0,0,0,0};
+		int count = 0;
+		
+		//count subject base
+		if(i >= 0 && i < int(subject.length())){
+			double qw = 1.0;
+			if(useQScores)
+				qw *= qscore_to_graph_weight2[(unsigned char)subjectqualityScores[i]];
+			switch(subject[i]){
+				case 'A': weights[0] += qw; break;
+				case 'C': weights[1] += qw; break;
+				case 'G': weights[2] += qw; break;
+				case 'T': weights[3] += qw; break;
+				case 'N': weights[4] += qw; break;
+				default: break;
+			}
+			count++;
+		}
+
+		//count query bases
+		for(size_t j = 0; j < queries.size(); j++){
+			const int baseindex = i - alignments[j].arc.shift;
+
+			if(baseindex >= 0 && baseindex < int(queries[j].length())){ //check query boundary
+				double qweight = defaultWeightsPerQuery[j];
+				if(useQScores)
+					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]];
+				switch(queries[j][baseindex]){
+					case 'A': weights[0] += qweight; break;
+					case 'C': weights[1] += qweight; break;
+					case 'G': weights[2] += qweight; break;
+					case 'T': weights[3] += qweight; break;
+					case 'N': weights[4] += qweight; break;
+					default: break;
+				}
+				count++;
+			}
+		}
+
+		double consensusWeight = 0;
+		int maxindex = 4;
+		double columnWeight = 0;
+		for(int k = 0; k < 5; k++){
+			columnWeight += weights[k];
+			if(weights[k] > consensusWeight){
+				consensusWeight = weights[k];
+				maxindex = k;
+			}
+		}
+		
+		double supportvalue = consensusWeight / columnWeight;
+		double origWeight = 0;
+		if(i >= 0 && i < int(subject.length())){
+			switch(subject[i]){
+				case 'A': origWeight = weights[0]; break;
+				case 'C': origWeight = weights[1]; break;
+				case 'G': origWeight = weights[2]; break;
+				case 'T': origWeight = weights[3]; break;
+				case 'N': origWeight = weights[4]; break;
+				default: break;
+			}
+		}
+		char consensusBase = ' ';
+		switch(maxindex){
+			case 0: consensusBase = 'A'; break;
+			case 1: consensusBase = 'C'; break;
+			case 2: consensusBase = 'G'; break;
+			case 3: consensusBase = 'T'; break;
+			case 4: consensusBase = 'N'; break;
+			default: break;
+		}
+
+		consensus[columnindex] = consensusBase;
+		support[columnindex] = supportvalue;
+		coverage[columnindex] = count;
+		origWeights[columnindex] = origWeight;
+		columnindex++;
+	}
+
+	double avg_support = 0;
+	double min_support = 1.0;
+	int max_coverage = 0;
+	int min_coverage = std::numeric_limits<int>::max();
+	//get stats for subject columns
+	for(columnindex = subjectColumnsBegin_incl; columnindex < subjectColumnsEnd_excl; columnindex++){
+		if(columnindex >= columnsToCheck){
+			assert(columnindex < columnsToCheck);
+		}
+		avg_support += support[columnindex];
+		min_support = support[columnindex] < min_support? support[columnindex] : min_support;
+		max_coverage = coverage[columnindex] > max_coverage ? coverage[columnindex] : max_coverage;
+		min_coverage = coverage[columnindex] < min_coverage ? coverage[columnindex] : min_coverage;
+	}
+	avg_support /= subject.length();
+
+#if 0
+	std::cout << "anchorsupport\n";
+	for(columnindex = subjectColumnsBegin_incl; columnindex < subjectColumnsEnd_excl; columnindex++){
+		std::cout << support[columnindex] << " ";
+	}
+	std::cout << '\n';
+	std::cout << "anchorcoverage\n";
+	for(columnindex = subjectColumnsBegin_incl; columnindex < subjectColumnsEnd_excl; columnindex++){
+		std::cout << coverage[columnindex] << " ";
+	}
+	std::cout << '\n';
+
+	std::cout << "avgsup " << avg_support << " >= " << (1-errorrate) << '\n';
+	std::cout << "minsup " << min_support << " >= " << (1-2*errorrate) << '\n';
+	std::cout << "mincov " << min_coverage << " >= " << (m) << '\n';
+	std::cout << "maxcov " << max_coverage << " <= " << (3*m) << '\n';
+	std::cout << "------------------------------------------------" << '\n';
+#endif
+
+	bool isHQ = avg_support >= 1-errorrate
+		 && min_support >= 1-errorratefactor*errorrate
+		 && min_coverage >= m / 2.0 * estimatedCoverage;
+
+	if(isHQ){
+		//correct anchor
+		for(int i = 0; i < int(subject.length()); i++){
+			subject[i] = consensus[subjectColumnsBegin_incl + i];
+		}
+
+		//correct candidates
+		if(false && correctQueries){
+			for(int i = 0; i < int(queries.size()); i++){
+				int queryColumnsBegin_incl = alignments[i].arc.shift - startindex;
+				double newColMinSupport = 1.0;
+				int newColMinCov = std::numeric_limits<int>::max();
+				//check new columns left of subject
+				for(columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols; 
+					columnindex >= queryColumnsBegin_incl;
+					columnindex++){
+					assert(columnindex < columnsToCheck);
+					newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
+					newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+				}
+				//check new columns right of subject
+				for(columnindex = subjectColumnsEnd_excl - 1 + candidate_correction_new_cols; 
+					columnindex < queryColumnsBegin_incl + int(queries[i].length());
+					columnindex++){
+					assert(columnindex < columnsToCheck);
+					newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
+					newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+				}
+
+				bool queryWasCorrected = false;
+
+				if(newColMinSupport >= 1-errorratefactor*errorrate 
+					&& newColMinCov >= m / 2.0 * estimatedCoverage){
+
+					for(int j = 0; j < int(queries[i].length()); j++){
+						columnindex = queryColumnsBegin_incl + j;
+						queries[i][j] = consensus[columnindex];
+						queryWasCorrected = true;
+					}
+				}
+
+				if(queryWasCorrected){
+					correctedQueries[i] = true;
+				}
+			}
+			std::cout << "ERRRRRRROR\n";
+		}		
+	}else{
+		if(avg_support < 1-errorrate)
+			status |= (1 << 0);
+		if(min_support < 1-errorratefactor*errorrate)
+			status |= (1 << 1);
+		if(min_coverage < m / 2.0 * estimatedCoverage)
+			status |= (1 << 2);
+
+		//correct anchor
+		for(int i = 0; i < int(subject.length()); i++){
+			columnindex = subjectColumnsBegin_incl + i;
+
+			if(support[columnindex] >= 1-errorratefactor*errorrate){
+				subject[i] = consensus[columnindex];
+			}else{
+				if(support[columnindex] > 0.5 && coverage[columnindex] < m / 2.0 * estimatedCoverage){
+					double avgsupportkregion = 0;
+					int c = 0;
+					bool kregioncoverageisgood = true;
+					for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
+						if(j != i && j >= 0 && j < int(subject.length())){
+							avgsupportkregion += support[subjectColumnsBegin_incl + j];
+							kregioncoverageisgood &= (coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
+							c++;
+						}
+					}
+					if(kregioncoverageisgood && avgsupportkregion / c >= 1-errorrate){
+						subject[i] = consensus[columnindex];
+					}
+				}
+			}
+			
+		}
+	}
+
+
+	return status;
 }
 
 std::string cpu_hamming_vote(const std::string& subject, 
@@ -110,15 +361,14 @@ std::string cpu_hamming_vote(const std::string& subject,
 		}
 
 		//find final count of subject base
-		double origbaseweight = 0;
 		int origcount = 0;
 		if(i >= 0 && i < int(subject.length()))
 			switch(subject[i]){
-				case 'A': origbaseweight = weights[0]; origcount = counts[0]; break;
-				case 'C': origbaseweight = weights[1]; origcount = counts[1]; break;
-				case 'G': origbaseweight = weights[2]; origcount = counts[2]; break;
-				case 'T': origbaseweight = weights[3]; origcount = counts[3]; break;
-				case 'N': origbaseweight = weights[4]; origcount = counts[4]; break;
+				case 'A': origcount = counts[0]; break;
+				case 'C': origcount = counts[1]; break;
+				case 'G': origcount = counts[2]; break;
+				case 'T': origcount = counts[3]; break;
+				case 'N': origcount = counts[4]; break;
 				default: break;
 			}
 
@@ -145,7 +395,6 @@ std::string cpu_hamming_vote(const std::string& subject,
 
 		double restweight = (columnWeight - consensusWeight);
 		if(origcount <= coverageThreshold && (consensusWeight - restweight) >= alpha * std::pow(x, restweight)){
-		//if((consensusWeight - origbaseweight) >= alpha * std::pow(x, origbaseweight) ){
 			// we correct this position
 			if(i >= 0 && i < int(subject.length()))
 				result[i] = consensusBase;
