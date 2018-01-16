@@ -44,11 +44,10 @@ int cpu_hamming_vote_new(std::string& subject,
 				std::vector<bool>& correctedQueries,
 				bool correctQueries_){
 
-	constexpr int estimatedCoverage = 21;
+	constexpr int estimatedCoverage = 255;
 	constexpr double errorrate = 0.03;
-	constexpr double errorratefactor = 3; //e.g. as in 1-3*e
-	constexpr double m = 0.42;
-	constexpr int candidate_correction_new_cols = 0;
+	constexpr double m = 0.6;
+	constexpr int candidate_correction_new_cols = 3;
 	constexpr int k = 16;
 	
 
@@ -73,6 +72,7 @@ int cpu_hamming_vote_new(std::string& subject,
 	std::vector<double> support(columnsToCheck);
 	std::vector<int> coverage(columnsToCheck);
 	std::vector<int> origWeights(columnsToCheck);
+	std::vector<int> origCoverage(columnsToCheck);
 	const int subjectColumnsBegin_incl = std::max(-startindex,0);
 	const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + subject.length();
 	int columnindex = 0;
@@ -80,6 +80,7 @@ int cpu_hamming_vote_new(std::string& subject,
 	for(int i = startindex; i < endindex; i++){
 		// weights for bases A C G T N
 		double weights[5]{0,0,0,0,0};
+		int cov[5]{0,0,0,0,0};
 		int count = 0;
 		
 		//count subject base
@@ -88,11 +89,11 @@ int cpu_hamming_vote_new(std::string& subject,
 			if(useQScores)
 				qw *= qscore_to_graph_weight2[(unsigned char)subjectqualityScores[i]];
 			switch(subject[i]){
-				case 'A': weights[0] += qw; break;
-				case 'C': weights[1] += qw; break;
-				case 'G': weights[2] += qw; break;
-				case 'T': weights[3] += qw; break;
-				case 'N': weights[4] += qw; break;
+				case 'A': weights[0] += qw; cov[0] += 1; break;
+				case 'C': weights[1] += qw; cov[1] += 1; break;
+				case 'G': weights[2] += qw; cov[2] += 1; break;
+				case 'T': weights[3] += qw; cov[3] += 1; break;
+				case 'N': weights[4] += qw; cov[4] += 1; break;
 				default: break;
 			}
 			count++;
@@ -107,11 +108,11 @@ int cpu_hamming_vote_new(std::string& subject,
 				if(useQScores)
 					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]];
 				switch(queries[j][baseindex]){
-					case 'A': weights[0] += qweight; break;
-					case 'C': weights[1] += qweight; break;
-					case 'G': weights[2] += qweight; break;
-					case 'T': weights[3] += qweight; break;
-					case 'N': weights[4] += qweight; break;
+					case 'A': weights[0] += qweight; cov[0] += 1; break;
+					case 'C': weights[1] += qweight; cov[1] += 1; break;
+					case 'G': weights[2] += qweight; cov[2] += 1; break;
+					case 'T': weights[3] += qweight; cov[3] += 1; break;
+					case 'N': weights[4] += qweight; cov[4] += 1; break;
 					default: break;
 				}
 				count++;
@@ -131,16 +132,18 @@ int cpu_hamming_vote_new(std::string& subject,
 		
 		double supportvalue = consensusWeight / columnWeight;
 		double origWeight = 0;
+		int origCov = 0;
 		if(i >= 0 && i < int(subject.length())){
 			switch(subject[i]){
-				case 'A': origWeight = weights[0]; break;
-				case 'C': origWeight = weights[1]; break;
-				case 'G': origWeight = weights[2]; break;
-				case 'T': origWeight = weights[3]; break;
-				case 'N': origWeight = weights[4]; break;
+				case 'A': origWeight = weights[0]; origCov = cov[0]; break;
+				case 'C': origWeight = weights[1]; origCov = cov[1]; break;
+				case 'G': origWeight = weights[2]; origCov = cov[2]; break;
+				case 'T': origWeight = weights[3]; origCov = cov[3]; break;
+				case 'N': origWeight = weights[4]; origCov = cov[4]; break;
 				default: break;
 			}
 		}
+
 		char consensusBase = ' ';
 		switch(maxindex){
 			case 0: consensusBase = 'A'; break;
@@ -155,6 +158,7 @@ int cpu_hamming_vote_new(std::string& subject,
 		support[columnindex] = supportvalue;
 		coverage[columnindex] = count;
 		origWeights[columnindex] = origWeight;
+		origCoverage[columnindex] = origCov;
 		columnindex++;
 	}
 
@@ -194,72 +198,86 @@ int cpu_hamming_vote_new(std::string& subject,
 #endif
 
 	bool isHQ = avg_support >= 1-errorrate
-		 && min_support >= 1-errorratefactor*errorrate
+		 && min_support >= 1-3*errorrate
 		 && min_coverage >= m / 2.0 * estimatedCoverage;
 
 	if(isHQ){
+#if 1
 		//correct anchor
 		for(int i = 0; i < int(subject.length()); i++){
 			subject[i] = consensus[subjectColumnsBegin_incl + i];
 		}
-
+#endif
+#if 1
 		//correct candidates
-		if(false && correctQueries){
+		if(correctQueries){
+			
 			for(int i = 0; i < int(queries.size()); i++){
 				int queryColumnsBegin_incl = alignments[i].arc.shift - startindex;
-				double newColMinSupport = 1.0;
-				int newColMinCov = std::numeric_limits<int>::max();
-				//check new columns left of subject
-				for(columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols; 
-					columnindex >= queryColumnsBegin_incl;
-					columnindex++){
-					assert(columnindex < columnsToCheck);
-					newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
-					newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-				}
-				//check new columns right of subject
-				for(columnindex = subjectColumnsEnd_excl - 1 + candidate_correction_new_cols; 
-					columnindex < queryColumnsBegin_incl + int(queries[i].length());
-					columnindex++){
-					assert(columnindex < columnsToCheck);
-					newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
-					newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-				}
-
 				bool queryWasCorrected = false;
+				//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
+				if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols 
+					&& subjectColumnsEnd_excl + candidate_correction_new_cols >= queryColumnsBegin_incl + int(queries[i].length())){
 
-				if(newColMinSupport >= 1-errorratefactor*errorrate 
-					&& newColMinCov >= m / 2.0 * estimatedCoverage){
+					double newColMinSupport = 1.0;
+					int newColMinCov = std::numeric_limits<int>::max();
+					//check new columns left of subject
+					for(columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols; 
+						columnindex < subjectColumnsBegin_incl;
+						columnindex++){
 
-					for(int j = 0; j < int(queries[i].length()); j++){
-						columnindex = queryColumnsBegin_incl + j;
-						queries[i][j] = consensus[columnindex];
-						queryWasCorrected = true;
+						assert(columnindex < columnsToCheck);
+						if(queryColumnsBegin_incl <= columnindex){
+							newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
+							newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+						}
+					}
+					//check new columns right of subject
+					for(columnindex = subjectColumnsEnd_excl; 
+						columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols 
+						&& columnindex < columnsToCheck;
+						columnindex++){
+
+						newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
+						newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+					}
+
+					if(newColMinSupport >= 1-3*errorrate 
+						&& newColMinCov >= m / 2.0 * estimatedCoverage){
+						//assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
+
+						for(int j = 0; j < int(queries[i].length()); j++){
+							columnindex = queryColumnsBegin_incl + j;
+							queries[i][j] = consensus[columnindex];
+							queryWasCorrected = true;
+						}
 					}
 				}
-
 				if(queryWasCorrected){
 					correctedQueries[i] = true;
 				}
 			}
-			std::cout << "ERRRRRRROR\n";
-		}		
+		}
+#endif	
 	}else{
 		if(avg_support < 1-errorrate)
 			status |= (1 << 0);
-		if(min_support < 1-errorratefactor*errorrate)
+		if(min_support < 1-3*errorrate)
 			status |= (1 << 1);
 		if(min_coverage < m / 2.0 * estimatedCoverage)
 			status |= (1 << 2);
-
+#if 0
 		//correct anchor
 		for(int i = 0; i < int(subject.length()); i++){
 			columnindex = subjectColumnsBegin_incl + i;
 
-			if(support[columnindex] >= 1-errorratefactor*errorrate){
+			if(support[columnindex] >= 1-3*errorrate){
+#if 1
 				subject[i] = consensus[columnindex];
+#endif
 			}else{
-				if(support[columnindex] > 0.5 && coverage[columnindex] < m / 2.0 * estimatedCoverage){
+#if 0
+				if(support[columnindex] > 0.5 && origCoverage[columnindex] < m / 2.0 * estimatedCoverage){
 					double avgsupportkregion = 0;
 					int c = 0;
 					bool kregioncoverageisgood = true;
@@ -274,9 +292,10 @@ int cpu_hamming_vote_new(std::string& subject,
 						subject[i] = consensus[columnindex];
 					}
 				}
+#endif
 			}
-			
 		}
+#endif
 	}
 
 
