@@ -57,7 +57,7 @@ constexpr std::uint64_t progressThreshold = 5000;
 
 constexpr double HASHMAP_LOAD_FACTOR = 0.8;
 
-constexpr bool CORRECT_CANDIDATE_READS_TOO = true;
+constexpr bool CORRECT_CANDIDATE_READS_TOO = false;
 constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 1.00;
 constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.00;
 
@@ -360,10 +360,11 @@ void ErrorCorrector::correct(const std::string& filename)
 		mapfilename = mapfilename.substr(lastslashpos + 1); 
 	if(!minhasher.loadTablesFromFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map")){
 		insertFile(filename, true);
-		//transform does not work yet
-		//TIMERSTARTCPU(MAP_TRANSFORM);
-		//minhasher.transform();
-		//TIMERSTOPCPU(MAP_TRANSFORM);
+#if 1
+		TIMERSTARTCPU(MAP_TRANSFORM);
+		minhasher.transform();
+		TIMERSTOPCPU(MAP_TRANSFORM);
+#endif
 		minhasher.saveTablesToFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map");
 		std::cout << "saved map to file " << (outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map") << std::endl;
 	}else{

@@ -11,6 +11,8 @@
 #include <fstream>
 #include <memory>
 #include <cassert>
+#include <iostream>
+#include <cstring>
 
 template <
     typename index_t,
@@ -25,7 +27,7 @@ struct OpenAddressingMultiHashMap {
 
     struct internal_elem{
 	index_t count;
-	index_t key;
+	index_t key = entry_t::get_empty_payload();
 	index_t* values;
     };
 
@@ -34,6 +36,8 @@ struct OpenAddressingMultiHashMap {
 	std::unique_ptr<index_t[]> valuebuffer;
 	index_t nData = 0;
 	index_t nValuebuffer = 0;
+	internal_elem* dataptr;
+	index_t* valueptr;
     };
 
     static constexpr index_t bits_for_key = bits_key;
@@ -120,6 +124,7 @@ struct OpenAddressingMultiHashMap {
 
     std::vector<index_t> get_nontransformed(
         const index_t& key) const {
+	//std::cout << "get_nontransformed\n";
 
         std::vector<index_t> result;
 	if(!isTransformer){
@@ -147,7 +152,7 @@ struct OpenAddressingMultiHashMap {
 
     std::vector<index_t> get_transformed(
         const index_t& key) const {
-
+	//std::cout << "get_transformed\n";
 	if(isTransformer){
 		index_t index = hash_func(key) % transformedData.nData;
 
@@ -160,12 +165,10 @@ struct OpenAddressingMultiHashMap {
 
 		    if (probed.key == key){
 			std::vector<index_t> result {probed.values, probed.values + probed.count};
-			//for(index_t elem : result)
-			//	elem = ((entry_t*)&elem)->get_val();
 		        return result;
 		    }
 
-		    index = (index + 1) % transformedData.nData;
+		    index = prob_func(index, iters, key) % transformedData.nData;
 		}
 	}
 
@@ -263,33 +266,48 @@ struct OpenAddressingMultiHashMap {
 	void transform(){
 		if(isTransformer) return;
 
-		std::unique_ptr<atomic_t[]> copy = std::make_unique<atomic_t[]>(capacity);
-		std::memcpy(&copy[0], &data[0], sizeof(atomic_t) * capacity);
+		std::unique_ptr<entry_t[]> copy = std::make_unique<entry_t[]>(capacity);
+		std::memcpy((void*)&copy[0], (void*)&data[0], sizeof(entry_t) * capacity);
 
 		entry_t* workingdata = (entry_t*)&copy[0];
 
+		/*for(int i = 0; i < capacity; i++){
+			std::cout << '(' << workingdata[i].get_key() << " , " << workingdata[i].get_val() << ')' << '\n';
+		}
+		std::cout <<'\n';*/
 		TIMERSTARTCPU(partition_and_sort);
 		//send all empty slots to the back
 		entry_t* empty_begin = std::partition(&workingdata[0], &workingdata[capacity], [](auto a){return a != entry_t::get_empty();});
 
 		index_t nNonEmptySlots = empty_begin - workingdata;
+		//std::cout << "part done. nNonEmptySlots = " << nNonEmptySlots << '\n';
 
 		//sort non empty slots by key
-		std::sort((index_t*)&workingdata[0], (index_t*)&empty_begin, [](index_t entry_a, index_t entry_b){
+		std::sort((index_t*)&workingdata[0], (index_t*)empty_begin, [](index_t entry_a, index_t entry_b){
 			return ((entry_t*)&entry_a)->get_key() < ((entry_t*)&entry_b)->get_key();
 		});
 
 		TIMERSTOPCPU(partition_and_sort);
 
+		/*for(int i = 0; i < capacity; i++){
+			std::cout << '(' << workingdata[i].get_key() << " , " << workingdata[i].get_val() << ')' << '\n';
+		}*/
+
 		
 
 		transformedData.valuebuffer.reset(new index_t[nNonEmptySlots]);
+		transformedData.valueptr = transformedData.valuebuffer.get();
 
 		TIMERSTARTCPU(copynonemptyslots);
 
 		std::memcpy(transformedData.valuebuffer.get(), (index_t*)workingdata, sizeof(index_t) * nNonEmptySlots);
 
 		TIMERSTOPCPU(copynonemptyslots);
+
+		/*std::cout << "transformeddata values\n";
+		for(int i = 0; i < nNonEmptySlots; i++){
+			std::cout << '(' << (((entry_t*)(&transformedData.valuebuffer[0])) + i)->get_key() << " , " << (((entry_t*)(&transformedData.valuebuffer[0])) + i)->get_val() << ')' << '\n';
+		}*/
 
 		index_t uniqueCount = 0;
 		entry_t previousElem = entry_t::get_empty();
@@ -315,26 +333,35 @@ struct OpenAddressingMultiHashMap {
 		);
 		TIMERSTOPCPU(stable_sort);*/
 
+		//std::cout << "unique keys " << uniqueCount << '\n';
+
 		transformedData.data.reset(new internal_elem[uniqueCount]());
 		transformedData.nData = uniqueCount;
 		transformedData.nValuebuffer = nNonEmptySlots;
+		transformedData.dataptr = transformedData.data.get();
 
 		TIMERSTARTCPU(setbucketpointers);
 
-		index_t previousKey = ((entry_t*)&transformedData.valuebuffer[0])->get_key();
+		index_t previousKey = entry_t::get_empty_payload();
 		index_t hv = previousKey % uniqueCount;
 		for(index_t i = 0; i < nNonEmptySlots; i++){
-			entry_t entry = *((entry_t*)&transformedData.valuebuffer[i]);
-			if(previousKey != entry.get_key()){
-				index_t hash = entry.get_key() % uniqueCount;
-				while(transformedData.data[hash].key != entry_t::get_empty_payload()){
-					hash = (hash + 1) % uniqueCount;
-				}
-				transformedData.data[hash].values = &transformedData.valuebuffer[i];
-				transformedData.data[hash].key = entry.get_key();
-				transformedData.data[hash].count++;
 
-				hv = hash;		
+			entry_t entry = *((entry_t*)&transformedData.valuebuffer[i]);
+			index_t key = entry.get_key();
+
+			if(previousKey != key){
+				index_t index = hash_func(key) % transformedData.nData;
+				index_t iters = 0;
+				while(transformedData.data[index].key != entry_t::get_empty_payload()){
+					index = prob_func(index, iters, key) % transformedData.nData;
+					iters++;
+				}
+
+				transformedData.data[index].values = &transformedData.valuebuffer[i];
+				transformedData.data[index].key = entry.get_key();
+				transformedData.data[index].count++;
+
+				hv = index;		
 			}else{
 				transformedData.data[hv].count++;
 			}
@@ -343,7 +370,16 @@ struct OpenAddressingMultiHashMap {
 		}
 
 		TIMERSTOPCPU(setbucketpointers);
-
+		/*std::cout << "transformed : \n";
+		for(int i = 0; i < uniqueCount; i++){
+			internal_elem bucket = transformedData.data[i];
+			std::cout << "bucket " << i << ", key " << bucket.key << ", count " << bucket.count << '\n';
+			std::cout << "values\n";
+			for(int k = 0; k < bucket.count; k++){
+				std::cout << bucket.values[k] << '\n'; 
+			}
+		}*/
+#if 1
 		TIMERSTARTCPU(check);
 		// check transformed data
 		for(size_t i = 0; i < uniqueCount; i++){
@@ -367,7 +403,7 @@ struct OpenAddressingMultiHashMap {
 			}
 		}
 		TIMERSTOPCPU(check);
-
+#endif
 		capacity = 0;
 		isTransformer = true;
 	}
