@@ -153,6 +153,7 @@ struct OpenAddressingMultiHashMap {
     std::vector<index_t> get_transformed(
         const index_t& key) const {
 	//std::cout << "get_transformed\n";
+#if 0
 	if(isTransformer){
 		index_t index = hash_func(key) % transformedData.nData;
 
@@ -171,6 +172,43 @@ struct OpenAddressingMultiHashMap {
 		    index = prob_func(index, iters, key) % transformedData.nData;
 		}
 	}
+#else
+
+
+	if(isTransformer){
+		//search key in sorted buckets(sorted by key)
+
+		if (key >= entry_t::mask_key)
+		    return {};
+
+		internal_elem tmp;
+		tmp.key = key;
+
+		bool exists = std::binary_search(transformedData.data.get(), 
+					    transformedData.data.get() + transformedData.nData, 
+					    tmp,
+						[](auto a, auto b){
+							return a.key < b.key;
+						});
+
+		assert(exists);
+
+		if(exists){
+			auto range = std::equal_range(transformedData.data.get(), 
+						      transformedData.data.get() + transformedData.nData,
+						      tmp,
+							[](auto a, auto b){
+								return a.key < b.key;
+							});
+			const auto& probed = *range.first;
+			std::vector<index_t> result {probed.values, probed.values + probed.count};
+			return result;
+		}else{
+			return {};
+		}
+	}
+
+#endif
 
         return {};
     }
@@ -342,7 +380,7 @@ struct OpenAddressingMultiHashMap {
 
 		TIMERSTARTCPU(setbucketpointers);
 
-		index_t previousKey = entry_t::get_empty_payload();
+		/*index_t previousKey = entry_t::get_empty_payload();
 		index_t hv = previousKey % uniqueCount;
 		for(index_t i = 0; i < nNonEmptySlots; i++){
 
@@ -367,9 +405,38 @@ struct OpenAddressingMultiHashMap {
 			}
 			transformedData.valuebuffer[i] = entry.get_val();
 			previousKey = entry.get_key();
+		}*/
+
+		index_t previousKey = ((entry_t*)&transformedData.valuebuffer[0])->get_key();
+		index_t currentBucket = 0;
+		transformedData.data[currentBucket].values = &transformedData.valuebuffer[0];
+		transformedData.data[currentBucket].key = previousKey;
+		transformedData.valuebuffer[0] = ((entry_t*)&transformedData.valuebuffer[0])->get_val();
+		transformedData.data[currentBucket].count++;
+
+		for(index_t i = 1; i < nNonEmptySlots; i++){
+
+			entry_t entry = *((entry_t*)&transformedData.valuebuffer[i]);
+			index_t key = entry.get_key();
+
+			if(previousKey != key){
+				currentBucket++;
+				transformedData.data[currentBucket].values = &transformedData.valuebuffer[i];
+				transformedData.data[currentBucket].key = key;		
+			}
+			transformedData.data[currentBucket].count++;
+			transformedData.valuebuffer[i] = entry.get_val();
+			previousKey = key;
 		}
 
 		TIMERSTOPCPU(setbucketpointers);
+
+		/*TIMERSTARTCPU(sortbucketsbykey);
+		std::sort(transformedData.data.get(), transformedData.data.get() + transformedData.nData, [](auto a, auto b){
+			return a.key < b.key;
+		});
+		TIMERSTOPCPU(sortbucketsbykey);*/
+		
 		/*std::cout << "transformed : \n";
 		for(int i = 0; i < uniqueCount; i++){
 			internal_elem bucket = transformedData.data[i];

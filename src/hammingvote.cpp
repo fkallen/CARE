@@ -44,7 +44,7 @@ int cpu_hamming_vote_new(std::string& subject,
 				std::vector<bool>& correctedQueries,
 				bool correctQueries_){
 
-	constexpr int estimatedCoverage = 255;
+	constexpr int estimatedCoverage = 20;
 	constexpr double errorrate = 0.03;
 	constexpr double m = 0.6;
 	constexpr int candidate_correction_new_cols = 3;
@@ -266,7 +266,7 @@ int cpu_hamming_vote_new(std::string& subject,
 			status |= (1 << 1);
 		if(min_coverage < m / 2.0 * estimatedCoverage)
 			status |= (1 << 2);
-#if 0
+#if 1
 		//correct anchor
 		for(int i = 0; i < int(subject.length()); i++){
 			columnindex = subjectColumnsBegin_incl + i;
@@ -276,7 +276,7 @@ int cpu_hamming_vote_new(std::string& subject,
 				subject[i] = consensus[columnindex];
 #endif
 			}else{
-#if 0
+#if 1
 				if(support[columnindex] > 0.5 && origCoverage[columnindex] < m / 2.0 * estimatedCoverage){
 					double avgsupportkregion = 0;
 					int c = 0;
