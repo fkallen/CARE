@@ -720,6 +720,9 @@ struct ErrorCorrector {
 	void setMinimumAlignmentOverlapRatio(double ratio);
 	void setFileFormat(const std::string& format);
 	void setUseQualityScores(bool val);
+	void setEstimatedCoverage(int cov);
+	void setEstimatedErrorRate(double rate);
+	void setM(double m);
 
 	
 
@@ -740,7 +743,9 @@ private:
 					std::vector<const Sequence*>& revcomplcandidates,
 					std::vector<const std::string*>& qualityscores,
 					std::vector<const std::string*>& revcomplqualityscores,
-					std::vector<int>& frequencies) const;
+					std::vector<int>& frequencies, 
+					std::chrono::duration<double>& a,
+					std::chrono::duration<double>& b) const;
 
 	void getMultipleAlignments(int threadId, const std::vector<const Sequence*>& queries,
 				   const std::vector<std::vector<const Sequence*>>& candidates,
@@ -816,6 +821,10 @@ private:
 	std::vector<char> readIsProcessedVector;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags;
 	size_t nLocksForProcessedFlags = 0;
+
+	int estimatedCoverage;
+	double errorrate;
+	double m_coverage;
 
 };
 

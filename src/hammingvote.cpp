@@ -34,21 +34,23 @@ void hamming_vote_global_init(){
 	}
 }
 
-int cpu_hamming_vote_new(std::string& subject, 
+int cpu_hamming_vote_new(std::string& subject,
+				int nQueries, 
 				std::vector<std::string>& queries, 
 				const std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
+				const std::vector<int>& frequenciesPrefixSum,
 				double maxErrorRate,
 				bool useQScores,
 				std::vector<bool>& correctedQueries,
-				bool correctQueries_){
+				bool correctQueries_,
+				int estimatedCoverage,
+				double errorrate,
+				double m,
+				int k){
 
-	constexpr int estimatedCoverage = 20;
-	constexpr double errorrate = 0.03;
-	constexpr double m = 0.6;
-	constexpr int candidate_correction_new_cols = 3;
-	constexpr int k = 16;
+	constexpr int candidate_correction_new_cols = 2;
 	
 
 	const bool correctQueries = correctQueries_;
@@ -57,7 +59,7 @@ int cpu_hamming_vote_new(std::string& subject,
 	int startindex = 0;
 	int endindex = subject.length();
 	std::vector<double> defaultWeightsPerQuery(queries.size());
-	for(size_t i = 0; i < alignments.size(); i++){
+	for(int i = 0; i < nQueries; i++){
 		startindex = alignments[i].arc.shift < startindex ? alignments[i].arc.shift : startindex;
 		int queryEndsAt = queryqualityScores[i].length() + alignments[i].arc.shift;
 		endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
@@ -100,22 +102,25 @@ int cpu_hamming_vote_new(std::string& subject,
 		}
 
 		//count query bases
-		for(size_t j = 0; j < queries.size(); j++){
+		for(int j = 0; j < nQueries; j++){
 			const int baseindex = i - alignments[j].arc.shift;
 
 			if(baseindex >= 0 && baseindex < int(queries[j].length())){ //check query boundary
 				double qweight = defaultWeightsPerQuery[j];
-				if(useQScores)
-					qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[j][baseindex]];
-				switch(queries[j][baseindex]){
-					case 'A': weights[0] += qweight; cov[0] += 1; break;
-					case 'C': weights[1] += qweight; cov[1] += 1; break;
-					case 'G': weights[2] += qweight; cov[2] += 1; break;
-					case 'T': weights[3] += qweight; cov[3] += 1; break;
-					case 'N': weights[4] += qweight; cov[4] += 1; break;
-					default: break;
+				for(int f = 0; f < frequenciesPrefixSum[j+1] - frequenciesPrefixSum[j]; f++){
+					const int qualityindex = frequenciesPrefixSum[j] + f;
+					if(useQScores)
+						qweight *= qscore_to_graph_weight2[(unsigned char)queryqualityScores[qualityindex][baseindex]];
+					switch(queries[j][baseindex]){
+						case 'A': weights[0] += qweight; cov[0] += 1; break;
+						case 'C': weights[1] += qweight; cov[1] += 1; break;
+						case 'G': weights[2] += qweight; cov[2] += 1; break;
+						case 'T': weights[3] += qweight; cov[3] += 1; break;
+						case 'N': weights[4] += qweight; cov[4] += 1; break;
+						default: break;
+					}
+					count++;
 				}
-				count++;
 			}
 		}
 
@@ -212,7 +217,7 @@ int cpu_hamming_vote_new(std::string& subject,
 		//correct candidates
 		if(correctQueries){
 			
-			for(int i = 0; i < int(queries.size()); i++){
+			for(int i = 0; i < nQueries; i++){
 				int queryColumnsBegin_incl = alignments[i].arc.shift - startindex;
 				bool queryWasCorrected = false;
 				//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
@@ -268,12 +273,14 @@ int cpu_hamming_vote_new(std::string& subject,
 			status |= (1 << 2);
 #if 1
 		//correct anchor
+		bool foundAColumn = false;
 		for(int i = 0; i < int(subject.length()); i++){
 			columnindex = subjectColumnsBegin_incl + i;
 
 			if(support[columnindex] >= 1-3*errorrate){
 #if 1
 				subject[i] = consensus[columnindex];
+				foundAColumn = true;
 #endif
 			}else{
 #if 1
@@ -290,11 +297,15 @@ int cpu_hamming_vote_new(std::string& subject,
 					}
 					if(kregioncoverageisgood && avgsupportkregion / c >= 1-errorrate){
 						subject[i] = consensus[columnindex];
+						foundAColumn = true;
 					}
 				}
 #endif
 			}
 		}
+
+		if(!foundAColumn)
+			status |= (1 << 3);
 #endif
 	}
 

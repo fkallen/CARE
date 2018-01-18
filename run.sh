@@ -17,6 +17,13 @@ inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
 #inputfile=/ssd/fkallenb/eccomparison/correcteddatasets2/readscorrected.fq
 #inputfile=/ssd/fkallenb/eccomparison/datasets/C.elegans_SRX218989.fastq
 
+#coverage=21
+coverage=255
+#coverage=31
+
+errorrate=0.03
+m=0.6
+
 #output path. this is used as temporary storage, too
 outdir=/ssd/fkallenb/eccomparison/correcteddatasets2/
 
@@ -65,8 +72,8 @@ xx=$(echo 'scale=2; 15/10' | bc)
 aa=$(echo 'scale=2; 10/10' | bc)
 
 
-echo $executable --fileformat=$fileformat --inputfile $inputfile --outdir $outdir $outfile --hashmaps $maps --kmerlength $k --insertthreads $ithreads --correctorthreads $cthreads --batchsize $batchsize -x $xx -a $aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores
+echo $executable --fileformat=$fileformat --inputfile $inputfile --outdir $outdir $outfile --hashmaps $maps --kmerlength $k --insertthreads $ithreads --correctorthreads $cthreads --batchsize $batchsize -x $xx -a $aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
 
-time $executable --fileformat=$fileformat --inputfile $inputfile --outdir $outdir $outfile --hashmaps $maps --kmerlength $k --insertthreads $ithreads --correctorthreads $cthreads --batchsize $batchsize -x $xx -a $aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores
+time $executable --fileformat=$fileformat --inputfile $inputfile --outdir $outdir $outfile --hashmaps $maps --kmerlength $k --insertthreads $ithreads --correctorthreads $cthreads --batchsize $batchsize -x $xx -a $aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
 
 

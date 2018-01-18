@@ -20,14 +20,20 @@ std::string cpu_hamming_vote(const std::string& subject,
 				bool correctQueries_);
 
 int cpu_hamming_vote_new(std::string& subject, 
+				int nQueries,
 				std::vector<std::string>& queries, 
 				const std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
+				const std::vector<int>& frequenciesPrefixSum,
 				double maxErrorRate,
 				bool useQScores,
 				std::vector<bool>& correctedQueries,
-				bool correctQueries_);
+				bool correctQueries,
+				int estimatedCoverage,
+				double errorrate,
+				double m,
+				int k);
 
 
 #endif
