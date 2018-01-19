@@ -738,6 +738,7 @@ private:
 
 	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
 
+#if 0
 	std::map<const Sequence*, std::vector<int>, SequencePtrLess> mapMinhashResultsToSequences(const std::vector<std::pair<std::uint64_t, int>>& minhashresults,
 					std::vector<const Sequence*>& candidates,
 					std::vector<const Sequence*>& revcomplcandidates,
@@ -746,6 +747,19 @@ private:
 					std::vector<int>& frequencies, 
 					std::chrono::duration<double>& a,
 					std::chrono::duration<double>& b) const;
+#else
+
+
+	std::map<const Sequence*, std::vector<int>, SequencePtrLess> mapMinhashResultsToSequences(const std::vector<std::uint64_t>& minhashresults,
+					std::vector<const Sequence*>& candidates,
+					std::vector<const Sequence*>& revcomplcandidates,
+					std::vector<const std::string*>& qualityscores,
+					std::vector<const std::string*>& revcomplqualityscores,
+					std::vector<int>& frequencies, 
+					std::chrono::duration<double>& a,
+					std::chrono::duration<double>& b) const;
+
+#endif
 
 	void getMultipleAlignments(int threadId, const std::vector<const Sequence*>& queries,
 				   const std::vector<std::vector<const Sequence*>>& candidates,

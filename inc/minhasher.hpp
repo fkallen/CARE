@@ -72,7 +72,8 @@ struct Minhasher {
 
 	int insertSequence(const std::string& sequence, const std::uint64_t readnum);
 
-	std::vector<std::pair<std::uint64_t, int>> getCandidates(const std::string& sequence) const;
+	std::vector<std::pair<std::uint64_t, int>> getCandidatesWithFlag(const std::string& sequence) const;
+	std::vector<std::uint64_t> getCandidates(const std::string& sequence) const;
 
 	void saveTablesToFile(std::string filename) const;
 

@@ -732,7 +732,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	std::vector<const Sequence*> queries(batchsize);
 	std::vector<std::string> queryStrings(batchsize);
 	// the readnums of candidates for each query
-	std::vector<std::vector<std::pair<std::uint64_t, int>>> candidateIds(batchsize);
+	//std::vector<std::vector<std::pair<std::uint64_t, int>>> candidateIds(batchsize);
+	std::vector<std::vector<std::uint64_t>> candidateIds(batchsize);
 
 	// the candidate sequences from candidateReadsWithFrequency
 	std::vector<std::vector<const Sequence*>> candidateReads(batchsize);
@@ -1381,7 +1382,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #endif
 }
 
-
+#if 0
 std::map<const Sequence*, std::vector<int>, SequencePtrLess> ErrorCorrector::mapMinhashResultsToSequences(
 				const std::vector<std::pair<std::uint64_t, int>>& minhashresults,
 				std::vector<const Sequence*>& candidates,
@@ -1437,6 +1438,65 @@ std::map<const Sequence*, std::vector<int>, SequencePtrLess> ErrorCorrector::map
 
 	return candidateSequencesToIds;
 }
+#else
+
+std::map<const Sequence*, std::vector<int>, SequencePtrLess> ErrorCorrector::mapMinhashResultsToSequences(
+				const std::vector<std::uint64_t>& minhashresults,
+				std::vector<const Sequence*>& candidates,
+				std::vector<const Sequence*>& revcomplcandidates,
+				std::vector<const std::string*>& qualityscores,
+				std::vector<const std::string*>& revcomplqualityscores,
+				std::vector<int>& frequencies,
+				std::chrono::duration<double>& a,
+				std::chrono::duration<double>& b) const{
+
+	// maps Sequence to readIds. SequencePtrLess compares the objects pointed to by the pointers
+	std::map<const Sequence*, std::vector<int>, SequencePtrLess> candidateSequencesToIds;
+
+	std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+
+	//deduplicate sequences
+	for (const auto r : minhashresults) {
+		const auto sequence = readStorage.fetchSequence_ptr(r);
+		candidateSequencesToIds[sequence].push_back(r);
+	}
+
+	std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
+
+	a += (tpb - tpa);
+
+	candidates.resize(candidateSequencesToIds.size());
+	revcomplcandidates.resize(candidateSequencesToIds.size());
+	frequencies.resize(candidateSequencesToIds.size());
+
+	//qualityscores.resize(minhashresults.size());
+	//revcomplqualityscores.resize(minhashresults.size());
+
+	tpa = std::chrono::system_clock::now();
+	//Now fetch reverse complements and quality scores and store them
+	//int qindex = 0;
+	int i = 0;
+	for(const auto& p : candidateSequencesToIds){
+		candidates[i] = p.first;
+		frequencies[i] = p.second.size();
+		revcomplcandidates[i] = readStorage.fetchReverseComplementSequence_ptr(p.second.front());
+		
+		/*for(const auto id : p.second){
+			qualityscores[qindex] = readStorage.fetchQuality_ptr(id);
+			revcomplqualityscores[qindex] = readStorage.fetchReverseComplementQuality_ptr(id);
+			qindex++;
+		}*/
+
+		i++;
+	}
+	tpb = std::chrono::system_clock::now();
+
+	b += (tpb - tpa);
+
+	return candidateSequencesToIds;
+}
+
+#endif
 
 
 

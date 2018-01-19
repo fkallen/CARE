@@ -84,7 +84,7 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 	return 1;
 }
 
-std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidates(const std::string& sequence) const{
+std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidatesWithFlag(const std::string& sequence) const{
 
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
@@ -107,7 +107,6 @@ std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidates(const std::s
 		std::uint64_t key = bandHashValues[map] & hv_bitmask;
 
 		std::vector<uint64_t> entries = minhashTables[map]->get(key);
-//		std::vector<uint64_t> entries = minhashTables[map]->get_unsafe(key);
 		for(const auto x : entries){
 			int increment = (x & 1) ? 1 : -1;
 			std::uint64_t readnum = (x >> 1);
@@ -118,6 +117,37 @@ std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidates(const std::s
 	result.insert(result.cend(), fwdrevmapping.cbegin(), fwdrevmapping.cend());
 
 	return result;
+}
+
+std::vector<std::uint64_t> Minhasher::getCandidates(const std::string& sequence) const{
+
+	// we do not consider reads which are shorter than k
+	if(sequence.size() < unsigned(minparams.k))
+		return {};
+
+	std::uint64_t bandHashValues[minparams.maps];
+	std::fill(bandHashValues, bandHashValues + minparams.maps, 0);
+
+	const unsigned int numberOfHashvalues = minparams.maps;
+	std::uint32_t isForwardStrand[numberOfHashvalues];
+	std::fill(isForwardStrand, isForwardStrand + numberOfHashvalues, 0);
+
+	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
+
+	std::vector<std::uint64_t> allMinhashResults;
+
+	for(int map = 0; map < minparams.maps; ++map) {
+		std::uint64_t key = bandHashValues[map] & hv_bitmask;
+
+		std::vector<uint64_t> entries = minhashTables[map]->get(key);
+		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
+	}
+
+	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
+
+	allMinhashResults.erase(uniqueEnd, allMinhashResults.end());	
+
+	return allMinhashResults;
 }
 
 
