@@ -12,7 +12,7 @@
 
 	ReadStorage::ReadStorage() : ReadStorage(1){}
 
-	ReadStorage::ReadStorage(int threads) : nThreads(threads){
+	ReadStorage::ReadStorage(int threads) : nThreads(threads), isReadOnly(false){
 		headers.resize(nThreads);
 		qualityscores.resize(nThreads);
 		reverseComplqualityscores.resize(nThreads);
@@ -60,9 +60,12 @@
 		for(auto& a : reverseComplqualityscores)
 		    a.clear();
 		bytecounts.clear();
+		isReadOnly = false;
 	}
 
 	void ReadStorage::insertRead(std::uint32_t readNumber, const Read& read){
+		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling noMoreInserts()");
+
 		std::uint32_t id = readNumber % nThreads;
 
 		size_t indexInVector = readNumber / nThreads;
@@ -87,11 +90,64 @@
 
 		std::reverse(q.begin(),q.end());
 		reverseComplqualityscores[id][indexInVector] = std::move(q);
-		
-		
+
 		reverseComplSequences[id][indexInVector] = (seq.reverseComplement());
 		sequences[id][indexInVector] = (seq);
 
+	}
+
+	void ReadStorage::noMoreInserts(){
+		isReadOnly = true;
+
+		int nSequences = 0;
+		for(const auto& v : sequences)
+			nSequences += v.size();
+
+		if(nSequences == 0) return;
+
+		sequences_dedup.resize(nSequences);
+
+		for(int readnum = 0; readnum < nSequences; readnum++){
+			std::uint32_t vecnum = readnum % nThreads;
+			int indexInVector = readnum / nThreads;
+
+			sequences_dedup[readnum] = std::move(sequences[vecnum].at(indexInVector));
+		}
+
+		sequences.clear();
+
+		sequencepointers.resize(nSequences);
+
+		std::vector<int> indexlist(nSequences);
+		std::iota(indexlist.begin(), indexlist.end(), 0);
+
+		//sort indexlist in order of sequence strings
+		std::sort(indexlist.begin(), indexlist.end(),[&](int i, int j){
+			return sequences_dedup[i] < sequences_dedup[j];
+		});
+
+		// sort sequence strings
+		std::sort(sequences_dedup.begin(), sequences_dedup.end(),[&](const auto& i, const auto& j){
+			return i < j;
+		});
+
+		int uniquecount = 1;
+		const Sequence* prevelem = &sequences_dedup[0];
+		sequencepointers[indexlist[0]] = &sequences_dedup[0];
+		for(int i = 1; i < nSequences; i++){
+			if(*prevelem == sequences_dedup[i]){
+				sequencepointers[indexlist[i]] = &sequences_dedup[uniquecount-1];
+			}else{
+				if(uniquecount != i)
+					sequences_dedup[uniquecount] = std::move(sequences_dedup[i]);
+				sequencepointers[indexlist[i]] = &sequences_dedup[uniquecount];
+				uniquecount++;
+			}
+			prevelem = &sequences_dedup[i];
+		}
+
+		sequences_dedup.resize(uniquecount);
+		
 	}
 
 	Read ReadStorage::fetchRead(std::uint32_t readNumber) const{
@@ -140,15 +196,19 @@
 	}
 
     	const Sequence* ReadStorage::fetchSequence_ptr(std::uint32_t readNumber) const{
-		std::uint32_t id = readNumber % nThreads;
+		if(isReadOnly){
+			return sequencepointers.at(readNumber);
+		}else{
+			std::uint32_t id = readNumber % nThreads;
 
-		size_t indexInVector = readNumber / nThreads;
+			size_t indexInVector = readNumber / nThreads;
 
-#ifdef SAFE_ACCESS
-		return &(sequences[id].at(indexInVector));
-#else
-		return &(sequences[id][indexInVector]);		
-#endif
+	#ifdef SAFE_ACCESS
+			return &(sequences[id].at(indexInVector));
+	#else
+			return &(sequences[id][indexInVector]);		
+	#endif
+		}
 	}
 
 	const Sequence* ReadStorage::fetchReverseComplementSequence_ptr(std::uint32_t readNumber) const{

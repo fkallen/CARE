@@ -140,14 +140,19 @@ std::vector<std::uint64_t> Minhasher::getCandidates(const std::string& sequence)
 		std::uint64_t key = bandHashValues[map] & hv_bitmask;
 
 		std::vector<uint64_t> entries = minhashTables[map]->get(key);
+		for(auto& e : entries)
+			e = e >> 1; // just discard the flag
 		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
 	}
 
+	std::sort(allMinhashResults.begin(), allMinhashResults.end());
 	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
 
-	allMinhashResults.erase(uniqueEnd, allMinhashResults.end());	
+	assert(allMinhashResults.end() - uniqueEnd >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
 
-	return allMinhashResults;
+	std::vector<std::uint64_t> result(allMinhashResults.begin(), uniqueEnd);
+	//std::vector<std::uint64_t> result;
+	return result;
 }
 
 

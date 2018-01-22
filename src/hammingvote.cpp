@@ -271,7 +271,7 @@ int cpu_hamming_vote_new(std::string& subject,
 			status |= (1 << 1);
 		if(min_coverage < m / 2.0 * estimatedCoverage)
 			status |= (1 << 2);
-#if 1
+#if 0
 		//correct anchor
 		bool foundAColumn = false;
 		for(int i = 0; i < int(subject.length()); i++){

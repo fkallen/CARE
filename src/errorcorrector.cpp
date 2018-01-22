@@ -377,6 +377,9 @@ void ErrorCorrector::correct(const std::string& filename)
 
 	std::cout << "end insert" << std::endl;
 
+TIMERSTARTCPU(readstorage_transform);
+	readStorage.noMoreInserts();
+TIMERSTOPCPU(readstorage_transform);
 
 #ifdef __NVCC__
 	for(int i = 0; i < nCorrectorThreads; i++){
@@ -832,6 +835,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
 			if(activeBatches[i]){
 				queryStrings[i] = queries[i]->toString();
+//				std::cout << "get candidates of read id " << (readnum + i) <<'\n';
 				candidateIds[i] = minhasher.getCandidates(queryStrings[i]);
 			}
 		}
@@ -844,6 +848,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		tpa = std::chrono::system_clock::now();
 #endif
 
+#if 1
+#if 0
 		// map minhash ids to sequences
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
 			if(activeBatches[i]){
@@ -858,6 +864,94 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 										mapminhashresultsfetch);
 			}
 		}
+#else
+
+		for(std::uint32_t i = 0; i < actualBatchSize; i++){
+			if(activeBatches[i]){
+				const int nCandidates = candidateIds[i].size();
+				if(nCandidates > 0){
+					std::vector<const Sequence*> allCandidates(nCandidates);
+
+					std::chrono::time_point<std::chrono::system_clock> t1 = std::chrono::system_clock::now();
+
+					for(int k = 0; k < nCandidates; k++){
+						allCandidates[k] = readStorage.fetchSequence_ptr(candidateIds[i][k]);
+					}
+
+					std::chrono::time_point<std::chrono::system_clock> t2 = std::chrono::system_clock::now();
+
+					mapminhashresultsfetch += (t2 - t1);
+
+					t1 = std::chrono::system_clock::now();
+//std::cout << "A\n";
+					std::vector<int> indexlist(nCandidates);
+					std::iota(indexlist.begin(), indexlist.end(), 0);
+
+					//sort indexlist in order of sequence strings
+					//SequencePtrLess comp;
+					std::sort(indexlist.begin(), indexlist.end(),[&](int i, int j){
+						//return comp(allCandidates[i], allCandidates[j]);
+						return allCandidates[i] < allCandidates[j];
+					});
+//std::cout << "B\n";
+					//sort sequences by indexlist
+					std::vector<const Sequence*> allCandidates_sorted(nCandidates);
+					for(int k = 0; k < nCandidates; k++){
+						allCandidates_sorted[k] = allCandidates[indexlist[k]];
+					}
+//std::cout << "C\n";
+					//sort candidateIds by indexlist
+					std::vector<std::uint64_t> candidateIds_sorted(nCandidates);
+					for(int k = 0; k < nCandidates; k++){
+						candidateIds_sorted[k] = candidateIds[i][indexlist[k]];
+					}
+//std::cout << "D\n";
+					// kind of like std::unique(allCandidates_sorted.begin(), allCandidates_sorted.end()),
+					// but also count number of duplicates for each unique entry(inclusive) in sortedFreqs
+					std::vector<int> sortedFreqs(1,1);
+					const Sequence* prevSeq = allCandidates_sorted[0];
+					auto uniquecount = 1;
+					for(int k = 1; k < nCandidates; k++){
+						const Sequence* curSeq = allCandidates_sorted[k];
+						if(*prevSeq == *curSeq){
+							sortedFreqs.back()++;
+						}else{
+							sortedFreqs.push_back(1);
+							allCandidates_sorted[uniquecount] = curSeq;
+							uniquecount++;
+						}
+						prevSeq = curSeq;
+					}
+
+					t2 = std::chrono::system_clock::now();
+
+					mapminhashresultsdedup += (t2 - t1);
+//std::cout << "E\n";
+					//set output vectors
+					candidateIds[i].swap(candidateIds_sorted);
+					std::vector<const Sequence*> tmp(allCandidates_sorted.begin(), allCandidates_sorted.begin() + uniquecount);			
+					candidateReads[i].swap(tmp);
+					frequencies[i].swap(sortedFreqs);
+					revComplcandidateReads[i].resize(uniquecount);
+//std::cout << "F\n";
+					t1 = std::chrono::system_clock::now();
+
+					int fc = 0;
+					for(int k = 0; k < uniquecount; k++){
+						revComplcandidateReads[i][k] = readStorage.fetchReverseComplementSequence_ptr(candidateIds[i][fc]);
+						fc += frequencies[i][k];
+					}
+					t2 = std::chrono::system_clock::now();
+
+					mapminhashresultsfetch += (t2 - t1);
+//std::cout << "G\n";
+				}
+			}
+		}
+
+
+#endif
+#endif
 
 		/*for(int i = 0; i < candidateReads[0].size(); i++){
 			
@@ -915,58 +1009,63 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			if(activeBatches[i]){								
 				assert(alignmentResults[i].size() == candidateReadsAndRevcompls[i].size());
 
-				// for each candidate, compare its alignment to the alignment of the reverse complement. 
-				// find the best of both, if any, and
-				// save the best alignment + additional data in these vectors
-				std::vector<AlignResult> insertedAlignments;
-				std::vector<const Sequence*> insertedSequences;
-				std::vector<std::uint64_t> insertedCandidateIds;
-				std::vector<int> insertedFreqs;
-				std::vector<bool> forwardRead;
-
-				const int querylength = queries[i]->getNbases();
-
-				int bad = 0;
-				for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
-					auto& res = alignmentResults[i][j];	
-					auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
-		
-					int candidatelength = candidateReads[i][j]->getNbases();
-
-					BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
-										querylength, candidatelength,
-										MAX_MISMATCH_RATIO, MIN_OVERLAP, 
-										MIN_OVERLAP_RATIO);					
-
-					if(best == BestAlignment_t::Forward){
-						const Sequence* seq = candidateReads[i][j];
-						const auto ids = sequenceToIdsMaps[i][seq];
-			
-						insertedAlignments.push_back(std::move(res));
-						insertedSequences.push_back(seq);
-						insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
-						insertedFreqs.push_back(frequencies[i][j]);
-						forwardRead.push_back(true);
-					}else if(best == BestAlignment_t::ReverseComplement){
-						const Sequence* seq = candidateReads[i][j];
-						const Sequence* revseq = revComplcandidateReads[i][j];
-						const auto ids = sequenceToIdsMaps[i][seq];
-			
-						insertedAlignments.push_back(std::move(revcomplres));
-						insertedSequences.push_back(revseq);
-						insertedCandidateIds.insert(insertedCandidateIds.cend(), ids.cbegin(), ids.cend());
-						insertedFreqs.push_back(frequencies[i][j]);
-						forwardRead.push_back(false);
-					}else{
-						bad++; //both alignments are bad	
-					}
-				}
-
-				// Now, use the good alignments for error correction
-				// With SHD, alignments cannot have indels. use quick majority vote for correction.
-				// SHD also allows for the correction of candidates, too.
-				// In Semi Global Alignment, indels can appear. use errorgraph for correction.
+				
 				if(aligner->type == AlignerType::ShiftedHamming){
+
+					// for each candidate, compare its alignment to the alignment of the reverse complement. 
+					// find the best of both, if any, and
+					// save the best alignment + additional data in these vectors
+					std::vector<AlignResult> insertedAlignments;
+					std::vector<const Sequence*> insertedSequences;
+					std::vector<std::uint64_t> insertedCandidateIds;
+					std::vector<int> insertedFreqs;
+					std::vector<bool> forwardRead;
+
+					const int querylength = queries[i]->getNbases();
+
+					int bad = 0;
+					int fc = 0;
+					for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
+						auto& res = alignmentResults[i][j];	
+						auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
+		
+						int candidatelength = candidateReads[i][j]->getNbases();
+
+						BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
+											querylength, candidatelength,
+											MAX_MISMATCH_RATIO, MIN_OVERLAP, 
+											MIN_OVERLAP_RATIO);					
+
+						if(best == BestAlignment_t::Forward){
+							const Sequence* seq = candidateReads[i][j];
+			
+							insertedAlignments.push_back(std::move(res));
+							insertedSequences.push_back(seq);
+							insertedCandidateIds.insert(insertedCandidateIds.cend(), 
+										    candidateIds[i].cbegin() + fc, 
+										    candidateIds[i].cbegin() + fc + frequencies[i][j]);
+							insertedFreqs.push_back(frequencies[i][j]);
+							forwardRead.push_back(true);
+						}else if(best == BestAlignment_t::ReverseComplement){
+							const Sequence* revseq = revComplcandidateReads[i][j];
+			
+							insertedAlignments.push_back(std::move(revcomplres));
+							insertedSequences.push_back(revseq);
+							insertedCandidateIds.insert(insertedCandidateIds.cend(), 
+										    candidateIds[i].cbegin() + fc, 
+										    candidateIds[i].cbegin() + fc + frequencies[i][j]);
+							insertedFreqs.push_back(frequencies[i][j]);
+							forwardRead.push_back(false);
+						}else{
+							bad++; //both alignments are bad	
+						}
+						fc += frequencies[i][j];
+					}
+
+					// Now, use the good alignments for error correction
+					// With SHD, alignments cannot have indels. use quick majority vote for correction.
+					// SHD also allows for the correction of candidates, too.
+					// In Semi Global Alignment, indels can appear. use errorgraph for correction.
 
 					// check errorrate of good alignments. we want at least m_coverage * estimatedCoverage alignments.
 					// if possible, we want to use only alignments with a max mismatch ratio of 2*errorrate
@@ -1216,6 +1315,61 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 				}
 #endif
 
+					// for each candidate, compare its alignment to the alignment of the reverse complement. 
+					// find the best of both, if any, and
+					// save the best alignment + additional data in these vectors
+					std::vector<AlignResult> insertedAlignments;
+					std::vector<const Sequence*> insertedSequences;
+					std::vector<std::uint64_t> insertedCandidateIds;
+					std::vector<int> insertedFreqs;
+					std::vector<bool> forwardRead;
+
+					const int querylength = queries[i]->getNbases();
+
+					int bad = 0;
+					int fc = 0;
+					for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
+						auto& res = alignmentResults[i][j];	
+						auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
+		
+						int candidatelength = candidateReads[i][j]->getNbases();
+
+						BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
+											querylength, candidatelength,
+											MAX_MISMATCH_RATIO, MIN_OVERLAP, 
+											MIN_OVERLAP_RATIO);					
+
+						if(best == BestAlignment_t::Forward){
+							const Sequence* seq = candidateReads[i][j];
+			
+							insertedAlignments.push_back(std::move(res));
+							insertedSequences.push_back(seq);
+							insertedCandidateIds.insert(insertedCandidateIds.cend(), 
+										    candidateIds[i].cbegin() + fc, 
+										    candidateIds[i].cbegin() + fc + frequencies[i][j]);
+							insertedFreqs.push_back(frequencies[i][j]);
+							forwardRead.push_back(true);
+						}else if(best == BestAlignment_t::ReverseComplement){
+							const Sequence* revseq = revComplcandidateReads[i][j];
+			
+							insertedAlignments.push_back(std::move(revcomplres));
+							insertedSequences.push_back(revseq);
+							insertedCandidateIds.insert(insertedCandidateIds.cend(), 
+										    candidateIds[i].cbegin() + fc, 
+										    candidateIds[i].cbegin() + fc + frequencies[i][j]);
+							insertedFreqs.push_back(frequencies[i][j]);
+							forwardRead.push_back(false);
+						}else{
+							bad++; //both alignments are bad	
+						}
+						fc += frequencies[i][j];
+					}
+
+					// Now, use the good alignments for error correction
+					// With SHD, alignments cannot have indels. use quick majority vote for correction.
+					// SHD also allows for the correction of candidates, too.
+					// In Semi Global Alignment, indels can appear. use errorgraph for correction.
+
 					ErrorGraph errorgraph(queryStrings[i].c_str(), queryStrings[i].length(), queryQualities[i]->c_str(), useQualityScores);
 
 					int qualindex = 0;
@@ -1454,24 +1608,28 @@ std::map<const Sequence*, std::vector<int>, SequencePtrLess> ErrorCorrector::map
 	std::map<const Sequence*, std::vector<int>, SequencePtrLess> candidateSequencesToIds;
 
 	std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
-
+//std::cout << "a\n";
+//int k = 0;
 	//deduplicate sequences
 	for (const auto r : minhashresults) {
-		const auto sequence = readStorage.fetchSequence_ptr(r);
+		const Sequence* sequence = readStorage.fetchSequence_ptr(r);
 		candidateSequencesToIds[sequence].push_back(r);
+//		std::cout << (k++) << '\n';
 	}
 
 	std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
 
 	a += (tpb - tpa);
 
+//std::cout << "b" << candidateSequencesToIds.size() << "\n";
+
 	candidates.resize(candidateSequencesToIds.size());
 	revcomplcandidates.resize(candidateSequencesToIds.size());
 	frequencies.resize(candidateSequencesToIds.size());
-
+//std::cout << "c\n";
 	//qualityscores.resize(minhashresults.size());
 	//revcomplqualityscores.resize(minhashresults.size());
-
+#if 1
 	tpa = std::chrono::system_clock::now();
 	//Now fetch reverse complements and quality scores and store them
 	//int qindex = 0;
@@ -1491,8 +1649,9 @@ std::map<const Sequence*, std::vector<int>, SequencePtrLess> ErrorCorrector::map
 	}
 	tpb = std::chrono::system_clock::now();
 
+//std::cout << "d\n";
 	b += (tpb - tpa);
-
+#endif
 	return candidateSequencesToIds;
 }
 
