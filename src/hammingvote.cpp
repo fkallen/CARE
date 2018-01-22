@@ -207,7 +207,7 @@ int cpu_hamming_vote_new(std::string& subject,
 		 && min_coverage >= m / 2.0 * estimatedCoverage;
 
 	if(isHQ){
-#if 1
+#if 0
 		//correct anchor
 		for(int i = 0; i < int(subject.length()); i++){
 			subject[i] = consensus[subjectColumnsBegin_incl + i];
@@ -271,7 +271,7 @@ int cpu_hamming_vote_new(std::string& subject,
 			status |= (1 << 1);
 		if(min_coverage < m / 2.0 * estimatedCoverage)
 			status |= (1 << 2);
-#if 0
+#if 1
 		//correct anchor
 		bool foundAColumn = false;
 		for(int i = 0; i < int(subject.length()); i++){
@@ -283,7 +283,7 @@ int cpu_hamming_vote_new(std::string& subject,
 				foundAColumn = true;
 #endif
 			}else{
-#if 1
+#if 0
 				if(support[columnindex] > 0.5 && origCoverage[columnindex] < m / 2.0 * estimatedCoverage){
 					double avgsupportkregion = 0;
 					int c = 0;

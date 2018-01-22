@@ -883,7 +883,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					mapminhashresultsfetch += (t2 - t1);
 
 					t1 = std::chrono::system_clock::now();
-//std::cout << "A\n";
+
 					std::vector<int> indexlist(nCandidates);
 					std::iota(indexlist.begin(), indexlist.end(), 0);
 
@@ -893,19 +893,19 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						//return comp(allCandidates[i], allCandidates[j]);
 						return allCandidates[i] < allCandidates[j];
 					});
-//std::cout << "B\n";
+
 					//sort sequences by indexlist
 					std::vector<const Sequence*> allCandidates_sorted(nCandidates);
 					for(int k = 0; k < nCandidates; k++){
 						allCandidates_sorted[k] = allCandidates[indexlist[k]];
 					}
-//std::cout << "C\n";
+
 					//sort candidateIds by indexlist
 					std::vector<std::uint64_t> candidateIds_sorted(nCandidates);
 					for(int k = 0; k < nCandidates; k++){
 						candidateIds_sorted[k] = candidateIds[i][indexlist[k]];
 					}
-//std::cout << "D\n";
+
 					// kind of like std::unique(allCandidates_sorted.begin(), allCandidates_sorted.end()),
 					// but also count number of duplicates for each unique entry(inclusive) in sortedFreqs
 					std::vector<int> sortedFreqs(1,1);
@@ -913,7 +913,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					auto uniquecount = 1;
 					for(int k = 1; k < nCandidates; k++){
 						const Sequence* curSeq = allCandidates_sorted[k];
-						if(*prevSeq == *curSeq){
+						if(prevSeq == curSeq){
+							assert(*prevSeq == *curSeq);
 							sortedFreqs.back()++;
 						}else{
 							sortedFreqs.push_back(1);
@@ -923,10 +924,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						prevSeq = curSeq;
 					}
 
+					int freqsum = 0;
+					for(const auto f : sortedFreqs) freqsum += f;
+					assert(freqsum == nCandidates);
+
 					t2 = std::chrono::system_clock::now();
 
 					mapminhashresultsdedup += (t2 - t1);
-//std::cout << "E\n";
+
 					//set output vectors
 					candidateIds[i].swap(candidateIds_sorted);
 					std::vector<const Sequence*> tmp(allCandidates_sorted.begin(), allCandidates_sorted.begin() + uniquecount);			

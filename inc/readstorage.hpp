@@ -22,6 +22,8 @@ struct ReadStorage{
     std::vector<std::vector<Sequence>> reverseComplSequences;
     std::vector<Sequence*> sequencepointers;
     std::vector<Sequence> sequences_dedup;
+    std::vector<Sequence*> reverseComplSequencepointers;
+    std::vector<Sequence> reverseComplSequences_dedup;
 
     std::vector<std::uint64_t> bytecounts;
 

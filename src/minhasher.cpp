@@ -150,9 +150,13 @@ std::vector<std::uint64_t> Minhasher::getCandidates(const std::string& sequence)
 
 	assert(allMinhashResults.end() - uniqueEnd >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
 
-	std::vector<std::uint64_t> result(allMinhashResults.begin(), uniqueEnd);
-	//std::vector<std::uint64_t> result;
-	return result;
+	//std::vector<std::uint64_t> result(allMinhashResults.begin(), uniqueEnd);
+
+	//return result;
+
+	allMinhashResults.resize(std::distance(allMinhashResults.begin(), uniqueEnd));
+
+	return allMinhashResults;
 }
 
 

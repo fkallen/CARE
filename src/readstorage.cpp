@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <unordered_set>
 #include <vector>
+#include <cassert>
+#include <map>
 
 #define SAFE_ACCESS
 
@@ -106,48 +108,74 @@
 		if(nSequences == 0) return;
 
 		sequences_dedup.resize(nSequences);
+		reverseComplSequences_dedup.resize(nSequences);
 
 		for(int readnum = 0; readnum < nSequences; readnum++){
 			std::uint32_t vecnum = readnum % nThreads;
 			int indexInVector = readnum / nThreads;
 
 			sequences_dedup[readnum] = std::move(sequences[vecnum].at(indexInVector));
+			reverseComplSequences_dedup[readnum] = std::move(reverseComplSequences[vecnum].at(indexInVector));
 		}
+
+		std::vector<Sequence> tmp(sequences_dedup.begin(), sequences_dedup.end());
+		std::vector<Sequence> revtmp(reverseComplSequences_dedup.begin(), reverseComplSequences_dedup.end());
 
 		sequences.clear();
+		reverseComplSequences.clear();
 
-		sequencepointers.resize(nSequences);
+		sequencepointers.resize(nSequences, nullptr);
+		reverseComplSequencepointers.resize(nSequences, nullptr);
 
-		std::vector<int> indexlist(nSequences);
-		std::iota(indexlist.begin(), indexlist.end(), 0);
+		std::sort(sequences_dedup.begin(), sequences_dedup.end());
+		auto uniqueend = std::unique(sequences_dedup.begin(), sequences_dedup.end());
 
-		//sort indexlist in order of sequence strings
-		std::sort(indexlist.begin(), indexlist.end(),[&](int i, int j){
-			return sequences_dedup[i] < sequences_dedup[j];
-		});
+		std::map<const Sequence, int> seqToSortedIndex;
 
-		// sort sequence strings
-		std::sort(sequences_dedup.begin(), sequences_dedup.end(),[&](const auto& i, const auto& j){
-			return i < j;
-		});
-
-		int uniquecount = 1;
-		const Sequence* prevelem = &sequences_dedup[0];
-		sequencepointers[indexlist[0]] = &sequences_dedup[0];
-		for(int i = 1; i < nSequences; i++){
-			if(*prevelem == sequences_dedup[i]){
-				sequencepointers[indexlist[i]] = &sequences_dedup[uniquecount-1];
-			}else{
-				if(uniquecount != i)
-					sequences_dedup[uniquecount] = std::move(sequences_dedup[i]);
-				sequencepointers[indexlist[i]] = &sequences_dedup[uniquecount];
-				uniquecount++;
-			}
-			prevelem = &sequences_dedup[i];
+		int index = 0;
+		for(auto it = sequences_dedup.begin(); it != uniqueend; it++){
+			seqToSortedIndex[(*it)] = index;
+			index++;
 		}
 
-		sequences_dedup.resize(uniquecount);
-		
+		std::cout << "found " << std::distance(uniqueend, sequences_dedup.end()) << " duplicate reads\n";
+		sequences_dedup.resize(std::distance(sequences_dedup.begin(), uniqueend));
+		sequences_dedup.shrink_to_fit();
+
+		for(int i = 0; i < nSequences; i++)
+			sequencepointers[i] = &sequences_dedup[seqToSortedIndex[tmp[i]]];
+	
+		//check
+		for(int i = 0; i < nSequences; i++){
+			assert(*sequencepointers[i] == tmp[i] && "readstorage wrong sequence after dedup");
+		}
+
+		std::sort(reverseComplSequences_dedup.begin(), reverseComplSequences_dedup.end());
+		uniqueend = std::unique(reverseComplSequences_dedup.begin(), reverseComplSequences_dedup.end());
+
+		seqToSortedIndex.clear();
+
+		index = 0;
+		for(auto it = reverseComplSequences_dedup.begin(); it != uniqueend; it++){
+			seqToSortedIndex[(*it)] = index;
+			index++;
+		}
+
+		std::cout << "found " << std::distance(uniqueend, reverseComplSequences_dedup.end()) << " duplicate reads\n";
+		reverseComplSequences_dedup.resize(std::distance(reverseComplSequences_dedup.begin(), uniqueend));
+		reverseComplSequences_dedup.shrink_to_fit();
+
+		for(int i = 0; i < nSequences; i++)
+			reverseComplSequencepointers[i] = &reverseComplSequences_dedup[seqToSortedIndex[revtmp[i]]];
+	
+		//check
+		for(int i = 0; i < nSequences; i++){
+			assert(*reverseComplSequencepointers[i] == revtmp[i] && "readstorage wrong sequence after dedup");
+		}
+
+
+
+
 	}
 
 	Read ReadStorage::fetchRead(std::uint32_t readNumber) const{
@@ -212,14 +240,18 @@
 	}
 
 	const Sequence* ReadStorage::fetchReverseComplementSequence_ptr(std::uint32_t readNumber) const{
-		std::uint32_t id = readNumber % nThreads;
+		if(isReadOnly){
+			return reverseComplSequencepointers.at(readNumber);
+		}else{
+			std::uint32_t id = readNumber % nThreads;
 
-		size_t indexInVector = readNumber / nThreads;
+			size_t indexInVector = readNumber / nThreads;
 
 #ifdef SAFE_ACCESS
 		return &(reverseComplSequences[id].at(indexInVector));
 #else
 		return &(reverseComplSequences[id][indexInVector]);		
 #endif
+		}
 	}
 
