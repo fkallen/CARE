@@ -207,13 +207,13 @@ int cpu_hamming_vote_new(std::string& subject,
 		 && min_coverage >= m / 2.0 * estimatedCoverage;
 
 	if(isHQ){
-#if 0
+#if 1
 		//correct anchor
 		for(int i = 0; i < int(subject.length()); i++){
 			subject[i] = consensus[subjectColumnsBegin_incl + i];
 		}
 #endif
-#if 0
+#if 1
 		//correct candidates
 		if(correctQueries){
 			
@@ -283,7 +283,7 @@ int cpu_hamming_vote_new(std::string& subject,
 				foundAColumn = true;
 #endif
 			}else{
-#if 0
+#if 1
 				if(support[columnindex] > 0.5 && origCoverage[columnindex] < m / 2.0 * estimatedCoverage){
 					double avgsupportkregion = 0;
 					int c = 0;

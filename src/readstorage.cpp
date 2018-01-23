@@ -98,6 +98,7 @@
 
 	}
 
+#if 1
 	void ReadStorage::noMoreInserts(){
 		isReadOnly = true;
 
@@ -172,11 +173,81 @@
 		for(int i = 0; i < nSequences; i++){
 			assert(*reverseComplSequencepointers[i] == revtmp[i] && "readstorage wrong sequence after dedup");
 		}
-
-
-
-
 	}
+
+#else
+
+	void ReadStorage::noMoreInserts(){
+		isReadOnly = true;
+
+		int nSequences = 0;
+		for(const auto& v : sequences)
+			nSequences += v.size();
+
+		if(nSequences == 0) return;
+
+		auto make_index_buffer = [&]{
+			std::vector<size_t> v(nSequences);
+			std::iota(v.begin(), v.end(), size_t(0));
+			return v;
+		};
+
+		auto dedup = [&](auto& what, auto& uniqueobj, auto& ptrs){
+
+			uniqueobj.resize(nSequences);
+
+			for(int readnum = 0; readnum < nSequences; readnum++){
+				std::uint32_t vecnum = readnum % nThreads;
+				int indexInVector = readnum / nThreads;
+
+				uniqueobj[readnum] = std::move(what[vecnum].at(indexInVector));
+			}
+
+			// build a buffer of unique element indexes:
+			auto uniques = make_index_buffer();
+
+			// compares indexes by their object: 
+			auto index_less = [&](auto lhs, auto rhs) { return uniqueobj[lhs] < uniqueobj[rhs]; };
+			auto index_equal = [&](auto lhs, auto rhs) { return uniqueobj[lhs] == uniqueobj[rhs]; };
+
+			std::sort( uniques.begin(), uniques.end(), index_less );
+			uniques.erase(std::unique( uniques.begin(), uniques.end(), index_equal), uniques.end() );
+
+			// build table of index to unique index:
+			std::map<size_t, size_t, decltype(index_less)> table(index_less);
+			for (size_t& i : uniques){
+				table[i] = &i-uniques.data();
+			}
+
+			// list of index to unique index for each element:
+			auto indexes = make_index_buffer();
+
+			// make indexes unique:
+			for (size_t& i:indexes)
+				i = table[i];
+
+			// build unique object list:
+			std::vector<Sequence> objects;
+			objects.reserve( uniques.size() );
+			for (size_t i : uniques)
+				objects.push_back( std::move(uniqueobj[i]) );
+
+			// build pointer objects:
+			std::vector<Sequence*> ptrarray; // N elements
+			ptrarray.reserve( indexes.size() );
+			for (size_t i : indexes)
+				ptrarray.push_back( std::addressof( objects[i] ) );
+
+			uniqueobj = std::move(objects);
+			ptrs = std::move(ptrarray);
+		};
+
+		dedup(sequences, sequences_dedup, sequencepointers);
+		dedup(reverseComplSequences, reverseComplSequences_dedup, reverseComplSequencepointers);
+	}
+
+
+#endif
 
 	Read ReadStorage::fetchRead(std::uint32_t readNumber) const{
 		Read returnvalue;

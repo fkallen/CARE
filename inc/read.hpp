@@ -72,13 +72,14 @@ struct Sequence {
 	}
 
 	Sequence& operator=(Sequence&& other){
-	        nBases = other.nBases;
-		compressed = other.compressed;
+		if(this != &other){
+			nBases = other.nBases;
+			compressed = other.compressed;
 
-	        data = std::move(other.data);
+			data = std::move(other.data);
 
-	        other.nBases = 0;
-
+			other.nBases = 0;
+		}
 	        return *this;
 	}
 
