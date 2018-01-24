@@ -32,6 +32,8 @@
 
 #include <experimental/filesystem> // create_directories
 
+using namespace hammingvote;
+
 #define ERRORCORRECTION_TIMING
 //#define USE_REVCOMPL_FLAG
 
@@ -972,7 +974,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		tpa = std::chrono::system_clock::now();
 #endif
 
-		
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
 			candidateReadsAndRevcompls[i].resize(candidateReads[i].size() * 2);
 
@@ -989,8 +990,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			auto d = std::distance(u, tmp.end());
 			if(d > 0) std::cout << "killed " << d << " sequences before alignment\n";*/
 		}
-
-		
 
 		// perform alignment
 #if 1
@@ -1030,8 +1029,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 					const int querylength = queries[i]->getNbases();
 
+					int counts[3]{0,0,0};
+					int countsDedup[3]{0,0,0};
+
 					int bad = 0;
 					int fc = 0;
+
 					for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
 						auto& res = alignmentResults[i][j];	
 						auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
@@ -1041,38 +1044,77 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
 											querylength, candidatelength,
 											MAX_MISMATCH_RATIO, MIN_OVERLAP, 
-											MIN_OVERLAP_RATIO);					
+											MIN_OVERLAP_RATIO);
+
+						const int f = frequencies[i][j];					
 
 						if(best == BestAlignment_t::Forward){
-							const Sequence* seq = candidateReads[i][j];
+							bool useIt = true;
+							const double mismatchratio = double(res.arc.nOps) / double(res.arc.overlap);
+
+							if(mismatchratio < 2*errorrate){
+								counts[0] += f;
+								countsDedup[0]++;
+							}
+							if(mismatchratio < 3*errorrate){
+								counts[1] += f;
+								countsDedup[1]++;
+							}
+							if(mismatchratio < 4*errorrate){
+								counts[2] += f;
+								countsDedup[2]++;
+							}else{
+								useIt = false;
+							}
+							
+							if(useIt){
+								const Sequence* seq = candidateReads[i][j];
 			
-							insertedAlignments.push_back(std::move(res));
-							insertedSequences.push_back(seq);
-							insertedCandidateIds.insert(insertedCandidateIds.cend(), 
-										    candidateIds[i].cbegin() + fc, 
-										    candidateIds[i].cbegin() + fc + frequencies[i][j]);
-							insertedFreqs.push_back(frequencies[i][j]);
-							forwardRead.push_back(true);
+								insertedAlignments.push_back(std::move(res));
+								insertedSequences.push_back(seq);
+								insertedCandidateIds.insert(insertedCandidateIds.cend(), 
+											    candidateIds[i].cbegin() + fc, 
+											    candidateIds[i].cbegin() + fc + f);
+								insertedFreqs.push_back(f);
+								forwardRead.push_back(true);
+							}
+
+							
 						}else if(best == BestAlignment_t::ReverseComplement){
-							const Sequence* revseq = revComplcandidateReads[i][j];
+							bool useIt = true;
+							const double mismatchratio = double(revcomplres.arc.nOps) / double(revcomplres.arc.overlap);
+
+							if(mismatchratio < 2*errorrate){
+								counts[0] += f;
+								countsDedup[0]++;
+							}
+							if(mismatchratio < 3*errorrate){
+								counts[1] += f;
+								countsDedup[1]++;
+							}
+							if(mismatchratio < 4*errorrate){
+								counts[2] += f;
+								countsDedup[2]++;
+							}else{
+								useIt = false;
+							}
+							
+							if(useIt){
+								const Sequence* revseq = revComplcandidateReads[i][j];
 			
-							insertedAlignments.push_back(std::move(revcomplres));
-							insertedSequences.push_back(revseq);
-							insertedCandidateIds.insert(insertedCandidateIds.cend(), 
-										    candidateIds[i].cbegin() + fc, 
-										    candidateIds[i].cbegin() + fc + frequencies[i][j]);
-							insertedFreqs.push_back(frequencies[i][j]);
-							forwardRead.push_back(false);
+								insertedAlignments.push_back(std::move(revcomplres));
+								insertedSequences.push_back(revseq);
+								insertedCandidateIds.insert(insertedCandidateIds.cend(), 
+											    candidateIds[i].cbegin() + fc, 
+											    candidateIds[i].cbegin() + fc + f);
+								insertedFreqs.push_back(f);
+								forwardRead.push_back(false);
+							}
 						}else{
 							bad++; //both alignments are bad	
 						}
-						fc += frequencies[i][j];
+						fc += f;
 					}
-
-					// Now, use the good alignments for error correction
-					// With SHD, alignments cannot have indels. use quick majority vote for correction.
-					// SHD also allows for the correction of candidates, too.
-					// In Semi Global Alignment, indels can appear. use errorgraph for correction.
 
 					// check errorrate of good alignments. we want at least m_coverage * estimatedCoverage alignments.
 					// if possible, we want to use only alignments with a max mismatch ratio of 2*errorrate
@@ -1080,26 +1122,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					// if there are not enough alignments, use max mismatch ratio of 4*errorrate
 					// if there are not enough alignments, do not correct
 
-					const int countThreshold = estimatedCoverage * m_coverage;
-					int counts[3]{0,0,0};
-					int countsDedup[3]{0,0,0};
-					for(int k = 0; k < int(insertedAlignments.size()); k++){
-						const auto& a = insertedAlignments[k];
-						const double mismatchratio = double(a.arc.nOps) / double(a.arc.overlap);
-						if(mismatchratio < 2*errorrate){
-							counts[0] += insertedFreqs[k];
-							countsDedup[0]++;
-						}
-						if(mismatchratio < 3*errorrate){
-							counts[1] += insertedFreqs[k];
-							countsDedup[1]++;
-						}
-						if(mismatchratio < 4*errorrate){
-							counts[2] += insertedFreqs[k];
-							countsDedup[2]++;
-						}
-					}
 
+					const int countThreshold = estimatedCoverage * m_coverage;
 					bool correctQuery = false;
 					double mismatchratioThreshold = 0;
 					int candidatecount = 0;
@@ -1178,17 +1202,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						int qualindex = 0;
 						for(int j = 0; j < candidatecount; j++){
 							candidateStrings.push_back(insertedSequences[j]->toString());
+							const int freq = insertedFreqs[j];
 							if(forwardRead[j]){
-								for(int f = 0; f < insertedFreqs[j]; f++){
+								for(int f = 0; f < freq; f++){
 									candidatequals.push_back(*readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]));
 								}
 							}else{
-								for(int f = 0; f < insertedFreqs[j]; f++){
+								for(int f = 0; f < freq; f++){
 									candidatequals.push_back(
 										*readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]));
 								}
 							}
-							qualindex += insertedFreqs[j];
+							qualindex += freq;
 						}
 
 						std::vector<bool> saveThisCandidate(candidatecount, false);
@@ -1735,11 +1760,15 @@ void ErrorCorrector::getMultipleAlignments(int threadId, const std::vector<const
 				maximumQueryLength = maximumQueryLength < ls ? ls : maximumQueryLength;
 				totalQueryBytes += bs;
 
+				assert(query->isCompressed());
+
 				for(const auto& candidate : candidates[i]){
 					int b = candidate->getNumBytes();		
 					int l = candidate->getNbases();
 					maximumCandidateLength = maximumCandidateLength < l ? l : maximumCandidateLength;
 					totalCandidateBytes += b;
+
+					assert(candidate->isCompressed());
 				}
 			}
 		}
