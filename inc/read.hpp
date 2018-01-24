@@ -83,11 +83,19 @@ struct Sequence {
 	        return *this;
 	}
 
-	bool operator==(const Sequence& other) const
+	bool operator==(const Sequence& rhs) const
 	{
-		return (nBases == other.nBases 
-			&& compressed == other.compressed 
-			&& 0 == std::memcmp(data.get(), other.data.get(), getNumBytes()));
+		if(getNbases() != rhs.getNbases()) return false;
+
+		if(isCompressed() == rhs.isCompressed())
+			return (std::memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
+		else{
+			for(int i = 0; i < getNbases(); i++){
+				if (begin()[i] != rhs.begin()[i])
+					return false;
+			}
+			return true;
+		}
 	}
 
 	bool operator!=(const Sequence& other) const
@@ -141,13 +149,23 @@ struct Sequence {
 		}
 	}
 
-	bool operator<(const Sequence& r) const{
-		const int size = getNumBytes();
-		const int othersize = r.getNumBytes();
-		if(size < othersize) return true;
-		if(size > othersize) return false;
+	bool operator<(const Sequence& rhs) const{
+		const int bases = getNbases();
+		const int otherbases = rhs.getNbases();
+		if(bases < otherbases) return true;
+		if(bases > otherbases) return false;
 
-		return (std::memcmp(begin(), r.begin(), size) < 0);
+		if(isCompressed() == rhs.isCompressed())
+			return (std::memcmp(begin(), rhs.begin(), getNumBytes()) < 0);
+		else{
+			for(int i = 0; i < bases; i++){
+				if (begin()[i] < rhs.begin()[i])
+					return true;
+				if (begin()[i] > rhs.begin()[i])
+					return false;
+			}
+			return false;
+		}
 	}
 
 	Sequence reverseComplement() const{
@@ -225,12 +243,22 @@ struct Sequence {
 
 struct SequencePtrLess{
 	bool operator() (const Sequence* lhs, const Sequence* rhs) const{
-		const int size = lhs->getNumBytes();
-		const int othersize = rhs->getNumBytes();
-		if(size < othersize) return true;
-		if(size > othersize) return false;
+		const int bases = lhs->getNbases();
+		const int otherbases = rhs->getNbases();
+		if(bases < otherbases) return true;
+		if(bases > otherbases) return false;
 
-		return (std::memcmp(lhs->begin(), rhs->begin(), size) < 0);
+		if(lhs->isCompressed() == rhs->isCompressed())
+			return (std::memcmp(lhs->begin(), rhs->begin(), lhs->getNumBytes()) < 0);
+		else{
+			for(int i = 0; i < bases; i++){
+				if (lhs->begin()[i] < rhs->begin()[i])
+					return true;
+				if (lhs->begin()[i] > rhs->begin()[i])
+					return false;
+			}
+			return false;
+		}			
 	}
 };
 
