@@ -377,9 +377,13 @@ void ErrorCorrector::correct(const std::string& filename)
 
 	std::cout << "end insert" << std::endl;
 
+	printf("Stored reads before transformation take %f GB memory\n", (readStorage.getMemUsageMB() / 1024.));
+
 TIMERSTARTCPU(readstorage_transform);
 	readStorage.noMoreInserts();
 TIMERSTOPCPU(readstorage_transform);
+
+	printf("Stored reads after transformation take %f GB memory\n", (readStorage.getMemUsageMB() / 1024.));
 
 #ifdef __NVCC__
 	for(int i = 0; i < nCorrectorThreads; i++){
@@ -467,12 +471,16 @@ void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 			std::uint64_t progressprocessedReads = 0;
 			std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
 
-			//std::cout << "insert thread " << threadId << " started." << std::endl;
 			std::pair<Read, std::uint32_t> pair = buffers[threadId].get();
 
 			while (pair != buffers[threadId].defaultValue) {
-				const Read& read = pair.first;
+				Read& read = pair.first;
 				const std::uint32_t& readnum = pair.second;
+
+				//replace 'N' with 'A'
+				for(auto& c : read.sequence)
+					if(c == 'N')
+						c = 'A';
 
 				if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
 
@@ -489,7 +497,6 @@ void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 				}
 
 			}
-			//std::cout << "insert thread " << threadId << " done." << std::endl; 
 		});
 
 	}
@@ -520,16 +527,12 @@ void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 	}
 // producer done
 
-	std::uint64_t totalReadBytes = 0;
 	for (size_t i = 0; i < inserterThreads.size(); ++i ) {
 		inserterThreads[i].join();
 		//printf("buffer %d: addWait: %lu, addNoWait: %lu, getWait: %lu, getNoWait: %lu\n", 
 		//	i, buffers[i].addWait, buffers[i].addNoWait, buffers[i].getWait, buffers[i].getNoWait);
 		buffers[i].reset();
-
-		totalReadBytes += readStorage.bytecounts[i];
 	}
-	printf("Stored reads take %f GB memory\n", (totalReadBytes / 1024. / 1024. / 1024.));
 
 	progress = 0;
 
@@ -888,9 +891,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					std::iota(indexlist.begin(), indexlist.end(), 0);
 
 					//sort indexlist in order of sequence strings
-					//SequencePtrLess comp;
 					std::sort(indexlist.begin(), indexlist.end(),[&](int i, int j){
-						//return comp(allCandidates[i], allCandidates[j]);
 						return allCandidates[i] < allCandidates[j];
 					});
 
@@ -986,6 +987,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			std::copy(revComplcandidateReads[i].begin(),
 				revComplcandidateReads[i].end(),
 				candidateReadsAndRevcompls[i].begin() + candidateReads[i].size());
+
+			/*std::vector<const Sequence*> tmp(candidateReadsAndRevcompls[i]);
+			auto u = std::unique(tmp.begin(), tmp.end());
+			auto d = std::distance(u, tmp.end());
+			if(d > 0) std::cout << "killed " << d << " sequences before alignment\n";*/
 		}
 
 		
