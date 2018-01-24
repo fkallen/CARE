@@ -873,12 +873,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			if(activeBatches[i]){
 				const int nCandidates = candidateIds[i].size();
 				if(nCandidates > 0){
-					std::vector<const Sequence*> allCandidates(nCandidates);
+					candidateReads[i].resize(nCandidates);
 
 					std::chrono::time_point<std::chrono::system_clock> t1 = std::chrono::system_clock::now();
 
 					for(int k = 0; k < nCandidates; k++){
-						allCandidates[k] = readStorage.fetchSequence_ptr(candidateIds[i][k]);
+						candidateReads[i][k] = readStorage.fetchSequence_ptr(candidateIds[i][k]);
 					}
 
 					std::chrono::time_point<std::chrono::system_clock> t2 = std::chrono::system_clock::now();
@@ -891,55 +891,52 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					std::iota(indexlist.begin(), indexlist.end(), 0);
 
 					//sort indexlist in order of sequence strings
-					std::sort(indexlist.begin(), indexlist.end(),[&](int i, int j){
-						return allCandidates[i] < allCandidates[j];
+					std::sort(indexlist.begin(), indexlist.end(),[&](int l, int r){
+						return candidateReads[i][l] < candidateReads[i][r];
 					});
 
-					//sort sequences by indexlist
-					std::vector<const Sequence*> allCandidates_sorted(nCandidates);
-					for(int k = 0; k < nCandidates; k++){
-						allCandidates_sorted[k] = allCandidates[indexlist[k]];
-					}
+					//sort sequences
+					std::sort(candidateReads[i].begin(), candidateReads[i].end());
 
 					//sort candidateIds by indexlist
-					std::vector<std::uint64_t> candidateIds_sorted(nCandidates);
+					std::vector<std::uint64_t> tmp(nCandidates);
 					for(int k = 0; k < nCandidates; k++){
-						candidateIds_sorted[k] = candidateIds[i][indexlist[k]];
+						tmp[k] = candidateIds[i][indexlist[k]];
 					}
+					candidateIds[i] = std::move(tmp);
 
-					// kind of like std::unique(allCandidates_sorted.begin(), allCandidates_sorted.end()),
+					// kind of like std::unique(candidateReads[i].begin(), candidateReads[i].end()),
 					// but also count number of duplicates for each unique entry(inclusive) in sortedFreqs
 					std::vector<int> sortedFreqs(1,1);
-					const Sequence* prevSeq = allCandidates_sorted[0];
+					const Sequence* prevSeq = candidateReads[i][0];
 					auto uniquecount = 1;
 					for(int k = 1; k < nCandidates; k++){
-						const Sequence* curSeq = allCandidates_sorted[k];
+						const Sequence* curSeq = candidateReads[i][k];
 						if(prevSeq == curSeq){
 							assert(*prevSeq == *curSeq);
 							sortedFreqs.back()++;
 						}else{
 							sortedFreqs.push_back(1);
-							allCandidates_sorted[uniquecount] = curSeq;
+							candidateReads[i][uniquecount] = curSeq;
 							uniquecount++;
 						}
 						prevSeq = curSeq;
 					}
 
+					candidateReads[i].resize(uniquecount);
+					frequencies[i] = std::move(sortedFreqs);
+
+					//check
 					int freqsum = 0;
-					for(const auto f : sortedFreqs) freqsum += f;
+					for(const auto f : frequencies[i]) freqsum += f;
 					assert(freqsum == nCandidates);
 
 					t2 = std::chrono::system_clock::now();
 
 					mapminhashresultsdedup += (t2 - t1);
 
-					//set output vectors
-					candidateIds[i].swap(candidateIds_sorted);
-					std::vector<const Sequence*> tmp(allCandidates_sorted.begin(), allCandidates_sorted.begin() + uniquecount);			
-					candidateReads[i].swap(tmp);
-					frequencies[i].swap(sortedFreqs);
 					revComplcandidateReads[i].resize(uniquecount);
-//std::cout << "F\n";
+
 					t1 = std::chrono::system_clock::now();
 
 					int fc = 0;
@@ -950,7 +947,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					t2 = std::chrono::system_clock::now();
 
 					mapminhashresultsfetch += (t2 - t1);
-//std::cout << "G\n";
 				}
 			}
 		}
