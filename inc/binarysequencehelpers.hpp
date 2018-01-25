@@ -4,6 +4,9 @@
 #include <cstring>
 #include <cstdint>
 
+#include <memory>
+#include <string>
+
 // encode the first min(sequencelenght, k_) bases in sequence and store in encoded which is encodelength bytes
 // sequencelength includes '\0'
 // if failOnUnknownBase is true, encode fails if a base not A C G or T
@@ -25,5 +28,12 @@ bool encoded_to_reverse_complement_encoded(const uint8_t* encoded, int encodedle
 // constructs the next encoded kmer using the previous encoded kmer and the next base
 bool get_next_encoded(const uint8_t* encoded, int encodedlength, uint8_t* nextencoded, int nextencodedlength,
                       const char nextBase, int k_);
+
+
+
+std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit(const std::string& sequence);
+std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases);
+
+
 
 #endif

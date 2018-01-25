@@ -4,6 +4,7 @@
 #include "../inc/cudareduce.cuh"
 
 #include <limits>
+#include <cassert>
 
 /*
 	Shifted hamming distance on CPU
@@ -238,43 +239,11 @@ void cuda_hamming_core(const char* subject, const char* query, int subjectbases,
 	}
 }
 
-/*
-	assumes both subject and query use 2 bit per base. First come all higher bits, then all lower bits.
-	A = 00, C = 01, G = 10, T = 11
-	Example:the sequence ACCGT would be encoded as : 0001101101
-*/
-
-//TODO
-__device__
-void cuda_hamming_2bit_hilo(const char* subject, const char* query, int subjectbases, int querybases, int& bestScore, int& bestShift){
-	const int totalbases = subjectbases + querybases;
-
-	for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += blockDim.x){
-		//const int queryoverlapbegin_incl = max(-shift, 0);
-		//const int queryoverlapend_excl = min(querybases, subjectbases - shift);
-		//const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-		const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-		int score = 0;
-
-		//for(int j =queryoverlapbegin_incl; j < queryoverlapend_excl; j++){
-		for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
-			score += cuda_encoded_accessor(subject, subjectbases, j + shift) != cuda_encoded_accessor(query, querybases, j);	
-		}
-
-		score += totalbases - overlapsize;
-
-		if(score < bestScore){
-			bestScore = score;
-			bestShift = shift;
-		}
-	}
-}
-
 
 
 
 __global__
-void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_out,
+void cuda_shifted_hamming_distance_general(AlignResultCompact* result_out, AlignOp* ops_out,
 					int max_ops,
 					const char* subjects, 
 					int nsubjects,				
@@ -376,7 +345,7 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 
 			// check best configuration again and save position of substitutions
 			int opnr = 0;
-			for(int j = queryoverlapbegin_incl; j < queryoverlapend_excl; j++){
+			/*for(int j = queryoverlapbegin_incl; j < queryoverlapend_excl; j++){
 				bool mismatch = false;
 				if(encr1 && encr2)
 					mismatch = cuda_encoded_accessor(sr1, subjectbases, j + bestShift) != cuda_encoded_accessor(sr2, querybases, j);
@@ -389,6 +358,129 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 
 				if(mismatch){
 					AlignOp op(j + bestShift, ALIGNTYPE_SUBSTITUTE, encr2 ? cuda_encoded_accessor(sr2, querybases, j) : cuda_ordinary_accessor(sr2, j));
+					my_ops_out[opnr] = op;
+					opnr++;
+				}		
+			}*/
+
+			//assert(bestScore - totalbases + overlapsize == opnr && "opnr check fails");
+			opnr = bestScore - totalbases + overlapsize;
+
+			result.score = bestScore;
+			result.subject_begin_incl = max(0, bestShift);
+			result.query_begin_incl = queryoverlapbegin_incl;
+			result.overlap = overlapsize;
+			result.shift = bestShift;
+			result.nOps = opnr;
+			result.isNormalized = false;
+
+			*my_result_out = result;
+		}
+	}
+}
+
+
+
+
+__global__
+void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_out,
+					int max_ops,
+					const char* subjects, 
+					int nsubjects,				
+					const int* subjectBytesPrefixSum, 
+					const int* subjectLengths, 
+					const int* isEncodedSubjects,
+					const char* queries,
+					int ncandidates,
+					const int* queryBytesPrefixSum, 
+					const int* queryLengths, 
+					const int* isEncodedQueries,
+					const int* queriesPerSubjectPrefixSum,
+					int maxSubjectLength){
+
+	extern __shared__ char smem[];
+
+	/* set up shared memory */
+	char* sr1 = (char*)(smem);
+	char* sr2 = (char*)(sr1 + maxSubjectLength);
+
+	for(int globalCandidateId = blockIdx.x; globalCandidateId < ncandidates; globalCandidateId += gridDim.x){
+
+		//setup batch. get correct pointers, store subject and query in shared mem,...
+
+		AlignResultCompact * const my_result_out = result_out + globalCandidateId;
+		AlignOp * const my_ops_out = ops_out + max_ops * globalCandidateId;
+
+		int subjectId = 0;
+		for(int i = 0; i < nsubjects; i++)
+			if(globalCandidateId >= queriesPerSubjectPrefixSum[i])
+				subjectId = i;
+
+		const char * subject = subjects + subjectBytesPrefixSum[subjectId];
+		const int subjectbytes = subjectBytesPrefixSum[subjectId+1] - subjectBytesPrefixSum[subjectId];
+		const int subjectbases = subjectLengths[subjectId];
+
+		for(int threadid = threadIdx.x; threadid < subjectbytes; threadid += blockDim.x){
+			sr1[threadid] = subject[threadid];			
+		}
+
+		const char * query = queries + queryBytesPrefixSum[globalCandidateId];
+		const int querybytes = queryBytesPrefixSum[globalCandidateId+1] - queryBytesPrefixSum[globalCandidateId];
+		const int querybases = queryLengths[globalCandidateId];
+
+		for(int threadid = threadIdx.x; threadid < querybytes; threadid += blockDim.x){
+			sr2[threadid] = query[threadid];
+		}	
+
+		__syncthreads(); //setup complete
+
+		//begin SHD algorithm
+
+		const int totalbases = subjectbases + querybases;
+		int bestScore = totalbases; // score is number of mismatches
+		int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
+
+		cuda_hamming_core<true, true>(sr1, sr2, subjectbases, querybases, bestScore, bestShift);	
+
+		//if(globalCandidateId == 0){
+		//	printf("tid: %d, bestscore %d, bestshift %d\n", threadIdx.x, bestScore, bestShift);
+		//}
+
+		// perform reduction to find smallest score in block. the corresponding shift is required, too
+		// pack both score and shift into int2 and perform int2-reduction by only comparing the score
+
+		static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
+	
+		int2 myval = make_int2(bestScore, bestShift);
+		int2 reduced;
+		blockreduce<128>(
+			(unsigned long long*)&reduced, 
+			*((unsigned long long*)&myval), 
+			[](unsigned long long a, unsigned long long b){
+				return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
+			}
+		);
+
+		bestScore = reduced.x;
+		bestShift = reduced.y;
+	
+		//make result
+		if(threadIdx.x == 0){
+
+			AlignResultCompact result;
+
+			result.isValid = (bestShift != -querybases);
+			const int queryoverlapbegin_incl = max(-bestShift, 0);
+			const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+			const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;		
+
+			// check best configuration again and save position of substitutions
+			int opnr = 0;
+			for(int j = queryoverlapbegin_incl; j < queryoverlapend_excl; j++){
+				const bool mismatch = cuda_encoded_accessor(sr1, subjectbases, j + bestShift) != cuda_encoded_accessor(sr2, querybases, j);
+
+				if(mismatch){
+					AlignOp op(j + bestShift, ALIGNTYPE_SUBSTITUTE, cuda_encoded_accessor(sr2, querybases, j));
 					my_ops_out[opnr] = op;
 					opnr++;
 				}		

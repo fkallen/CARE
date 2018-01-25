@@ -86,7 +86,7 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 	semiglobalaligner.reset(new SemiGlobalAligner(ALIGNMENTSCORE_MATCH, ALIGNMENTSCORE_SUB, ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL));
 	shdaligner.reset(new ShiftedHammingDistance());
 
-
+#if 0
 	std::string subject = "NTCTGAAAACTTGCGTATGCTGATAAAAAATCCGATTTCTTATTTCCATATTGGCATATTTTTATTATTAGGAAAAAATGTCATCTTCTGAAATACTGGAA";
 	std::vector<std::string> queries{
 		"GGTTTTATTTGTGTATATGAAATACATCTGTTTTCATTGTTTTCTGAAAACTTGCGTATGCTGATAAAAAATCCGATTTCTTATTTCCATATTGGCATATT",
@@ -120,6 +120,8 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 	std::string corrected = cpu_hamming_vote(subject, queries, ar, "", {}, 1.0, 1, 1, false, {}, false);
 
 	std::cout << corrected << std::endl;
+#endif
+
 
 #ifdef __CUDACC__
 
@@ -447,8 +449,15 @@ void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 	std::uint64_t progressprocessedReads = 0;
 
 	while (reader->getNextRead(&read, &readnum)) {
-		minhasher.insertSequence(read.sequence, readnum);
-		readnum++;
+
+		//replace 'N' with 'A'
+		for(auto& c : read.sequence)
+			if(c == 'N')
+				c = 'A';
+
+		if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
+
+		readStorage.insertRead(readnum, read);
 
 		progressprocessedReads++;
 

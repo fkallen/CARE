@@ -9,6 +9,8 @@
 #include <limits>
 #include <cassert>
 
+namespace hammingvote{
+
 constexpr double min_bases_for_candidate_correction_factor = 0.0;
 
 static_assert(0.0 <= min_bases_for_candidate_correction_factor && min_bases_for_candidate_correction_factor <= 1.0, "");
@@ -36,7 +38,8 @@ void hamming_vote_global_init(){
 
 int cpu_hamming_vote_new(std::string& subject,
 				int nQueries, 
-				std::vector<std::string>& queries, 
+				std::vector<std::string>& queries,
+				//std::vector<char*>& queries,  
 				const std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
@@ -213,7 +216,7 @@ int cpu_hamming_vote_new(std::string& subject,
 			subject[i] = consensus[subjectColumnsBegin_incl + i];
 		}
 #endif
-#if 1
+#if 0
 		//correct candidates
 		if(correctQueries){
 			
@@ -633,6 +636,8 @@ void hamming_vote_kernel(char* subject, int subjectbytes, int subjectlength, boo
 }
 
 #endif
+
+}
 
 
 

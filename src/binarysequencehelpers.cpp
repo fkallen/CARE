@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <cstdio>
 
+#include <memory>
+#include <string>
+
 
 const uint8_t BITS_PER_BASE = 2;
 const uint8_t BASE_A = 0x00;
@@ -11,6 +14,8 @@ const uint8_t BASE_C = 0x01;
 const uint8_t BASE_G = 0x02;
 const uint8_t BASE_T = 0x03;
 const uint8_t BASES_PER_BYTE = (sizeof(uint8_t)*8 / BITS_PER_BASE);
+
+static_assert(BASES_PER_BYTE == 4, "unexpected size of uint8_t"); // only tested for sizeof(std::uint8_t) == 1
 
 // REVERSE_COMPLEMENT_2BIT[ X ] is the reverse complement of X , where X is the encoded value of 4 bases
 const uint8_t REVERSE_COMPLEMENT_2BIT[256] = {
@@ -36,6 +41,97 @@ const uint8_t REVERSE_COMPLEMENT_2BIT[256] = {
 const uint8_t DELETE_UNUSED_BITS_2BIT[4] = {
         0x3F, 0xF, 0x3, 0x0
 };
+
+std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit(const std::string& sequence){
+	const std::size_t l = sequence.length();
+	const std::size_t bytes = (l + BASES_PER_BYTE - 1) / BASES_PER_BYTE;
+	const std::size_t unusedByteSpace = (BASES_PER_BYTE - (l % BASES_PER_BYTE)) % BASES_PER_BYTE;
+
+	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
+
+	std::memset(encoded.get(), 0, bytes);
+
+	for(std::size_t i = 0; i < l; i++){
+		const std::size_t byte = (i + unusedByteSpace) / 4;
+		const std::size_t posInByte = (i + unusedByteSpace) % 4;
+                switch(sequence[i]) {
+                case 'A':
+                        encoded[byte] |=  BASE_A << ((3-posInByte) * 2);
+                        break;
+                case 'C':
+                        encoded[byte] |=  BASE_C << ((3-posInByte) * 2);
+                        break;
+                case 'G':
+                        encoded[byte] |=  BASE_G << ((3-posInByte) * 2);
+                        break;
+                case 'T':
+                        encoded[byte] |=  BASE_T << ((3-posInByte) * 2);
+                        break;
+		default:
+                        encoded[byte] |=  BASE_A << ((3-posInByte) * 2);
+                        break;
+		}
+	}
+
+	return {std::move(encoded), bytes};
+}
+
+std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
+	const std::size_t unusedByteSpace = (BASES_PER_BYTE - (bases % BASES_PER_BYTE)) % BASES_PER_BYTE;
+
+	std::string sequence;
+	sequence.reserve(bases);
+
+	for(std::size_t i = 0; i < bases; i++){
+		const std::size_t byte = (i + unusedByteSpace) / 4;
+		const std::size_t posInByte = (i + unusedByteSpace) % 4;
+		switch((encoded[byte] >> (3-posInByte) * 2) & 0x03) {
+		        case BASE_A: sequence.push_back('A'); break;
+		        case BASE_C: sequence.push_back('C'); break;
+		        case BASE_G: sequence.push_back('G'); break;
+		        case BASE_T: sequence.push_back('T'); break;
+			default: sequence.push_back('_'); break; // cannot happen
+		}
+	}
+
+	return sequence;
+}
+
+std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit_hilo(const std::string& sequence){
+	const std::size_t l = sequence.length();
+	const std::size_t bytes = 2*((l + 8 - 1) / 8);
+
+	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
+
+	return {std::move(encoded), bytes};
+}
+
+std::string decode_2bit_hilo(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
+	std::string sequence;
+	sequence.reserve(bases);
+
+
+	return sequence;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 bool encode(const char * sequence, int sequencelength, int k_, uint8_t* encoded, int encodedlength, bool failOnUnknownBase){

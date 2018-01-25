@@ -122,11 +122,11 @@ std::vector<std::vector<AlignResult>> ShiftedHammingDistance::cuda_alignment(con
 			sizeof(AlignResultCompact) * ncandidates, 
 			D2H, 
 			mybuffers.stream); CUERR; cudaStreamSynchronize(mybuffers.stream); CUERR;
-	cudaMemcpyAsync(mybuffers.h_ops.get(), 
+	/*cudaMemcpyAsync(mybuffers.h_ops.get(), 
 			mybuffers.d_ops.get(), 
 			sizeof(AlignOp) * max_ops_per_alignment * ncandidates, 
 			D2H, 
-			mybuffers.stream); CUERR; cudaStreamSynchronize(mybuffers.stream); CUERR;
+			mybuffers.stream); CUERR; cudaStreamSynchronize(mybuffers.stream); CUERR;*/
 
 	cudaStreamSynchronize(mybuffers.stream); CUERR;
 
@@ -149,9 +149,10 @@ std::vector<std::vector<AlignResult>> ShiftedHammingDistance::cuda_alignment(con
 
 		for(int j = 0; j < nqueriesForThisSubject; j++){
 			const auto& currentResult = mybuffers.h_results.get()[candidateIndex];
-			alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
+			/*alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
 										mybuffers.h_ops.get() + candidateIndex * max_ops_per_alignment, 
-										true);
+										true);*/
+			alignments[outputindex][j].setDataFromAlignResultCompact(currentResult);
 			candidateIndex++; 
 		}			
 	}

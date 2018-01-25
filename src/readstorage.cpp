@@ -88,7 +88,7 @@
 		sequences[id].resize(indexInVector+1);
 		reverseComplSequences[id].resize(indexInVector+1);
 
-		Sequence seq{read.sequence, true};  
+		Sequence seq(read.sequence);  
 		std::string q(read.quality);
 
 		headers[id][indexInVector] = std::move(read.header);

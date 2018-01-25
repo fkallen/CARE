@@ -5,6 +5,8 @@
 
 #include <string>
 
+namespace hammingvote{
+
 void hamming_vote_global_init();
 
 std::string cpu_hamming_vote(const std::string& subject, 
@@ -34,6 +36,8 @@ int cpu_hamming_vote_new(std::string& subject,
 				double errorrate,
 				double m,
 				int k);
+
+}
 
 
 #endif
