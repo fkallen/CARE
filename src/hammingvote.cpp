@@ -216,7 +216,7 @@ int cpu_hamming_vote_new(std::string& subject,
 			subject[i] = consensus[subjectColumnsBegin_incl + i];
 		}
 #endif
-#if 0
+#if 1
 		//correct candidates
 		if(correctQueries){
 			

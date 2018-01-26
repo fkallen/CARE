@@ -1290,8 +1290,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 											std::string header = *readStorage.fetchHeader_ptr(candidateId);
 											resultstringstream << (candidateId) << ' ';
 
-											resultstringstream << header << '\n'
-											  << s << '\n';
+											resultstringstream << header << '\n';
+
+											if(forwardRead[j])
+												resultstringstream << s << '\n';
+											else{ //s is reverse complement, make reverse complement again
+												std::string fwd = SequenceGeneral(s, false).reverseComplement().toString();
+												resultstringstream << fwd << '\n';
+											}
 
 											if(inputfileformat == Fileformat::FASTQ){
 												if(forwardRead[j])
