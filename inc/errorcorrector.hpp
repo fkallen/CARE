@@ -22,7 +22,10 @@
 #include <condition_variable>
 #include <tuple>
 
-#define USE_QUALITY_SCORES
+//#define USE_QUALITY_SCORES
+
+
+enum class CorrectionMode {Hamming, Graph};
 
 class Barrier
 {

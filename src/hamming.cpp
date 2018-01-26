@@ -476,7 +476,7 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 
 			// check best configuration again and save position of substitutions
 			int opnr = 0;
-			for(int j = queryoverlapbegin_incl; j < queryoverlapend_excl; j++){
+			/*for(int j = queryoverlapbegin_incl; j < queryoverlapend_excl; j++){
 				const bool mismatch = cuda_encoded_accessor(sr1, subjectbases, j + bestShift) != cuda_encoded_accessor(sr2, querybases, j);
 
 				if(mismatch){
@@ -484,7 +484,9 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 					my_ops_out[opnr] = op;
 					opnr++;
 				}		
-			}
+			}*/
+
+			opnr = bestScore - totalbases + overlapsize;
 
 			result.score = bestScore;
 			result.subject_begin_incl = max(0, bestShift);

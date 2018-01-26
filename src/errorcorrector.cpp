@@ -1843,47 +1843,47 @@ void ErrorCorrector::getMultipleAlignments(int threadId, const std::vector<const
 				mybuffers.h_subjectsdata.get(), 
 				sizeof(char) * totalQueryBytes, 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_queriesdata.get(),
 				mybuffers.h_queriesdata.get(), 
 				sizeof(char) * totalCandidateBytes, 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_cBytesPrefixSum.get(),
 				mybuffers.h_cBytesPrefixSum.get(), 
 				sizeof(int) * (totalNumberOfAlignments + 1), 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_cLengths.get(),
 				mybuffers.h_cLengths.get(), 
 				sizeof(int) * totalNumberOfAlignments, 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_cIsEncoded.get(),
 				mybuffers.h_cIsEncoded.get(), 
 				sizeof(int) * totalNumberOfAlignments, 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_rBytesPrefixSum.get(),
 				mybuffers.h_rBytesPrefixSum.get(), 
 				sizeof(int) * (numberOfRealSubjects + 1), 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_rLengths.get(),
 				mybuffers.h_rLengths.get(), 
 				sizeof(int) * numberOfRealSubjects, 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_rIsEncoded.get(),
 				mybuffers.h_rIsEncoded.get(), 
 				sizeof(int) * numberOfRealSubjects, 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 		cudaMemcpyAsync(mybuffers.d_r2PerR1.get(),
 				mybuffers.h_r2PerR1.get(), 
 				sizeof(int) * (numberOfRealSubjects + 1), 
 				H2D, 
-				mybuffers.stream); CUERR; cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
+				mybuffers.stream); CUERR;// cudaStreamSynchronize(alignerData[threadId].stream); CUERR;
 
 		size_t smem = cuda_semi_global_align_getSharedMemSize(maximumQueryLength, maximumCandidateLength);
 

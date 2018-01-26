@@ -151,9 +151,6 @@ struct AlignResult{
 
 
 
-
-
-
 #ifdef __CUDACC__
 
 struct AlignerDataArrays{
@@ -385,6 +382,19 @@ struct AlignerDataArrays{
 	}
 
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 #endif
