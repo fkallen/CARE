@@ -115,6 +115,10 @@ namespace hammingtools{
 		printf("max_n_subjects %d\n", mybuffers.max_n_subjects);
 		printf("max_n_queries %d\n", mybuffers.max_n_queries);
 	}
+	
+	void init_once(){
+        hammingtools::correction::init_once();
+    }
 
 	std::vector<std::vector<AlignResult>> 
 	getMultipleAlignments(SHDdata& mybuffers, 

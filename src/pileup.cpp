@@ -200,6 +200,16 @@ namespace hammingtools{
 			bool isHQ = avg_support >= 1-errorrate
 				 && min_support >= 1-3*errorrate
 				 && min_coverage >= m / 2.0 * estimatedCoverage;
+                 
+                 
+           /*      std::cout << "ishq " << isHQ << std::endl;
+                 			std::cout << "avgsup " << avg_support << " >= " << (1-errorrate) << '\n';
+			std::cout << "minsup " << min_support << " >= " << (1-2*errorrate) << '\n';
+			std::cout << "mincov " << min_coverage << " >= " << (m) << '\n';
+			std::cout << "maxcov " << max_coverage << " <= " << (3*m) << '\n';
+			std::cout << "subjectColumnsBegin_incl " << subjectColumnsBegin_incl  << '\n';
+			std::cout << "subjectColumnsEnd_excl " << subjectColumnsEnd_excl  << '\n';
+			std::cout << "------------------------------------------------" << '\n';*/
 
 			if(isHQ){
 		#if 1

@@ -39,7 +39,11 @@ struct SHDdata{
 	void resize(int n_sub, int n_quer);
 };
 
+void print_SHDdata(const SHDdata& data);
+
 void cuda_cleanup_SHDdata(SHDdata& data);
+
+void init_once();
 
 //we assume that each sequence has the same length and same number of bytes which is specified in SHDdata buffer if useGPU = true
 std::vector<std::vector<AlignResult>> getMultipleAlignments(SHDdata& buffer, const std::vector<const Sequence*>& subjects,
