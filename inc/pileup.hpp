@@ -15,7 +15,7 @@ namespace hammingtools{
 		int correct_cpu(std::string& subject,
 				int nQueries, 
 				std::vector<std::string>& queries,
-				const std::vector<AlignResult>& alignments,
+				const std::vector<AlignResultCompact>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,

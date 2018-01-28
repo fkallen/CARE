@@ -120,7 +120,7 @@ namespace hammingtools{
         hammingtools::correction::init_once();
     }
 
-	std::vector<std::vector<AlignResult>> 
+	std::vector<std::vector<AlignResultCompact>> 
 	getMultipleAlignments(SHDdata& mybuffers, 
 					const std::vector<const Sequence*>& subjects,
 					const std::vector<std::vector<const Sequence*>>& queries,
@@ -140,7 +140,7 @@ namespace hammingtools{
 			}
 		}
 
-		std::vector<std::vector<AlignResult>> alignments(subjects.size());
+		std::vector<std::vector<AlignResultCompact>> alignments(subjects.size());
 
 		// check for empty input
 		if(totalNumberOfAlignments == 0){
@@ -238,7 +238,7 @@ namespace hammingtools{
 				alignments[outputindex].resize(nqueriesForThisSubject);
 
 				for(int j = 0; j < nqueriesForThisSubject; j++){
-					alignments[outputindex][j].arc = mybuffers.h_results[candidateIndex];
+					alignments[outputindex][j] = mybuffers.h_results[candidateIndex];
 					candidateIndex++; 
 				}			
 			}
@@ -259,7 +259,7 @@ namespace hammingtools{
 						const char* query =  (const char*)queries[i][j]->begin();
 						int nq = queries[i][j]->getNbases();
 
-						alignments[i][j].arc = alignment::cpu_shifted_hamming_distance(subject, query, ns, nq);
+						alignments[i][j] = alignment::cpu_shifted_hamming_distance(subject, query, ns, nq);
 					}
 				}
 			}
@@ -275,7 +275,7 @@ namespace hammingtools{
 	int performCorrection(std::string& subject,
 				int nQueries, 
 				std::vector<std::string>& queries,
-				const std::vector<AlignResult>& alignments,
+				const std::vector<AlignResultCompact>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,

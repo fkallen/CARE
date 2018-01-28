@@ -408,42 +408,6 @@ TIMERSTOPCPU(readstorage_transform);
 	}
 #endif
 
-
-    std::vector<const Sequence*> queries;
-    std::vector<std::vector<const Sequence*>> candidates(1);
-    std::vector<std::vector<AlignResult>> alignmentsold(1);
-    std::vector<std::vector<AlignResult>> alignmentsnew(1);
-    std::vector<bool> activeBatches(1,true);
-    
-    std::chrono::duration<double> a(0);
-    std::chrono::duration<double> s(0);
-    std::chrono::duration<double> d(0);
-    
-    Sequence q("AGCAGTTAACCGGTGCACCGCCATACAGTTGGGTTTGATCCGGATCGACCACCACAATATCCACCAGATAACCCGGAATACGGACAGATTTAGGATGCAGC");
-    Sequence c("TCCGGATCGACCACCACAATATCCACCAGATAACCCGGAATACGGACAGATTTAGGATGCAGCGTGGCTTTCTTAACCATTTTCTGCACCTGCATCATCAC");
-    
-    queries.push_back(&q);
-    candidates[0].push_back(&c);
-    
-    getMultipleAlignments(0, 
-            queries,
-            candidates,
-            alignmentsold,
-            activeBatches,
-            a, s, d);  
-    
-    hammingtools::SHDdata buffer(0, 101);
-    
-    alignmentsnew = hammingtools::getMultipleAlignments(buffer, queries,
-			   candidates,
-			   activeBatches, true);
-    
-    
-
-
-
-
-
 	std::cout << "begin correct" << std::endl;
 
 	TIMERSTARTCPU(CORRECT);	
@@ -1078,21 +1042,28 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #if 1
 
 		if(correctionmode == CorrectionMode::Hamming){  
-            alignmentResults = hammingtools::getMultipleAlignments(shddata, queries,
+            auto alignments = hammingtools::getMultipleAlignments(shddata, queries,
                                                 candidateReadsAndRevcompls,
                                                 activeBatches, true);
+			
+#ifdef ERRORCORRECTION_TIMING
+			tpb = std::chrono::system_clock::now();
+			getAlignmentsTimeTotal += tpb - tpa;
+			
+			tpa = std::chrono::system_clock::now();
+#endif
             
             for(std::uint32_t i = 0; i < actualBatchSize; i++){
                 if(activeBatches[i]){	
-                    if(alignmentResults[i].size() != candidateReadsAndRevcompls[i].size()){
+                    if(alignments[i].size() != candidateReadsAndRevcompls[i].size()){
                         std::cout << readnum << '\n';
-                        assert(alignmentResults[i].size() == candidateReadsAndRevcompls[i].size());
+                        assert(alignments[i].size() == candidateReadsAndRevcompls[i].size());
                     }
             
                     // for each candidate, compare its alignment to the alignment of the reverse complement. 
 					// find the best of both, if any, and
 					// save the best alignment + additional data in these vectors
-					std::vector<AlignResult> insertedAlignments;
+					std::vector<AlignResultCompact> insertedAlignments;
 					std::vector<const Sequence*> insertedSequences;
 					std::vector<std::uint64_t> insertedCandidateIds;
 					std::vector<int> insertedFreqs;
@@ -1106,13 +1077,13 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					int bad = 0;
 					int fc = 0;
 
-					for(size_t j = 0; j < alignmentResults[i].size() / 2; j++){
-						auto& res = alignmentResults[i][j];	
-						auto& revcomplres = alignmentResults[i][candidateReads[i].size() + j];
+					for(size_t j = 0; j < alignments[i].size() / 2; j++){
+						auto& res = alignments[i][j];	
+						auto& revcomplres = alignments[i][candidateReads[i].size() + j];
 		
 						int candidatelength = candidateReads[i][j]->getNbases();
 
-						BestAlignment_t best = get_best_alignment(res.arc, revcomplres.arc, 
+						BestAlignment_t best = get_best_alignment(res, revcomplres, 
 											querylength, candidatelength,
 											MAX_MISMATCH_RATIO, MIN_OVERLAP, 
 											MIN_OVERLAP_RATIO);
@@ -1121,7 +1092,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 						if(best == BestAlignment_t::Forward){
 							bool useIt = true;
-							const double mismatchratio = double(res.arc.nOps) / double(res.arc.overlap);
+							const double mismatchratio = double(res.nOps) / double(res.overlap);
 
 							if(mismatchratio < 2*errorrate){
 								counts[0] += f;
@@ -1153,7 +1124,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							
 						}else if(best == BestAlignment_t::ReverseComplement){
 							bool useIt = true;
-							const double mismatchratio = double(revcomplres.arc.nOps) / double(revcomplres.arc.overlap);
+							const double mismatchratio = double(revcomplres.nOps) / double(revcomplres.overlap);
 
 							if(mismatchratio < 2*errorrate){
 								counts[0] += f;
@@ -1247,7 +1218,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						auto it2 = insertedCandidateIds.begin();
 						for(size_t k = 0; k < insertedAlignments.size(); k++){
 							auto& a = insertedAlignments[k];
-							const double mismatchratio = double(a.arc.nOps) / double(a.arc.overlap);
+							const double mismatchratio = double(a.nOps) / double(a.overlap);
 							if(mismatchratio < mismatchratioThreshold){
 								insertedAlignments[newindex] = std::move(a);
 								insertedSequences[newindex] = insertedSequences[k];
@@ -1384,9 +1355,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					}
                 }
             }
+#ifdef ERRORCORRECTION_TIMING
+			tpb = std::chrono::system_clock::now();
+			correctReadTimeTotal += tpb - tpa;
+#endif
 	
 		}else{
 			std::cout << "ERROR\n";
+			assert(false);
 			getMultipleAlignments(threadId, 
 					queries,
 					candidateReadsAndRevcompls,
@@ -1398,14 +1374,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		}
 
 		//std::exit(-1);
-#endif
-
-
-#ifdef ERRORCORRECTION_TIMING
-		tpb = std::chrono::system_clock::now();
-		getAlignmentsTimeTotal += tpb - tpa;
-		
-		tpa = std::chrono::system_clock::now();
 #endif
 
 #if 0
@@ -1561,18 +1529,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 #endif
 
-#ifdef ERRORCORRECTION_TIMING
-		tpb = std::chrono::system_clock::now();
-		correctReadTimeTotal += tpb - tpa;
-
-		tpa = std::chrono::system_clock::now();
-#endif
 #endif
 
-#ifdef ERRORCORRECTION_TIMING
-		tpb = std::chrono::system_clock::now();
-		outputbufferTimeTotal += tpb - tpa;
-#endif
 
 		
 		// write result to output file if output buffer is full

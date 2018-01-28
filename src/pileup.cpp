@@ -32,7 +32,7 @@ namespace hammingtools{
 		int correct_cpu(std::string& subject,
 						int nQueries, 
 						std::vector<std::string>& queries,
-						const std::vector<AlignResult>& alignments,
+						const std::vector<AlignResultCompact>& alignments,
 						const std::string& subjectqualityScores, 
 						const std::vector<std::string>& queryqualityScores,
 						const std::vector<int>& frequenciesPrefixSum,
@@ -55,10 +55,10 @@ namespace hammingtools{
 			int endindex = subject.length();
 			std::vector<double> defaultWeightsPerQuery(queries.size());
 			for(int i = 0; i < nQueries; i++){
-				startindex = alignments[i].arc.shift < startindex ? alignments[i].arc.shift : startindex;
-				int queryEndsAt = queryqualityScores[i].length() + alignments[i].arc.shift;
+				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
+				int queryEndsAt = queryqualityScores[i].length() + alignments[i].shift;
 				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
-				defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].arc.nOps / (alignments[i].arc.overlap * maxErrorRate));
+				defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
 				correctedQueries[i] = false;
 			}
 
@@ -98,7 +98,7 @@ namespace hammingtools{
 
 				//count query bases
 				for(int j = 0; j < nQueries; j++){
-					const int baseindex = i - alignments[j].arc.shift;
+					const int baseindex = i - alignments[j].shift;
 
 					if(baseindex >= 0 && baseindex < int(queries[j].length())){ //check query boundary
 						double qweight = defaultWeightsPerQuery[j];
@@ -223,7 +223,7 @@ namespace hammingtools{
 				if(correctQueries){
 			
 					for(int i = 0; i < nQueries; i++){
-						int queryColumnsBegin_incl = alignments[i].arc.shift - startindex;
+						int queryColumnsBegin_incl = alignments[i].shift - startindex;
 						bool queryWasCorrected = false;
 						//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
 						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols 

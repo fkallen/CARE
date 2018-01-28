@@ -46,14 +46,14 @@ void cuda_cleanup_SHDdata(SHDdata& data);
 void init_once();
 
 //we assume that each sequence has the same length and same number of bytes which is specified in SHDdata buffer if useGPU = true
-std::vector<std::vector<AlignResult>> getMultipleAlignments(SHDdata& buffer, const std::vector<const Sequence*>& subjects,
+std::vector<std::vector<AlignResultCompact>> getMultipleAlignments(SHDdata& buffer, const std::vector<const Sequence*>& subjects,
 			   const std::vector<std::vector<const Sequence*>>& queries,
 			   std::vector<bool> activeBatches, bool useGpu);
 
 int performCorrection(std::string& subject,
 				int nQueries, 
 				std::vector<std::string>& queries,
-				const std::vector<AlignResult>& alignments,
+				const std::vector<AlignResultCompact>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<std::string>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
