@@ -12,6 +12,10 @@
 
 #include "../inc/hammingvote.hpp"
 
+
+
+#include "../inc/hammingtools.hpp"
+
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -23,6 +27,7 @@
 #include <mutex>
 #include <chrono>
 #include <iterator>
+#include <future>
 
 #include <fstream>
 #include <sstream>
@@ -72,6 +77,9 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 	: minhashparams(minhashparameters), nInserterThreads(nInserterThreads_),  nCorrectorThreads(nCorrectorThreads_) 
 		, outputPath("")
 {
+    cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
+	correctionmode = CorrectionMode::Hamming;
+
 	minhasher.minparams = minhashparameters;
 
 	readStorage = ReadStorage(nInserterThreads);
@@ -121,6 +129,9 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 
 	std::cout << corrected << std::endl;
 #endif
+    
+    
+  
 
 
 #ifdef __CUDACC__
@@ -395,6 +406,42 @@ TIMERSTOPCPU(readstorage_transform);
 	}
 #endif
 
+
+    std::vector<const Sequence*> queries;
+    std::vector<std::vector<const Sequence*>> candidates(1);
+    std::vector<std::vector<AlignResult>> alignmentsold(1);
+    std::vector<std::vector<AlignResult>> alignmentsnew(1);
+    std::vector<bool> activeBatches(1,true);
+    
+    std::chrono::duration<double> a(0);
+    std::chrono::duration<double> s(0);
+    std::chrono::duration<double> d(0);
+    
+    Sequence q("AGCAGTTAACCGGTGCACCGCCATACAGTTGGGTTTGATCCGGATCGACCACCACAATATCCACCAGATAACCCGGAATACGGACAGATTTAGGATGCAGC");
+    Sequence c("TCCGGATCGACCACCACAATATCCACCAGATAACCCGGAATACGGACAGATTTAGGATGCAGCGTGGCTTTCTTAACCATTTTCTGCACCTGCATCATCAC");
+    
+    queries.push_back(&q);
+    candidates[0].push_back(&c);
+    
+    getMultipleAlignments(0, 
+            queries,
+            candidates,
+            alignmentsold,
+            activeBatches,
+            a, s, d);  
+    
+    hammingtools::SHDdata buffer(0, 101);
+    
+    alignmentsnew = hammingtools::getMultipleAlignments(buffer, queries,
+			   candidates,
+			   activeBatches, true);
+    
+    
+
+
+
+
+
 	std::cout << "begin correct" << std::endl;
 
 	TIMERSTARTCPU(CORRECT);	
@@ -472,46 +519,55 @@ void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 	progress = 0;
 
 #else
-	std::vector<std::thread> inserterThreads;
+
+	std::vector<std::future<int>> inserterThreads;
 	progress = 0;
 
 	for (int threadId = 0; threadId < nInserterThreads; ++threadId) {
 
-		inserterThreads.emplace_back([&, threadId](){
+		inserterThreads.emplace_back(
+			std::async(std::launch::async, [&, threadId]()->int{
 
-			std::uint64_t progressprocessedReads = 0;
-			std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
+				std::uint64_t progressprocessedReads = 0;
+				std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
 
-			std::pair<Read, std::uint32_t> pair = buffers[threadId].get();
+				int maxlength = 0;
 
-			while (pair != buffers[threadId].defaultValue) {
-				Read& read = pair.first;
-				const std::uint32_t& readnum = pair.second;
+				std::pair<Read, std::uint32_t> pair = buffers[threadId].get();
 
-				//replace 'N' with 'A'
-				for(auto& c : read.sequence)
-					if(c == 'N')
-						c = 'A';
+				while (pair != buffers[threadId].defaultValue) {
+					Read& read = pair.first;
+					const std::uint32_t& readnum = pair.second;
 
-				if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
+					//replace 'N' with 'A'
+					for(auto& c : read.sequence)
+						if(c == 'N')
+							c = 'A';
+					if(int(read.sequence.length()) > maxlength)
+						maxlength = read.sequence.length();
+					
 
-				readStorage.insertRead(readnum, read);
+					if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
 
-				pair = buffers[threadId].get();
+					readStorage.insertRead(readnum, read);
 
-				progressprocessedReads += 1;
+					pair = buffers[threadId].get();
 
-				// update global progress
-				if(progressprocessedReads > 3*progressThreshold){
-					updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
-					progressprocessedReads = 0;
+					progressprocessedReads += 1;
+
+					// update global progress
+					if(progressprocessedReads > 3*progressThreshold){
+						updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
+						progressprocessedReads = 0;
+					}
+
 				}
 
-			}
-		});
+				return maxlength;
+			})
+		);
 
 	}
-
 
 	std::unique_ptr<ReadReader> reader;
 
@@ -538,12 +594,25 @@ void ErrorCorrector::insertFile(const std::string& filename, bool buildHashmap)
 	}
 // producer done
 
-	for (size_t i = 0; i < inserterThreads.size(); ++i ) {
+	/*for (size_t i = 0; i < inserterThreads.size(); ++i ) {
 		inserterThreads[i].join();
 		//printf("buffer %d: addWait: %lu, addNoWait: %lu, getWait: %lu, getNoWait: %lu\n", 
 		//	i, buffers[i].addWait, buffers[i].addNoWait, buffers[i].getWait, buffers[i].getNoWait);
 		buffers[i].reset();
+	}*/
+
+	int maxlen = 0;
+
+	for (size_t i = 0; i < inserterThreads.size(); ++i ) {
+		int res = inserterThreads[i].get();
+		if(res > maxlen)
+			maxlen = res;
+		buffers[i].reset();
 	}
+
+	std::cout << "max sequence length in file: " << maxlen << '\n';
+
+	maximum_sequence_length = maxlen;
 
 	progress = 0;
 
@@ -744,6 +813,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	// candidates which were corrected, too, during query correction
 	int nCorrectedCandidates = 0;
 	int nProcessedQueries = 0;
+
+	//TODO length and bytes
+	hammingtools::SHDdata shddata(deviceIds.size() == 0 ? 0 : threadId % deviceIds.size(), maximum_sequence_length);
 
 	// the query sequences fetched from ReadStorage
 	std::vector<const Sequence*> queries(batchsize);
@@ -1002,12 +1074,23 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 		// perform alignment
 #if 1
-		getMultipleAlignments(threadId, 
+
+		if(correctionmode == CorrectionMode::Hamming){  
+            alignmentResults = hammingtools::getMultipleAlignments(shddata, queries,
+                                                candidateReadsAndRevcompls,
+                                                activeBatches, true);
+	
+		}else{
+			std::cout << "ERROR\n";
+			getMultipleAlignments(threadId, 
 					queries,
 					candidateReadsAndRevcompls,
 		   			alignmentResults,
 					activeBatches,
 					H2DTimeTotal, D2HTimeTotal, kernelTimeTotal);
+		}
+
+		//std::exit(-1);
 #endif
 
 
@@ -1021,8 +1104,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #if 1
 		// perform error correction
 		for(std::uint32_t i = 0; i < actualBatchSize; i++){
-			if(activeBatches[i]){								
-				assert(alignmentResults[i].size() == candidateReadsAndRevcompls[i].size());
+			if(activeBatches[i]){	
+				if(alignmentResults[i].size() != candidateReadsAndRevcompls[i].size()){
+					std::cout << readnum << '\n';
+					assert(alignmentResults[i].size() == candidateReadsAndRevcompls[i].size());
+				}
 
 				
 				if(aligner->type == AlignerType::ShiftedHamming){
@@ -1564,6 +1650,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	//free alignment buffers
 	alignerData[threadId].clear();
 #endif	
+
+	hammingtools::cuda_cleanup_SHDdata(shddata);
 
 #ifdef ERRORCORRECTION_TIMING
 	{

@@ -11,6 +11,16 @@
 */
 
 
+		HOSTDEVICEQUALIFIER
+		char twobitToChar(char bits){
+			if(bits == 0x00) return 'A';
+			if(bits == 0x01) return 'C';
+			if(bits == 0x02) return 'G';
+			if(bits == 0x03) return 'T';
+			return '_';
+		}
+
+
 template<class Accessor1, class Accessor2>
 AlignResult cpu_shifted_hamming_distance_internal(const char* subject, const char* query, int ns, int nq){
 
@@ -210,8 +220,10 @@ template<bool enc1, bool enc2>
 __device__
 void cuda_hamming_core(const char* subject, const char* query, int subjectbases, int querybases, int& bestScore, int& bestShift){
 	const int totalbases = subjectbases + querybases;
-
+//if(threadIdx.x == 0){
+    //printf("subjectbases %d querybases %d totalbases %d\n", subjectbases, querybases, totalbases);
 	for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += blockDim.x){
+    //for(int shift = -querybases + 1; shift < subjectbases; shift ++){
 		//const int queryoverlapbegin_incl = max(-shift, 0);
 		//const int queryoverlapend_excl = min(querybases, subjectbases - shift);
 		//const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
@@ -231,12 +243,14 @@ void cuda_hamming_core(const char* subject, const char* query, int subjectbases,
 		}
 
 		score += totalbases - overlapsize;
-
+        //printf("score %d overlapsize %d\n", score, overlapsize);
 		if(score < bestScore){
 			bestScore = score;
 			bestShift = shift;
 		}
 	}
+	//printf("over\n");
+//}
 }
 
 
@@ -292,7 +306,7 @@ void cuda_shifted_hamming_distance_general(AlignResultCompact* result_out, Align
 
 		for(int threadid = threadIdx.x; threadid < querybytes; threadid += blockDim.x){
 			sr2[threadid] = query[threadid];
-		}	
+		}
 
 		__syncthreads(); //setup complete
 
@@ -450,6 +464,8 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 		// pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
 		static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
+        
+        //printf("thread %d, bestScore %d, bestShift %d\n", threadIdx.x, bestScore, bestShift);
 	
 		int2 myval = make_int2(bestScore, bestShift);
 		int2 reduced;
@@ -495,6 +511,18 @@ void cuda_shifted_hamming_distance(AlignResultCompact* result_out, AlignOp* ops_
 			result.shift = bestShift;
 			result.nOps = opnr;
 			result.isNormalized = false;
+
+			/*if(blockIdx.x == 0 && threadIdx.x == 0){
+				printf("%d %d %d %d %d %d\n", globalCandidateId, queryoverlapbegin_incl, overlapsize, bestScore, opnr, totalbases);
+				for(int i = 0; i < subjectbases; i++){
+					printf("%c", cuda_encoded_accessor(sr1, subjectbases, i));
+				}
+				printf("\n");
+				for(int i = 0; i < querybases; i++){
+					printf("%c", cuda_encoded_accessor(sr2, querybases, i));
+				}
+				printf("\n");
+			}*/
 
 			*my_result_out = result;
 		}
@@ -549,6 +577,9 @@ void call_cuda_shifted_hamming_distance_kernel_async(AlignResultCompact* result_
 
 	dim3 block(std::min(128, 32 * SDIV(maxQueryLength+1, 32)), 1, 1);
 	dim3 grid(nqueries, 1, 1);
+
+	/*dim3 block(32,1,1);
+	dim3 grid(1,1,1);*/
 
 	size_t smem = cuda_shifted_hamming_distance_getSharedMemSize(maxSubjectLength, maxQueryLength);
 

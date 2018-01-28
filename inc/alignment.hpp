@@ -260,7 +260,7 @@ struct AlignerDataArrays{
 			d_rBytesPrefixSum = make_unique_dev<int>(deviceId, res+1);
 			d_rLengths = make_unique_dev<int>(deviceId, res);
 			d_rIsEncoded = make_unique_dev<int>(deviceId, res);
-			d_r2PerR1 = make_unique_dev<int>(deviceId, res);
+			d_r2PerR1 = make_unique_dev<int>(deviceId, res+1);
 
 			h_results = make_unique_pinned<AlignResultCompact>(res);
 			h_cBytesPrefixSum = make_unique_pinned<int>(res+1);
@@ -269,7 +269,7 @@ struct AlignerDataArrays{
 			h_rBytesPrefixSum = make_unique_pinned<int>(res+1);
 			h_rLengths = make_unique_pinned<int>(res);
 			h_rIsEncoded = make_unique_pinned<int>(res);
-			h_r2PerR1 = make_unique_pinned<int>(res);
+			h_r2PerR1 = make_unique_pinned<int>(res+1);
 
 			results_size = res;
 		}

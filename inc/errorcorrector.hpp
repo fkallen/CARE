@@ -843,6 +843,9 @@ private:
 	double errorrate;
 	double m_coverage;
 
+	CorrectionMode correctionmode = CorrectionMode::Hamming;
+	int maximum_sequence_length = 0;
+
 };
 
 #endif

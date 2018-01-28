@@ -8,48 +8,61 @@
 
 namespace hammingtools{
 
-//assumes subject and queries to have same length and same number of bytes
-
 struct SHDdata{
 
-	AlignResultCompact* d_results;
-	char* d_subjectsdata;
-	char* d_queriesdata;
-	int* d_queriesPerSubject;
+	AlignResultCompact* d_results = nullptr;
+	char* d_subjectsdata = nullptr;
+	char* d_queriesdata = nullptr;
+	int* d_queriesPerSubject = nullptr;
+	int* d_lengths = nullptr; //first n_subjects entries are lengths of subjects
 
-	AlignResultCompact* h_results;
-	char* h_subjectsdata;
-	char* h_queriesdata;
-	int* h_queriesPerSubject;
+	AlignResultCompact* h_results = nullptr;
+	char* h_subjectsdata = nullptr;
+	char* h_queriesdata = nullptr;
+	int* h_queriesPerSubject = nullptr;
+	int* h_lengths = nullptr; //first n_subjects entries are lengths of subjects
 
-#ifdef __CUDACC__
+#ifdef __NVCC__
 	cudaStream_t stream = nullptr;
 #endif
-	int deviceId;
-	size_t sequencepitch;
-	int sequencelength;
-	int sequencebytes;
-	int n_subjects;
-	int n_queries;
-	int max_n_subjects;
-	int max_n_queries;
+	int deviceId = -1;
+	size_t sequencepitch = 0;
+	int max_sequence_length = 0;
+	int max_sequence_bytes = 0;
+	int n_subjects = 0;
+	int n_queries = 0;
+	int max_n_subjects = 0;
+	int max_n_queries = 0;
 
-	SHDdata(int deviceId_, int seqlength, int seqbytes);
+	SHDdata(int deviceId_, int maxseqlength);
 
 	void resize(int n_sub, int n_quer);
 };
 
-struct SHDAligner{
-
-	SHDAligner();
-
-	//we assume that each sequence has the same length and same number of bytes which is specified in SHDdata buffer if useGPU = true
-	std::vector<std::vector<AlignResult>> getMultipleAlignments(SHDdata& buffer, const std::vector<const Sequence*>& subjects,
-				   const std::vector<std::vector<const Sequence*>>& queries,
-				   std::vector<bool> activeBatches, bool useGpu) const;
-};
-
 void cuda_cleanup_SHDdata(SHDdata& data);
+
+//we assume that each sequence has the same length and same number of bytes which is specified in SHDdata buffer if useGPU = true
+std::vector<std::vector<AlignResult>> getMultipleAlignments(SHDdata& buffer, const std::vector<const Sequence*>& subjects,
+			   const std::vector<std::vector<const Sequence*>>& queries,
+			   std::vector<bool> activeBatches, bool useGpu);
+
+int performCorrection(std::string& subject,
+				int nQueries, 
+				std::vector<std::string>& queries,
+				const std::vector<AlignResult>& alignments,
+				const std::string& subjectqualityScores, 
+				const std::vector<std::string>& queryqualityScores,
+				const std::vector<int>& frequenciesPrefixSum,
+				double maxErrorRate,
+				bool useQScores,
+				std::vector<bool>& correctedQueries,
+				bool correctQueries_,
+				int estimatedCoverage,
+				double errorrate,
+				double m,
+				int kmerlength);
+
+
 
 
 

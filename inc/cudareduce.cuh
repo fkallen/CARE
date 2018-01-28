@@ -21,32 +21,52 @@ __device__ void blockreduce(S *result, S localvalue, Func func){
     // each thread puts its local sum into shared memory
     sdata[tid] = localvalue;
     __syncthreads();
+    /*if(threadIdx.x == 0){
+        for(int i = 0; i < MAX_BLOCK_DIM_X_; i++)
+            printf("%d %d\n", i, (*((int2*)&sdata[i])).x);
+    }
+    __syncthreads();*/
+    
 
     // do reduction in shared mem
     if ((blockDim.x >= 1024) && (tid < 512)){
         sdata[tid] = myValue = func(myValue, sdata[tid + 512]);
     }
     __syncthreads();
+    /*if(threadIdx.x == 0)
+        printf("step\n");
+    __syncthreads();*/
 
     if ((blockDim.x >= 512) && (tid < 256)){
         sdata[tid] = myValue = func(myValue, sdata[tid + 256]);
     }
     __syncthreads();
+    /*if(threadIdx.x == 0)
+        printf("step\n");
+    __syncthreads();*/
 
     if ((blockDim.x >= 256) && (tid < 128)){
             sdata[tid] = myValue = func(myValue, sdata[tid + 128]);
     }
      __syncthreads();
+    /*if(threadIdx.x == 0)
+        printf("step\n");
+    __syncthreads();*/
 
     if ((blockDim.x >= 128) && (tid <  64)){
        sdata[tid] = myValue = func(myValue, sdata[tid +  64]);
     }
     __syncthreads();
-
+    /*if(threadIdx.x == 0)
+        printf("step\n");
+    __syncthreads();*/
 #if (__CUDA_ARCH__ >= 300 )
     if ( tid < 32 ){
         // Fetch final intermediate sum from 2nd warp
         if (blockDim.x >=  64) myValue = func(myValue, sdata[tid + 32]);
+    /*if(threadIdx.x == 0)
+        printf("step\n");
+    __syncthreads();*/
         // Reduce final warp using shuffle
         #pragma unroll
         for (int offset = WARP_SIZE/2; offset > 0; offset /= 2){
@@ -56,6 +76,9 @@ __device__ void blockreduce(S *result, S localvalue, Func func){
             unsigned mask = __activemask();
             myValue = func(myValue, __shfl_down_sync(mask, myValue, offset));
 #endif
+    /*if(threadIdx.x == 0)
+        printf("step\n");
+    __syncthreads();*/
         }
 
     }

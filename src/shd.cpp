@@ -18,6 +18,15 @@ namespace hammingtools{
 			return (data[byte] >> (3-basepos) * 2) & 0x03;
 		}
 
+		HOSTDEVICEQUALIFIER
+		char twobitToChar(char bits){
+			if(bits == 0x00) return 'A';
+			if(bits == 0x01) return 'C';
+			if(bits == 0x02) return 'G';
+			if(bits == 0x03) return 'T';
+			return '_';
+		}
+
 		AlignResultCompact cpu_shifted_hamming_distance(const char* subject, const char* query, int ns, int nq){
 			const int totalbases = ns + nq;
 			int bestScore = totalbases; // score is number of mismatches
@@ -61,6 +70,7 @@ namespace hammingtools{
 
 #ifdef __NVCC__
 
+		template<int BLOCKSIZE>
 		__global__
 		void cuda_shifted_hamming_distance(SHDdata buffers){
 
@@ -68,7 +78,7 @@ namespace hammingtools{
 
 			/* set up shared memory */
 			char* sr1 = (char*)(smem);
-			char* sr2 = (char*)(sr1 + buffers.sequencelength);
+			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
 
 			for(int globalQueryId = blockIdx.x; globalQueryId < buffers.n_queries; globalQueryId += gridDim.x){
 
@@ -89,50 +99,66 @@ namespace hammingtools{
 				const char* subject = buffers.d_subjectsdata + subjectId * buffers.sequencepitch;
 				const char* query = buffers.d_queriesdata + globalQueryId * buffers.sequencepitch;
 
-				for(int threadid = threadIdx.x; threadid < buffers.sequencepitch; threadid += blockDim.x){
+				for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += BLOCKSIZE){
 					sr1[threadid] = subject[threadid];
 					sr2[threadid] = query[threadid];			
 				}
 
 				__syncthreads(); //setup complete
+                
+                
 
 				//begin SHD algorithm
 
-				const int subjectbases = buffers.sequencelength;
-				const int querybases = buffers.sequencelength;
+				const int subjectbases = buffers.d_lengths[subjectId];
+				const int querybases = buffers.d_lengths[buffers.n_subjects + globalQueryId];
 
 				const int totalbases = subjectbases + querybases;
 				int bestScore = totalbases; // score is number of mismatches
 				int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
-
-				for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += blockDim.x){
+                assert(blockDim.x == BLOCKSIZE);
+				//if(threadIdx.x == 0){
+                //    printf("subjectbases %d querybases %d totalbases %d\n", subjectbases, querybases, totalbases);
+				for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += BLOCKSIZE){
+                //for(int shift = -querybases + 1; shift < subjectbases; shift ++){
 					const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
 					int score = 0;
 
 					for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
-						score += encoded_accessor(subject, subjectbases, j + shift) != encoded_accessor(query, querybases, j);	
+						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);	
 					}
 
 					score += totalbases - overlapsize;
-
+                    //printf("shift %d score %d\n", shift, score);
 					if(score < bestScore){
 						bestScore = score;
 						bestShift = shift;
 					}
 				}
 
+
 				// perform reduction to find smallest score in block. the corresponding shift is required, too
 				// pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
 				static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
+                
+                
 	
 				int2 myval = make_int2(bestScore, bestShift);
+                //printf("thread %d, bestScore %d, bestShift %d\n", threadIdx.x, myval.x, myval.y); 
 				int2 reduced;
-				blockreduce<128>(
+				blockreduce<BLOCKSIZE>(
 					(unsigned long long*)&reduced, 
 					*((unsigned long long*)&myval), 
 					[](unsigned long long a, unsigned long long b){
-						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
+                        /*if((*((int2*)&a)).x < (*((int2*)&b)).x){
+                            printf("tid %d, %d < %d\n", threadIdx.x, (*((int2*)&a)).x, (*((int2*)&b)).x);
+                            return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
+                        }else{
+                            printf("tid %d, %d >= %d\n", threadIdx.x, (*((int2*)&a)).x, (*((int2*)&b)).x); 
+                            return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
+                        }*/
+						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b; 
 					}
 				);
 
@@ -158,6 +184,18 @@ namespace hammingtools{
 					result.nOps = opnr;
 					result.isNormalized = false;
 
+					/*if(blockIdx.x == 0 && threadIdx.x == 0){
+						printf("%d %d %d %d %d %d\n", globalQueryId, queryoverlapbegin_incl, overlapsize, bestScore, opnr, totalbases);
+						for(int i = 0; i < subjectbases; i++){
+							printf("%c", twobitToChar(encoded_accessor(sr1, subjectbases, i)));
+						}
+						printf("\n");
+						for(int i = 0; i < querybases; i++){
+							printf("%c", twobitToChar(encoded_accessor(sr2, querybases, i)));
+						}
+						printf("\n");
+					}*/
+
 					*my_result_out = result;
 				}
 			}
@@ -167,7 +205,7 @@ namespace hammingtools{
 		size_t shd_kernel_getSharedMemSize(const SHDdata& buffer){
 
 			size_t smem = 0;
-			smem += sizeof(char) * 2 * buffer.sequencelength;
+			smem += sizeof(char) * 2 * buffer.max_sequence_bytes;
 
 			return smem;
 		}
@@ -177,20 +215,32 @@ namespace hammingtools{
 		void call_shd_kernel(const SHDdata& buffer){
 
 			call_shd_kernel_async(buffer);
-			CUERR;
-			cudaStreamSynchronize(buffer.stream);
-			CUERR;
+
+			cudaStreamSynchronize(buffer.stream); CUERR;
 		}
 
 		void call_shd_kernel_async(const SHDdata& buffer){
 
-			dim3 block(std::min(512, 32 * SDIV(buffer.sequencelength+1, 32)), 1, 1);
+			//dim3 block(std::min(256, 32 * SDIV(2 * buffer.max_sequence_length, 32)), 1, 1);
+            dim3 block(256, 1, 1);
 			dim3 grid(buffer.n_queries, 1, 1);
+
+			/*dim3 block(32, 1, 1);
+			dim3 grid(1, 1, 1);*/
 
 			size_t smem = shd_kernel_getSharedMemSize(buffer);
 
-			cuda_shifted_hamming_distance<<<grid, block, smem, buffer.stream>>>(buffer);
-			CUERR;
+			switch(block.x){
+			case 32: cuda_shifted_hamming_distance<32><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 64: cuda_shifted_hamming_distance<64><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 96: cuda_shifted_hamming_distance<96><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 128: cuda_shifted_hamming_distance<128><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 160: cuda_shifted_hamming_distance<160><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 192: cuda_shifted_hamming_distance<192><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 224: cuda_shifted_hamming_distance<224><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			default: std::cout << "error call_shd_kernel_async\n"; break;
+			}
 		}
 #endif
 
