@@ -20,7 +20,6 @@ struct ReadStorage{
     std::vector<std::vector<std::string>> reverseComplqualityscores;
 
     std::vector<std::vector<Sequence>> sequences;
-    std::vector<std::vector<Sequence>> reverseComplSequences;
 
     std::vector<Sequence*> sequencepointers;
     std::vector<Sequence*> reverseComplSequencepointers;
