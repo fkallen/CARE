@@ -222,11 +222,8 @@ namespace hammingtools{
 		void call_shd_kernel_async(const SHDdata& buffer){
 
 			//dim3 block(std::min(256, 32 * SDIV(2 * buffer.max_sequence_length, 32)), 1, 1);
-            dim3 block(256, 1, 1);
+            		dim3 block(256, 1, 1);
 			dim3 grid(buffer.n_queries, 1, 1);
-
-			/*dim3 block(32, 1, 1);
-			dim3 grid(1, 1, 1);*/
 
 			size_t smem = shd_kernel_getSharedMemSize(buffer);
 

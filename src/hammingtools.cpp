@@ -10,13 +10,26 @@
 
 namespace hammingtools{
 
+	int reserved_SMs = 1;
 
 
-	SHDdata::SHDdata(int deviceId_, int maxseqlength) 
+
+	SHDdata::SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength) 
 		: deviceId(deviceId_), max_sequence_length(maxseqlength), max_sequence_bytes(SDIV(maxseqlength,4)){
 	#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
 		cudaStreamCreate(&stream); CUERR;
+
+		cudaDeviceProp prop;
+		cudaGetDeviceProperties(&prop, deviceId); CUERR;
+
+		int numBlocksPerSM = 8;
+		//cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSM, alignment::cuda_shifted_hamming_distance<256>, 256,0); CUERR;
+
+		int mySMs = std::max(1, (prop.multiProcessorCount-1) / cpuThreadsOnDevice);
+		shd_max_blocks = mySMs * numBlocksPerSM;
+		//printf("shd_max_blocks = %d\n", shd_max_blocks);
+
 	#endif
 
 	};
@@ -105,7 +118,9 @@ namespace hammingtools{
 		printf("h_queriesdata %p\n", mybuffers.h_queriesdata);
 		printf("h_queriesPerSubject %p\n", mybuffers.h_queriesPerSubject);
 		printf("h_lengths %p\n", mybuffers.h_lengths);
+	#ifdef __NVCC__
 		printf("stream %p\n", mybuffers.stream);
+	#endif
 		printf("deviceId %d\n", mybuffers.deviceId);
 		printf("sequencepitch %lu\n", mybuffers.sequencepitch);
 		printf("max_sequence_length %d\n", mybuffers.max_sequence_length);

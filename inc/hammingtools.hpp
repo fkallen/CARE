@@ -34,7 +34,9 @@ struct SHDdata{
 	int max_n_subjects = 0;
 	int max_n_queries = 0;
 
-	SHDdata(int deviceId_, int maxseqlength);
+	int shd_max_blocks = 1;
+
+	SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength);
 
 	void resize(int n_sub, int n_quer);
 };

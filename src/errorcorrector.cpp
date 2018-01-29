@@ -77,7 +77,7 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 	: minhashparams(minhashparameters), nInserterThreads(nInserterThreads_),  nCorrectorThreads(nCorrectorThreads_) 
 		, outputPath("")
 {
-    cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
+    	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
 	correctionmode = CorrectionMode::Hamming;
 
 	minhasher.minparams = minhashparameters;
@@ -722,7 +722,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	std::chrono::duration<double> H2DTimeTotal(0);
 	std::chrono::duration<double> D2HTimeTotal(0);
 	std::chrono::duration<double> kernelTimeTotal(0);
-	std::chrono::duration<double> lockacquisitionTimeTotal(0);
+	std::chrono::duration<double> readcorrectionTimeTotal(0);
 	std::chrono::duration<double> fileoutputTimeTotal(0);
 	std::chrono::duration<double> outputbufferTimeTotal(0);
 	std::chrono::duration<double> mapminhashresultsdedup(0);
@@ -780,8 +780,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	int nCorrectedCandidates = 0;
 	int nProcessedQueries = 0;
 
-	//TODO length and bytes
-	hammingtools::SHDdata shddata(deviceIds.size() == 0 ? 0 : threadId % deviceIds.size(), maximum_sequence_length);
+	hammingtools::SHDdata shddata(deviceIds.size() == 0 ? 0 : deviceIds[threadId % deviceIds.size()], SDIV(nThreads, deviceIds.size()), maximum_sequence_length);
 
 	// the query sequences fetched from ReadStorage
 	std::vector<const Sequence*> queries(batchsize);
@@ -1259,22 +1258,28 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						}
 
 						std::vector<bool> saveThisCandidate(candidatecount, false);
-                        
-                        int status = hammingtools::performCorrection(queryStrings[i],
-                                candidatecount, 
-                                candidateStrings,
-                                insertedAlignments,
-                                *queryQualities[i], 
-                                candidatequals,
-                                frequenciesPrefixSum,
-                                MAX_MISMATCH_RATIO,
-                                useQualityScores,
-                                saveThisCandidate,
-                                CORRECT_CANDIDATE_READS_TOO,
-                                estimatedCoverage,
-                                errorrate,
-                                m_coverage,
-                                minhashparams.k);
+						
+						std::chrono::time_point<std::chrono::system_clock> tpc = std::chrono::system_clock::now();       
+						
+						int status = hammingtools::performCorrection(queryStrings[i],
+												candidatecount, 
+												candidateStrings,
+												insertedAlignments,
+												*queryQualities[i], 
+												candidatequals,
+												frequenciesPrefixSum,
+												MAX_MISMATCH_RATIO,
+												useQualityScores,
+												saveThisCandidate,
+												CORRECT_CANDIDATE_READS_TOO,
+												estimatedCoverage,
+												errorrate,
+												m_coverage,
+												minhashparams.k);
+						
+						std::chrono::time_point<std::chrono::system_clock> tpd = std::chrono::system_clock::now();
+						
+						readcorrectionTimeTotal += tpd - tpc;
 
 						avgsupportfail += (((status >> 0) & 1) == 1);
 						minsupportfail += (((status >> 1) & 1) == 1);
@@ -1532,7 +1537,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #endif
 
 
-		
+#if 1		
 		// write result to output file if output buffer is full
 		if(nBufferedResults >= bufferedResultsThreshold){
 #ifdef ERRORCORRECTION_TIMING
@@ -1540,14 +1545,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #endif
 
 			std::lock_guard<std::mutex> lg(writelock);
-
-#ifdef ERRORCORRECTION_TIMING
-			tpb = std::chrono::system_clock::now();
-
-			lockacquisitionTimeTotal += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-#endif
 
 			outputfile << resultstringstream.rdbuf();
 			nBufferedResults = 0;
@@ -1559,7 +1556,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			fileoutputTimeTotal += tpb - tpa;
 #endif
 		}
-
+#endif
 
 		// update local progress
 		progressprocessedReads += actualBatchSize;
@@ -1572,6 +1569,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 	}
 
+#if 1	
 	// write remaining buffered results
 	if(nBufferedResults > 0){
 
@@ -1580,14 +1578,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #endif
 
 		std::lock_guard<std::mutex> lg(writelock);
-
-#ifdef ERRORCORRECTION_TIMING
-		tpb = std::chrono::system_clock::now();
-
-		lockacquisitionTimeTotal += tpb - tpa;
-
-		tpa = std::chrono::system_clock::now();
-#endif
 
 		outputfile << resultstringstream.rdbuf();
 		nBufferedResults = 0;
@@ -1598,7 +1588,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		tpb = std::chrono::system_clock::now();
 		fileoutputTimeTotal += tpb - tpa;
 #endif
+		
 	}
+#endif	
 
 	//final progress update
 	updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
@@ -1637,6 +1629,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		//std::cout << "thread " << threadId << " : kernelTimeTotal " << kernelTimeTotal.count() << '\n';
 #endif
 		std::cout << "thread " << threadId << " : getAlignmentsTimeTotal " << getAlignmentsTimeTotal.count() << '\n';
+		std::cout << "thread " << threadId << " : readcorrectionTimeTotal " << readcorrectionTimeTotal.count() << '\n';
 		std::cout << "thread " << threadId << " : correctReadTimeTotal " << correctReadTimeTotal.count() << '\n';
 	}
 #endif

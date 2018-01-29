@@ -6,7 +6,7 @@ executable=./errorcorrector_gpu
 #executable=./errorcorrector_cpu
 
 #number of threads to hash the reads
-ithreads=2
+ithreads=4
 
 #number of threads to correct reads. in gpu version, when using N gpus each gpu will be used by cthreads / N threads
 cthreads=16
