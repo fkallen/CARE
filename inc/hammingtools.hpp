@@ -5,6 +5,7 @@
 #include "../inc/read.hpp"
 
 #include <vector>
+#include <chrono>
 
 namespace hammingtools{
 
@@ -35,6 +36,13 @@ struct SHDdata{
 	int max_n_queries = 0;
 
 	int shd_max_blocks = 1;
+
+	std::chrono::duration<double> resizetime{0};
+	std::chrono::duration<double> preprocessingtime{0};
+	std::chrono::duration<double> h2dtime{0};
+	std::chrono::duration<double> alignmenttime{0};
+	std::chrono::duration<double> d2htime{0};
+	std::chrono::duration<double> postprocessingtime{0};
 
 	SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength);
 

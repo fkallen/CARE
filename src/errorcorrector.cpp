@@ -727,9 +727,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	std::chrono::duration<double> outputbufferTimeTotal(0);
 	std::chrono::duration<double> mapminhashresultsdedup(0);
 	std::chrono::duration<double> mapminhashresultsfetch(0);
-	//std::chrono::duration<double> ftransa(0);
-	//std::chrono::duration<double> ftransb(0);
-	//std::chrono::duration<double> ftransc(0);	
 
 	std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
 
@@ -1041,9 +1038,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 #if 1
 
 		if(correctionmode == CorrectionMode::Hamming){  
-            auto alignments = hammingtools::getMultipleAlignments(shddata, queries,
-                                                candidateReadsAndRevcompls,
-                                                activeBatches, true);
+			    auto alignments = hammingtools::getMultipleAlignments(shddata, queries,
+				                                candidateReadsAndRevcompls,
+				                                activeBatches, true);
 			
 #ifdef ERRORCORRECTION_TIMING
 			tpb = std::chrono::system_clock::now();
@@ -1614,8 +1611,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	alignerData[threadId].clear();
 #endif	
 
-	hammingtools::cuda_cleanup_SHDdata(shddata);
-
 #ifdef ERRORCORRECTION_TIMING
 	{
 		std::lock_guard<std::mutex> lg(writelock);
@@ -1623,16 +1618,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		std::cout << "thread " << threadId << " : mapminhashresultsdedup " << mapminhashresultsdedup.count() << '\n';
 		std::cout << "thread " << threadId << " : mapminhashresultsfetch " << mapminhashresultsfetch.count() << '\n';
 		std::cout << "thread " << threadId << " : mapMinhashResultsToSequencesTimeTotal " << mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-#ifdef __NVCC__
-		//std::cout << "thread " << threadId << " : transferTime H2D " << H2DTimeTotal.count() << '\n';
-		//std::cout << "thread " << threadId << " : transferTime D2H " << D2HTimeTotal.count() << '\n';
-		//std::cout << "thread " << threadId << " : kernelTimeTotal " << kernelTimeTotal.count() << '\n';
-#endif
-		std::cout << "thread " << threadId << " : getAlignmentsTimeTotal " << getAlignmentsTimeTotal.count() << '\n';
+		std::cout << "thread " << threadId << " : alignment resize buffer " << shddata.resizetime.count() << '\n';
+		std::cout << "thread " << threadId << " : alignment preprocessing " << shddata.preprocessingtime.count() << '\n';
+		std::cout << "thread " << threadId << " : alignment H2D " << shddata.h2dtime.count() << '\n';
+		std::cout << "thread " << threadId << " : alignment calculation " << shddata.alignmenttime.count() << '\n';
+		std::cout << "thread " << threadId << " : alignment D2H " << shddata.d2htime.count() << '\n';
+		std::cout << "thread " << threadId << " : alignment postprocessing " << shddata.postprocessingtime.count() << '\n';
 		std::cout << "thread " << threadId << " : readcorrectionTimeTotal " << readcorrectionTimeTotal.count() << '\n';
 		std::cout << "thread " << threadId << " : correctReadTimeTotal " << correctReadTimeTotal.count() << '\n';
 	}
 #endif
+
+	hammingtools::cuda_cleanup_SHDdata(shddata);
 }
 
 #if 0

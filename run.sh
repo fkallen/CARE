@@ -9,16 +9,16 @@ executable=./errorcorrector_gpu
 ithreads=4
 
 #number of threads to correct reads. in gpu version, when using N gpus each gpu will be used by cthreads / N threads
-cthreads=16
+cthreads=8
 
 #input file
-inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655_1M.fastq
-#inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
+#inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655_1M.fastq
+inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
 #inputfile=/ssd/fkallenb/eccomparison/correcteddatasets2/readscorrected.fq
 #inputfile=/ssd/fkallenb/eccomparison/datasets/C.elegans_SRX218989.fastq
 
-coverage=21
-#coverage=255
+#coverage=21
+coverage=255
 #coverage=31
 
 errorrate=0.03
@@ -56,7 +56,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=10
+batchsize=20
 
 #properties of good alignment
 maxmismatchratio=0.20

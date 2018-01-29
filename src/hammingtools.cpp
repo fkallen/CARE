@@ -38,6 +38,8 @@ namespace hammingtools{
 	#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
 
+		bool resizeResult = false;
+
 		if(n_sub > max_n_subjects){
 			size_t oldpitch = sequencepitch;
 			cudaFree(d_subjectsdata); CUERR;
@@ -54,6 +56,8 @@ namespace hammingtools{
 			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * n_sub); CUERR;
 
 			max_n_subjects = n_sub;
+
+			resizeResult = true;
 		}
 
 
@@ -67,20 +71,22 @@ namespace hammingtools{
 			cudaMallocHost(&h_queriesdata, sequencepitch * n_quer); CUERR;
 
 			max_n_queries = n_quer;
+
+			resizeResult = true;
 		}
 
-		if(n_sub > n_subjects || n_quer > n_queries){
+		if(resizeResult){
 			cudaFree(d_results); CUERR;
-			cudaMalloc(&d_results, sizeof(AlignResultCompact) * n_sub * n_quer); CUERR;
+			cudaMalloc(&d_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
 
 			cudaFreeHost(h_results); CUERR;
-			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * n_sub * n_quer); CUERR;
+			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
 
 			cudaFree(d_lengths); CUERR;
-			cudaMalloc(&d_lengths, sizeof(int) * (n_sub + n_quer)); CUERR;	
+			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;	
 
 			cudaFreeHost(h_lengths); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * (n_sub + n_quer)); CUERR;
+			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
 		}
 	#endif
 		n_subjects = n_sub;
@@ -141,6 +147,9 @@ namespace hammingtools{
 					const std::vector<std::vector<const Sequence*>>& queries,
 					std::vector<bool> activeBatches, bool useGpu){
 
+		std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+		std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
+
 		if(subjects.size() != queries.size()){
 			throw std::runtime_error("SHDAligner::getMultipleAlignments incorrect input dimensions. queries.size() != candidates.size()");
 		}
@@ -166,9 +175,17 @@ namespace hammingtools{
 
 		if(useGpu){ // use gpu for alignment
 
+			tpa = std::chrono::system_clock::now();
+
 			cudaSetDevice(mybuffers.deviceId); CUERR;
 
 			mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
+
+			tpb = std::chrono::system_clock::now();
+			
+			mybuffers.resizetime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
 
 			int subjectindex = 0;
 			int queryindex = 0;
@@ -201,8 +218,14 @@ namespace hammingtools{
 				}
 			}	
 
+			tpb = std::chrono::system_clock::now();
+		
+			mybuffers.preprocessingtime += tpb - tpa;
+
 			assert(subjectindex == numberOfRealSubjects);
 			assert(queryindex == totalNumberOfAlignments);
+
+			tpa = std::chrono::system_clock::now();
 
 			// copy data to gpu
 			cudaMemcpyAsync(mybuffers.d_subjectsdata, 
@@ -226,8 +249,22 @@ namespace hammingtools{
 					H2D, 
 					mybuffers.stream); CUERR;
 
+			cudaStreamSynchronize(mybuffers.stream);
+
+			tpb = std::chrono::system_clock::now();
+		
+			mybuffers.h2dtime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
+
 			// start kernel
 			alignment::call_shd_kernel(mybuffers);
+
+			tpb = std::chrono::system_clock::now();
+		
+			mybuffers.alignmenttime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
 
 			//copy results to host
 			cudaMemcpyAsync(mybuffers.h_results, 
@@ -237,6 +274,12 @@ namespace hammingtools{
 				mybuffers.stream); CUERR;
 
 			cudaStreamSynchronize(mybuffers.stream); CUERR;
+
+			tpb = std::chrono::system_clock::now();
+		
+			mybuffers.d2htime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
 
 			int previousOutputIndex = -1;
 			int candidateIndex = 0;
@@ -258,11 +301,17 @@ namespace hammingtools{
 				}			
 			}
 
+			tpb = std::chrono::system_clock::now();
+		
+			mybuffers.postprocessingtime += tpb - tpa;
+
 		}else{ // use cpu for alignment
 
 
 
 	#endif // __NVCC__
+
+			tpa = std::chrono::system_clock::now();
 
 			for(size_t i = 0; i < subjects.size(); i++){
 				alignments[i].resize(queries[i].size());
@@ -278,6 +327,10 @@ namespace hammingtools{
 					}
 				}
 			}
+
+			tpb = std::chrono::system_clock::now();
+		
+			mybuffers.alignmenttime += tpb - tpa;
 	#ifdef __NVCC__
 		}
 	#endif // __NVCC__

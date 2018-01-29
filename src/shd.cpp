@@ -213,7 +213,6 @@ namespace hammingtools{
 		//wrapper functions to call kernels
 
 		void call_shd_kernel(const SHDdata& buffer){
-
 			call_shd_kernel_async(buffer);
 
 			cudaStreamSynchronize(buffer.stream); CUERR;
