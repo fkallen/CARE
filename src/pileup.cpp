@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <cassert>
+#include <chrono>
 
 namespace hammingtools{
 
@@ -29,12 +30,13 @@ namespace hammingtools{
 			}
 		}
 
-		int correct_cpu(std::string& subject,
+		std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
+		correct_cpu(std::string& subject,
 						int nQueries, 
 						std::vector<std::string>& queries,
 						const std::vector<AlignResultCompact>& alignments,
 						const std::string& subjectqualityScores, 
-						const std::vector<std::string>& queryqualityScores,
+						const std::vector<const std::string*>& queryqualityScores,
 						const std::vector<int>& frequenciesPrefixSum,
 						double maxErrorRate,
 						bool useQScores,
@@ -45,8 +47,14 @@ namespace hammingtools{
 						double m,
 						int k){
 
+			std::chrono::duration<double> majorityvotetime(0);
+			std::chrono::duration<double> basecorrectiontime(0);
+			std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
 			constexpr int candidate_correction_new_cols = 2;
 	
+
+			tpa = std::chrono::system_clock::now();
 
 			const bool correctQueries = correctQueries_;
 			int status = 0;
@@ -56,7 +64,7 @@ namespace hammingtools{
 			std::vector<double> defaultWeightsPerQuery(queries.size());
 			for(int i = 0; i < nQueries; i++){
 				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
-				int queryEndsAt = queryqualityScores[i].length() + alignments[i].shift;
+				int queryEndsAt = queryqualityScores[i]->length() + alignments[i].shift;
 				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
 				defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
 				correctedQueries[i] = false;
@@ -105,7 +113,7 @@ namespace hammingtools{
 						for(int f = 0; f < frequenciesPrefixSum[j+1] - frequenciesPrefixSum[j]; f++){
 							const int qualityindex = frequenciesPrefixSum[j] + f;
 							if(useQScores)
-								qweight *= qscore_to_weight[(unsigned char)queryqualityScores[qualityindex][baseindex]];
+								qweight *= qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[baseindex]];
 							switch(queries[j][baseindex]){
 								case 'A': weights[0] += qweight; cov[0] += 1; break;
 								case 'C': weights[1] += qweight; cov[1] += 1; break;
@@ -162,6 +170,12 @@ namespace hammingtools{
 				columnindex++;
 			}
 
+			tpb = std::chrono::system_clock::now();
+
+			majorityvotetime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
+
 			double avg_support = 0;
 			double min_support = 1.0;
 			int max_coverage = 0;
@@ -177,6 +191,7 @@ namespace hammingtools{
 				min_coverage = coverage[columnindex] < min_coverage ? coverage[columnindex] : min_coverage;
 			}
 			avg_support /= subject.length();
+
 
 		#if 0
 			std::cout << "anchorsupport\n";
@@ -314,8 +329,11 @@ namespace hammingtools{
 		#endif
 			}
 
+			tpb = std::chrono::system_clock::now();
 
-			return status;
+			basecorrectiontime += tpb - tpa;
+
+			return std::tie(status, majorityvotetime, basecorrectiontime);
 		}
 
 

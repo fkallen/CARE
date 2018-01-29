@@ -719,16 +719,17 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	std::chrono::duration<double> mapMinhashResultsToSequencesTimeTotal(0);
 	std::chrono::duration<double> getAlignmentsTimeTotal(0);
 	std::chrono::duration<double> correctReadTimeTotal(0);
-	std::chrono::duration<double> H2DTimeTotal(0);
-	std::chrono::duration<double> D2HTimeTotal(0);
-	std::chrono::duration<double> kernelTimeTotal(0);
+	std::chrono::duration<double> determinegoodalignmentsTime(0);
+	std::chrono::duration<double> fetchgoodcandidatesTime(0);
+	std::chrono::duration<double> majorityvotetime(0);
+	std::chrono::duration<double> basecorrectiontime(0);
 	std::chrono::duration<double> readcorrectionTimeTotal(0);
 	std::chrono::duration<double> fileoutputTimeTotal(0);
 	std::chrono::duration<double> outputbufferTimeTotal(0);
 	std::chrono::duration<double> mapminhashresultsdedup(0);
 	std::chrono::duration<double> mapminhashresultsfetch(0);
 
-	std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+	std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
 
 	// the output file of this thread
@@ -1056,7 +1057,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
                         assert(alignments[i].size() == candidateReadsAndRevcompls[i].size());
                     }
             
-                    // for each candidate, compare its alignment to the alignment of the reverse complement. 
+                    			// for each candidate, compare its alignment to the alignment of the reverse complement. 
 					// find the best of both, if any, and
 					// save the best alignment + additional data in these vectors
 					std::vector<AlignResultCompact> insertedAlignments;
@@ -1072,6 +1073,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 					int bad = 0;
 					int fc = 0;
+
+					tpc = std::chrono::system_clock::now();
 
 					for(size_t j = 0; j < alignments[i].size() / 2; j++){
 						auto& res = alignments[i][j];	
@@ -1191,6 +1194,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						correctionCases[3]++;
 					}
 
+					tpd = std::chrono::system_clock::now();
+
+					determinegoodalignmentsTime += tpd - tpc;
+
 					if(!correctQuery){
 						std::string header = *readStorage.fetchHeader_ptr(readnum + i);
 
@@ -1205,7 +1212,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 						nBufferedResults++;
 					}else{
-
+						tpc = std::chrono::system_clock::now();
 						//collect selected alignments
 						std::vector<int> frequenciesPrefixSum(candidatecount+1, 0);
 
@@ -1233,32 +1240,46 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							assert(candidatecount == newindex);			
 						}
 
-
 						//get sequence strings and quality strings for candidates
 						std::vector<std::string> candidateStrings;
-						std::vector<std::string> candidatequals;
+						//std::vector<std::string> candidatequals;
+						std::vector<const std::string*> candidatequals;
+						candidateStrings.reserve(candidatecount);
+						candidatequals.reserve(frequenciesPrefixSum.back());
+
 						int qualindex = 0;
 						for(int j = 0; j < candidatecount; j++){
 							candidateStrings.push_back(insertedSequences[j]->toString());
 							const int freq = insertedFreqs[j];
 							if(forwardRead[j]){
 								for(int f = 0; f < freq; f++){
-									candidatequals.push_back(*readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]));
+									//candidatequals.push_back(*readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]));
+									candidatequals.push_back(readStorage.fetchQuality_ptr(insertedCandidateIds[qualindex + f]));
 								}
 							}else{
 								for(int f = 0; f < freq; f++){
+									//candidatequals.push_back(
+									//	*readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]));
 									candidatequals.push_back(
-										*readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]));
+										readStorage.fetchReverseComplementQuality_ptr(insertedCandidateIds[qualindex + f]));
 								}
 							}
 							qualindex += freq;
 						}
 
+						tpd = std::chrono::system_clock::now();
+
+						fetchgoodcandidatesTime += tpd - tpc;
+
+
 						std::vector<bool> saveThisCandidate(candidatecount, false);
 						
-						std::chrono::time_point<std::chrono::system_clock> tpc = std::chrono::system_clock::now();       
+						tpc = std::chrono::system_clock::now();       
 						
-						int status = hammingtools::performCorrection(queryStrings[i],
+						int status;
+						std::chrono::duration<double> foo1;
+						std::chrono::duration<double> foo2;
+						std::tie(status, foo1, foo2) = hammingtools::performCorrection(queryStrings[i],
 												candidatecount, 
 												candidateStrings,
 												insertedAlignments,
@@ -1274,9 +1295,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 												m_coverage,
 												minhashparams.k);
 						
-						std::chrono::time_point<std::chrono::system_clock> tpd = std::chrono::system_clock::now();
+						tpd = std::chrono::system_clock::now();
 						
 						readcorrectionTimeTotal += tpd - tpc;
+	
+						majorityvotetime += foo1;
+						basecorrectiontime += foo2;
 
 						avgsupportfail += (((status >> 0) & 1) == 1);
 						minsupportfail += (((status >> 1) & 1) == 1);
@@ -1365,12 +1389,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		}else{
 			std::cout << "ERROR\n";
 			assert(false);
-			getMultipleAlignments(threadId, 
-					queries,
-					candidateReadsAndRevcompls,
-		   			alignmentResults,
-					activeBatches,
-					H2DTimeTotal, D2HTimeTotal, kernelTimeTotal);
+
             
             
 		}
@@ -1624,7 +1643,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		std::cout << "thread " << threadId << " : alignment calculation " << shddata.alignmenttime.count() << '\n';
 		std::cout << "thread " << threadId << " : alignment D2H " << shddata.d2htime.count() << '\n';
 		std::cout << "thread " << threadId << " : alignment postprocessing " << shddata.postprocessingtime.count() << '\n';
-		std::cout << "thread " << threadId << " : readcorrectionTimeTotal " << readcorrectionTimeTotal.count() << '\n';
+		std::cout << "thread " << threadId << " : correction find good alignments " << determinegoodalignmentsTime.count() << '\n';
+		std::cout << "thread " << threadId << " : correction fetch good data " << fetchgoodcandidatesTime.count() << '\n';
+		std::cout << "thread " << threadId << " : pileup vote " << majorityvotetime.count() << '\n';
+		std::cout << "thread " << threadId << " : pileup correct " << basecorrectiontime.count() << '\n';
+		std::cout << "thread " << threadId << " : correction calculation " << readcorrectionTimeTotal.count() << '\n';
 		std::cout << "thread " << threadId << " : correctReadTimeTotal " << correctReadTimeTotal.count() << '\n';
 	}
 #endif

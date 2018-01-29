@@ -6,6 +6,7 @@
 
 #include <vector>
 #include <chrono>
+#include <tuple>
 
 namespace hammingtools{
 
@@ -60,12 +61,13 @@ std::vector<std::vector<AlignResultCompact>> getMultipleAlignments(SHDdata& buff
 			   const std::vector<std::vector<const Sequence*>>& queries,
 			   std::vector<bool> activeBatches, bool useGpu);
 
-int performCorrection(std::string& subject,
+std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
+performCorrection(std::string& subject,
 				int nQueries, 
 				std::vector<std::string>& queries,
 				const std::vector<AlignResultCompact>& alignments,
 				const std::string& subjectqualityScores, 
-				const std::vector<std::string>& queryqualityScores,
+				const std::vector<const std::string*>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
 				double maxErrorRate,
 				bool useQScores,
