@@ -22,6 +22,7 @@ struct KVMapFixed{
 
 	KVMapFixed(std::uint64_t size_) : size(size_), nKeys(size_), nValues(0), noMoreWrites(false){
 		keys = std::make_unique<key_t[]>(size);
+		std::cout << "new map\n";
 	}
 
 	void print(std::ostream& stream){
@@ -54,7 +55,7 @@ struct KVMapFixed{
 		keys = std::make_unique<key_t[]>(size);
 	}
 
-	bool set(std::uint64_t index, key_t key){
+	bool add(key_t key, std::uint64_t index){
 		if(index >= size){
 			std::cout << "KVMapFixed: want to set index " << index << " but size is " << size << '\n';
 			return false;
@@ -69,7 +70,7 @@ struct KVMapFixed{
 		}
 	}
 
-	std::vector<std::uint64_t> getByKey(key_t key){
+	std::vector<std::uint64_t> get(key_t key){
 		if(!noMoreWrites){
 			std::cout << "KVMapFixed: want to get key " << key << " but writes are still allowed. Need to call freeze() beforehand\n";
 			return {};
@@ -106,7 +107,7 @@ struct KVMapFixed{
 		//make keys unique and count frequency of each key
 		std::uint64_t unique_end = 1;
 		counts[0]++;
-		std::uint64_t prev = 0;
+		std::uint64_t prev = keys[0];
 		for(std::uint64_t i = 1; i < size; i++){
 			std::uint64_t cur = keys[i];
 			if(cur == prev){
@@ -127,9 +128,9 @@ struct KVMapFixed{
 		counts.reset();
 
 		//shrink keys array
-		std::unique_ptr<std::uint64_t[]> tmp = std::make_unique<std::uint64_t[]>(unique_end);
+		/*std::unique_ptr<std::uint64_t[]> tmp = std::make_unique<std::uint64_t[]>(unique_end);
 		std::memcpy(tmp.get(), keys.get(), sizeof(std::uint64_t) * unique_end);
-		keys = std::move(tmp);
+		keys = std::move(tmp);*/
 
 		nKeys = unique_end;
 	}

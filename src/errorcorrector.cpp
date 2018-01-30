@@ -369,7 +369,7 @@ void ErrorCorrector::correct(const std::string& filename)
 	std::cout << "begin insert" << std::endl;
 
 	TIMERSTARTCPU(INSERT);
-#if 1
+#if 0
 	std::string mapfilename = filename;
 	size_t lastslashpos = mapfilename.find_last_of("/"); 
 	if(lastslashpos != std::string::npos)
@@ -389,6 +389,9 @@ void ErrorCorrector::correct(const std::string& filename)
 	}
 #else
 	insertFile(filename, true);
+	TIMERSTARTCPU(MAP_TRANSFORM);
+	minhasher.transform();
+	TIMERSTOPCPU(MAP_TRANSFORM);
 #endif
 	TIMERSTOPCPU(INSERT);
 

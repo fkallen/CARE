@@ -6,6 +6,7 @@
 
 #include "ganja/open_addressing_multi_hash_map.cuh"
 #include "ganja/hash_functions.cuh"
+#include "kvmapfixed.hpp"
 
 #include <set>
 #include <cstdint>
@@ -56,6 +57,7 @@ struct Minhasher {
 
 	// the actual hash maps
 	std::vector<std::unique_ptr<oa_hash_t> > minhashTables;
+	std::vector<std::unique_ptr<KVMapFixed<std::uint64_t>>> minhashTables2;
 	MinhashParameters minparams;
 	double load;
 	std::chrono::duration<double> minhashtime;

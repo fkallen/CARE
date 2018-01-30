@@ -32,9 +32,11 @@ void Minhasher::init(std::uint64_t nReads, double load_){
 	std::cout << "minhashmap capacity: " << capacity << ". size per map: " << ((capacity * 8.0)/(1024.0*1024.0*1024.0)) << " GB" << std::endl;
 
 	minhashTables.resize(minparams.maps);
+	minhashTables2.resize(minparams.maps);
 
 	for (int i = 0; i < minparams.maps; ++i) {
 		minhashTables[i].reset(new oa_hash_t { capacity, hash_func {}, prob_func {} });
+		minhashTables2[i].reset(new KVMapFixed<std::uint64_t>(nReads));
 	}
 }
 
@@ -42,6 +44,7 @@ void Minhasher::init(std::uint64_t nReads, double load_){
 void Minhasher::clear(){
 	for (int i = 0; i < minparams.maps; ++i) {
 		minhashTables[i]->clear();
+		minhashTables2[i]->clear();
 	}
 }
 
@@ -71,10 +74,18 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 	for (int map = 0; map < minparams.maps; ++map) {
 		std::uint64_t key = bandHashValues[map] & hv_bitmask;
 		// last bit of value is 1 if the hash value comes from the forward strand
-		std::uint64_t value = ((readnum << 1) | isForwardStrand[map]);
 
-		if (!minhashTables[map]->add(key, value)) {
+		std::uint64_t value = ((readnum << 1) | isForwardStrand[map]);
+		/*if (!minhashTables[map]->add(key, value)) {
 			std::cout << "error adding key to map " << map 
+				<< ". key = " << key 
+				<< " , readnum = " << readnum << std::endl;
+			throw std::runtime_error(("error adding key to map. key " + key));
+		}*/
+
+		value = readnum;
+		if (!minhashTables2[map]->add(key, value)) {
+			std::cout << "error adding key to map2 " << map 
 				<< ". key = " << key 
 				<< " , readnum = " << readnum << std::endl;
 			throw std::runtime_error(("error adding key to map. key " + key));
@@ -139,10 +150,25 @@ std::vector<std::uint64_t> Minhasher::getCandidates(const std::string& sequence)
 	for(int map = 0; map < minparams.maps; ++map) {
 		std::uint64_t key = bandHashValues[map] & hv_bitmask;
 
-		std::vector<uint64_t> entries = minhashTables[map]->get(key);
+		/*std::vector<uint64_t> entries = minhashTables[map]->get(key);
 		for(auto& e : entries)
-			e = e >> 1; // just discard the flag
-		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
+			e = e >> 1; // just discard the flag*/
+
+		std::vector<uint64_t> entries2 = minhashTables2[map]->get(key);
+
+		/*std::sort(entries.begin(), entries.end());
+		std::sort(entries2.begin(), entries2.end());
+
+		if(entries.size() != entries2.size()){
+			std::cout << "size error map " << map << std::endl;
+		}else{
+			for(int i = 0; i < entries.size(); i++)
+				if(entries[i] != entries2[i])
+					std::cout << "entry error map " << map << " entry " << i << std::endl;
+		}*/
+
+		//allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
+		allMinhashResults.insert(allMinhashResults.end(), entries2.begin(), entries2.end());
 	}
 
 	std::sort(allMinhashResults.begin(), allMinhashResults.end());
@@ -215,21 +241,22 @@ void Minhasher::bandhashfunc(const std::uint64_t* minhashSignature, std::uint64_
 
 void Minhasher::saveTablesToFile(std::string filename) const{
 	for (int i = 0; i < minparams.maps; ++i) {
-		minhashTables[i]->saveToFile(filename+std::to_string(i));
+		//minhashTables[i]->saveToFile(filename+std::to_string(i));
 	}
 }
 
 bool Minhasher::loadTablesFromFile(std::string filename){
 	bool success = true;
 	for (int i = 0; i < minparams.maps && success; ++i) {
-		success &= minhashTables[i]->loadFromFile(filename+std::to_string(i));
+		//success &= minhashTables[i]->loadFromFile(filename+std::to_string(i));
 	}
-	return success;
+	return false;
 }
 
 void Minhasher::transform(){
 	for (int i = 0; i < minparams.maps; ++i) {
-		minhashTables[i]->transform();
+		//minhashTables[i]->transform();
+		minhashTables2[i]->freeze();
 	}
 }
 
