@@ -62,7 +62,8 @@ struct OpenAddressingMultiHashMap {
 				hash_func(other.hash_func),
 				prob_func(other.prob_func),
 				capacity(other.capacity),
-				probe_length(other.capacity)
+				probe_length(other.capacity),
+				isTransformer(other.isTransformer)
 {
 
 	data.reset(new atomic_t[capacity]);
@@ -78,7 +79,8 @@ struct OpenAddressingMultiHashMap {
         const probe_t prob_func_) : hash_func(hash_func_),
                                     prob_func(prob_func_),
 				    capacity(capacity_),
-                                    probe_length(capacity_)
+                                    probe_length(capacity_),
+				    isTransformer(false)
  {
 
 	data.reset(new atomic_t[capacity]);
@@ -106,6 +108,7 @@ struct OpenAddressingMultiHashMap {
 		data.reset();
 		data.reset(new atomic_t[capacity]);
 	}
+	isTransformer = other.isTransformer;
 	//std::copy ( other.data , other.data + other.capacity, data );
 
 	return *this;

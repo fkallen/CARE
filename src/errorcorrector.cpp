@@ -374,7 +374,7 @@ void ErrorCorrector::correct(const std::string& filename)
 	size_t lastslashpos = mapfilename.find_last_of("/"); 
 	if(lastslashpos != std::string::npos)
 		mapfilename = mapfilename.substr(lastslashpos + 1); 
-	if(!minhasher.loadTablesFromFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map")){
+	if(!minhasher.loadTablesFromFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_"+std::to_string(minhashparams.maps)+"_map")){
 		insertFile(filename, true);
 #if 1
 		TIMERSTARTCPU(MAP_TRANSFORM);
