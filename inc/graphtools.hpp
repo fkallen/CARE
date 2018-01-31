@@ -73,11 +73,22 @@ namespace graphtools{
 
 	void init_once();
 
-	//we assume that each sequence has the same length and same number of bytes which is specified in SHDdata buffer if useGPU = true
 	std::vector<std::vector<AlignResult>> 
 	getMultipleAlignments(AlignerDataArrays& buffer, const std::vector<const Sequence*>& subjects,
 			   const std::vector<std::vector<const Sequence*>>& queries,
 			   std::vector<bool> activeBatches, bool useGpu);
+
+	void performCorrection(std::string& subject,
+				int nQueries, 
+				const std::vector<std::string>& queries,
+				std::vector<AlignResult>& alignments,
+				const std::string& subjectqualityScores, 
+				const std::vector<const std::string*>& queryqualityScores,
+				const std::vector<int>& frequenciesPrefixSum,
+				bool useQScores,
+				double MAX_MISMATCH_RATIO,
+				double graphalpha,
+				double graphx);
 
 } //namespace end
 

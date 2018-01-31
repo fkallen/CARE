@@ -16,7 +16,7 @@ namespace hammingtools{
 		void init_once(){
 
 			constexpr int ASCII_BASE = 33;
-			constexpr double MIN_GRAPH_WEIGHT = 0.001;
+			constexpr double MIN_WEIGHT = 0.001;
 
 			for(int i = 0; i < 256; i++){
 				if(i < ASCII_BASE)
@@ -26,7 +26,7 @@ namespace hammingtools{
 			}
 
 			for(int i = 0; i < 256; i++){
-				qscore_to_weight[i] = std::max(MIN_GRAPH_WEIGHT, 1.0 - qscore_to_error_prob[i]);
+				qscore_to_weight[i] = std::max(MIN_WEIGHT, 1.0 - qscore_to_error_prob[i]);
 			}
 		}
 

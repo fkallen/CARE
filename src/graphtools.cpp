@@ -1,6 +1,7 @@
 #include "../inc/graphtools.hpp"
 #include "../inc/alignment.hpp"
 #include "../inc/sga.hpp"
+#include "../inc/graph.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -320,6 +321,24 @@ namespace graphtools{
 	#endif
 
 		return alignments;
+	}
+
+
+	void performCorrection(std::string& subject,
+				int nQueries, 
+				const std::vector<std::string>& queries,
+				std::vector<AlignResult>& alignments,
+				const std::string& subjectqualityScores, 
+				const std::vector<const std::string*>& queryqualityScores,
+				const std::vector<int>& frequenciesPrefixSum,
+				bool useQScores,
+				double MAX_MISMATCH_RATIO,
+				double graphalpha,
+				double graphx){
+
+		return correction::correct_cpu(subject, nQueries, queries, alignments, subjectqualityScores, queryqualityScores, frequenciesPrefixSum,
+				useQScores, MAX_MISMATCH_RATIO, graphalpha, graphx);
+
 	}
 
 
