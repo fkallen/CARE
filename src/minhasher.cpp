@@ -29,7 +29,6 @@ void Minhasher::init(std::uint64_t nReads, double load_){
 	load = load_;
 
 	const std::uint64_t capacity = nReads / load;
-	std::cout << "minhashmap capacity: " << capacity << ". size per map: " << ((capacity * 8.0)/(1024.0*1024.0*1024.0)) << " GB" << std::endl;
 
 	minhashTables.resize(minparams.maps);
 	minhashTables2.resize(minparams.maps);

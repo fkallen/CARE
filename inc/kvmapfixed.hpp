@@ -6,6 +6,17 @@
 #include <numeric>
 #include <vector>
 
+#ifdef __NVCC__
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+
+#include <thrust/iterator/constant_iterator.h>
+
+#include <thrust/copy.h>
+#include <thrust/inner_product.h>
+#include <thrust/sort.h>
+#endif
+
 //store size keys
 template<class key_t>
 struct KVMapFixed{
@@ -22,7 +33,6 @@ struct KVMapFixed{
 
 	KVMapFixed(std::uint64_t size_) : size(size_), nKeys(size_), nValues(0), noMoreWrites(false){
 		keys = std::make_unique<key_t[]>(size);
-		std::cout << "new map\n";
 	}
 
 	void print(std::ostream& stream){
@@ -90,15 +100,18 @@ struct KVMapFixed{
 		noMoreWrites = true;
 		if(size == 0) return;
 
-		//sort indices by keys
 		values = std::make_unique<std::uint64_t[]>(size);
 		nValues = size;
+
+#ifndef __NVCC__
+//#if 1
+		//sort indices and keys by keys
 		std::iota(values.get(), values.get() + size, std::uint64_t(0));
+
 		std::sort(values.get(), values.get() + size, [&](auto a, auto b)->bool{
 			return keys[a] < keys[b];
 		});
 
-		//sort keys
 		std::sort(keys.get(), keys.get() + size);
 
 		std::unique_ptr<std::uint64_t[]> counts = std::make_unique<std::uint64_t[]>(size);
@@ -125,13 +138,43 @@ struct KVMapFixed{
 		countsPrefixSum[0] = 0;
 		for(std::uint64_t i = 0; i < unique_end; i++)
 			countsPrefixSum[i+1] = countsPrefixSum[i] + counts[i];
-		counts.reset();
-
-		//shrink keys array
-		/*std::unique_ptr<std::uint64_t[]> tmp = std::make_unique<std::uint64_t[]>(unique_end);
-		std::memcpy(tmp.get(), keys.get(), sizeof(std::uint64_t) * unique_end);
-		keys = std::move(tmp);*/
 
 		nKeys = unique_end;
+#else
+		//sort indices and keys by keys on gpu
+		thrust::device_vector<std::uint64_t> d_keys(size);		
+		thrust::device_vector<std::uint64_t> d_vals(size);
+
+		thrust::copy(keys.get(), keys.get() + size, d_keys.begin());
+		thrust::sequence(d_vals.begin(), d_vals.end());
+
+		thrust::sort_by_key(d_keys.begin(), d_keys.end(), d_vals.begin());
+
+		thrust::copy(d_vals.begin(), d_vals.end(), values.get());
+
+		nKeys = thrust::inner_product(d_keys.begin(), d_keys.end() - 1,
+						d_keys.begin() + 1,
+						std::uint64_t(1),
+						thrust::plus<std::uint64_t>(),
+						thrust::not_equal_to<std::uint64_t>());
+
+		// resize histogram storage
+		thrust::device_vector<std::uint64_t> histogram_values(nKeys);
+		thrust::device_vector<std::uint64_t> histogram_counts(nKeys);
+		thrust::device_vector<std::uint64_t> histogram_counts_prefixsum(nKeys+1, 0); //inclusive with leading zero
+		  
+		// compact find the end of each bin of values
+		thrust::reduce_by_key(d_keys.begin(), d_keys.end(),
+				        thrust::constant_iterator<std::uint64_t>(1),
+				        histogram_values.begin(),
+				        histogram_counts.begin());
+
+		thrust::inclusive_scan(histogram_counts.begin(), histogram_counts.end(), histogram_counts_prefixsum.begin() + 1);
+
+		countsPrefixSum = std::make_unique<std::uint64_t[]>(nKeys+1);
+
+		thrust::copy(histogram_values.begin(), histogram_values.end(), keys.get());
+		thrust::copy(histogram_counts_prefixsum.begin(), histogram_counts_prefixsum.end(), countsPrefixSum.get());
+#endif
 	}
 };
