@@ -151,7 +151,7 @@ namespace hammingtools{
 		std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
 
 		if(subjects.size() != queries.size()){
-			throw std::runtime_error("SHDAligner::getMultipleAlignments incorrect input dimensions. queries.size() != candidates.size()");
+			throw std::runtime_error("hammingtools::getMultipleAlignments incorrect input dimensions. queries.size() != candidates.size()");
 		}
 
 		int numberOfRealSubjects = 0;
