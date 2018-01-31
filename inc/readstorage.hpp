@@ -12,14 +12,12 @@
 
 struct ReadStorage{
 
-    int nThreads;
     bool isReadOnly;
 
-    std::vector<std::vector<std::string>> headers;
-    std::vector<std::vector<std::string>> qualityscores;
-    std::vector<std::vector<std::string>> reverseComplqualityscores;
-
-    std::vector<std::vector<Sequence>> sequences;
+    std::vector<std::string> headers;
+    std::vector<std::string> qualityscores;
+    std::vector<std::string> reverseComplqualityscores;
+    std::vector<Sequence> sequences;
 
     std::vector<Sequence*> sequencepointers;
     std::vector<Sequence*> reverseComplSequencepointers;
@@ -28,28 +26,22 @@ struct ReadStorage{
 
     ReadStorage();
 
-    // threads: maximum number of threads that insert into ReadStorage in parallel
-    ReadStorage(int threads);
-
-    ReadStorage(const ReadStorage& other);
-
-    ReadStorage& operator=(const ReadStorage& other);
-
     ReadStorage& operator=(const ReadStorage&& other);
 
     void clear();
+    void init(size_t nReads);
 
-    void insertRead(std::uint32_t readNumber, const Read& read);
+    void insertRead(size_t readNumber, const Read& read);
     void noMoreInserts();
-    Read fetchRead(std::uint32_t readNumber) const;
+    Read fetchRead(size_t readNumber) const;
 
-    const std::string* fetchHeader_ptr(std::uint32_t readNumber) const;
-    const std::string* fetchQuality_ptr(std::uint32_t readNumber) const;
-    const std::string* fetchReverseComplementQuality_ptr(std::uint32_t readNumber) const;
-    const Sequence* fetchSequence_ptr(std::uint32_t readNumber) const;
-    const Sequence* fetchReverseComplementSequence_ptr(std::uint32_t readNumber) const;
+    const std::string* fetchHeader_ptr(size_t readNumber) const;
+    const std::string* fetchQuality_ptr(size_t readNumber) const;
+    const std::string* fetchReverseComplementQuality_ptr(size_t readNumber) const;
+    const Sequence* fetchSequence_ptr(size_t readNumber) const;
+    const Sequence* fetchReverseComplementSequence_ptr(size_t readNumber) const;
 
-    double getMemUsageMB();
+    double getMemUsageMB() const;
 };
 
 

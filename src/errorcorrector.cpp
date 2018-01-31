@@ -82,7 +82,6 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 
 	minhasher.minparams = minhashparameters;
 
-	readStorage = ReadStorage(nInserterThreads);
 	buffers.resize(nInserterThreads);
 
 	eg_global_init();
@@ -358,7 +357,7 @@ void ErrorCorrector::correct(const std::string& filename)
 #if 1
 	minhasher.init(nReads, HASHMAP_LOAD_FACTOR);
 
-	readStorage.clear();
+	readStorage.init(nReads);
 
 	if(CORRECT_CANDIDATE_READS_TOO){
 		readIsProcessedVector.resize(nReads, 0);
@@ -389,21 +388,18 @@ void ErrorCorrector::correct(const std::string& filename)
 	}
 #else
 	insertFile(filename, true);
-	TIMERSTARTCPU(MAP_TRANSFORM);
-	minhasher.transform();
-	TIMERSTOPCPU(MAP_TRANSFORM);
 #endif
 	TIMERSTOPCPU(INSERT);
 
 	std::cout << "end insert" << std::endl;
 
-	printf("Stored reads before transformation take %f GB memory\n", (readStorage.getMemUsageMB() / 1024.));
+	TIMERSTARTCPU(MAP_TRANSFORM);
+	minhasher.transform();
+	TIMERSTOPCPU(MAP_TRANSFORM);
 
-TIMERSTARTCPU(readstorage_transform);
+	TIMERSTARTCPU(readstorage_transform);
 	readStorage.noMoreInserts();
-TIMERSTOPCPU(readstorage_transform);
-
-	printf("Stored reads after transformation take %f GB memory\n", (readStorage.getMemUsageMB() / 1024.));
+	TIMERSTOPCPU(readstorage_transform);
 
 #ifdef __NVCC__
 	for(int i = 0; i < nCorrectorThreads; i++){

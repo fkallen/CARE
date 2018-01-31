@@ -9,42 +9,13 @@
 #include <cassert>
 #include <map>
 
-#define SAFE_ACCESS
-
-
-	ReadStorage::ReadStorage() : ReadStorage(1){}
-
-	ReadStorage::ReadStorage(int threads) : nThreads(threads), isReadOnly(false){
-		headers.resize(nThreads);
-		qualityscores.resize(nThreads);
-		reverseComplqualityscores.resize(nThreads);
-		sequences.resize(nThreads);
-	}
-
-	ReadStorage::ReadStorage(const ReadStorage& other){
-		*this = other;
-	}
-
-	ReadStorage& ReadStorage::operator=(const ReadStorage& other){
-		headers = other.headers;
-		qualityscores = other.qualityscores;
-		reverseComplqualityscores = other.reverseComplqualityscores;
-		nThreads = other.nThreads;
-		sequences = other.sequences;
-
-		sequencepointers = other.sequencepointers;
-		reverseComplSequencepointers = other.reverseComplSequencepointers;
-		all_unique_sequences = other.all_unique_sequences;
-
-		return *this;
-	}
+	ReadStorage::ReadStorage() : isReadOnly(false){}
 
 	ReadStorage& ReadStorage::operator=(const ReadStorage&& other){
 		headers = std::move(other.headers);
 		qualityscores = std::move(other.qualityscores);
 		reverseComplqualityscores = std::move(other.reverseComplqualityscores);
 		sequences = std::move(other.sequences);
-		nThreads = other.nThreads;
 
 		sequencepointers = std::move(other.sequencepointers);
 		reverseComplSequencepointers = std::move(other.reverseComplSequencepointers);
@@ -53,15 +24,20 @@
 		return *this;
 	}
 
+	void ReadStorage::init(size_t nReads){
+		clear();
+
+		headers.resize(nReads);
+		qualityscores.resize(nReads);
+		reverseComplqualityscores.resize(nReads);
+		sequences.resize(nReads);		
+	}
+
 	void ReadStorage::clear(){
-		for(auto& a : headers)
-		    a.clear();
-		for(auto& a : qualityscores)
-		    a.clear();
-		for(auto& a : sequences)
-		    a.clear();
-		for(auto& a : reverseComplqualityscores)
-		    a.clear();
+		headers.clear();
+		qualityscores.clear();
+		reverseComplqualityscores.clear();
+		sequences.clear();
 
 		sequencepointers.clear();
 		reverseComplSequencepointers.clear();
@@ -70,73 +46,61 @@
 		isReadOnly = false;
 	}
 
-	void ReadStorage::insertRead(std::uint32_t readNumber, const Read& read){
+	void ReadStorage::insertRead(size_t readNumber, const Read& read){
 		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling noMoreInserts()");
-
-		std::uint32_t id = readNumber % nThreads;
-
-		size_t indexInVector = readNumber / nThreads;
-
-		headers[id].resize(indexInVector+1);
-		qualityscores[id].resize(indexInVector+1);
-		reverseComplqualityscores[id].resize(indexInVector+1);
-		sequences[id].resize(indexInVector+1);
 
 		Sequence seq(read.sequence);  
 		std::string q(read.quality);
-
-		headers[id][indexInVector] = std::move(read.header);
-		qualityscores[id][indexInVector] = std::move(read.quality);
-
 		std::reverse(q.begin(),q.end());
-		reverseComplqualityscores[id][indexInVector] = std::move(q);
 
-		sequences[id][indexInVector] = (seq);
+		headers.at(readNumber) = std::move(read.header);
+		qualityscores.at(readNumber) = std::move(read.quality);
+		reverseComplqualityscores.at(readNumber) = std::move(q);
+		sequences.at(readNumber) = std::move(seq);
 	}
 
 	void ReadStorage::noMoreInserts(){
 		isReadOnly = true;
 
-		int nSequences = 0;
-		for(const auto& v : sequences)
-			nSequences += v.size();
+		size_t nSequences = sequences.size();
 
 		if(nSequences == 0) return;
 
 		std::vector<Sequence> sequencesflat;
 		sequencesflat.reserve(2*nSequences);
 
-		for(int readnum = 0; readnum < nSequences; readnum++){
-			std::uint32_t vecnum = readnum % nThreads;
-			int indexInVector = readnum / nThreads;
-
-			sequencesflat.push_back(std::move(sequences[vecnum].at(indexInVector)));
+		for(size_t readnum = 0; readnum < nSequences; readnum++){
+			sequencesflat.push_back(std::move(sequences.at(readnum)));
 		}
 
-		for(auto& vec : sequences)
-			vec.clear();
+		sequences.clear();
 
 		std::vector<Sequence> tmp(sequencesflat);
 
+TIMERSTARTCPU(READ_STORAGE_SORT);
 		std::sort(sequencesflat.begin(), sequencesflat.end());
 		sequencesflat.erase(std::unique(sequencesflat.begin(), sequencesflat.end()), sequencesflat.end());
-
+TIMERSTOPCPU(READ_STORAGE_SORT);
 		std::map<const Sequence, int> seqToSortedIndex;
 
+TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
 		for(const auto& s : sequencesflat){
 			seqToSortedIndex[s] = &s - sequencesflat.data();
 		}
-
+TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
 		assert(sequencesflat.size() == seqToSortedIndex.size());
 
 		std::cout << "ReadStorage: found " << (nSequences - sequencesflat.size()) << " duplicates\n";
 
+TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 		sequencepointers.resize(nSequences);
-		for(int i = 0; i < nSequences; i++)
+		for(size_t i = 0; i < nSequences; i++)
 			sequencepointers[i] = &sequencesflat[seqToSortedIndex[tmp[i]]];
+TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 
+TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 		reverseComplSequencepointers.resize(nSequences);
-		for(int i = 0; i < nSequences; i++){
+		for(size_t i = 0; i < nSequences; i++){
 			Sequence revcompl = sequencepointers[i]->reverseComplement();
 			auto it = seqToSortedIndex.find(revcompl);
 			if(it == seqToSortedIndex.end()){
@@ -152,21 +116,24 @@
 				reverseComplSequencepointers[i] = &(sequencesflat[it->second]);
 			}
 		}
+TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 
 #if 1	
+TIMERSTARTCPU(READ_STORAGE_CHECK);
 		//check
-		for(int i = 0; i < nSequences; i++){
+		for(size_t i = 0; i < nSequences; i++){
 			assert(*sequencepointers[i] == tmp[i] && "readstorage wrong sequence after dedup");
 		}
-		for(int i = 0; i < nSequences; i++){
+		for(size_t i = 0; i < nSequences; i++){
 			assert(*reverseComplSequencepointers[i] == sequencepointers[i]->reverseComplement() && "readstorage wrong reverse complement after dedup");
 		}
+TIMERSTOPCPU(READ_STORAGE_CHECK);
 #endif
 
 		all_unique_sequences = std::move(sequencesflat);
 	}
 
-	Read ReadStorage::fetchRead(std::uint32_t readNumber) const{
+	Read ReadStorage::fetchRead(size_t readNumber) const{
 		Read returnvalue;
 
 		returnvalue.header = *fetchHeader_ptr(readNumber);
@@ -176,58 +143,27 @@
 		return returnvalue;
 	}
 
-	const std::string* ReadStorage::fetchHeader_ptr(std::uint32_t readNumber) const{
-		std::uint32_t id = readNumber % nThreads;
-
-		size_t indexInVector = readNumber / nThreads;
-#ifdef SAFE_ACCESS
-		return &(headers[id].at(indexInVector));
-#else
-		return &(headers[id][indexInVector]);		
-#endif
+	const std::string* ReadStorage::fetchHeader_ptr(size_t readNumber) const{
+		return &(headers.at(readNumber));
 	}
 
-    	const std::string* ReadStorage::fetchQuality_ptr(std::uint32_t readNumber) const{
-		std::uint32_t id = readNumber % nThreads;
-
-		size_t indexInVector = readNumber / nThreads;
-
-#ifdef SAFE_ACCESS
-		return &(qualityscores[id].at(indexInVector));
-#else
-		return &(qualityscores[id][indexInVector]);		
-#endif
+    	const std::string* ReadStorage::fetchQuality_ptr(size_t readNumber) const{
+		return &(qualityscores.at(readNumber));
 	}
 
-    	const std::string* ReadStorage::fetchReverseComplementQuality_ptr(std::uint32_t readNumber) const{
-		std::uint32_t id = readNumber % nThreads;
-
-		size_t indexInVector = readNumber / nThreads;
-
-#ifdef SAFE_ACCESS
-		return &(reverseComplqualityscores[id].at(indexInVector));
-#else
-		return &(reverseComplqualityscores[id][indexInVector]);		
-#endif
+    	const std::string* ReadStorage::fetchReverseComplementQuality_ptr(size_t readNumber) const{
+		return &(reverseComplqualityscores.at(readNumber));
 	}
 
-    	const Sequence* ReadStorage::fetchSequence_ptr(std::uint32_t readNumber) const{
+    	const Sequence* ReadStorage::fetchSequence_ptr(size_t readNumber) const{
 		if(isReadOnly){
 			return sequencepointers.at(readNumber);
 		}else{
-			std::uint32_t id = readNumber % nThreads;
-
-			size_t indexInVector = readNumber / nThreads;
-
-	#ifdef SAFE_ACCESS
-			return &(sequences[id].at(indexInVector));
-	#else
-			return &(sequences[id][indexInVector]);		
-	#endif
+			return &(sequences.at(readNumber));
 		}
 	}
 
-	const Sequence* ReadStorage::fetchReverseComplementSequence_ptr(std::uint32_t readNumber) const{
+	const Sequence* ReadStorage::fetchReverseComplementSequence_ptr(size_t readNumber) const{
 		if(isReadOnly){
 			return reverseComplSequencepointers.at(readNumber);
 		}else{
@@ -235,41 +171,27 @@
 		}
 	}
 
-	double ReadStorage::getMemUsageMB(){
+	double ReadStorage::getMemUsageMB() const{
 		size_t bytes = 0;
 
-		for(const auto& vec : sequences){
-			for(const auto& s : vec){
-				bytes += s.getNumBytes();
-			}
+		for(const auto& s : sequences){
+			bytes += s.getNumBytes();
 		}
-
-		/*for(const auto& vec : reverseComplSequences){
-			for(const auto& s : vec){
-				bytes += s.getNumBytes();
-			}
-		}*/
 
 		for(const auto& s : all_unique_sequences){
 			bytes += s.getNumBytes();
 		}
 
-		for(const auto& vec : headers){
-			for(const auto& s : vec){
-				bytes += s.size();
-			}
+		for(const auto& s : headers){
+			bytes += s.size();
 		}
 
-		for(const auto& vec : qualityscores){
-			for(const auto& s : vec){
-				bytes += s.size();
-			}
+		for(const auto& s : qualityscores){
+			bytes += s.size();
 		}
 
-		for(const auto& vec : reverseComplqualityscores){
-			for(const auto& s : vec){
-				bytes += s.size();
-			}
+		for(const auto& s : reverseComplqualityscores){
+			bytes += s.size();
 		}
 
 		return bytes / 1024. / 1024.;
