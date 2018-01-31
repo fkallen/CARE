@@ -53,7 +53,6 @@ namespace hammingtools{
 
 			constexpr int candidate_correction_new_cols = 2;
 	
-
 			tpa = std::chrono::system_clock::now();
 
 			const bool correctQueries = correctQueries_;
@@ -61,113 +60,101 @@ namespace hammingtools{
 
 			int startindex = 0;
 			int endindex = subject.length();
-			std::vector<double> defaultWeightsPerQuery(queries.size());
 			for(int i = 0; i < nQueries; i++){
 				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
-				int queryEndsAt = queryqualityScores[i]->length() + alignments[i].shift;
+				const int queryEndsAt = queryqualityScores[i]->length() + alignments[i].shift;
 				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
-				defaultWeightsPerQuery[i] = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
 				correctedQueries[i] = false;
 			}
 
-			int columnsToCheck = endindex - startindex;
+			const int columnsToCheck = endindex - startindex;
 
 			// the column index range for the subject begins at max(-leftOfSubjectBegin,0);
-			std::vector<char> consensus(columnsToCheck);
-			std::vector<double> support(columnsToCheck);
-			std::vector<int> coverage(columnsToCheck);
-			std::vector<int> origWeights(columnsToCheck);
-			std::vector<int> origCoverage(columnsToCheck);
+			std::vector<char> consensus(columnsToCheck,0);
+			std::vector<double> support(columnsToCheck,0);
+			std::vector<int> coverage(columnsToCheck,0);
+			std::vector<double> origWeights(columnsToCheck,0);
+			std::vector<int> origCoverage(columnsToCheck,0);
+			std::vector<int> As(columnsToCheck,0);
+			std::vector<int> Cs(columnsToCheck,0);
+			std::vector<int> Gs(columnsToCheck,0);
+			std::vector<int> Ts(columnsToCheck,0);
+			std::vector<double> Aweights(columnsToCheck,0);
+			std::vector<double> Cweights(columnsToCheck,0);
+			std::vector<double> Gweights(columnsToCheck,0);
+			std::vector<double> Tweights(columnsToCheck,0);
 			const int subjectColumnsBegin_incl = std::max(-startindex,0);
 			const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + subject.length();
-			int columnindex = 0;
 
-			for(int i = startindex; i < endindex; i++){
-				// weights for bases A C G T N
-				double weights[5]{0,0,0,0,0};
-				int cov[5]{0,0,0,0,0};
-				int count = 0;
-		
-				//count subject base
-				if(i >= 0 && i < int(subject.length())){
-					double qw = 1.0;
-					if(useQScores)
-						qw *= qscore_to_weight[(unsigned char)subjectqualityScores[i]];
-					switch(subject[i]){
-						case 'A': weights[0] += qw; cov[0] += 1; break;
-						case 'C': weights[1] += qw; cov[1] += 1; break;
-						case 'G': weights[2] += qw; cov[2] += 1; break;
-						case 'T': weights[3] += qw; cov[3] += 1; break;
-						case 'N': weights[4] += qw; cov[4] += 1; break;
-						default: break;
-					}
-					count++;
+			//add subject weights
+			for(int i = 0; i < int(subject.length()); i++){
+				const int globalIndex = subjectColumnsBegin_incl + i;
+				double qw = 1.0;
+				if(useQScores)
+					qw *= qscore_to_weight[(unsigned char)subjectqualityScores[i]];
+				switch(subject[i]){
+					case 'A': Aweights[globalIndex] += qw; As[globalIndex] += 1; break;
+					case 'C': Cweights[globalIndex] += qw; Cs[globalIndex] += 1; break;
+					case 'G': Gweights[globalIndex] += qw; Gs[globalIndex] += 1; break;
+					case 'T': Tweights[globalIndex] += qw; Ts[globalIndex] += 1; break;
+					default: std::cout << "this should not happen in pileup\n"; break;
 				}
+				coverage[globalIndex]++;				
+			}
 
-				//count query bases
-				for(int j = 0; j < nQueries; j++){
-					const int baseindex = i - alignments[j].shift;
+			//add candidate weights
+			for(int i = 0; i < nQueries; i++){
+				double qw = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
 
-					if(baseindex >= 0 && baseindex < int(queries[j].length())){ //check query boundary
-						double qweight = defaultWeightsPerQuery[j];
-						for(int f = 0; f < frequenciesPrefixSum[j+1] - frequenciesPrefixSum[j]; f++){
-							const int qualityindex = frequenciesPrefixSum[j] + f;
-							if(useQScores)
-								qweight *= qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[baseindex]];
-							switch(queries[j][baseindex]){
-								case 'A': weights[0] += qweight; cov[0] += 1; break;
-								case 'C': weights[1] += qweight; cov[1] += 1; break;
-								case 'G': weights[2] += qweight; cov[2] += 1; break;
-								case 'T': weights[3] += qweight; cov[3] += 1; break;
-								case 'N': weights[4] += qweight; cov[4] += 1; break;
-								default: break;
-							}
-							count++;
+				for(int j = 0; j < int(queries[i].length()); j++){					
+					const int globalIndex = subjectColumnsBegin_incl + alignments[i].shift + j;
+
+					for(int f = 0; f < frequenciesPrefixSum[i+1] - frequenciesPrefixSum[i]; f++){
+						const int qualityindex = frequenciesPrefixSum[i] + f;
+						if(useQScores)
+							qw *= qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
+
+						switch(queries[i][j]){
+							case 'A': Aweights[globalIndex] += qw; As[globalIndex] += 1; break;
+							case 'C': Cweights[globalIndex] += qw; Cs[globalIndex] += 1; break;
+							case 'G': Gweights[globalIndex] += qw; Gs[globalIndex] += 1; break;
+							case 'T': Tweights[globalIndex] += qw; Ts[globalIndex] += 1; break;
+							default: std::cout << "this should not happen in pileup\n"; break;
 						}
+						coverage[globalIndex]++;
 					}
 				}
 
-				double consensusWeight = 0;
-				int maxindex = 4;
-				double columnWeight = 0;
-				for(int k = 0; k < 5; k++){
-					columnWeight += weights[k];
-					if(weights[k] > consensusWeight){
-						consensusWeight = weights[k];
-						maxindex = k;
-					}
-				}
-		
-				double supportvalue = consensusWeight / columnWeight;
-				double origWeight = 0;
-				int origCov = 0;
-				if(i >= 0 && i < int(subject.length())){
-					switch(subject[i]){
-						case 'A': origWeight = weights[0]; origCov = cov[0]; break;
-						case 'C': origWeight = weights[1]; origCov = cov[1]; break;
-						case 'G': origWeight = weights[2]; origCov = cov[2]; break;
-						case 'T': origWeight = weights[3]; origCov = cov[3]; break;
-						case 'N': origWeight = weights[4]; origCov = cov[4]; break;
-						default: break;
-					}
-				}
+			}
 
-				char consensusBase = ' ';
-				switch(maxindex){
-					case 0: consensusBase = 'A'; break;
-					case 1: consensusBase = 'C'; break;
-					case 2: consensusBase = 'G'; break;
-					case 3: consensusBase = 'T'; break;
-					case 4: consensusBase = 'N'; break;
-					default: break;
+			//find consensus and support in each column
+			for(int i = 0; i < columnsToCheck; i++){
+				char cons = 'A';
+				double consWeight = Aweights[i];
+				if(Cweights[i] > consWeight){
+					cons = 'C';
+					consWeight = Cweights[i];
 				}
+				if(Gweights[i] > consWeight){
+					cons = 'G';
+					consWeight = Gweights[i];
+				}
+				if(Tweights[i] > consWeight){
+					cons = 'T';
+					consWeight = Tweights[i];
+				}
+				consensus[i] = cons;
 
-				consensus[columnindex] = consensusBase;
-				support[columnindex] = supportvalue;
-				coverage[columnindex] = count;
-				origWeights[columnindex] = origWeight;
-				origCoverage[columnindex] = origCov;
-				columnindex++;
+				const double columnWeight = Aweights[i] + Cweights[i] + Gweights[i] + Tweights[i];
+				support[i] = consWeight / columnWeight;
+
+				switch(cons){
+					case 'A': origCoverage[i] = As[i]; origWeights[i] = Aweights[i]; break;
+					case 'C': origCoverage[i] = Cs[i]; origWeights[i] = Cweights[i]; break;
+					case 'G': origCoverage[i] = Gs[i]; origWeights[i] = Gweights[i]; break;
+					case 'T': origCoverage[i] = Ts[i]; origWeights[i] = Tweights[i]; break;
+					default: std::cout << "this should not happen in pileup\n"; break;
+				}	
 			}
 
 			tpb = std::chrono::system_clock::now();
@@ -181,14 +168,13 @@ namespace hammingtools{
 			int max_coverage = 0;
 			int min_coverage = std::numeric_limits<int>::max();
 			//get stats for subject columns
-			for(columnindex = subjectColumnsBegin_incl; columnindex < subjectColumnsEnd_excl; columnindex++){
-				if(columnindex >= columnsToCheck){
-					assert(columnindex < columnsToCheck);
-				}
-				avg_support += support[columnindex];
-				min_support = support[columnindex] < min_support? support[columnindex] : min_support;
-				max_coverage = coverage[columnindex] > max_coverage ? coverage[columnindex] : max_coverage;
-				min_coverage = coverage[columnindex] < min_coverage ? coverage[columnindex] : min_coverage;
+			for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
+				assert(i < columnsToCheck);
+				
+				avg_support += support[i];
+				min_support = support[i] < min_support? support[i] : min_support;
+				max_coverage = coverage[i] > max_coverage ? coverage[i] : max_coverage;
+				min_coverage = coverage[i] < min_coverage ? coverage[i] : min_coverage;
 			}
 			avg_support /= subject.length();
 
@@ -212,25 +198,16 @@ namespace hammingtools{
 			std::cout << "------------------------------------------------" << '\n';
 		#endif
 
-			bool isHQ = avg_support >= 1-errorrate
-				 && min_support >= 1-3*errorrate
+			bool isHQ = avg_support >= 1.0-errorrate
+				 && min_support >= 1.0-3.0*errorrate
 				 && min_coverage >= m / 2.0 * estimatedCoverage;
-                 
-                 
-           /*      std::cout << "ishq " << isHQ << std::endl;
-                 			std::cout << "avgsup " << avg_support << " >= " << (1-errorrate) << '\n';
-			std::cout << "minsup " << min_support << " >= " << (1-2*errorrate) << '\n';
-			std::cout << "mincov " << min_coverage << " >= " << (m) << '\n';
-			std::cout << "maxcov " << max_coverage << " <= " << (3*m) << '\n';
-			std::cout << "subjectColumnsBegin_incl " << subjectColumnsBegin_incl  << '\n';
-			std::cout << "subjectColumnsEnd_excl " << subjectColumnsEnd_excl  << '\n';
-			std::cout << "------------------------------------------------" << '\n';*/
 
 			if(isHQ){
 		#if 1
 				//correct anchor
 				for(int i = 0; i < int(subject.length()); i++){
-					subject[i] = consensus[subjectColumnsBegin_incl + i];
+					const int globalIndex = subjectColumnsBegin_incl + i;
+					subject[i] = consensus[globalIndex];
 				}
 		#endif
 		#if 0
@@ -285,9 +262,9 @@ namespace hammingtools{
 				}
 		#endif	
 			}else{
-				if(avg_support < 1-errorrate)
+				if(avg_support < 1.0-errorrate)
 					status |= (1 << 0);
-				if(min_support < 1-3*errorrate)
+				if(min_support < 1.0-3.0*errorrate)
 					status |= (1 << 1);
 				if(min_coverage < m / 2.0 * estimatedCoverage)
 					status |= (1 << 2);
@@ -295,16 +272,16 @@ namespace hammingtools{
 				//correct anchor
 				bool foundAColumn = false;
 				for(int i = 0; i < int(subject.length()); i++){
-					columnindex = subjectColumnsBegin_incl + i;
+					const int globalIndex = subjectColumnsBegin_incl + i;
 
-					if(support[columnindex] >= 1-3*errorrate){
+					if(support[globalIndex] >= 1.0-3.0*errorrate){
 		#if 1
-						subject[i] = consensus[columnindex];
+						subject[i] = consensus[globalIndex];
 						foundAColumn = true;
 		#endif
 					}else{
 		#if 1
-						if(support[columnindex] > 0.5 && origCoverage[columnindex] < m / 2.0 * estimatedCoverage){
+						if(support[globalIndex] > 0.5 && origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
 							double avgsupportkregion = 0;
 							int c = 0;
 							bool kregioncoverageisgood = true;
@@ -315,8 +292,8 @@ namespace hammingtools{
 									c++;
 								}
 							}
-							if(kregioncoverageisgood && avgsupportkregion / c >= 1-errorrate){
-								subject[i] = consensus[columnindex];
+							if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
+								subject[i] = consensus[globalIndex];
 								foundAColumn = true;
 							}
 						}
@@ -338,5 +315,4 @@ namespace hammingtools{
 
 
 	}
-
 }
