@@ -58,7 +58,20 @@ namespace graphtools{
 			return splitted_subs;
 		};
 
+		ErrorGraph::Edge::Edge(int t, double w) : to(t), weight(w), canBeUsed(true){}
 
+		ErrorGraph::Vertex::Vertex(char b) : base(b){
+		#ifdef LOGBASEDPATH
+			bestPathProb = std::numeric_limits<double>::lowest();
+		#else
+			bestPathProb = 0.0;
+		#endif
+		}
+
+		ErrorGraph::LinkOperation::LinkOperation():from(0), to(0), isOriginal(false){}
+		ErrorGraph::LinkOperation::LinkOperation(int f, int t, bool o):from(f), to(t), isOriginal(o){}
+
+		ErrorGraph::ErrorGraph(){}
 
 		ErrorGraph::ErrorGraph(const char* seq, int seqlength, const char* qualityScores, bool useQscores_, const int nTimes){
 			init(seq, seqlength, qualityScores, useQscores_, nTimes);
@@ -610,8 +623,6 @@ namespace graphtools{
 		}
 
 		void correct_cpu(std::string& subject,
-				int nQueries, 
-				const std::vector<std::string>& queries,
 				std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,

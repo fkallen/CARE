@@ -121,21 +121,21 @@ namespace graphtools{
 					break;
 				case ALIGNTYPE_SUBSTITUTE: //printf("s\n");
 
-					operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_SUBSTITUTE, encoded_accessor(r2, r2bases, curcol - 1)});
+					operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_SUBSTITUTE, twobitToChar(encoded_accessor(r2, r2bases, curcol - 1))});
 
 					curcol -= 1;
 					currow -= 1;
 					break;
 				case ALIGNTYPE_DELETE:  //printf("d\n");
 
-					operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_DELETE, encoded_accessor(r1, r1length, currow - 1)});
+					operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_DELETE, twobitToChar(encoded_accessor(r1, r1length, currow - 1))});
 
 					curcol -= 0;
 					currow -= 1;
 					break;
 				case ALIGNTYPE_INSERT:  //printf("i\n");
 
-					operations.push_back(AlignOp{(short)currow, ALIGNTYPE_INSERT, encoded_accessor(r2, r2bases, curcol - 1)});
+					operations.push_back(AlignOp{(short)currow, ALIGNTYPE_INSERT, twobitToChar(encoded_accessor(r2, r2bases, curcol - 1))});
 
 					curcol -= 1;
 					currow -= 0;
@@ -161,10 +161,11 @@ namespace graphtools{
 
 
 
-		AlignResult cpu_semi_global_alignment(const char* subject, const char* query, int ns, int nq,
-			int SCORE_EQUAL, int SCORE_SUBSTITUTE, int SCORE_INSERT, int SCORE_DELETE){
+		AlignResult cpu_semi_global_alignment(const AlignerDataArrays& buffers, const char* subject, const char* query, int ns, int nq){
 
-			return cpu_semi_global_align_internal(subject, query, ns, nq, SCORE_EQUAL, SCORE_SUBSTITUTE, SCORE_INSERT, SCORE_DELETE);
+			return cpu_semi_global_align_internal(subject, query, ns, nq, 
+						buffers.ALIGNMENTSCORE_MATCH, buffers.ALIGNMENTSCORE_SUB, 
+						buffers.ALIGNMENTSCORE_INS, buffers.ALIGNMENTSCORE_DEL);
 		}
 
 
@@ -409,7 +410,7 @@ namespace graphtools{
 
 							currentOp.position = currow - 1;
 							currentOp.type = ALIGNTYPE_SUBSTITUTE;
-							currentOp.base = encoded_accessor(sr2, r2bases, curcol - 1);
+							currentOp.base = twobitToChar(encoded_accessor(sr2, r2bases, curcol - 1));
 
 							my_ops_out[nOps] = currentOp;
 							++nOps;
@@ -421,7 +422,7 @@ namespace graphtools{
 
 							currentOp.position = currow - 1;
 							currentOp.type = ALIGNTYPE_DELETE;
-							currentOp.base = encoded_accessor(sr1, r1bases, currow - 1);
+							currentOp.base = twobitToChar(encoded_accessor(sr1, r1bases, currow - 1));
 
 							my_ops_out[nOps] = currentOp;
 							++nOps;
@@ -433,7 +434,7 @@ namespace graphtools{
 
 							currentOp.position = currow;
 							currentOp.type = ALIGNTYPE_INSERT;
-							currentOp.base = encoded_accessor(sr2, r2bases, curcol - 1);
+							currentOp.base = twobitToChar(encoded_accessor(sr2, r2bases, curcol - 1));
 
 							my_ops_out[nOps] = currentOp;
 							++nOps;
@@ -462,7 +463,7 @@ namespace graphtools{
 		void call_cuda_semi_global_alignment_kernel_async(const AlignerDataArrays& buffers){
 
 				size_t smem = cuda_semi_global_alignment_getSharedMemSize(buffers.maximumQueryLength, buffers.maximumCandidateLength);
-
+				printf("maxqlen %d, maxclen %d\n", buffers.maximumQueryLength, buffers.maximumCandidateLength);
 				dim3 block(std::min(512, 32 * SDIV(buffers.maximumCandidateLength+1, 32)), 1, 1);
 				dim3 grid(buffers.n_candidates, 1, 1);
 
@@ -807,7 +808,7 @@ namespace graphtools{
 
 							currentOp.position = currow - 1;
 							currentOp.type = ALIGNTYPE_SUBSTITUTE;
-							currentOp.base = encoded_accessor(sr2, r2bases, curcol - 1);
+							currentOp.base = twobitToChar(encoded_accessor(sr2, r2bases, curcol - 1));
 
 							my_ops_out[nOps] = currentOp;
 							++nOps;
@@ -819,7 +820,7 @@ namespace graphtools{
 
 							currentOp.position = currow - 1;
 							currentOp.type = ALIGNTYPE_DELETE;
-							currentOp.base = encoded_accessor(sr1, r1length, currow - 1);
+							currentOp.base = twobitToChar(encoded_accessor(sr1, r1length, currow - 1));
 
 							my_ops_out[nOps] = currentOp;
 							++nOps;
@@ -831,7 +832,7 @@ namespace graphtools{
 
 							currentOp.position = currow;
 							currentOp.type = ALIGNTYPE_INSERT;
-							currentOp.base = encoded_accessor(sr2, r2bases, curcol - 1);
+							currentOp.base = twobitToChar(encoded_accessor(sr2, r2bases, curcol - 1));
 
 							my_ops_out[nOps] = currentOp;
 							++nOps;

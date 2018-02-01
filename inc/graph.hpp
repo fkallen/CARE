@@ -18,9 +18,7 @@ namespace graphtools{
 				double prob;
 				bool canBeUsed;
 
-				Edge(int t, double w) : to(t), weight(w), canBeUsed(true)
-				{
-				}
+				Edge(int t, double w);
 			};
 
 			struct Vertex {
@@ -32,16 +30,13 @@ namespace graphtools{
 				double bestPathProb = 0.0;
 				double incomingOrigReadProb = 0.0;
 
-				Vertex(char b) : base(b)
-				{
-				}
+				Vertex(char b);
 			};
 
 			struct LinkOperation {
 
-				LinkOperation():from(0), to(0), isOriginal(false){}
-
-				LinkOperation(int f, int t, bool o):from(f), to(t), isOriginal(o){}
+				LinkOperation();
+				LinkOperation(int f, int t, bool o);
 
 				int from;
 				int to;
@@ -77,9 +72,7 @@ namespace graphtools{
 
 			std::vector<int> finalPath;
 
-			ErrorGraph()
-			{
-			}
+			ErrorGraph();
 
 			ErrorGraph(const char* seq, int seqlength, const char* qualityScores, bool useQscores, const int nTimes = 1);
 
@@ -119,8 +112,6 @@ namespace graphtools{
 		void init_once();
 
 		void correct_cpu(std::string& subject,
-				int nQueries, 
-				const std::vector<std::string>& queries,
 				std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,

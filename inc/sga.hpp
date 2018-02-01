@@ -8,8 +8,7 @@ namespace graphtools{
 
 	namespace alignment{
 
-		AlignResult cpu_semi_global_alignment(const char* subject, const char* query, int ns, int nq,
-				int SCORE_EQUAL, int SCORE_SUBSTITUTE, int SCORE_INSERT, int SCORE_DELETE);
+		AlignResult cpu_semi_global_alignment(const AlignerDataArrays& buffers, const char* subject, const char* query, int ns, int nq);
 
 
 #ifdef __NVCC__

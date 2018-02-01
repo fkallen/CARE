@@ -109,7 +109,7 @@ namespace graphtools{
 	}
 
 	void init_once(){
-		//TODO
+		correction::init_once();
 	}
 
 	std::vector<std::vector<AlignResult>> 
@@ -236,6 +236,9 @@ namespace graphtools{
 				}
 			}
 
+			mybuffers.maximumQueryLength = maximumQueryLength;
+			mybuffers.maximumCandidateLength = maximumCandidateLength;
+
 			mybuffers.h_r2PerR1[0] = 0;
 
 			int r2perr1index = 1;
@@ -295,6 +298,44 @@ namespace graphtools{
 
 			alignment::call_cuda_semi_global_align_kernel(mybuffers);
 
+			// copy result to host
+			cudaMemcpyAsync(mybuffers.h_results, 
+					mybuffers.d_results, 
+					sizeof(AlignResultCompact) * mybuffers.n_candidates, 
+					D2H, 
+					mybuffers.stream); CUERR;
+			cudaMemcpyAsync(mybuffers.h_ops, 
+					mybuffers.d_ops, 
+					sizeof(AlignOp) * mybuffers.max_ops_per_alignment * mybuffers.n_candidates, 
+					D2H, 
+					mybuffers.stream); CUERR;
+
+			cudaStreamSynchronize(mybuffers.stream); CUERR;
+
+			// store alignments in result vector
+
+			candidateIndex = 0;
+			int previousOutputIndex = -1;
+
+			for(int i = 0; i < mybuffers.n_subjects; i++){
+
+				int outputindex = previousOutputIndex + 1;
+				while(!activeBatches[outputindex]) outputindex++;
+				previousOutputIndex = outputindex;
+
+				int nqueriesForThisSubject = mybuffers.h_r2PerR1[i+1] - mybuffers.h_r2PerR1[i];
+
+				alignments[outputindex].resize(nqueriesForThisSubject);
+
+				for(int j = 0; j < nqueriesForThisSubject; j++){
+					const auto& currentResult = mybuffers.h_results[candidateIndex];
+					alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
+												mybuffers.h_ops + candidateIndex * mybuffers.max_ops_per_alignment, 
+												true);
+					candidateIndex++; 
+				}			
+			}
+
 		}else{ // use cpu for alignment
 
 	#endif 
@@ -312,7 +353,7 @@ namespace graphtools{
 						const char* cdata = (const char*)c->begin();
 						int cbases = c->getNbases();
 
-						//alignments[i][j] = aligner->cpu_alignment(qdata, cdata, qbases, cbases, query->isCompressed(), c->isCompressed());
+						alignments[i][j] = alignment::cpu_semi_global_alignment(mybuffers, qdata, cdata, qbases, cbases);
 					}
 				}
 			}
@@ -325,8 +366,6 @@ namespace graphtools{
 
 
 	void performCorrection(std::string& subject,
-				int nQueries, 
-				const std::vector<std::string>& queries,
 				std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,
@@ -336,7 +375,7 @@ namespace graphtools{
 				double graphalpha,
 				double graphx){
 
-		return correction::correct_cpu(subject, nQueries, queries, alignments, subjectqualityScores, queryqualityScores, frequenciesPrefixSum,
+		return correction::correct_cpu(subject, alignments, subjectqualityScores, queryqualityScores, frequenciesPrefixSum,
 				useQScores, MAX_MISMATCH_RATIO, graphalpha, graphx);
 
 	}
