@@ -3,16 +3,8 @@
 #include "../inc/fastareader.hpp"
 #include "../inc/fastqreader.hpp"
 #include "../inc/binarysequencehelpers.hpp"
-#include "../inc/errorgraph.hpp"
 
 #include "../inc/ganja/hpc_helpers.cuh"
-#include "../inc/hamming.hpp"
-#include "../inc/alignment_semi_global.hpp"
-#include "../inc/aligner.hpp"
-
-#include "../inc/hammingvote.hpp"
-
-
 
 #include "../inc/hammingtools.hpp"
 #include "../inc/graphtools.hpp"
@@ -37,8 +29,6 @@
 #include <cstring>
 
 #include <experimental/filesystem> // create_directories
-
-using namespace hammingvote;
 
 #define ERRORCORRECTION_TIMING
 //#define USE_REVCOMPL_FLAG
@@ -70,16 +60,13 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters, int n
 		, outputPath("")
 {
     	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
-	//correctionmode = CorrectionMode::Hamming;
-	correctionmode = CorrectionMode::Graph;
+	correctionmode = CorrectionMode::Hamming;
+	//correctionmode = CorrectionMode::Graph;
 
 	minhasher.minparams = minhashparameters;
 
 	buffers.resize(nInserterThreads);
 
-	eg_global_init();
-	hamming_vote_global_init();
-    
     	hammingtools::init_once();
     	graphtools::init_once();
 
@@ -1424,6 +1411,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					graphcorrectiontime += foo2;
 
 					std::string header = *readStorage.fetchHeader_ptr(readnum + i);
+
+					resultstringstream << (readnum + i) << ' ';
 
 					resultstringstream << header << '\n'
 						<< newcorrected << '\n';

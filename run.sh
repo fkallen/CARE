@@ -12,13 +12,13 @@ ithreads=4
 cthreads=8
 
 #input file
-inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655_1M.fastq
-#inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
+#inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655_1M.fastq
+inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
 #inputfile=/ssd/fkallenb/eccomparison/correcteddatasets2/readscorrected.fq
 #inputfile=/ssd/fkallenb/eccomparison/datasets/C.elegans_SRX218989.fastq
 
-coverage=21
-#coverage=255
+#coverage=21
+coverage=255
 #coverage=31
 
 errorrate=0.03
@@ -46,7 +46,7 @@ useQualityScores=--useQualityScores
 #kmer length
 k=16
 #hashmaps (one kmer hash value per map)
-maps=4
+maps=8
 
 #alignment scores for semiglobal alignment
 #we use a high indel penalty to focus on substitutions only. you may want to change this to include indel correction
@@ -56,7 +56,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=20
+batchsize=5
 
 #properties of good alignment
 maxmismatchratio=0.20

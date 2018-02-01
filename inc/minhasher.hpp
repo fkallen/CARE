@@ -2,7 +2,6 @@
 #define MINHASHER_HPP
 
 #include "read.hpp"
-#include "countminsketch.hpp"
 
 #include "ganja/open_addressing_multi_hash_map.cuh"
 #include "ganja/hash_functions.cuh"

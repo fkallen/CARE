@@ -2,17 +2,9 @@
 #define ERRORCORRECTOR_HPP
 
 #include "minhasher.hpp"
-
 #include "read.hpp"
 #include "readstorage.hpp"
 #include "threadsafe_buffer.hpp"
-
-//#include "countminsketch.hpp"
-
-#include "errorgraph.hpp"
-#include "alignment.hpp"
-#include "alignment_semi_global.hpp"
-#include "../inc/aligner.hpp"
 
 #include <cstdint>
 #include <vector>

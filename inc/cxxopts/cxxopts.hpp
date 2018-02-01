@@ -535,8 +535,9 @@ namespace cxxopts
         if (!is_signed)
         {
           throw argument_incorrect_type(text);
-        }
-        value = -result;
+        }else{
+        	value = -result;
+	}
       }
       else
       {
