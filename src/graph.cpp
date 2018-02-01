@@ -2,6 +2,7 @@
 #include "../inc/alignment.hpp"
 
 #include <cassert>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -622,7 +623,7 @@ namespace graphtools{
 			}
 		}
 
-		void correct_cpu(std::string& subject,
+		std::tuple<std::chrono::duration<double>,std::chrono::duration<double>> correct_cpu(std::string& subject,
 				std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,
@@ -632,6 +633,11 @@ namespace graphtools{
 				double graphalpha,
 				double graphx){
 
+			std::chrono::duration<double> graphbuildtime(0);
+			std::chrono::duration<double> graphcorrectiontime(0);
+			std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
+			tpa = std::chrono::system_clock::now();
 
 			ErrorGraph errorgraph(subject.c_str(), subject.length(),subjectqualityScores.c_str(), useQScores);
 
@@ -648,8 +654,20 @@ namespace graphtools{
 				}
 			}
 
+			tpb = std::chrono::system_clock::now();
+	
+			graphbuildtime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
+
 			// let the graph to its work
 			subject = errorgraph.getCorrectedRead(graphalpha, graphx);
+
+			tpb = std::chrono::system_clock::now();
+	
+			graphcorrectiontime += tpb - tpa;
+
+			return std::tie(graphbuildtime, graphcorrectiontime);
 		}
 
 

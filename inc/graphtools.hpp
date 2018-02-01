@@ -78,7 +78,7 @@ namespace graphtools{
 			   const std::vector<std::vector<const Sequence*>>& queries,
 			   std::vector<bool> activeBatches, bool useGpu);
 
-	void performCorrection(std::string& subject,
+	std::tuple<std::chrono::duration<double>,std::chrono::duration<double>> performCorrection(std::string& subject,
 				std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,

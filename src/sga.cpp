@@ -463,7 +463,6 @@ namespace graphtools{
 		void call_cuda_semi_global_alignment_kernel_async(const AlignerDataArrays& buffers){
 
 				size_t smem = cuda_semi_global_alignment_getSharedMemSize(buffers.maximumQueryLength, buffers.maximumCandidateLength);
-				printf("maxqlen %d, maxclen %d\n", buffers.maximumQueryLength, buffers.maximumCandidateLength);
 				dim3 block(std::min(512, 32 * SDIV(buffers.maximumCandidateLength+1, 32)), 1, 1);
 				dim3 grid(buffers.n_candidates, 1, 1);
 
@@ -504,7 +503,7 @@ namespace graphtools{
 
 
 
-		//below is unused
+//----------------------------below is unused------------------------------------------
 
 		size_t cuda_semi_global_align_multiwarp_getSharedMemSize(int maxLengthR1, int maxLengthR2, int threadsPerBlock){
 

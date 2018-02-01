@@ -111,7 +111,7 @@ namespace graphtools{
 
 		void init_once();
 
-		void correct_cpu(std::string& subject,
+		std::tuple<std::chrono::duration<double>,std::chrono::duration<double>> correct_cpu(std::string& subject,
 				std::vector<AlignResult>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,
