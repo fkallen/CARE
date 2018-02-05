@@ -1,6 +1,7 @@
 #ifndef PILEUP_HPP
 #define PILEUP_HPP
 
+#include "../inc/hammingtools.hpp"
 #include "../inc/alignment.hpp"
 
 #include <vector>
@@ -28,6 +29,26 @@ namespace hammingtools{
 				double errorrate,
 				double m,
 				int k);
+
+		int cpu_pileup_correct(CorrectionBuffers* buffers, int nQueries, int columnsToCheck, 
+						int subjectColumnsBegin_incl, int subjectColumnsEnd_excl,
+						int startindex, int endindex,
+						double errorrate, int estimatedCoverage, double m, 
+						bool correctQueries, int k, std::vector<bool>& correctedQueries);
+
+#ifdef __NVCC__
+
+		void call_cuda_pileup_vote_kernel_async(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
+						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
+						const double maxErrorRate, 
+						const bool useQScores);
+
+		void call_cuda_pileup_vote_kernel(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
+								const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
+								const double maxErrorRate, 
+								const bool useQScores);
+
+#endif
 
 	}
 

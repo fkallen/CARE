@@ -858,11 +858,13 @@ namespace graphtools{
 			}
 		}
 
-	}
-}
+
 
 
 #endif
+
+	}
+}
 
 
 

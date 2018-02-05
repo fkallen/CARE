@@ -7,6 +7,7 @@
 #include <vector>
 #include <chrono>
 #include <tuple>
+#include <climits>
 
 namespace hammingtools{
 
@@ -50,9 +51,71 @@ struct SHDdata{
 	void resize(int n_sub, int n_quer);
 };
 
+struct CorrectionBuffers{
+//work memory
+	char* d_consensus = nullptr;
+	double* d_support = nullptr;
+	int* d_coverage = nullptr;
+	double* d_origWeights = nullptr;
+	int* d_origCoverage = nullptr;
+	int* d_As = nullptr;
+	int* d_Cs = nullptr;
+	int* d_Gs = nullptr;
+	int* d_Ts = nullptr;
+	double* d_Aweights = nullptr;
+	double* d_Cweights = nullptr;
+	double* d_Gweights = nullptr;
+	double* d_Tweights = nullptr;
+
+//transfer memory
+	int* d_lengths = nullptr;
+	char* d_sequences = nullptr;
+	char* d_qualityscores = nullptr;
+	AlignResultCompact* d_alignments = nullptr;
+	int* d_frequencies_prefix_sum = nullptr;
+
+	int* h_lengths = nullptr;
+	char* h_sequences = nullptr;
+	char* h_qualityscores = nullptr;
+	AlignResultCompact* h_alignments = nullptr;
+	int* h_frequencies_prefix_sum = nullptr;
+
+	char* h_consensus = nullptr;
+	double* h_support = nullptr;
+	int* h_coverage = nullptr;
+	double* h_origWeights = nullptr;
+	int* h_origCoverage = nullptr;
+
+	CorrectionBuffers* d_this = nullptr;
+	
+
+	int deviceId = -1;
+#ifdef __NVCC__
+	cudaStream_t stream = nullptr;
+#endif
+
+	int max_n_columns = 0;
+	int n_columns = 0;
+	int max_n_sequences = 0;
+	int n_sequences = 0;
+	int max_n_qualityscores = 0;
+	int n_qualityscores = 0;
+
+	int max_seq_length = -1;
+
+	double avg_support = 0;
+	double min_support = 0;
+	int max_coverage = 0;
+	int min_coverage = 0;
+
+	CorrectionBuffers(int id, int maxseqlength);
+	void resize(int cols, int nsequences, int nqualityscores);
+};
+
 void print_SHDdata(const SHDdata& data);
 
 void cuda_cleanup_SHDdata(SHDdata& data);
+void cuda_cleanup_CorrectionBuffers(CorrectionBuffers& buffers);
 
 void init_once();
 
@@ -62,7 +125,7 @@ std::vector<std::vector<AlignResultCompact>> getMultipleAlignments(SHDdata& buff
 			   std::vector<bool> activeBatches, bool useGpu);
 
 std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-performCorrection(std::string& subject,
+performCorrection(CorrectionBuffers& buffers, std::string& subject,
 				int nQueries, 
 				std::vector<std::string>& queries,
 				const std::vector<AlignResultCompact>& alignments,
@@ -76,7 +139,8 @@ performCorrection(std::string& subject,
 				int estimatedCoverage,
 				double errorrate,
 				double m,
-				int kmerlength);
+				int kmerlength,
+				bool useGpu);
 
 
 

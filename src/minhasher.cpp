@@ -1,10 +1,44 @@
 #include "../inc/minhasher.hpp"
-
 #include "../inc/binarysequencehelpers.hpp"
 #include "../inc/ntHash/nthash.hpp"
+#include "../inc/ganja/hpc_helpers.cuh"
+
 #include <stdexcept>
 #include <chrono>
 
+#ifdef __NVCC__
+#include <thrust/system/cuda/execution_policy.h>
+#include <thrust/copy.h>
+#include <thrust/sort.h>
+#endif
+
+MinhasherBuffers::MinhasherBuffers(int id){
+	deviceId = id;
+#ifdef __NVCC__
+	cudaSetDevice(deviceId); CUERR;
+	cudaStreamCreate(&stream); CUERR;
+#endif
+}
+
+void MinhasherBuffers::grow(size_t newcapacity){
+#ifdef __NVCC__
+	cudaSetDevice(deviceId);
+	if(newcapacity > capacity){
+		cudaFree(d_allMinhashResults); CUERR;
+		cudaMalloc(&d_allMinhashResults, sizeof(std::uint64_t) * newcapacity); CUERR;
+	}
+#endif	
+	size = 0;
+	capacity = newcapacity;
+}
+
+void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer){
+#ifdef __NVCC__
+	cudaSetDevice(buffer.deviceId);
+	cudaFree(buffer.d_allMinhashResults); CUERR;
+	cudaStreamDestroy(buffer.stream); CUERR;
+#endif	
+}
 
 Minhasher::Minhasher() : Minhasher(MinhashParameters{1,1})
 {
@@ -129,7 +163,7 @@ std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidatesWithFlag(cons
 	return result;
 }
 
-std::vector<std::uint64_t> Minhasher::getCandidates(const std::string& sequence) const{
+std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
 
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
@@ -170,16 +204,46 @@ std::vector<std::uint64_t> Minhasher::getCandidates(const std::string& sequence)
 		allMinhashResults.insert(allMinhashResults.end(), entries2.begin(), entries2.end());
 	}
 
+	int n_initial_candidates = allMinhashResults.size();
+
+	int unique_elements = -1;
+
+#if 0
+	cudaSetDevice(buffers.deviceId);
+
+	buffers.grow(allMinhashResults.size());
+	thrust::device_ptr<std::uint64_t> dev_ptr = thrust::device_pointer_cast(buffers.d_allMinhashResults);
+	//thrust::copy(thrust::cuda::par.on(buffers.stream), allMinhashResults.begin(), allMinhashResults.end(), dev_ptr);
+	cudaMemcpyAsync(dev_ptr.get(), allMinhashResults.data(), sizeof(std::uint64_t) * n_initial_candidates, cudaMemcpyHostToDevice, buffers.stream); CUERR;
+	thrust::sort(thrust::cuda::par.on(buffers.stream), dev_ptr, dev_ptr + n_initial_candidates);
+	auto d_unique_end = thrust::unique(thrust::cuda::par.on(buffers.stream), dev_ptr, dev_ptr + n_initial_candidates);
+
+	cudaStreamSynchronize(buffers.stream); CUERR;
+
+	unique_elements = thrust::distance(dev_ptr, d_unique_end);
+	allMinhashResults.resize(unique_elements);
+	//thrust::copy(thrust::cuda::par.on(buffers.stream), dev_ptr, d_unique_end, allMinhashResults.begin());
+	cudaMemcpyAsync(allMinhashResults.data(), dev_ptr.get(), sizeof(std::uint64_t) * unique_elements, cudaMemcpyDeviceToHost, buffers.stream); CUERR;
+	cudaStreamSynchronize(buffers.stream); CUERR;
+#else
+
 	std::sort(allMinhashResults.begin(), allMinhashResults.end());
 	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
+	unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
+	allMinhashResults.resize(unique_elements);
 
-	assert(allMinhashResults.end() - uniqueEnd >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
+#endif
 
-	//std::vector<std::uint64_t> result(allMinhashResults.begin(), uniqueEnd);
-
-	//return result;
-
-	allMinhashResults.resize(std::distance(allMinhashResults.begin(), uniqueEnd));
+	assert(n_initial_candidates - unique_elements >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
+	
+	/*if(d != unique_elements){
+		std::cout << "#unique elements wrong. normal " << d << ", thrust " << unique_elements << std::endl;
+	}
+	for(int i = 0; i < d; i++){
+		if(tmp[i] != allMinhashResults[i]){
+			std::cout << "unique element wrong. normal " << allMinhashResults[i] << ", thrust " << tmp[i] << std::endl;
+		}
+	}*/
 
 	return allMinhashResults;
 }

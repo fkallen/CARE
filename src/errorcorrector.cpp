@@ -28,6 +28,17 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef __NVCC__
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+
+#include <thrust/iterator/constant_iterator.h>
+
+#include <thrust/copy.h>
+#include <thrust/inner_product.h>
+#include <thrust/sort.h>
+#endif
+
 #include <experimental/filesystem> // create_directories
 
 #define ERRORCORRECTION_TIMING
@@ -49,6 +60,80 @@ constexpr double HASHMAP_LOAD_FACTOR = 0.8;
 constexpr bool CORRECT_CANDIDATE_READS_TOO = true;
 //constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 1.00;
 //constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.00;
+
+
+struct MinhashResultsDedupBuffers{
+	const Sequence** d_candidateReads = nullptr;
+	int* d_indexlist = nullptr;
+	const Sequence** d_uniqueSequences = nullptr;
+	int* d_frequencies = nullptr;
+	int* h_indexlist = nullptr;
+
+	size_t n_initial_results = 0;
+	size_t n_unique_results = 0;
+	size_t max_n_initial_results = 0;
+	size_t max_n_unique_results = 0;
+	int deviceId = -1;
+
+#ifdef __NVCC__
+	cudaStream_t stream;
+#endif
+
+	MinhashResultsDedupBuffers(int id){
+		deviceId = id;
+		#ifdef __NVCC__
+			cudaSetDevice(deviceId); CUERR;
+			cudaStreamCreate(&stream);
+		#endif
+	}
+
+	void resize_initial_results(size_t n_results){
+	#ifdef __NVCC__
+		cudaSetDevice(deviceId); CUERR;
+		if(n_results > max_n_initial_results){
+			cudaFree(d_candidateReads); CUERR;
+			cudaFree(d_indexlist); CUERR;
+			cudaMalloc(&d_candidateReads, sizeof(const Sequence*) * n_results); CUERR;
+			cudaMalloc(&d_indexlist, sizeof(int) * n_results); CUERR;
+
+			cudaFreeHost(h_indexlist); CUERR
+			cudaMallocHost(&h_indexlist, sizeof(int*) * n_results); CUERR;
+
+			max_n_initial_results = n_results;
+		}
+	#endif
+		n_initial_results = n_results;
+	}
+	void resize_unique_results(size_t n_results){
+	#ifdef __NVCC__
+		cudaSetDevice(deviceId); CUERR;
+		if(n_results > max_n_unique_results){
+			cudaFree(d_uniqueSequences); CUERR;
+			cudaFree(d_frequencies); CUERR;
+			cudaMalloc(&d_uniqueSequences, sizeof(const Sequence*) * n_results); CUERR;
+			cudaMalloc(&d_frequencies, sizeof(int) * n_results); CUERR;
+
+			max_n_unique_results = n_results;
+		}
+	#endif
+		n_unique_results = n_results;
+	}
+};
+
+void cuda_cleanup_MinhashResultsDedupBuffers(MinhashResultsDedupBuffers buffer){
+#ifdef __NVCC__
+	cudaSetDevice(buffer.deviceId); CUERR;
+	cudaFree(buffer.d_candidateReads); CUERR;
+	cudaFree(buffer.d_indexlist); CUERR;
+	cudaFree(buffer.d_uniqueSequences); CUERR;
+	cudaFree(buffer.d_frequencies); CUERR;
+	cudaFreeHost(buffer.h_indexlist); CUERR;
+	cudaStreamDestroy(buffer.stream); CUERR;
+#endif
+}
+
+
+
 
 ErrorCorrector::ErrorCorrector()
 	: ErrorCorrector(MinhashParameters(), 1, 1)
@@ -671,10 +756,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 	int nCorrectedCandidates = 0;
 	int nProcessedQueries = 0;
 
-	hammingtools::SHDdata shddata(deviceIds.size() == 0 ? 0 : deviceIds[threadId % deviceIds.size()], SDIV(nThreads, deviceIds.size()), maximum_sequence_length);
-	graphtools::AlignerDataArrays sgadata(deviceIds.size() == 0 ? 0 : deviceIds[threadId % deviceIds.size()], 
+	//printf("max seq length = %d\n", maximum_sequence_length);
+	int deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
+	hammingtools::SHDdata shddata(deviceId, SDIV(nThreads, deviceIds.size()), maximum_sequence_length);
+	hammingtools::CorrectionBuffers hcorrectionbuffers(deviceId, maximum_sequence_length);
+	graphtools::AlignerDataArrays sgadata(deviceId, 
 						ALIGNMENTSCORE_MATCH, ALIGNMENTSCORE_SUB, 
 						ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL);
+
+	MinhasherBuffers minhasherbuffers(deviceId);
+	MinhashResultsDedupBuffers minhashresultsdedupbuffers(deviceId);
 
 	// the query sequences fetched from ReadStorage
 	std::vector<const Sequence*> queries(batchsize);
@@ -781,7 +872,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			if(activeBatches[i]){
 				queryStrings[i] = queries[i]->toString();
 //				std::cout << "get candidates of read id " << (readnum + i) <<'\n';
-				candidateIds[i] = minhasher.getCandidates(queryStrings[i]);
+				candidateIds[i] = minhasher.getCandidates(minhasherbuffers, queryStrings[i]);
 			}
 		}
 
@@ -829,6 +920,89 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 					t1 = std::chrono::system_clock::now();
 
+					int n_unique_elements = -1;
+
+//#ifdef __NVCC__
+#if 0
+					cudaSetDevice(minhashresultsdedupbuffers.deviceId);
+					minhashresultsdedupbuffers.resize_initial_results(nCandidates);
+
+					thrust::device_ptr<const Sequence*> d_candidateReads_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_candidateReads);
+					thrust::device_ptr<int> d_indexlist_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_indexlist);
+
+					cudaMemcpyAsync(d_candidateReads_ptr.get(), 
+							candidateReads[i].data(), 
+							sizeof(const Sequence*) * nCandidates, 
+							cudaMemcpyHostToDevice, 
+							minhashresultsdedupbuffers.stream); CUERR;
+					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
+
+//std::cout << "readnum " << readnum << ", i " << i << std::endl;
+
+					//thrust::copy(candidateReads[i].begin(), candidateReads[i].end(), d_candidateReads_ptr);
+					thrust::sequence(thrust::cuda::par.on(minhashresultsdedupbuffers.stream), 
+							d_indexlist_ptr, 
+							d_indexlist_ptr + nCandidates);
+					thrust::sort_by_key(thrust::cuda::par.on(minhashresultsdedupbuffers.stream), 
+								d_candidateReads_ptr, 
+								d_candidateReads_ptr + nCandidates, 
+								d_indexlist_ptr);
+
+					//sort candidateIds by indexlist
+					//thrust::copy(d_indexlist_ptr, d_indexlist_ptr + nCandidates, minhashresultsdedupbuffers.h_indexlist);
+					cudaMemcpyAsync(minhashresultsdedupbuffers.h_indexlist, 
+							d_indexlist_ptr.get(), 
+							sizeof(int) * nCandidates, 
+							cudaMemcpyDeviceToHost, 
+							minhashresultsdedupbuffers.stream); CUERR;
+					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
+
+					std::vector<std::uint64_t> tmp(nCandidates);
+					for(int k = 0; k < nCandidates; k++){
+						tmp[k] = candidateIds[i][minhashresultsdedupbuffers.h_indexlist[k]];
+					}
+					candidateIds[i] = std::move(tmp);
+
+					// count unique sequences
+					n_unique_elements = thrust::inner_product(thrust::cuda::par.on(minhashresultsdedupbuffers.stream),
+										d_candidateReads_ptr, 
+										d_candidateReads_ptr + nCandidates - 1,
+										d_candidateReads_ptr + 1,
+										int(1),
+										thrust::plus<int>(),
+										thrust::not_equal_to<const Sequence*>());
+
+					minhashresultsdedupbuffers.resize_unique_results(n_unique_elements);
+
+					thrust::device_ptr<const Sequence*> d_uniqueSequences_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_uniqueSequences);
+					thrust::device_ptr<int> d_frequencies_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_frequencies);
+		  
+					// save unique sequences and their frequencies
+					thrust::reduce_by_key(thrust::cuda::par.on(minhashresultsdedupbuffers.stream), 
+								d_candidateReads_ptr, d_candidateReads_ptr + nCandidates,
+								thrust::constant_iterator<int>(1),
+								d_uniqueSequences_ptr,
+								d_frequencies_ptr);
+
+					candidateReads[i].resize(n_unique_elements);
+					//thrust::copy(d_uniqueSequences_ptr, d_uniqueSequences_ptr + n_unique_elements, candidateReads[i].begin());
+					cudaMemcpyAsync(candidateReads[i].data(), 
+							d_uniqueSequences_ptr.get(), 
+							sizeof(const Sequence*) * n_unique_elements, 
+							cudaMemcpyDeviceToHost, 
+							minhashresultsdedupbuffers.stream); CUERR;
+					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
+
+					frequencies[i].resize(n_unique_elements);
+					//thrust::copy(d_frequencies_ptr, d_frequencies_ptr + n_unique_elements, frequencies[i].begin());
+					cudaMemcpyAsync(frequencies[i].data(), 
+							d_frequencies_ptr.get(), 
+							sizeof(int) * n_unique_elements, 
+							cudaMemcpyDeviceToHost, 
+							minhashresultsdedupbuffers.stream); CUERR;
+					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
+#else					
+
 					std::vector<int> indexlist(nCandidates);
 					std::iota(indexlist.begin(), indexlist.end(), 0);
 
@@ -851,7 +1025,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 					// but also count number of duplicates for each unique entry(inclusive) in sortedFreqs
 					std::vector<int> sortedFreqs(1,1);
 					const Sequence* prevSeq = candidateReads[i][0];
-					auto uniquecount = 1;
+					n_unique_elements = 1;
 					for(int k = 1; k < nCandidates; k++){
 						const Sequence* curSeq = candidateReads[i][k];
 						if(prevSeq == curSeq){
@@ -859,15 +1033,29 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 							sortedFreqs.back()++;
 						}else{
 							sortedFreqs.push_back(1);
-							candidateReads[i][uniquecount] = curSeq;
-							uniquecount++;
+							candidateReads[i][n_unique_elements] = curSeq;
+							n_unique_elements++;
 						}
 						prevSeq = curSeq;
 					}
 
-					candidateReads[i].resize(uniquecount);
+					candidateReads[i].resize(n_unique_elements);
 					frequencies[i] = std::move(sortedFreqs);
+#endif
 
+#if 0
+					if(uniquecount != n_unique_elements){
+						std::cout << "sequence dedup #unique elements wrong " << i << ". normal " << uniquecount << ", thrust " << n_unique_elements << std::endl;
+					}
+					for(int k = 0; k< uniquecount; k++){
+						if(candidateReads[i][k] != copy[k]){
+							std::cout << "sequence dedup unique element wrong " << i << " " << k << ". normal " << candidateReads[i][k] << ", thrust " << copy[k] << std::endl;
+						}
+						if(frequencies[i][k] != freqstmp[k]){
+							std::cout << "sequence dedup freq wrong " << i << " " << k << ". normal " << frequencies[i][k] << ", thrust " << freqstmp[k] << std::endl;
+						}
+					}
+#endif
 					//check
 					int freqsum = 0;
 					for(const auto f : frequencies[i]) freqsum += f;
@@ -877,12 +1065,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 					mapminhashresultsdedup += (t2 - t1);
 
-					revComplcandidateReads[i].resize(uniquecount);
+					revComplcandidateReads[i].resize(n_unique_elements);
 
 					t1 = std::chrono::system_clock::now();
 
 					int fc = 0;
-					for(int k = 0; k < uniquecount; k++){
+					for(int k = 0; k < n_unique_elements; k++){
 						revComplcandidateReads[i][k] = readStorage.fetchReverseComplementSequence_ptr(candidateIds[i][fc]);
 						fc += frequencies[i][k];
 					}
@@ -937,6 +1125,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 			auto alignments = hammingtools::getMultipleAlignments(shddata, queries,
 				                                candidateReadsAndRevcompls,
 				                                activeBatches, true);
+
+
 			
 #ifdef ERRORCORRECTION_TIMING
 			tpb = std::chrono::system_clock::now();
@@ -1170,7 +1360,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 						int status;
 						std::chrono::duration<double> foo1;
 						std::chrono::duration<double> foo2;
-						std::tie(status, foo1, foo2) = hammingtools::performCorrection(queryStrings[i],
+						std::tie(status, foo1, foo2) = hammingtools::performCorrection(hcorrectionbuffers, queryStrings[i],
 												candidatecount, 
 												candidateStrings,
 												insertedAlignments,
@@ -1184,7 +1374,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 												estimatedCoverage,
 												errorrate,
 												m_coverage,
-												minhashparams.k);
+												minhashparams.k,
+												true);
 						
 						tpd = std::chrono::system_clock::now();
 						
@@ -1431,6 +1622,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 		}
 #endif
 
+			//std::cout << "foo" << std::endl;
+			//std::exit(-1);
+
 
 
 #endif
@@ -1554,7 +1748,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads, const std::str
 
 	hammingtools::cuda_cleanup_SHDdata(shddata);
 	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
-
+	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
+	cuda_cleanup_MinhashResultsDedupBuffers(minhashresultsdedupbuffers);
+	hammingtools::cuda_cleanup_CorrectionBuffers(hcorrectionbuffers);
 }
 
 

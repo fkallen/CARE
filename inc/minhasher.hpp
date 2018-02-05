@@ -32,6 +32,22 @@ struct MinhashParameters {
 	}
 };
 
+struct MinhasherBuffers{
+	std::uint64_t* allMinhashResults = nullptr;
+	std::uint64_t* d_allMinhashResults = nullptr;
+	size_t size = 0;
+	size_t capacity = 0;
+	int deviceId = -1;
+#ifdef __NVCC__
+	cudaStream_t stream;
+#endif
+
+	MinhasherBuffers(int id);
+	void grow(size_t newcapacity);
+};
+
+void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer);
+
 struct Minhasher {
 
 	// configure hash map
@@ -74,7 +90,7 @@ struct Minhasher {
 	int insertSequence(const std::string& sequence, const std::uint64_t readnum);
 
 	std::vector<std::pair<std::uint64_t, int>> getCandidatesWithFlag(const std::string& sequence) const;
-	std::vector<std::uint64_t> getCandidates(const std::string& sequence) const;
+	std::vector<std::uint64_t> getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const;
 
 	void saveTablesToFile(std::string filename) const;
 
