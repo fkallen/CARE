@@ -12,20 +12,20 @@ ithreads=4
 cthreads=8
 
 #input file
-inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655_1M.fastq
-#inputfile=/ssd/fkallenb/eccomparison/datasets/E.coli_SRR1191655.fastq
-#inputfile=/ssd/fkallenb/eccomparison/correcteddatasets2/readscorrected.fq
-#inputfile=/ssd/fkallenb/eccomparison/datasets/C.elegans_SRX218989.fastq
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#inputfile=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/readscorrected.fq
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
 
-coverage=21
-#coverage=255
+#coverage=21
+coverage=255
 #coverage=31
 
 errorrate=0.03
 m=0.6
 
 #output path. this is used as temporary storage, too
-outdir=/ssd/fkallenb/eccomparison/correcteddatasets2/
+outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/
 
 #output file
 outputfile="readscorrected.fq"
@@ -46,7 +46,7 @@ useQualityScores=--useQualityScores
 #kmer length
 k=16
 #hashmaps (one kmer hash value per map)
-maps=8
+maps=4
 
 #alignment scores for semiglobal alignment
 #we use a high indel penalty to focus on substitutions only. you may want to change this to include indel correction
