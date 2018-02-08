@@ -9,6 +9,10 @@
 #include <tuple>
 #include <climits>
 
+#ifdef __NVCC__
+#include <cublas_v2.h>
+#endif
+
 namespace hammingtools{
 
 struct SHDdata{
@@ -67,16 +71,21 @@ struct CorrectionBuffers{
 	double* d_Gweights = nullptr;
 	double* d_Tweights = nullptr;
 
+	int* h_As = nullptr;
+	int* h_Cs = nullptr;
+	int* h_Gs = nullptr;
+	int* h_Ts = nullptr;
+	double* h_Aweights = nullptr;
+	double* h_Cweights = nullptr;
+	double* h_Gweights = nullptr;
+	double* h_Tweights = nullptr;
+
 //transfer memory
 	int* d_lengths = nullptr;
-	char* d_sequences = nullptr;
-	char* d_qualityscores = nullptr;
 	AlignResultCompact* d_alignments = nullptr;
 	int* d_frequencies_prefix_sum = nullptr;
 
 	int* h_lengths = nullptr;
-	char* h_sequences = nullptr;
-	char* h_qualityscores = nullptr;
 	AlignResultCompact* h_alignments = nullptr;
 	int* h_frequencies_prefix_sum = nullptr;
 
@@ -86,12 +95,21 @@ struct CorrectionBuffers{
 	double* h_origWeights = nullptr;
 	int* h_origCoverage = nullptr;
 
+	char* h_pileup = nullptr;
+	char* d_pileup = nullptr;
+	char* d_pileup_transposed = nullptr;
+
+	char* h_qual_pileup = nullptr;
+	char* d_qual_pileup = nullptr;
+	char* d_qual_pileup_transposed = nullptr;
+
 	CorrectionBuffers* d_this = nullptr;
 	
 
 	int deviceId = -1;
 #ifdef __NVCC__
 	cudaStream_t stream = nullptr;
+	cublasHandle_t handle;
 #endif
 
 	int max_n_columns = 0;
@@ -108,8 +126,16 @@ struct CorrectionBuffers{
 	int max_coverage = 0;
 	int min_coverage = 0;
 
+	std::chrono::duration<double> resizetime{0};
+	std::chrono::duration<double> preprocessingtime{0};
+	std::chrono::duration<double> h2dtime{0};
+	std::chrono::duration<double> correctiontime{0};
+	std::chrono::duration<double> d2htime{0};
+	std::chrono::duration<double> postprocessingtime{0};
+
 	CorrectionBuffers(int id, int maxseqlength);
 	void resize(int cols, int nsequences, int nqualityscores);
+	void resize_host_cols(int cols);
 };
 
 void print_SHDdata(const SHDdata& data);

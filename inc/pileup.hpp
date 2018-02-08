@@ -14,13 +14,15 @@ namespace hammingtools{
 		void init_once();
 
 		std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-		correct_cpu(std::string& subject,
+		cpu_pileup_all_in_one(const CorrectionBuffers* buffers, std::string& subject,
 				int nQueries, 
 				std::vector<std::string>& queries,
 				const std::vector<AlignResultCompact>& alignments,
 				const std::string& subjectqualityScores, 
 				const std::vector<const std::string*>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
+				const int startindex, const int endindex,
+				const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 				double maxErrorRate,
 				bool useQScores,
 				std::vector<bool>& correctedQueries,
@@ -30,23 +32,39 @@ namespace hammingtools{
 				double m,
 				int k);
 
-		int cpu_pileup_correct(CorrectionBuffers* buffers, int nQueries, int columnsToCheck, 
-						int subjectColumnsBegin_incl, int subjectColumnsEnd_excl,
-						int startindex, int endindex,
-						double errorrate, int estimatedCoverage, double m, 
-						bool correctQueries, int k, std::vector<bool>& correctedQueries);
+		void cpu_pileup_create(const CorrectionBuffers* buffers, std::string& subject,
+						std::vector<std::string>& queries,
+						const std::string& subjectqualityScores, 
+						const std::vector<const std::string*>& queryqualityScores,
+						const std::vector<AlignResultCompact>& alignments,
+						const std::vector<int>& frequenciesPrefixSum,
+						const int subjectColumnsBegin_incl);
+
+		void cpu_pileup_vote(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments,
+						const std::vector<int>& frequenciesPrefixSum,
+						const double maxErrorRate, 
+						const bool useQScores,
+						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl);
+
+		int cpu_pileup_correct(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments, const std::vector<int>& frequenciesPrefixSum,
+						const int columnsToCheck, 
+						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
+						const int startindex, const int endindex,
+						const double errorrate, const int estimatedCoverage, const double m, 
+						const bool correctQueries, int k, std::vector<bool>& correctedQueries);
 
 #ifdef __NVCC__
 
-		void call_cuda_pileup_vote_kernel_async(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
+
+
+		void gpu_pileup_transpose(const CorrectionBuffers* buffers);
+
+		void gpu_qual_pileup_transpose(const CorrectionBuffers* buffers);
+
+		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						const double maxErrorRate, 
 						const bool useQScores);
-
-		void call_cuda_pileup_vote_kernel(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
-								const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-								const double maxErrorRate, 
-								const bool useQScores);
 
 #endif
 

@@ -2,15 +2,24 @@
 #include "../inc/alignment.hpp"
 #include "../inc/hammingtools.hpp"
 #include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/cudareduce.cuh"
 
 #include <vector>
 #include <string>
 #include <cassert>
 #include <chrono>
 #include <climits>
+#include <cmath>
 
 #ifdef __NVCC__
 #include <cooperative_groups.h>
+#include <cublas_v2.h>
+
+#include <thrust/functional.h>
+#include <thrust/gather.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
+#include <thrust/device_vector.h>
 
 using namespace cooperative_groups;
 #endif
@@ -55,17 +64,19 @@ namespace hammingtools{
 		}
 
 		std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-		correct_cpu(std::string& subject,
+		cpu_pileup_all_in_one(const CorrectionBuffers* buffers, std::string& subject,
 						int nQueries, 
 						std::vector<std::string>& queries,
 						const std::vector<AlignResultCompact>& alignments,
 						const std::string& subjectqualityScores, 
 						const std::vector<const std::string*>& queryqualityScores,
 						const std::vector<int>& frequenciesPrefixSum,
+						const int startindex, const int endindex,
+						const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						double maxErrorRate,
 						bool useQScores,
 						std::vector<bool>& correctedQueries,
-						bool correctQueries_,
+						const bool correctQueries,
 						int estimatedCoverage,
 						double errorrate,
 						double m,
@@ -75,40 +86,9 @@ namespace hammingtools{
 			std::chrono::duration<double> basecorrectiontime(0);
 			std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
 
-			
-	
 			tpa = std::chrono::system_clock::now();
 
-			const bool correctQueries = correctQueries_;
 			int status = 0;
-
-			int startindex = 0;
-			int endindex = subject.length();
-			for(int i = 0; i < nQueries; i++){
-				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
-				const int queryEndsAt = queryqualityScores[i]->length() + alignments[i].shift;
-				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
-				correctedQueries[i] = false;
-			}
-
-			const int columnsToCheck = endindex - startindex;
-
-			// the column index range for the subject begins at max(-leftOfSubjectBegin,0);
-			std::vector<char> consensus(columnsToCheck,0);
-			std::vector<double> support(columnsToCheck,0);
-			std::vector<int> coverage(columnsToCheck,0);
-			std::vector<double> origWeights(columnsToCheck,0);
-			std::vector<int> origCoverage(columnsToCheck,0);
-			std::vector<int> As(columnsToCheck,0);
-			std::vector<int> Cs(columnsToCheck,0);
-			std::vector<int> Gs(columnsToCheck,0);
-			std::vector<int> Ts(columnsToCheck,0);
-			std::vector<double> Aweights(columnsToCheck,0);
-			std::vector<double> Cweights(columnsToCheck,0);
-			std::vector<double> Gweights(columnsToCheck,0);
-			std::vector<double> Tweights(columnsToCheck,0);
-			const int subjectColumnsBegin_incl = std::max(-startindex,0);
-			const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + subject.length();
 
 			//add subject weights
 			for(int i = 0; i < int(subject.length()); i++){
@@ -117,16 +97,20 @@ namespace hammingtools{
 				if(useQScores)
 					qw *= qscore_to_weight[(unsigned char)subjectqualityScores[i]];
 				switch(subject[i]){
-					case 'A': Aweights[globalIndex] += qw; As[globalIndex] += 1; break;
-					case 'C': Cweights[globalIndex] += qw; Cs[globalIndex] += 1; break;
-					case 'G': Gweights[globalIndex] += qw; Gs[globalIndex] += 1; break;
-					case 'T': Tweights[globalIndex] += qw; Ts[globalIndex] += 1; break;
+					case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += 1; break;
+					case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += 1; break;
+					case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += 1; break;
+					case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += 1; break;
 					default: std::cout << "this should not happen in pileup\n"; break;
 				}
-				coverage[globalIndex]++;				
+				buffers->h_coverage[globalIndex]++;				
 			}
 
 			//add candidate weights
+
+#define WEIGHTMODE 3
+
+#if WEIGHTMODE == 0
 			for(int i = 0; i < nQueries; i++){
 				const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
 
@@ -140,46 +124,157 @@ namespace hammingtools{
 							qw *= qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
 
 						switch(queries[i][j]){
-							case 'A': Aweights[globalIndex] += qw; As[globalIndex] += 1; break;
-							case 'C': Cweights[globalIndex] += qw; Cs[globalIndex] += 1; break;
-							case 'G': Gweights[globalIndex] += qw; Gs[globalIndex] += 1; break;
-							case 'T': Tweights[globalIndex] += qw; Ts[globalIndex] += 1; break;
+							case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += 1; break;
+							case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += 1; break;
+							case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += 1; break;
+							case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += 1; break;
 							default: std::cout << "this should not happen in pileup\n"; break;
 						}
-						coverage[globalIndex]++;
+						buffers->h_coverage[globalIndex]++;
+					}
+				}
+			}
+#elif WEIGHTMODE == 1
+
+			for(int i = 0; i < nQueries; i++){
+				const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
+				const int prefix = frequenciesPrefixSum[i];
+				const int freq = frequenciesPrefixSum[i+1] - prefix;
+				const int len = queries[i].length();
+				const int defaultcolumnoffset = subjectColumnsBegin_incl + alignments[i].shift;
+				for(int f = 0; f < freq; f++){
+					const int qualityindex = prefix + f;
+					if(useQScores){
+						for(int j = 0; j < len; j++){
+							//use h_support as temporary storage
+							buffers->h_support[j] = defaultweight * qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
+						}
+					}else{
+						for(int j = 0; j < len; j++){
+							buffers->h_support[j] = defaultweight;
+						}
+					}
+
+					for(int j = 0; j <len; j++){
+						const double qw = buffers->h_support[j];
+						const char base = queries[i][j];
+						const int globalIndex = defaultcolumnoffset + j;
+						switch(base){
+							case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += 1; break;
+							case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += 1; break;
+							case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += 1; break;
+							case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += 1; break;
+							default: std::cout << "this should not happen in pileup\n"; break;
+						}
+						//buffers->h_coverage[globalIndex]++;
+					}
+				}
+				for(int j = 0; j < len; j++){
+					const int globalIndex = defaultcolumnoffset + j;
+					buffers->h_coverage[globalIndex] += freq;
+				}
+			}
+
+#elif WEIGHTMODE == 2
+
+			for(int i = 0; i < nQueries; i++){
+				const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
+				const int prefix = frequenciesPrefixSum[i];
+				const int freq = frequenciesPrefixSum[i+1] - prefix;
+				const int len = queries[i].length();
+
+				for(int j = 0; j < len; j++){					
+					const int globalIndex = subjectColumnsBegin_incl + alignments[i].shift + j;
+					double qw = 0.0;
+					for(int f = 0; f < freq; f++){
+						const int qualityindex = prefix + f;
+						if(useQScores)
+							qw += qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
+						else
+							qw += 1.0;
+					}
+					qw *= defaultweight;
+
+					switch(queries[i][j]){
+						case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
+						case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
+						case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
+						case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
+						default: std::cout << "this should not happen in pileup\n"; break;
+					}
+					buffers->h_coverage[globalIndex] += freq;
+				}
+			}
+#elif WEIGHTMODE == 3
+
+			for(int i = 0; i < nQueries; i++){
+				const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
+				const int prefix = frequenciesPrefixSum[i];
+				const int freq = frequenciesPrefixSum[i+1] - prefix;
+				const int len = queries[i].length();
+				const int defaultcolumnoffset = subjectColumnsBegin_incl + alignments[i].shift;
+				//use h_support as temporary storage to store sum of quality weights
+				for(int f = 0; f < freq; f++){
+					const int qualityindex = prefix + f;
+					if(useQScores){
+						for(int j = 0; j < len; j++){							
+							buffers->h_support[j] += qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
+						}
+					}else{
+						for(int j = 0; j < len; j++){
+							buffers->h_support[j] += 1.0;
+						}
 					}
 				}
 
+				for(int j = 0; j < len; j++){
+					const double qw = buffers->h_support[j] * defaultweight;
+					const char base = queries[i][j];
+					const int globalIndex = defaultcolumnoffset + j;
+					switch(base){
+						case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
+						case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
+						case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
+						case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
+						default: std::cout << "this should not happen in pileup\n"; break;
+					}
+					buffers->h_coverage[globalIndex] += freq;
+					buffers->h_support[j] = 0;
+				}
 			}
+#elif
+	static_assert(false, "invalid WEIGHTMODE");
+#endif
+
 
 			//find consensus and support in each column
 			for(int i = 0; i < columnsToCheck; i++){
 				char cons = 'A';
-				double consWeight = Aweights[i];
-				if(Cweights[i] > consWeight){
+				double consWeight = buffers->h_Aweights[i];
+				if(buffers->h_Cweights[i] > consWeight){
 					cons = 'C';
-					consWeight = Cweights[i];
+					consWeight = buffers->h_Cweights[i];
 				}
-				if(Gweights[i] > consWeight){
+				if(buffers->h_Gweights[i] > consWeight){
 					cons = 'G';
-					consWeight = Gweights[i];
+					consWeight = buffers->h_Gweights[i];
 				}
-				if(Tweights[i] > consWeight){
+				if(buffers->h_Tweights[i] > consWeight){
 					cons = 'T';
-					consWeight = Tweights[i];
+					consWeight = buffers->h_Tweights[i];
 				}
-				consensus[i] = cons;
+				buffers->h_consensus[i] = cons;
 
-				const double columnWeight = Aweights[i] + Cweights[i] + Gweights[i] + Tweights[i];
-				support[i] = consWeight / columnWeight;
+				const double columnWeight = buffers->h_Aweights[i] + buffers->h_Cweights[i] + buffers->h_Gweights[i] + buffers->h_Tweights[i];
+				buffers->h_support[i] = consWeight / columnWeight;
 
 				//printf("i %i, %f %f %f %f\n",i, Aweights[i], Cweights[i], Gweights[i], Tweights[i]);
 
 				switch(cons){
-					case 'A': origCoverage[i] = As[i]; origWeights[i] = Aweights[i]; break;
-					case 'C': origCoverage[i] = Cs[i]; origWeights[i] = Cweights[i]; break;
-					case 'G': origCoverage[i] = Gs[i]; origWeights[i] = Gweights[i]; break;
-					case 'T': origCoverage[i] = Ts[i]; origWeights[i] = Tweights[i]; break;
+					case 'A': buffers->h_origCoverage[i] = buffers->h_As[i]; buffers->h_origWeights[i] = buffers->h_Aweights[i]; break;
+					case 'C': buffers->h_origCoverage[i] = buffers->h_Cs[i]; buffers->h_origWeights[i] = buffers->h_Cweights[i]; break;
+					case 'G': buffers->h_origCoverage[i] = buffers->h_Gs[i]; buffers->h_origWeights[i] = buffers->h_Gweights[i]; break;
+					case 'T': buffers->h_origCoverage[i] = buffers->h_Ts[i]; buffers->h_origWeights[i] = buffers->h_Tweights[i]; break;
 					default: std::cout << "this should not happen in pileup\n"; break;
 				}	
 			}
@@ -198,13 +293,23 @@ namespace hammingtools{
 			for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
 				assert(i < columnsToCheck);
 				
-				avg_support += support[i];
-				min_support = support[i] < min_support? support[i] : min_support;
-				max_coverage = coverage[i] > max_coverage ? coverage[i] : max_coverage;
-				min_coverage = coverage[i] < min_coverage ? coverage[i] : min_coverage;
+				avg_support += buffers->h_support[i];
+				min_support = buffers->h_support[i] < min_support? buffers->h_support[i] : min_support;
+				max_coverage = buffers->h_coverage[i] > max_coverage ? buffers->h_coverage[i] : max_coverage;
+				min_coverage = buffers->h_coverage[i] < min_coverage ? buffers->h_coverage[i] : min_coverage;
 				//printf("i %d sup %f cov %d\n", i, support[i], coverage[i]);
 			}
 			avg_support /= subject.length();
+
+			/*for(int i = 0; i < columnsToCheck; i++){
+				printf("%2c ", consensus[i]);
+			}
+			printf("\n");
+			for(int i = 0; i < columnsToCheck; i++){
+				printf("%2d ", coverage[i]);
+			}
+			printf("\n");
+			printf("%f %f %d %d\n", avg_support, min_support, max_coverage, min_coverage);*/
 
 
 		#if 0
@@ -223,7 +328,7 @@ namespace hammingtools{
 				//correct anchor
 				for(int i = 0; i < int(subject.length()); i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
-					subject[i] = consensus[globalIndex];
+					subject[i] = buffers->h_consensus[globalIndex];
 				}
 		#endif
 		#if 0
@@ -246,8 +351,8 @@ namespace hammingtools{
 
 								assert(columnindex < columnsToCheck);
 								if(queryColumnsBegin_incl <= columnindex){
-									newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
-									newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+									newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;		
+									newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
 								}
 							}
 							//check new columns right of subject
@@ -256,8 +361,8 @@ namespace hammingtools{
 								&& columnindex < columnsToCheck;
 								columnindex++){
 
-								newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;		
-								newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+								newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;		
+								newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
 							}
 
 							if(newColMinSupport >= 1-3*errorrate 
@@ -266,7 +371,7 @@ namespace hammingtools{
 
 								for(int j = 0; j < int(queries[i].length()); j++){
 									int columnindex = queryColumnsBegin_incl + j;
-									queries[i][j] = consensus[columnindex];
+									queries[i][j] = buffers->h_consensus[columnindex];
 									queryWasCorrected = true;
 								}
 							}
@@ -290,23 +395,23 @@ namespace hammingtools{
 				for(int i = 0; i < int(subject.length()); i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
 
-					if(support[globalIndex] >= 1.0-3.0*errorrate){
-						subject[i] = consensus[globalIndex];
+					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
+						subject[i] = buffers->h_consensus[globalIndex];
 						foundAColumn = true;
 					}else{
-						if(support[globalIndex] > 0.5 && origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
+						if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
 							double avgsupportkregion = 0;
 							int c = 0;
 							bool kregioncoverageisgood = true;
 							for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
 								if(j != i && j >= 0 && j < int(subject.length())){
-									avgsupportkregion += support[subjectColumnsBegin_incl + j];
-									kregioncoverageisgood &= (coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
+									avgsupportkregion += buffers->h_support[subjectColumnsBegin_incl + j];
+									kregioncoverageisgood &= (buffers->h_coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
 									c++;
 								}
 							}
 							if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
-								subject[i] = consensus[globalIndex];
+								subject[i] = buffers->h_consensus[globalIndex];
 								foundAColumn = true;
 							}
 						}
@@ -325,15 +430,178 @@ namespace hammingtools{
 			return std::tie(status, majorityvotetime, basecorrectiontime);
 		}
 
+		void cpu_pileup_create(const CorrectionBuffers* buffers, std::string& subject,
+						std::vector<std::string>& queries,
+						const std::string& subjectqualityScores, 
+						const std::vector<const std::string*>& queryqualityScores,
+						const std::vector<AlignResultCompact>& alignments,
+						const std::vector<int>& frequenciesPrefixSum,
+						const int subjectColumnsBegin_incl){
+			const int nQueries = queries.size();
 
+			//clear sequences
+			std::memset(buffers->h_pileup, 'F', sizeof(char) * buffers->max_n_columns *  buffers->max_n_sequences);
+			//clear qualityscores
+			std::memset(buffers->h_qual_pileup, 0, sizeof(char) * buffers->max_n_columns *  buffers->max_n_qualityscores);
 
+			//copy subject to buffer
+			std::memcpy(buffers->h_pileup + 0 * buffers->max_n_columns + subjectColumnsBegin_incl, subject.data(), sizeof(char) * subject.length());
+			//copy subject quality to buffer
+			std::memcpy(buffers->h_qual_pileup + 0 * buffers->max_n_columns + subjectColumnsBegin_incl, 
+					subjectqualityScores.data(), 
+					sizeof(char) * subjectqualityScores.length());
 
+			for(int i = 0; i < nQueries; i++){
+				const int freqSum = frequenciesPrefixSum[i];
+				const int freqSumNext = frequenciesPrefixSum[i+1];
+				const int freq = freqSumNext - freqSum;
+				const int colOffset = subjectColumnsBegin_incl + alignments[i].shift;
+				//copy queries[i] to buffer
+				for(int f = 0; f < freq; f++){
+					const int row = 1 + freqSum + f;
+					std::memcpy(buffers->h_pileup + row * buffers->max_n_columns 
+									+ colOffset, 
+							queries[i].data(), 
+							sizeof(char) * queries[i].length());
+					std::memcpy(buffers->h_qual_pileup + row * buffers->max_n_columns 
+									+ colOffset, 
+							queryqualityScores[i]->data(), 
+							sizeof(char) * queryqualityScores[i]->length());
+				}
+			}
+		}
 
-		int cpu_pileup_correct(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
+		void cpu_pileup_vote(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments,
+						const std::vector<int>& frequenciesPrefixSum,
+						const double maxErrorRate, 
+						const bool useQScores,
+						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl){
+
+			
+			int unique_sequence_index = 0;
+			//row in original pileup
+			for(int row = 0; row < buffers->n_sequences; row += 1){
+				if(row-1 >= frequenciesPrefixSum[unique_sequence_index+1]){
+					unique_sequence_index++;
+				}
+				//col in original pileup
+				for(int column = 0; column < buffers->n_columns; column += 1){
+					const int cellindex = row * buffers->max_n_columns + column;
+					const char base = buffers->h_pileup[cellindex];
+					const char qual = buffers->h_qual_pileup[cellindex];
+					const double qualweight = qscore_to_weight[(unsigned char)qual];
+
+					if(base != 'F'){
+						if(row == 0){
+							double qw = 1.0;
+							if(useQScores){
+								qw *= qualweight;
+							} 		
+								
+							switch(base){
+								case 'A': buffers->h_Aweights[column] += qw; buffers->h_As[column] += 1; break;
+								case 'C': buffers->h_Cweights[column] += qw; buffers->h_Cs[column] += 1; break;
+								case 'G': buffers->h_Gweights[column] += qw; buffers->h_Gs[column] += 1; break;
+								case 'T': buffers->h_Tweights[column] += qw; buffers->h_Ts[column] += 1; break;
+								default:  break; //all other chars are invalid and not counted
+							}
+						}else{
+							const AlignResultCompact& arc = alignments[unique_sequence_index];
+							const double defaultweight = 1.0 - sqrt(arc.nOps / (arc.overlap * maxErrorRate));
+
+							double qw = defaultweight;
+							if(useQScores){
+								qw *= qualweight;
+							}
+
+							switch(base){
+								case 'A': buffers->h_Aweights[column] += qw; buffers->h_As[column] += 1; break;
+								case 'C': buffers->h_Cweights[column] += qw; buffers->h_Cs[column] += 1; break;
+								case 'G': buffers->h_Gweights[column] += qw; buffers->h_Gs[column] += 1; break;
+								case 'T': buffers->h_Tweights[column] += qw; buffers->h_Ts[column] += 1; break;
+								default:  break; //all other chars are invalid and not counted
+							}
+						}
+					}
+				}
+
+			}
+
+			//find consensus
+			for(int column = 0; column < buffers->n_columns; column += 1){
+				char cons = 'F';
+				double consWeight = 0;
+				if(buffers->h_Aweights[column] > consWeight){
+					cons = 'A';
+					consWeight = buffers->h_Aweights[column];
+				}
+				if(buffers->h_Cweights[column] > consWeight){
+					cons = 'C';
+					consWeight = buffers->h_Cweights[column];
+				}
+				if(buffers->h_Gweights[column] > consWeight){
+					cons = 'G';
+					consWeight = buffers->h_Gweights[column];
+				}
+				if(buffers->h_Tweights[column] > consWeight){
+					cons = 'T';
+					consWeight = buffers->h_Tweights[column];
+				}
+
+				const double columnWeight = buffers->h_Aweights[column] + buffers->h_Cweights[column] 
+								+ buffers->h_Gweights[column] + buffers->h_Tweights[column];
+				const int coverage = buffers->h_As[column] + buffers->h_Cs[column] 
+								+ buffers->h_Gs[column] + buffers->h_Ts[column];
+
+				buffers->h_coverage[column] = coverage;
+				buffers->h_consensus[column] = cons;
+				buffers->h_support[column] = consWeight / columnWeight;
+
+				if(column >= subjectColumnsBegin_incl && column < subjectColumnsEnd_excl){
+					switch(cons){
+						case 'A': 	buffers->h_origCoverage[column] = buffers->h_As[column]; 
+								buffers->h_origWeights[column] = buffers->h_Aweights[column]; break;
+						case 'C': 	buffers->h_origCoverage[column] = buffers->h_Cs[column]; 
+								buffers->h_origWeights[column] = buffers->h_Cweights[column]; break;
+						case 'G': 	buffers->h_origCoverage[column] = buffers->h_Gs[column]; 
+								buffers->h_origWeights[column] = buffers->h_Gweights[column]; break;
+						case 'T': 	buffers->h_origCoverage[column] = buffers->h_Ts[column]; 
+								buffers->h_origWeights[column] = buffers->h_Tweights[column]; break;
+						default:  printf("this should never happen in a subject column. w = %f\n", columnWeight); break;
+					}
+				}
+			}
+
+			double avg_support = 0;
+			double min_support = 1.0;
+			int max_coverage = 0;
+			int min_coverage = std::numeric_limits<int>::max();
+			//get stats for subject columns
+			for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
+				const double sup = buffers->h_support[i];
+				const int cov = buffers->h_coverage[i];
+				
+				avg_support += sup;
+				min_support = sup < min_support? sup : min_support;
+				max_coverage = cov > max_coverage ? cov : max_coverage;
+				min_coverage = cov < min_coverage ? cov : min_coverage;
+				//printf("i %d sup %f cov %d\n", i, support[i], coverage[i]);
+			}
+			avg_support /= buffers->h_lengths[0];
+
+			buffers->avg_support = avg_support;
+			buffers->min_support = min_support;
+			buffers->max_coverage = max_coverage;
+			buffers->min_coverage = min_coverage;
+		}
+
+		int cpu_pileup_correct(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments, const std::vector<int>& frequenciesPrefixSum,
+						const int columnsToCheck, 
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						const int startindex, const int endindex,
 						const double errorrate, const int estimatedCoverage, const double m, 
 						const bool correctQueries, int k, std::vector<bool>& correctedQueries){
+
 			const bool isHQ = buffers->avg_support >= 1.0-errorrate
 				 && buffers->min_support >= 1.0-3.0*errorrate
 				 && buffers->min_coverage >= m / 2.0 * estimatedCoverage;
@@ -343,17 +611,18 @@ namespace hammingtools{
 			if(isHQ){
 		#if 1
 				//correct anchor
-				for(int i = 0; i < buffers->h_lengths[0]; i++){
-					const int globalIndex = subjectColumnsBegin_incl + i;
-					buffers->h_sequences[0 * buffers->max_seq_length + i] = buffers->h_consensus[globalIndex]; //assign to subject[i]
-				}
+				std::memcpy(	buffers->h_pileup + subjectColumnsBegin_incl, 
+						buffers->h_consensus + subjectColumnsBegin_incl, 
+						sizeof(char) * buffers->h_lengths[0]);
+
 		#endif
 		#if 0
 				//correct candidates
 				if(correctQueries){
 			
-					for(int i = 0; i < nQueries; i++){
-						int queryColumnsBegin_incl = buffers->h_alignments[i].shift - startindex;
+					for(int i = 0; i < buffers->n_sequences - 1; i++){
+						const int row = 1 + frequenciesPrefixSum[i];
+						int queryColumnsBegin_incl = alignments[i].shift - startindex;
 						bool queryWasCorrected = false;
 						//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
 						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols 
@@ -384,14 +653,10 @@ namespace hammingtools{
 
 							if(newColMinSupport >= 1-3*errorrate 
 								&& newColMinCov >= m / 2.0 * estimatedCoverage){
-								//assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
 
-								for(int j = 0; j < buffers->h_lengths[1+i]; j++){
-									const int columnindex = queryColumnsBegin_incl + j;
-									//assign to query[i][j]
-									buffers->h_sequences[(1+i) * buffers->max_seq_length + j] = buffers->h_consensus[columnindex];
-									queryWasCorrected = true;
-								}
+								std::memcpy(	buffers->h_pileup + row * buffers->max_n_columns + queryColumnsBegin_incl, 
+										buffers->h_consensus + queryColumnsBegin_incl, 
+										sizeof(char) * buffers->h_lengths[row]);
 							}
 						}
 						if(queryWasCorrected){
@@ -414,7 +679,7 @@ namespace hammingtools{
 					const int globalIndex = subjectColumnsBegin_incl + i;
 
 					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
-						buffers->h_sequences[0 * buffers->max_seq_length + i] = buffers->h_consensus[globalIndex]; //assign to subject[i]
+						buffers->h_pileup[globalIndex] = buffers->h_consensus[globalIndex]; //assign to subject[i]
 						foundAColumn = true;
 					}else{
 						if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
@@ -429,7 +694,7 @@ namespace hammingtools{
 								}
 							}
 							if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
-								buffers->h_sequences[0 * buffers->max_seq_length + i] = buffers->h_consensus[globalIndex]; //assign to subject[i]
+								buffers->h_pileup[globalIndex] = buffers->h_consensus[globalIndex]; //assign to subject[i]
 								foundAColumn = true;
 							}
 						}
@@ -446,283 +711,289 @@ namespace hammingtools{
 
 
 
-#if 1		
+#ifdef __NVCC__
+
+
+
+		// convert a linear index to a linear index in the transpose 
+		struct transpose_index : public thrust::unary_function<size_t,size_t>
+		{
+			size_t m, n;
+
+			__host__ __device__
+			transpose_index(size_t _m, size_t _n) : m(_m), n(_n) {}
+
+			__host__ __device__
+			size_t operator()(size_t linear_index)
+			{
+				size_t i = linear_index / n;
+				size_t j = linear_index % n;
+	
+				return m * j + i;
+			}
+		};
+
+		void gpu_pileup_transpose(const CorrectionBuffers* buffers){
+			//copy h_pileup to d_pileup, then store transposed in d_pileup_transposed
+
+			const size_t rows = buffers->max_n_sequences;
+			const size_t cols = buffers->max_n_columns;
+
+			cudaSetDevice(buffers->deviceId);
+			cudaMemcpyAsync(buffers->d_pileup, buffers->h_pileup, sizeof(char) * rows * cols, H2D, buffers->stream); CUERR;
+			cudaStreamSynchronize(buffers->stream);
+
+			thrust::device_ptr<char> d_pileup_ptr = thrust::device_pointer_cast(buffers->d_pileup);
+			thrust::device_ptr<char> d_pileup_transposed_ptr = thrust::device_pointer_cast(buffers->d_pileup_transposed);
+
+			thrust::counting_iterator<size_t> indices(0);
+
+			thrust::gather(thrust::cuda::par.on(buffers->stream),
+					thrust::make_transform_iterator(indices, transpose_index(cols, rows)),
+					thrust::make_transform_iterator(indices, transpose_index(cols, rows)) + rows * cols,
+					d_pileup_ptr, d_pileup_transposed_ptr);
+
+			/*printf("before transpose\n");
+			for(int i = 0; i < buffers->n_sequences; i++){
+				for(int j = 0; j < buffers->n_columns; j++){
+					printf("%c", buffers->h_pileup[i * cols + j]);
+				}
+				printf("\n");
+			}
+			printf("\n");*/
+
+			/*cudaMemcpyAsync(buffers->h_pileup, buffers->d_pileup_transposed, sizeof(char) * rows * cols, D2H, buffers->stream); CUERR;
+			cudaStreamSynchronize(buffers->stream);
+
+			printf("after transpose\n");
+			for(int j = 0; j < cols; j++){
+				for(int i = 0; i < rows; i++){				
+					printf("%c", buffers->h_pileup[j * rows + i]);
+				}
+				printf("\n");
+			}*/
+		}
+
+		void gpu_qual_pileup_transpose(const CorrectionBuffers* buffers){
+			//copy h_pileup to d_pileup, then store transposed in d_pileup_transposed
+
+			const size_t rows = buffers->max_n_qualityscores;
+			const size_t cols = buffers->max_n_columns;
+
+			cudaSetDevice(buffers->deviceId);
+			cudaMemcpyAsync(buffers->d_qual_pileup, buffers->h_qual_pileup, sizeof(char) * rows * cols, H2D, buffers->stream); CUERR;
+			cudaStreamSynchronize(buffers->stream);
+
+			thrust::device_ptr<char> d_qual_pileup_ptr = thrust::device_pointer_cast(buffers->d_qual_pileup);
+			thrust::device_ptr<char> d_qual_pileup_transposed_ptr = thrust::device_pointer_cast(buffers->d_qual_pileup_transposed);
+
+			thrust::counting_iterator<size_t> indices(0);
+
+			thrust::gather(thrust::cuda::par.on(buffers->stream),
+					thrust::make_transform_iterator(indices, transpose_index(cols, rows)),
+					thrust::make_transform_iterator(indices, transpose_index(cols, rows)) + rows * cols,
+					d_qual_pileup_ptr, d_qual_pileup_transposed_ptr);
+		}
+
 		__global__
-		void cuda_pileup_vote_kernel(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
+		void cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						const double maxErrorRate, 
 						const bool useQScores){
 
-//using only 1 block, 
-#if 1
-			thread_block block = this_thread_block();
-	
-			//add subject weights
-			const int subjectlength = buffers->d_lengths[0];
-			for(int i = block.thread_rank(); i < subjectlength; i += block.size()){
-				const char base = buffers->d_sequences[0 * buffers->max_seq_length + i];
-				const int globalIndex = subjectColumnsBegin_incl + i;
-				double qw = 1.0;
-				if(useQScores)
-					qw *= d_qscore_to_weight[(unsigned char)(buffers->d_qualityscores[0 * buffers->max_seq_length + i])];
-				switch(base){
-					case 'A': buffers->d_Aweights[globalIndex] += qw; buffers->d_As[globalIndex] += 1; break;
-					case 'C': buffers->d_Cweights[globalIndex] += qw; buffers->d_Cs[globalIndex] += 1; break;
-					case 'G': buffers->d_Gweights[globalIndex] += qw; buffers->d_Gs[globalIndex] += 1; break;
-					case 'T': buffers->d_Tweights[globalIndex] += qw; buffers->d_Ts[globalIndex] += 1; break;
-					default:  printf("this should not happen in pileup\n"); break;
+			__shared__ double smem[128];
+			// multiple blocks, one block per column in pileup -> one block per row in transposed pileup
+
+			//column in original pileup
+			for(int column = blockIdx.x; column < columnsToCheck; column += gridDim.x){
+				double Aweight = 0;
+				double Cweight = 0;
+				double Gweight = 0;
+				double Tweight = 0;
+				int As = 0;
+				int Cs = 0;
+				int Gs = 0;
+				int Ts = 0;
+
+				//row in original pileup
+				for(int row = threadIdx.x; row < nSequences; row += blockDim.x){
+					const int cellindex = column * buffers->max_n_sequences + row;
+					const char base = buffers->d_pileup_transposed[cellindex];
+					const char qual = buffers->d_qual_pileup_transposed[cellindex];
+					const double qualweight = d_qscore_to_weight[(unsigned char)qual];
+
+					if(base != 'F'){
+						if(row == 0){
+							double qw = 1.0;
+							if(useQScores){
+								qw *= qualweight;
+							} 		
+								
+							switch(base){
+								case 'A': Aweight += qw; As += 1; break;
+								case 'C': Cweight += qw; Cs += 1; break;
+								case 'G': Gweight += qw; Gs += 1; break;
+								case 'T': Tweight += qw; Ts += 1; break;
+								default:  break; //all other chars are invalid and not counted
+							}
+						}else{
+							const AlignResultCompact arc = buffers->d_alignments[row-1];
+							const double defaultweight = 1.0 - sqrt(arc.nOps / (arc.overlap * maxErrorRate));
+
+							double qw = defaultweight;
+							if(useQScores){
+								qw *= qualweight;
+							}
+
+							switch(base){
+								case 'A': Aweight += qw; As += 1; break;
+								case 'C': Cweight += qw; Cs += 1; break;
+								case 'G': Gweight += qw; Gs += 1; break;
+								case 'T': Tweight += qw; Ts += 1; break;
+								default:  break; //all other chars are invalid and not counted
+							}
+						}
+					}
 				}
-				assert(buffers->d_coverage[globalIndex] == 0);
-				buffers->d_coverage[globalIndex]++;				
-			}
 
-			block.sync();
+				//wait before performing reduction
+				__syncthreads();
 
-			//add candidate weights
-			for(int i = 0; i < nQueries; i++){
-				const AlignResultCompact arc = buffers->d_alignments[i];
-				const int querylength = buffers->d_lengths[1+i];
-				const int freqSum = buffers->d_frequencies_prefix_sum[i];
-				const int freqSumNext = buffers->d_frequencies_prefix_sum[1+i];
+				double Aweight_red = 0;
+				double Cweight_red = 0;
+				double Gweight_red = 0;
+				double Tweight_red = 0;
+				int As_red = 0;
+				int Cs_red = 0;
+				int Gs_red = 0;
+				int Ts_red = 0;
 
-				double defaultweight = 1.0 - sqrt(arc.nOps / (arc.overlap * maxErrorRate));
-				const int frequency = freqSumNext - freqSum;
-				assert(frequency >= 1);
-				for(int j = block.thread_rank(); j < querylength; j += block.size()){
-					const char base = buffers->d_sequences[(1+i) * buffers->max_seq_length + j];		
-					const int globalIndex = subjectColumnsBegin_incl + arc.shift + j;
-					double weightincrement = 0;
+				// block reduction
+				auto sum = [](auto a, auto b){return a+b;};
+				blockreduce(smem, &Aweight_red, Aweight, sum);
+				blockreduce(smem, &Cweight_red, Cweight, sum);
+				blockreduce(smem, &Gweight_red, Gweight, sum);
+				blockreduce(smem, &Tweight_red, Tweight, sum);
+				blockreduce((int*)smem, &As_red, As, sum);
+				blockreduce((int*)smem, &Cs_red, Gs, sum);
+				blockreduce((int*)smem, &Gs_red, Cs, sum);
+				blockreduce((int*)smem, &Ts_red, Ts, sum);
 
-					for(int f = 0; f < frequency; f++){
-						const int qualityindex = freqSum + f;
-						double qw = defaultweight;
-						if(useQScores)
-							qw *= d_qscore_to_weight[(unsigned char)(buffers->d_qualityscores[(qualityindex+1) * buffers->max_seq_length + j])];
-						weightincrement += qw;
+				if(threadIdx.x == 0){
+					//find consensus
+					char cons = 'A';
+					double consWeight = Aweight_red;
+					if(Cweight_red > consWeight){
+						cons = 'C';
+						consWeight = Cweight_red;
+					}
+					if(Gweight_red > consWeight){
+						cons = 'G';
+						consWeight = Gweight_red;
+					}
+					if(Tweight_red > consWeight){
+						cons = 'T';
+						consWeight = Tweight_red;
 					}
 
-					switch(base){
-						case 'A': buffers->d_Aweights[globalIndex] += weightincrement; buffers->d_As[globalIndex] += frequency; break;
-						case 'C': buffers->d_Cweights[globalIndex] += weightincrement; buffers->d_Cs[globalIndex] += frequency; break;
-						case 'G': buffers->d_Gweights[globalIndex] += weightincrement; buffers->d_Gs[globalIndex] += frequency; break;
-						case 'T': buffers->d_Tweights[globalIndex] += weightincrement; buffers->d_Ts[globalIndex] += frequency; break;
+					const int coverage = As_red + Cs_red + Gs_red + Ts_red;
+					const double columnWeight = Aweight_red + Cweight_red + Gweight_red + Tweight_red;
+
+					//save results
+					buffers->d_Aweights[column] = Aweight_red;
+					buffers->d_Cweights[column] = Cweight_red;
+					buffers->d_Gweights[column] = Gweight_red;
+					buffers->d_Tweights[column] = Tweight_red;
+
+					buffers->d_As[column] = As_red;
+					buffers->d_Cs[column] = Cs_red;
+					buffers->d_Gs[column] = Gs_red;
+					buffers->d_Ts[column] = Ts_red;
+
+					buffers->d_coverage[column] = coverage;
+					buffers->d_consensus[column] = cons;
+					buffers->d_support[column] = consWeight / columnWeight;
+
+					switch(cons){
+						case 'A': buffers->d_origCoverage[column] = As_red; buffers->d_origWeights[column] = Aweight_red; break;
+						case 'C': buffers->d_origCoverage[column] = Cs_red; buffers->d_origWeights[column] = Cweight_red; break;
+						case 'G': buffers->d_origCoverage[column] = Gs_red; buffers->d_origWeights[column] = Gweight_red; break;
+						case 'T': buffers->d_origCoverage[column] = Ts_red; buffers->d_origWeights[column] = Tweight_red; break;
 						default:  printf("this should not happen in pileup\n"); break;
 					}
-
-					buffers->d_coverage[globalIndex] += frequency;
-				}
-
-				block.sync();
-			}
-
-
-			//find consensus and support in each column
-			for(int i = block.thread_rank(); i < columnsToCheck; i += block.size()){
-				const double aw = buffers->d_Aweights[i];
-				const double cw = buffers->d_Cweights[i];
-				const double gw = buffers->d_Gweights[i];
-				const double tw = buffers->d_Tweights[i];
-
-				char cons = 'A';
-				double consWeight = aw;
-				if(cw > consWeight){
-					cons = 'C';
-					consWeight = cw;
-				}
-				if(gw > consWeight){
-					cons = 'G';
-					consWeight = gw;
-				}
-				if(tw > consWeight){
-					cons = 'T';
-					consWeight = tw;
-				}
-				buffers->d_consensus[i] = cons;
-
-				const double columnWeight = aw + cw + gw + tw;
-				buffers->d_support[i] = consWeight / columnWeight;
-
-				//printf("i %i, %f %f %f %f\n",i, aw, cw,gw,tw);
-
-				switch(cons){
-					case 'A': buffers->d_origCoverage[i] = buffers->d_As[i]; buffers->d_origWeights[i] = aw; break;
-					case 'C': buffers->d_origCoverage[i] = buffers->d_Cs[i]; buffers->d_origWeights[i] = cw; break;
-					case 'G': buffers->d_origCoverage[i] = buffers->d_Gs[i]; buffers->d_origWeights[i] = gw; break;
-					case 'T': buffers->d_origCoverage[i] = buffers->d_Ts[i]; buffers->d_origWeights[i] = tw; break;
-					default:  printf("this should not happen in pileup\n"); break;
-				}	
-			}
-
-			block.sync();
-
-			if(block.thread_rank() == 0){
-				double avg_support = 0;
-				double min_support = 1.0;
-				int max_coverage = 0;
-				int min_coverage = INT_MAX;
-				//get stats for subject columns
-				//for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += blockDim.x){
-				for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i += 1){
-					const double sup = buffers->d_support[i];
-					const int cov = buffers->d_coverage[i];
-					assert(sup >= 0);
-					assert(cov >= 0);
-					//printf("i %d sup %f cov %d\n", i, sup, cov);
-
-					avg_support += sup;
-					min_support = sup < min_support? sup : min_support;
-					max_coverage = cov > max_coverage ? cov : max_coverage;
-					min_coverage = cov < min_coverage ? cov : min_coverage;
-				}
-				avg_support /= subjectlength;
-
-				buffers->avg_support = avg_support;
-				buffers->min_support = min_support;
-				buffers->max_coverage = max_coverage;
-				buffers->min_coverage = min_coverage;
-			}
-#endif
-
-// multiple blocks, with atomics
-#if 0
-			thread_block block = this_thread_block();
-			const int seqid = block.group_index.x;
-			/*double Aweight = 0;
-			double Cweight = 0;
-			double Gweight = 0;
-			double Tweight = 0;
-			int As = 0;
-			int Cs = 0;
-			int Gs = 0;
-			int Ts = 0;*/
-			//add subject weights
-			const int subjectlength = buffers->d_lengths[0];
-		
-			if(seqid == 0){
-				for(int i = block.thread_rank(); i < subjectlength; i += block.size()){
-					const char base = buffers->d_sequences[0 * buffers->max_seq_length + i];
-					const int globalIndex = subjectColumnsBegin_incl + i;
-					double qw = 1.0;
-					if(useQScores)
-						qw *= d_qscore_to_weight[(unsigned char)(buffers->d_qualityscores[0 * buffers->max_seq_length + i])];
-					switch(base){
-						case 'A': atomicAdd(buffers->d_Aweights + globalIndex, qw); atomicAdd(buffers->d_As + globalIndex, 1); break;
-						case 'C': atomicAdd(buffers->d_Cweights + globalIndex, qw); atomicAdd(buffers->d_Cs + globalIndex, 1); break;
-						case 'G': atomicAdd(buffers->d_Gweights + globalIndex, qw); atomicAdd(buffers->d_Gs + globalIndex, 1); break;
-						case 'T': atomicAdd(buffers->d_Tweights + globalIndex, qw); atomicAdd(buffers->d_Ts + globalIndex, 1); break;
-						default:  printf("this should not happen in pileup\n"); break;
-					}
-					atomicAdd(buffers->d_coverage + globalIndex, 1);
 				}
 			}
-
-
-			//add candidate weights
-			for(int i = seqid; i < nQueries; i += gridDim.x){
-				const AlignResultCompact arc = buffers->d_alignments[i];
-				const int querylength = buffers->d_lengths[1+i];
-				const int freqSum = buffers->d_frequencies_prefix_sum[i];
-				const int freqSumNext = buffers->d_frequencies_prefix_sum[1+i];
-
-				double defaultweight = 1.0 - sqrt(arc.nOps / (arc.overlap * maxErrorRate));
-				const int frequency = freqSumNext - freqSum;
-				assert(frequency >= 1);
-				for(int j = block.thread_rank(); j < querylength; j += block.size()){
-					const char base = buffers->d_sequences[(1+i) * buffers->max_seq_length + j];		
-					const int globalIndex = subjectColumnsBegin_incl + arc.shift + j;
-					double weightincrement = 0;
-
-					for(int f = 0; f < frequency; f++){
-						const int qualityindex = freqSum + f;
-						double qw = defaultweight;
-						if(useQScores)
-							qw *= d_qscore_to_weight[(unsigned char)(buffers->d_qualityscores[(qualityindex+1) * buffers->max_seq_length + j])];
-						weightincrement += qw;
-					}
-
-					switch(base){
-						case 'A': atomicAdd(buffers->d_Aweights + globalIndex, weightincrement); atomicAdd(buffers->d_As + globalIndex, frequency); break;
-						case 'C': atomicAdd(buffers->d_Cweights + globalIndex, weightincrement); atomicAdd(buffers->d_Cs + globalIndex, frequency); break;
-						case 'G': atomicAdd(buffers->d_Gweights + globalIndex, weightincrement); atomicAdd(buffers->d_Gs + globalIndex, frequency); break;
-						case 'T': atomicAdd(buffers->d_Tweights + globalIndex, weightincrement); atomicAdd(buffers->d_Ts + globalIndex, frequency); break;
-						default:  printf("this should not happen in pileup\n"); break;
-					}
-
-					atomicAdd(buffers->d_coverage + globalIndex, frequency);
-				}
-			}
-
-
-			//find consensus and support in each column
-			for(int i = block.thread_rank(); i < columnsToCheck; i += block.size()){
-				const double aw = buffers->d_Aweights[i];
-				const double cw = buffers->d_Cweights[i];
-				const double gw = buffers->d_Gweights[i];
-				const double tw = buffers->d_Tweights[i];
-
-				char cons = 'A';
-				double consWeight = aw;
-				if(cw > consWeight){
-					cons = 'C';
-					consWeight = cw;
-				}
-				if(gw > consWeight){
-					cons = 'G';
-					consWeight = gw;
-				}
-				if(tw > consWeight){
-					cons = 'T';
-					consWeight = tw;
-				}
-				buffers->d_consensus[i] = cons;
-
-				const double columnWeight = aw + cw + gw + tw;
-				buffers->d_support[i] = consWeight / columnWeight;
-
-				//printf("i %i, %f %f %f %f\n",i, aw, cw,gw,tw);
-
-				switch(cons){
-					case 'A': buffers->d_origCoverage[i] = buffers->d_As[i]; buffers->d_origWeights[i] = aw; break;
-					case 'C': buffers->d_origCoverage[i] = buffers->d_Cs[i]; buffers->d_origWeights[i] = cw; break;
-					case 'G': buffers->d_origCoverage[i] = buffers->d_Gs[i]; buffers->d_origWeights[i] = gw; break;
-					case 'T': buffers->d_origCoverage[i] = buffers->d_Ts[i]; buffers->d_origWeights[i] = tw; break;
-					default:  printf("this should not happen in pileup\n"); break;
-				}	
-			}
-
-			block.sync();
-
-			if(block.thread_rank() == 0){
-				double avg_support = 0;
-				double min_support = 1.0;
-				int max_coverage = 0;
-				int min_coverage = INT_MAX;
-				//get stats for subject columns
-				//for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += blockDim.x){
-				for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i += 1){
-					const double sup = buffers->d_support[i];
-					const int cov = buffers->d_coverage[i];
-					assert(sup >= 0);
-					assert(cov >= 0);
-					//printf("i %d sup %f cov %d\n", i, sup, cov);
-
-					avg_support += sup;
-					min_support = sup < min_support? sup : min_support;
-					max_coverage = cov > max_coverage ? cov : max_coverage;
-					min_coverage = cov < min_coverage ? cov : min_coverage;
-				}
-				avg_support /= subjectlength;
-
-				buffers->avg_support = avg_support;
-				buffers->min_support = min_support;
-				buffers->max_coverage = max_coverage;
-				buffers->min_coverage = min_coverage;
-			}
-#endif
-
 		}
 
-		void call_cuda_pileup_vote_kernel_async(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
+		__global__
+		void cuda_pileup_reduce_kernel(CorrectionBuffers* buffers, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl){
+
+			__shared__ double smem[128];
+
+			double avg_support = 0;
+			double min_support = 1.0;
+			int max_coverage = 0;
+			int min_coverage = INT_MAX;
+
+			for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += blockDim.x){
+				const double sup = buffers->d_support[i];
+				const int cov = buffers->d_coverage[i];
+				avg_support += sup;
+				min_support = sup < min_support? sup : min_support;
+				max_coverage = cov > max_coverage ? cov : max_coverage;
+				min_coverage = cov < min_coverage ? cov : min_coverage;
+			}
+
+			// block reduction			
+			double avg_support_red = 0;
+			double min_support_red = 1.0;
+			int max_coverage_red = 0;
+			int min_coverage_red = INT_MAX;		
+
+			blockreduce(smem, &avg_support_red, avg_support, [](auto a, auto b){return a+b;});
+			blockreduce(smem, &min_support_red, min_support, [](auto a, auto b){return min(a,b);});
+			blockreduce((int*)smem, &max_coverage_red, max_coverage, [](auto a, auto b){return max(a,b);});
+			blockreduce((int*)smem, &min_coverage_red, min_coverage, [](auto a, auto b){return min(a,b);});
+
+			if(threadIdx.x == 0){
+				const int subjectlength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+				avg_support_red /= subjectlength;
+
+				buffers->avg_support = avg_support_red;
+				buffers->min_support = min_support_red;
+				buffers->max_coverage = max_coverage_red;
+				buffers->min_coverage = min_coverage_red;
+
+				/*for(int i = 0; i < buffers->n_columns; i++){
+					printf("%d", buffers->d_As[i]);
+				}
+				printf("\nCs\n");
+				for(int i = 0; i < buffers->n_columns; i++){
+					printf("%d", buffers->d_Cs[i]);
+				}
+				printf("\n");
+				for(int i = 0; i < buffers->n_columns; i++){
+					printf("%d", buffers->d_Gs[i]);
+				}
+				printf("\n");
+				for(int i = 0; i < buffers->n_columns; i++){
+					printf("%d", buffers->d_Ts[i]);
+				}
+				printf("\n");
+
+				for(int i = 0; i < buffers->n_columns; i++){
+					printf("%2c ", buffers->d_consensus[i]);
+				}
+				printf("\n");
+				for(int i = 0; i < buffers->n_columns; i++){
+					printf("%2d ", buffers->d_coverage[i]);
+				}
+				printf("\n");
+				printf("%d %f %f %d %d\n", buffers->n_columns, avg_support_red, min_support_red, max_coverage_red, min_coverage_red);*/
+			}
+		}
+
+		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						const double maxErrorRate, 
 						const bool useQScores){
@@ -732,23 +1003,17 @@ namespace hammingtools{
 					sizeof(CorrectionBuffers), 
 					H2D, buffers->stream); CUERR;
 
-			constexpr int blockdim = 128;
-			constexpr int griddim = 1;
-			
-			cuda_pileup_vote_kernel<<<griddim, blockdim, 0, buffers->stream>>>(buffers->d_this, nQueries, columnsToCheck, 
-											subjectColumnsBegin_incl, subjectColumnsEnd_excl, 
-											maxErrorRate, useQScores); CUERR;
-		}
+			dim3 block(64);
+			dim3 grid(nSequences);
+			cuda_pileup_vote_transposed_kernel<<<grid, block, 0, buffers->stream>>>(buffers->d_this, nSequences, nQualityScores, columnsToCheck, 
+												subjectColumnsBegin_incl, subjectColumnsEnd_excl,
+												maxErrorRate, 
+												useQScores); CUERR;
 
-		void call_cuda_pileup_vote_kernel(CorrectionBuffers* buffers, const int nQueries, const int columnsToCheck, 
-						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate, 
-						const bool useQScores){
+			//calculate stats of subject. min max avg coverage
+			cuda_pileup_reduce_kernel<<<1,128, 0, buffers->stream>>>(buffers->d_this, subjectColumnsBegin_incl, subjectColumnsEnd_excl); CUERR;
 
-			call_cuda_pileup_vote_kernel_async(buffers, nQueries, columnsToCheck, 
-							subjectColumnsBegin_incl, subjectColumnsEnd_excl, 
-							maxErrorRate, useQScores);
-			cudaStreamSynchronize(buffers->stream);
+			cudaStreamSynchronize(buffers->stream); CUERR;
 		}
 
 #endif
