@@ -90,8 +90,6 @@ private:
 
 	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
 
-	void mergeThreadResults(const std::string& filename) const;
-
 	void mergeUnorderedThreadResults(const std::string& filename) const;
 
 	std::uint64_t getReadPos(const std::string& readheader) const;

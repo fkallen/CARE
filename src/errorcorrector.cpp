@@ -163,53 +163,6 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 
 }
 
-void ErrorCorrector::mergeThreadResults(const std::string& filename) const {
-
-	std::string name = filename;
-	std::string fileEnding = ".fq";
-
-	size_t lastdotpos = filename.find_last_of(".");
-	if (lastdotpos != std::string::npos) {
-		name = name.substr(0, lastdotpos);
-		fileEnding = filename.substr(lastdotpos);
-	}
-
-	size_t lastslashpos = filename.find_last_of("/");
-	if (lastslashpos != std::string::npos)
-		name = name.substr(lastslashpos + 1);
-
-	std::string currentOutputFilename;
-
-	if (outputFilename != "")
-		currentOutputFilename = outputPath + "/" + outputFilename;
-	else
-		currentOutputFilename = outputPath + "/" + name + "_"
-				+ std::to_string(minhashparams.k) + "_"
-				+ std::to_string(minhashparams.maps) + "_1" + "_alpha_"
-				+ std::to_string(graphalpha) + "_x_" + std::to_string(graphx)
-				+ "_corrected" + fileEnding;
-
-	std::cout << "merging into " << currentOutputFilename << std::endl;
-
-	std::ofstream outputfile(currentOutputFilename, std::ios_base::binary);
-
-	for (int i = 0; i < nCorrectorThreads; i++) {
-		std::ifstream inputfile(outputPath + "/" + std::to_string(i),
-				std::ios_base::binary);
-		outputfile << inputfile.rdbuf();
-		inputfile.close();
-	}
-	outputfile.flush();
-	outputfile.close();
-
-	for (int i = 0; i < nCorrectorThreads; i++) {
-		std::string s = outputPath + "/" + std::to_string(i);
-		int ret = std::remove(s.c_str());
-		if (ret != 0)
-			std::cout << "could not remove file " << s << std::endl;
-	}
-}
-
 void ErrorCorrector::mergeUnorderedThreadResults(
 		const std::string& filename) const {
 
