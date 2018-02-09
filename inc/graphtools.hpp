@@ -12,10 +12,10 @@ namespace graphtools{
 
 	struct AlignerDataArrays{
 
-		AlignResultCompact* d_results = nullptr;
+		//AlignResultCompact* d_results = nullptr;
 		AlignOp* d_ops = nullptr;
-		char* d_subjectsdata = nullptr;
-		char* d_queriesdata = nullptr;
+		//char* d_subjectsdata = nullptr;
+		//char* d_queriesdata = nullptr;
 		int* d_rBytesPrefixSum = nullptr;
 		int* d_rLengths = nullptr;
 		int* d_rIsEncoded = nullptr;
@@ -24,10 +24,10 @@ namespace graphtools{
 		int* d_cIsEncoded = nullptr;
 		int* d_r2PerR1 = nullptr;
 
-		AlignResultCompact* h_results = nullptr;
+		//AlignResultCompact* h_results = nullptr;
 		AlignOp* h_ops = nullptr;
-		char* h_subjectsdata = nullptr;
-		char* h_queriesdata = nullptr;
+		//char* h_subjectsdata = nullptr;
+		//char* h_queriesdata = nullptr;
 		int* h_rBytesPrefixSum = nullptr;
 		int* h_rLengths = nullptr;
 		int* h_rIsEncoded = nullptr;
@@ -53,12 +53,41 @@ namespace graphtools{
 		int ALIGNMENTSCORE_DEL = -1;
 
 		int max_ops_per_alignment = 0;
-		int n_subjects = 0;
-		int n_candidates = 0;
 		int maximumQueryLength = 0;
 		int maximumCandidateLength = 0;
 
-		AlignerDataArrays(int deviceId, int scorematch, int scoresub, int scoreins, int scoredel);
+//new
+		int max_sequence_length = 0;
+		int max_sequence_bytes = 0;
+		int n_subjects = 0;
+		int n_queries = 0;
+		int max_n_subjects = 0;
+		int max_n_queries = 0;
+
+		size_t sequencepitch = 0;
+
+		AlignResultCompact* d_results = nullptr;
+		char* d_subjectsdata = nullptr;
+		char* d_queriesdata = nullptr;
+		int* d_queriesPerSubject = nullptr;
+		int* d_lengths = nullptr; //first n_subjects entries are lengths of subjects
+
+		AlignResultCompact* h_results = nullptr;
+		char* h_subjectsdata = nullptr;
+		char* h_queriesdata = nullptr;
+		int* h_queriesPerSubject = nullptr;
+		int* h_lengths = nullptr; //first n_subjects entries are lengths of subjects
+
+	std::chrono::duration<double> resizetime{0};
+	std::chrono::duration<double> preprocessingtime{0};
+	std::chrono::duration<double> h2dtime{0};
+	std::chrono::duration<double> alignmenttime{0};
+	std::chrono::duration<double> d2htime{0};
+	std::chrono::duration<double> postprocessingtime{0};
+
+		void resize_new(int n_sub, int n_quer);
+//new end
+		AlignerDataArrays(int deviceId, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel);
 
 		/*
 			res = number of alignments
