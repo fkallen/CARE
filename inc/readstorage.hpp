@@ -24,6 +24,9 @@ struct ReadStorage{
 
     std::vector<Sequence> all_unique_sequences; //forward and reverse complement
 
+    std::vector<std::vector<float>*> quality_weights_pointers;
+    std::vector<std::vector<float>> quality_weights;
+
     ReadStorage();
 
     ReadStorage& operator=(const ReadStorage&& other);

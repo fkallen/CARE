@@ -21,6 +21,9 @@
 		reverseComplSequencepointers = std::move(other.reverseComplSequencepointers);
 		all_unique_sequences = std::move(other.all_unique_sequences);
 
+		quality_weights_pointers = std::move(other.quality_weights_pointers);
+		quality_weights = std::move(other.quality_weights);
+
 		return *this;
 	}
 
@@ -30,7 +33,10 @@
 		headers.resize(nReads);
 		qualityscores.resize(nReads);
 		reverseComplqualityscores.resize(nReads);
-		sequences.resize(nReads);		
+		sequences.resize(nReads);
+		//quality_weights_pointers.resize(nReads, nullptr);
+		sequencepointers.resize(nReads, nullptr);
+		reverseComplSequencepointers.resize(nReads, nullptr);	
 	}
 
 	void ReadStorage::clear(){
@@ -42,6 +48,8 @@
 		sequencepointers.clear();
 		reverseComplSequencepointers.clear();
 		all_unique_sequences.clear();
+		quality_weights_pointers.clear();
+		quality_weights.clear();
 
 		isReadOnly = false;
 	}
@@ -67,7 +75,7 @@
 		if(nSequences == 0) return;
 
 		std::vector<Sequence> sequencesflat;
-		sequencesflat.reserve(2*nSequences);
+		sequencesflat.reserve(nSequences);
 
 		for(size_t readnum = 0; readnum < nSequences; readnum++){
 			sequencesflat.push_back(std::move(sequences.at(readnum)));
@@ -90,16 +98,18 @@ TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
 TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
 		assert(sequencesflat.size() == seqToSortedIndex.size());
 
-		std::cout << "ReadStorage: found " << (nSequences - sequencesflat.size()) << " duplicates\n";
+		size_t n_unique_forward_sequences = sequencesflat.size();
+
+		std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
 
 TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
-		sequencepointers.resize(nSequences);
+		
 		for(size_t i = 0; i < nSequences; i++)
 			sequencepointers[i] = &sequencesflat[seqToSortedIndex[tmp[i]]];
 TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 
 TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
-		reverseComplSequencepointers.resize(nSequences);
+
 		for(size_t i = 0; i < nSequences; i++){
 			Sequence revcompl = sequencepointers[i]->reverseComplement();
 			auto it = seqToSortedIndex.find(revcompl);
@@ -118,6 +128,10 @@ TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 		}
 TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 
+		std::cout << "ReadStorage: holding a total of " << seqToSortedIndex.size() << " unique sequences\n";
+
+		seqToSortedIndex.clear();
+
 #if 1	
 TIMERSTARTCPU(READ_STORAGE_CHECK);
 		//check
@@ -131,6 +145,35 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 #endif
 
 		all_unique_sequences = std::move(sequencesflat);
+
+		
+
+/*
+
+		//make combined quality weights for identical forward sequences
+
+		std::map<const Sequence*, std::vector<size_t>> seqToIds;
+		for(size_t i = 0; i < nSequences; i++){
+			seqToIds[sequencepointers[i]].push_back(i);
+		}
+
+		quality_weights.reserve(n_unique_forward_sequences);
+
+		for(auto pair : seqToIds){
+			const int len = pair.first->getNbases();
+			std::vector<float> weights(0.0f, len);
+			for(size_t id : pair.second){
+				const std::string* qptr = fetchQuality_ptr(id);
+				for(int i = 0; i < len; i++){
+					weights[i] += 1.0f; // TODO lookup weight
+				}
+			}
+			quality_weights.push_back(std::move(weights));
+			for(size_t id : pair.second){
+				quality_weights_pointers[id] = &(quality_weights.back());
+			}
+		}
+*/
 	}
 
 	Read ReadStorage::fetchRead(size_t readNumber) const{
