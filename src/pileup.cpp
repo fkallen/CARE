@@ -28,7 +28,7 @@ namespace hammingtools{
 
 	namespace correction{
 
-		constexpr int candidate_correction_new_cols = 2;
+		constexpr int candidate_correction_new_cols = 0;
 
 		double	qscore_to_error_prob[256];
 		double	qscore_to_weight[256];

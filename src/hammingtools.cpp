@@ -23,6 +23,7 @@ namespace hammingtools{
 	#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
 		cudaStreamCreate(&stream); CUERR;
+		cudaMalloc(&d_this, sizeof(SHDdata));
 
 		cudaDeviceProp prop;
 		cudaGetDeviceProperties(&prop, deviceId); CUERR;
@@ -106,6 +107,7 @@ namespace hammingtools{
 		cudaFree(data.d_queriesdata); CUERR;
 		cudaFree(data.d_queriesPerSubject); CUERR;
 		cudaFree(data.d_lengths); CUERR;
+		cudaFree(data.d_this); CUERR;
 
 		cudaFreeHost(data.h_results); CUERR;
 		cudaFreeHost(data.h_subjectsdata); CUERR;

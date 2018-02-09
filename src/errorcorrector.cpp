@@ -411,32 +411,41 @@ void ErrorCorrector::insertFile(const std::string& filename,
 
 #else
 
-	std::vector<std::future<int>> inserterThreads;
+	std::vector<std::future<std::pair<int,int>>> inserterThreads;
 	progress = 0;
 
 	for (int threadId = 0; threadId < nInserterThreads; ++threadId) {
 
 		inserterThreads.emplace_back(
 				std::async(std::launch::async,
-						[&, threadId]()->int {
+						[&, threadId]()->std::pair<int,int> {
 
 							std::uint64_t progressprocessedReads = 0;
 							std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
 
 							int maxlength = 0;
+							int minlength = std::numeric_limits<int>::max();
 
 							std::pair<Read, std::uint32_t> pair = buffers[threadId].get();
-
+							int Ncount = 0;
+							char bases[4]{'A', 'C', 'G', 'T'};
 							while (pair != buffers[threadId].defaultValue) {
 								Read& read = pair.first;
 								const std::uint32_t& readnum = pair.second;
 
-								//replace 'N' with 'A'
-								for(auto& c : read.sequence)
-								if(c == 'N')
-								c = 'A';
-								if(int(read.sequence.length()) > maxlength)
-								maxlength = read.sequence.length();
+								//replace 'N' with "random" base
+								for(auto& c : read.sequence){
+									if(c == 'N'){
+										c = bases[Ncount];
+										Ncount = (Ncount + 1) % 4;
+									}
+								}
+
+								int len = int(read.sequence.length());
+								if(len > maxlength)
+									maxlength = len;
+								if(len < minlength)
+									minlength = len;
 
 								if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
 
@@ -454,7 +463,7 @@ void ErrorCorrector::insertFile(const std::string& filename,
 
 							}
 
-							return maxlength;
+							return {minlength,maxlength};
 						}));
 
 	}
@@ -497,15 +506,17 @@ void ErrorCorrector::insertFile(const std::string& filename,
 	 }*/
 
 	int maxlen = 0;
-
+	int minlen = std::numeric_limits<int>::max();
 	for (size_t i = 0; i < inserterThreads.size(); ++i) {
-		int res = inserterThreads[i].get();
-		if (res > maxlen)
-			maxlen = res;
+		auto res = inserterThreads[i].get();
+		if (res.second > maxlen)
+			maxlen = res.second;
+		if (res.first < minlen)
+			minlen = res.first;
 		buffers[i].reset();
 	}
 
-	std::cout << "max sequence length in file: " << maxlen << '\n';
+	std::cout << "min sequence length " << minlen << ", max sequence length " << maxlen << '\n';
 
 	maximum_sequence_length = maxlen;
 
@@ -838,23 +849,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		tpa = std::chrono::system_clock::now();
 #endif
 
-#if 1
-#if 0
-		// map minhash ids to sequences
-		for(std::uint32_t i = 0; i < actualBatchSize; i++) {
-			if(activeBatches[i]) {
-				sequenceToIdsMaps[i] = mapMinhashResultsToSequences(
-						candidateIds[i],
-						candidateReads[i],
-						revComplcandidateReads[i],
-						candidateQualities[i],
-						revcomplcandidateQualities[i],
-						frequencies[i],
-						mapminhashresultsdedup,
-						mapminhashresultsfetch);
-			}
-		}
-#else
 
 		for (std::uint32_t i = 0; i < actualBatchSize; i++) {
 			if (activeBatches[i]) {
@@ -1042,9 +1036,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 				}
 			}
 		}
-
-#endif
-#endif
 
 		/*for(int i = 0; i < candidateReads[0].size(); i++){
 

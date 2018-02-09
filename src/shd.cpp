@@ -116,11 +116,8 @@ namespace hammingtools{
 				const int totalbases = subjectbases + querybases;
 				int bestScore = totalbases; // score is number of mismatches
 				int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
-                assert(blockDim.x == BLOCKSIZE);
-				//if(threadIdx.x == 0){
-                //    printf("subjectbases %d querybases %d totalbases %d\n", subjectbases, querybases, totalbases);
+
 				for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += BLOCKSIZE){
-                //for(int shift = -querybases + 1; shift < subjectbases; shift ++){
 					const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
 					int score = 0;
 
@@ -129,7 +126,7 @@ namespace hammingtools{
 					}
 
 					score += totalbases - overlapsize;
-                    //printf("shift %d score %d\n", shift, score);
+
 					if(score < bestScore){
 						bestScore = score;
 						bestShift = shift;
@@ -145,19 +142,11 @@ namespace hammingtools{
                 
 	
 				int2 myval = make_int2(bestScore, bestShift);
-                //printf("thread %d, bestScore %d, bestShift %d\n", threadIdx.x, myval.x, myval.y); 
 				int2 reduced;
 				blockreduce<BLOCKSIZE>(
 					(unsigned long long*)&reduced, 
 					*((unsigned long long*)&myval), 
 					[](unsigned long long a, unsigned long long b){
-                        /*if((*((int2*)&a)).x < (*((int2*)&b)).x){
-                            printf("tid %d, %d < %d\n", threadIdx.x, (*((int2*)&a)).x, (*((int2*)&b)).x);
-                            return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
-                        }else{
-                            printf("tid %d, %d >= %d\n", threadIdx.x, (*((int2*)&a)).x, (*((int2*)&b)).x); 
-                            return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
-                        }*/
 						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b; 
 					}
 				);
@@ -183,18 +172,6 @@ namespace hammingtools{
 					result.shift = bestShift;
 					result.nOps = opnr;
 					result.isNormalized = false;
-
-					/*if(blockIdx.x == 0 && threadIdx.x == 0){
-						printf("%d %d %d %d %d %d\n", globalQueryId, queryoverlapbegin_incl, overlapsize, bestScore, opnr, totalbases);
-						for(int i = 0; i < subjectbases; i++){
-							printf("%c", twobitToChar(encoded_accessor(sr1, subjectbases, i)));
-						}
-						printf("\n");
-						for(int i = 0; i < querybases; i++){
-							printf("%c", twobitToChar(encoded_accessor(sr2, querybases, i)));
-						}
-						printf("\n");
-					}*/
 
 					*my_result_out = result;
 				}

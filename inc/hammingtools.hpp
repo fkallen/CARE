@@ -32,6 +32,9 @@ struct SHDdata{
 #ifdef __NVCC__
 	cudaStream_t stream = nullptr;
 #endif
+
+	SHDdata* d_this;
+
 	int deviceId = -1;
 	size_t sequencepitch = 0;
 	int max_sequence_length = 0;
