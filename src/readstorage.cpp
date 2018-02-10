@@ -21,9 +21,6 @@
 		reverseComplSequencepointers = std::move(other.reverseComplSequencepointers);
 		all_unique_sequences = std::move(other.all_unique_sequences);
 
-		quality_weights_pointers = std::move(other.quality_weights_pointers);
-		quality_weights = std::move(other.quality_weights);
-
 		return *this;
 	}
 
@@ -33,10 +30,7 @@
 		headers.resize(nReads);
 		qualityscores.resize(nReads);
 		reverseComplqualityscores.resize(nReads);
-		sequences.resize(nReads);
-		//quality_weights_pointers.resize(nReads, nullptr);
-		sequencepointers.resize(nReads, nullptr);
-		reverseComplSequencepointers.resize(nReads, nullptr);	
+		sequences.resize(nReads);		
 	}
 
 	void ReadStorage::clear(){
@@ -48,8 +42,6 @@
 		sequencepointers.clear();
 		reverseComplSequencepointers.clear();
 		all_unique_sequences.clear();
-		quality_weights_pointers.clear();
-		quality_weights.clear();
 
 		isReadOnly = false;
 	}
@@ -75,7 +67,7 @@
 		if(nSequences == 0) return;
 
 		std::vector<Sequence> sequencesflat;
-		sequencesflat.reserve(nSequences);
+		sequencesflat.reserve(2*nSequences);
 
 		for(size_t readnum = 0; readnum < nSequences; readnum++){
 			sequencesflat.push_back(std::move(sequences.at(readnum)));
@@ -99,17 +91,16 @@ TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
 		assert(sequencesflat.size() == seqToSortedIndex.size());
 
 		size_t n_unique_forward_sequences = sequencesflat.size();
-
 		std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
 
 TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
-		
+		sequencepointers.resize(nSequences);
 		for(size_t i = 0; i < nSequences; i++)
 			sequencepointers[i] = &sequencesflat[seqToSortedIndex[tmp[i]]];
 TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 
 TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
-
+		reverseComplSequencepointers.resize(nSequences);
 		for(size_t i = 0; i < nSequences; i++){
 			Sequence revcompl = sequencepointers[i]->reverseComplement();
 			auto it = seqToSortedIndex.find(revcompl);
@@ -145,8 +136,6 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 #endif
 
 		all_unique_sequences = std::move(sequencesflat);
-
-		
 
 /*
 

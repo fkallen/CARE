@@ -37,6 +37,8 @@
 #include <thrust/copy.h>
 #include <thrust/inner_product.h>
 #include <thrust/sort.h>
+
+#include <cuda_profiler_api.h>
 #endif
 
 #include <experimental/filesystem> // create_directories
@@ -717,7 +719,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			maximum_sequence_length);
 	hammingtools::CorrectionBuffers hcorrectionbuffers(deviceId,
 			maximum_sequence_length);
-	graphtools::AlignerDataArrays sgadata(deviceId, ALIGNMENTSCORE_MATCH,
+	graphtools::AlignerDataArrays sgadata(deviceId, maximum_sequence_length, ALIGNMENTSCORE_MATCH,
 			ALIGNMENTSCORE_SUB, ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL);
 
 	MinhasherBuffers minhasherbuffers(deviceId);
@@ -754,12 +756,23 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 									/ nLocksForProcessedFlags) % batchsize;
 
 	// loop over the reads to process
-	//for(std::uint32_t readnum = firstRead; readnum < firstRead + chunkSize; readnum += batchsize){
+#ifdef __NVCC__									
+	int itersUntilProfilingStops = 4;
+	//cudaProfilerStart();
+#endif	
+
 	for (std::uint32_t currentBatchNum = firstBatch;
-			currentBatchNum < firstBatch + chunkSize; currentBatchNum++) {
+			currentBatchNum < firstBatch + chunkSize; currentBatchNum += 1) {
 		const std::uint32_t readnum = currentBatchNum * batchsize; // id of first read in batch
 
 		assert(readnum < totalNumberOfReads);
+	
+#ifdef __NVCC__	
+		if(itersUntilProfilingStops == 0){
+			//cudaProfilerStop();
+		}
+		itersUntilProfilingStops--;
+#endif	
 
 		// boundary condition. cannot process more reads than the remaining reads
 		//std::uint32_t actualBatchSize = std::min(batchsize, firstRead + chunkSize - readnum);
@@ -1774,14 +1787,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			std::cout << "thread " << threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment resize buffer " << shddata.resizetime.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment preprocessing " << shddata.preprocessingtime.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment H2D " << shddata.h2dtime.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment calculation " << shddata.alignmenttime.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment D2H " << shddata.d2htime.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment postprocessing " << shddata.postprocessingtime.count() << '\n';
+			//std::cout << "thread " << threadId << " : alignment total "
+			//		<< getAlignmentsTimeTotal.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment resize buffer " << sgadata.resizetime.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment preprocessing " << sgadata.preprocessingtime.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment H2D " << sgadata.h2dtime.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment calculation " << sgadata.alignmenttime.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment D2H " << sgadata.d2htime.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';
 			//std::cout << "thread " << threadId << " : correction find good alignments " << determinegoodalignmentsTime.count() << '\n';
 			//std::cout << "thread " << threadId << " : correction fetch good data " << fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadId << " : graph build "
