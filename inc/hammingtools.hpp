@@ -21,16 +21,18 @@ struct SHDdata{
 	char* d_subjectsdata = nullptr;
 	char* d_queriesdata = nullptr;
 	int* d_queriesPerSubject = nullptr;
-	int* d_lengths = nullptr; //first n_subjects entries are lengths of subjects
+	int* d_subjectlengths = nullptr;
+	int* d_querylengths = nullptr;
 
 	AlignResultCompact* h_results = nullptr;
 	char* h_subjectsdata = nullptr;
 	char* h_queriesdata = nullptr;
 	int* h_queriesPerSubject = nullptr;
-	int* h_lengths = nullptr; //first n_subjects entries are lengths of subjects
+	int* h_subjectlengths = nullptr;
+	int* h_querylengths = nullptr;
 
 #ifdef __NVCC__
-	cudaStream_t stream = nullptr;
+	cudaStream_t streams[8];
 #endif
 
 	SHDdata* d_this;
@@ -45,6 +47,7 @@ struct SHDdata{
 	int max_n_queries = 0;
 
 	int shd_max_blocks = 1;
+	int max_batch_size = 1;
 
 	std::chrono::duration<double> resizetime{0};
 	std::chrono::duration<double> preprocessingtime{0};

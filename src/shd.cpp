@@ -70,23 +70,175 @@ namespace hammingtools{
 
 #ifdef __NVCC__
 
+
+		
 		template<int BLOCKSIZE>
 		__global__
-		void cuda_shifted_hamming_distance(SHDdata buffers){
+		void cuda_shifted_hamming_distance(const shdparams buffers){
 
 			extern __shared__ char smem[];
 
 			/* set up shared memory */
 			char* sr1 = (char*)(smem);
 			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
+			
+			const int subjectbases = buffers.subjectlength;
+			const char* subject = buffers.subjectdata;
+			for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += BLOCKSIZE){
+				sr1[threadid] = subject[threadid];		
+			}
+						
+			for(int queryId = blockIdx.x; queryId < buffers.n_queries; queryId += gridDim.x){
 
-			for(int globalQueryId = blockIdx.x; globalQueryId < buffers.n_queries; globalQueryId += gridDim.x){
+				const char* query = buffers.queriesdata + queryId * buffers.sequencepitch;
+
+				for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += BLOCKSIZE){
+					sr2[threadid] = query[threadid];			
+				}
+
+				__syncthreads();
+
+				//begin SHD algorithm
+
+				const int querybases = buffers.querylengths[queryId];
+
+				const int totalbases = subjectbases + querybases;
+				int bestScore = totalbases; // score is number of mismatches
+				int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
+
+				for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += BLOCKSIZE){
+					const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+					int score = 0;
+#if 1
+					for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
+						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);	
+					}
+					score += totalbases - overlapsize;
+#else
+					const int lowerbound = max(-shift, 0);
+					const int upperbound = min(querybases, subjectbases - shift);
+					for(int j = 0; j < totalbases; j++){							
+							if(j < lowerbound || j >= upperbound)
+								score++;
+							else
+								score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);
+					}
+#endif
+					
+
+					if(score < bestScore){
+						bestScore = score;
+						bestShift = shift;
+					}
+				}
+
+
+				// perform reduction to find smallest score in block. the corresponding shift is required, too
+				// pack both score and shift into int2 and perform int2-reduction by only comparing the score
+
+				static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
+                
+                
+	
+				int2 myval = make_int2(bestScore, bestShift);
+				int2 reduced;
+				blockreduce<BLOCKSIZE>(
+					(unsigned long long*)&reduced, 
+					*((unsigned long long*)&myval), 
+					[](unsigned long long a, unsigned long long b){
+						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b; 
+					}
+				);
+
+				bestScore = reduced.x;
+				bestShift = reduced.y;
+	
+				//make result
+				if(threadIdx.x == 0){
+
+					AlignResultCompact result;
+
+					result.isValid = (bestShift != -querybases);
+					const int queryoverlapbegin_incl = max(-bestShift, 0);
+					const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+					const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;		
+					const int opnr = bestScore - totalbases + overlapsize;
+
+					result.score = bestScore;
+					result.subject_begin_incl = max(0, bestShift);
+					result.query_begin_incl = queryoverlapbegin_incl;
+					result.overlap = overlapsize;
+					result.shift = bestShift;
+					result.nOps = opnr;
+					result.isNormalized = false;
+
+					buffers.results[queryId] = result;
+				}
+			}
+		}	
+		
+		size_t shd_kernel_getSharedMemSize(const shdparams& buffer){
+
+			size_t smem = 0;
+			smem += sizeof(char) * 2 * buffer.max_sequence_bytes;
+
+			return smem;
+		}
+
+		//wrapper functions to call kernels
+
+		void call_shd_kernel(const shdparams& buffer, cudaStream_t stream){
+			call_shd_kernel_async(buffer, stream);
+
+			cudaStreamSynchronize(stream); CUERR;
+		}
+
+		void call_shd_kernel_async(const shdparams& buffer, cudaStream_t stream){
+
+			//dim3 block(std::min(256, 32 * SDIV(2 * buffer.max_sequence_length, 32)), 1, 1);
+			dim3 block(256, 1, 1);
+			dim3 grid(buffer.n_queries, 1, 1);
+
+			size_t smem = shd_kernel_getSharedMemSize(buffer);
+
+			switch(block.x){
+			case 32: cuda_shifted_hamming_distance<32><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 64: cuda_shifted_hamming_distance<64><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 96: cuda_shifted_hamming_distance<96><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 128: cuda_shifted_hamming_distance<128><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 160: cuda_shifted_hamming_distance<160><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 192: cuda_shifted_hamming_distance<192><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 224: cuda_shifted_hamming_distance<224><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, stream>>>(buffer); CUERR; break;
+			default: std::cout << "error call_shd_kernel_async\n"; break;
+			}
+		}		
+		
+
+		template<int BLOCKSIZE>
+		__global__
+		void cuda_shifted_hamming_distance(SHDdata buffers, int batchid){
+
+			extern __shared__ char smem[];
+
+			/* set up shared memory */
+			char* sr1 = (char*)(smem);
+			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
+			
+			const int subjectId = batchid;
+			int queriesPerSubjectPrefixSum = 0;
+			for(int i = 0; i < batchid; i++){
+				queriesPerSubjectPrefixSum += buffers.d_queriesPerSubject[i];
+			}
+			const int queriesPerSubjectPrefixSumUp = queriesPerSubjectPrefixSum + buffers.d_queriesPerSubject[batchid];
+			
+			for(int globalQueryId = queriesPerSubjectPrefixSum + blockIdx.x; globalQueryId < queriesPerSubjectPrefixSumUp; globalQueryId += gridDim.x){
 
 				//setup batch. get correct pointers, store subject and query in shared mem,...
 
-				AlignResultCompact * const my_result_out = buffers.d_results + globalQueryId;
+				
 
-				int subjectId = 0;
+				/*int subjectId = 0;				
 				int queriesPerSubjectPrefixSum = 0;
 				for(int i = 0; i < buffers.n_subjects; i++){
 					queriesPerSubjectPrefixSum += buffers.d_queriesPerSubject[i];
@@ -94,7 +246,7 @@ namespace hammingtools{
 						subjectId = i;
 						break;
 					}
-				}
+				}*/
 
 				const char* subject = buffers.d_subjectsdata + subjectId * buffers.sequencepitch;
 				const char* query = buffers.d_queriesdata + globalQueryId * buffers.sequencepitch;
@@ -110,8 +262,8 @@ namespace hammingtools{
 
 				//begin SHD algorithm
 
-				const int subjectbases = buffers.d_lengths[subjectId];
-				const int querybases = buffers.d_lengths[buffers.n_subjects + globalQueryId];
+				const int subjectbases = buffers.d_subjectlengths[subjectId];
+				const int querybases = buffers.d_querylengths[globalQueryId];
 
 				const int totalbases = subjectbases + querybases;
 				int bestScore = totalbases; // score is number of mismatches
@@ -173,7 +325,7 @@ namespace hammingtools{
 					result.nOps = opnr;
 					result.isNormalized = false;
 
-					*my_result_out = result;
+					buffers.d_results[globalQueryId] = result;
 				}
 			}
 		}
@@ -189,29 +341,29 @@ namespace hammingtools{
 
 		//wrapper functions to call kernels
 
-		void call_shd_kernel(const SHDdata& buffer){
-			call_shd_kernel_async(buffer);
+		void call_shd_kernel(const SHDdata& buffer, int batchid){
+			call_shd_kernel_async(buffer, batchid);
 
-			cudaStreamSynchronize(buffer.stream); CUERR;
+			cudaStreamSynchronize(buffer.streams[batchid]); CUERR;
 		}
 
-		void call_shd_kernel_async(const SHDdata& buffer){
+		void call_shd_kernel_async(const SHDdata& buffer, int batchid){
 
 			//dim3 block(std::min(256, 32 * SDIV(2 * buffer.max_sequence_length, 32)), 1, 1);
-            		dim3 block(256, 1, 1);
-			dim3 grid(buffer.n_queries, 1, 1);
+			dim3 block(256, 1, 1);
+			dim3 grid(buffer.h_queriesPerSubject[batchid], 1, 1);
 
 			size_t smem = shd_kernel_getSharedMemSize(buffer);
 
 			switch(block.x){
-			case 32: cuda_shifted_hamming_distance<32><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 64: cuda_shifted_hamming_distance<64><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 96: cuda_shifted_hamming_distance<96><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 128: cuda_shifted_hamming_distance<128><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 160: cuda_shifted_hamming_distance<160><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 192: cuda_shifted_hamming_distance<192><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 224: cuda_shifted_hamming_distance<224><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
-			case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, buffer.stream>>>(buffer); CUERR; break;
+			case 32: cuda_shifted_hamming_distance<32><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 64: cuda_shifted_hamming_distance<64><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 96: cuda_shifted_hamming_distance<96><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 128: cuda_shifted_hamming_distance<128><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 160: cuda_shifted_hamming_distance<160><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 192: cuda_shifted_hamming_distance<192><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 224: cuda_shifted_hamming_distance<224><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
+			case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, buffer.streams[batchid]>>>(buffer, batchid); CUERR; break;
 			default: std::cout << "error call_shd_kernel_async\n"; break;
 			}
 		}
