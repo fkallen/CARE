@@ -12,13 +12,13 @@ namespace graphtools{
 
 
 #ifdef __NVCC__
+		__global__
+		void cuda_semi_global_alignment_kernel(const AlignerDataArrays buffers);
+
+		size_t cuda_semi_global_alignment_getSharedMemSize(const AlignerDataArrays& buffers);
+
 		void call_cuda_semi_global_alignment_kernel_async(const AlignerDataArrays& buffers);
-
 		void call_cuda_semi_global_align_kernel(const AlignerDataArrays& buffers);
-
-		void call_cuda_semi_global_alignment_kernel_async_new(const AlignerDataArrays& buffers);
-
-		void call_cuda_semi_global_align_kernel_new(const AlignerDataArrays& buffers);
 
 #endif
 

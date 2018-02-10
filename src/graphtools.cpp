@@ -18,46 +18,57 @@ namespace graphtools{
 		#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
 		cudaStreamCreate(&stream); CUERR;
+		cudaMalloc(&d_this, sizeof(AlignerDataArrays)); CUERR;
+
+		cudaDeviceProp prop;
+		cudaGetDeviceProperties(&prop, deviceId); CUERR;
+		int numBlocksPerSM = 0;
+		dim3 block(std::min(512, 32 * SDIV(max_sequence_length+1, 32)), 1, 1);
+		size_t smem = alignment::cuda_semi_global_alignment_getSharedMemSize(*this);
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSM, alignment::cuda_semi_global_alignment_kernel, block.x, smem); CUERR;
+		max_blocks = numBlocksPerSM * prop.multiProcessorCount;
 		#endif
 	};
 
-	void AlignerDataArrays::resize_new(int n_sub, int n_quer){
+	void AlignerDataArrays::resize(int n_sub, int n_quer){
 	#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
 
 		bool resizeResult = false;
 
 		if(n_sub > max_n_subjects){
+			const int newmax = 1.5 * n_sub;
 			size_t oldpitch = sequencepitch;
 			cudaFree(d_subjectsdata); CUERR;
-			cudaMallocPitch(&d_subjectsdata, &sequencepitch, max_sequence_bytes, n_sub); CUERR;
+			cudaMallocPitch(&d_subjectsdata, &sequencepitch, max_sequence_bytes, newmax); CUERR;
 			assert(!oldpitch || oldpitch == sequencepitch);
 
 			cudaFree(d_queriesPerSubject); CUERR;
-			cudaMalloc(&d_queriesPerSubject, sizeof(int) * n_sub); CUERR;
+			cudaMalloc(&d_queriesPerSubject, sizeof(int) * newmax); CUERR;
 
 			cudaFreeHost(h_subjectsdata); CUERR;
-			cudaMallocHost(&h_subjectsdata, sequencepitch * n_sub); CUERR;
+			cudaMallocHost(&h_subjectsdata, sequencepitch * newmax); CUERR;
 
 			cudaFreeHost(h_queriesPerSubject); CUERR;
-			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * n_sub); CUERR;
+			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * newmax); CUERR;
 
-			max_n_subjects = n_sub;
+			max_n_subjects = newmax;
 
 			resizeResult = true;
 		}
 
 
 		if(n_quer > max_n_queries){
+			const int newmax = 1.5 * n_quer;
 			size_t oldpitch = sequencepitch;
 			cudaFree(d_queriesdata); CUERR;
-			cudaMallocPitch(&d_queriesdata, &sequencepitch, max_sequence_bytes, n_quer); CUERR;
+			cudaMallocPitch(&d_queriesdata, &sequencepitch, max_sequence_bytes, newmax); CUERR;
 			assert(!oldpitch || oldpitch == sequencepitch);
 
 			cudaFreeHost(h_queriesdata); CUERR;
-			cudaMallocHost(&h_queriesdata, sequencepitch * n_quer); CUERR;
+			cudaMallocHost(&h_queriesdata, sequencepitch * newmax); CUERR;
 
-			max_n_queries = n_quer;
+			max_n_queries = newmax;
 
 			resizeResult = true;
 		}
@@ -87,62 +98,6 @@ namespace graphtools{
 	}
 
 
-	/*
-		res = number of alignments
-		ops = maximum total number of alignment operations for res alignments
-		r = number of bytes to store all subjects
-		c = number of bytes to store all candidates
-	*/
-	void AlignerDataArrays::resize(size_t res, size_t ops, size_t r, size_t c){
-		#ifdef __NVCC__
-		cudaSetDevice(deviceId); 
-
-		if(res > results_size){
-			cudaMalloc(&d_results, sizeof(AlignResultCompact) * res); CUERR;
-			cudaMalloc(&d_cBytesPrefixSum, sizeof(int) * (res+1)); CUERR;
-			cudaMalloc(&d_cLengths, sizeof(int) * res); CUERR;
-			cudaMalloc(&d_cIsEncoded, sizeof(int) * res); CUERR;
-			cudaMalloc(&d_rBytesPrefixSum, sizeof(int) * (res+1)); CUERR;
-			cudaMalloc(&d_rLengths, sizeof(int) * res); CUERR;
-			cudaMalloc(&d_rIsEncoded, sizeof(int) * res); CUERR;
-			cudaMalloc(&d_r2PerR1, sizeof(int) * (res+1)); CUERR;
-
-			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * res); CUERR;
-			cudaMallocHost(&h_cBytesPrefixSum, sizeof(int) * (res+1)); CUERR;
-			cudaMallocHost(&h_cLengths, sizeof(int) * res); CUERR;
-			cudaMallocHost(&h_cIsEncoded, sizeof(int) * res); CUERR;
-			cudaMallocHost(&h_rBytesPrefixSum, sizeof(int) * (res+1)); CUERR;
-			cudaMallocHost(&h_rLengths, sizeof(int) * res); CUERR;
-			cudaMallocHost(&h_rIsEncoded, sizeof(int) * res); CUERR;
-			cudaMallocHost(&h_r2PerR1, sizeof(int) * (res+1)); CUERR;
-
-			results_size = res;
-		}
-
-		if(ops > ops_size){
-			cudaMalloc(&d_ops, sizeof(AlignOp) * ops); CUERR;
-			cudaMallocHost(&h_ops, sizeof(AlignOp) * ops); CUERR;
-
-			ops_size = ops;
-		}
-
-		if(r > r_size){
-			cudaMalloc(&d_subjectsdata, sizeof(char) * r); CUERR;
-			cudaMallocHost(&h_subjectsdata, sizeof(char) * r); CUERR;
-
-			r_size = r;
-		}
-
-		if(c > c_size){
-			cudaMalloc(&d_queriesdata, sizeof(char) * c); CUERR;
-			cudaMallocHost(&h_queriesdata, sizeof(char) * c); CUERR;
-
-			c_size = c;
-		}
-		#endif
-	}
-
-
 	void cuda_cleanup_AlignerDataArrays(AlignerDataArrays& data){
 		#ifdef __NVCC__
 			cudaSetDevice(data.deviceId); CUERR;
@@ -151,31 +106,17 @@ namespace graphtools{
 			cudaFree(data.d_ops); CUERR;
 			cudaFree(data.d_subjectsdata); CUERR;
 			cudaFree(data.d_queriesdata); CUERR;
-			cudaFree(data.d_rBytesPrefixSum); CUERR;
-			cudaFree(data.d_rLengths); CUERR;
-			cudaFree(data.d_rIsEncoded); CUERR;
-			cudaFree(data.d_cBytesPrefixSum); CUERR;
-			cudaFree(data.d_cLengths); CUERR;
-			cudaFree(data.d_cIsEncoded); CUERR;
-			cudaFree(data.d_r2PerR1); CUERR;
+			cudaFree(data.d_queriesPerSubject); CUERR;
+			cudaFree(data.d_lengths); CUERR;
 
 			cudaFreeHost(data.h_results); CUERR;
 			cudaFreeHost(data.h_ops); CUERR;
 			cudaFreeHost(data.h_subjectsdata); CUERR;
-			cudaFreeHost(data.h_queriesdata); CUERR;
-			cudaFreeHost(data.h_rBytesPrefixSum); CUERR;
-			cudaFreeHost(data.h_rLengths); CUERR;
-			cudaFreeHost(data.h_rIsEncoded); CUERR;
-			cudaFreeHost(data.h_cBytesPrefixSum); CUERR;
-			cudaFreeHost(data.h_cLengths); CUERR;
-			cudaFreeHost(data.h_cIsEncoded); CUERR;
-			cudaFreeHost(data.h_r2PerR1); CUERR;
-
-			cudaFree(data.d_queriesPerSubject); CUERR;
-			cudaFree(data.d_lengths); CUERR;
-
+			cudaFreeHost(data.h_queriesdata); CUERR;		
 			cudaFreeHost(data.h_queriesPerSubject); CUERR;
 			cudaFreeHost(data.h_lengths); CUERR;
+
+			cudaFree(data.d_this);
 
 			cudaStreamDestroy(data.stream); CUERR;
 		#endif
@@ -217,207 +158,11 @@ namespace graphtools{
 	#ifdef __NVCC__
 
 		if(useGpu){ // use gpu for alignment
-
-#if 1
-
-			cudaSetDevice(mybuffers.deviceId); CUERR;
-
-			//tpa = std::chrono::system_clock::now();
-
-			int maximumCandidateLength = 0;
-			int maximumQueryLength = 0;
-			int totalCandidateBytes = 0;
-			int totalQueryBytes = 0;
-
-			/*determine required buffer sizes
-			  resize buffers
-			  collect data and write to buffers
-			  copy data from CPU buffers to GPU buffers
-			  run alignment kernel
-			  copy data from GPU buffers to CPU buffers
-			  make alignment results*/
-		
-
-			//determine buffer size
-
-			for(size_t i = 0; i < subjects.size(); i++){
-				if(activeBatches[i]){
-					const auto& query = subjects[i];
-					int bs = query->getNumBytes();		
-					int ls = query->getNbases();
-					maximumQueryLength = maximumQueryLength < ls ? ls : maximumQueryLength;
-					totalQueryBytes += bs;
-
-					assert(query->isCompressed());
-
-					for(const auto& candidate : queries[i]){
-						int b = candidate->getNumBytes();		
-						int l = candidate->getNbases();
-						maximumCandidateLength = maximumCandidateLength < l ? l : maximumCandidateLength;
-						totalCandidateBytes += b;
-
-						assert(candidate->isCompressed());
-					}
-				}
-			}
-
-			// resize buffers
-			int ml = maximumCandidateLength;
-			int max_ops_per_alignment = 2 * (ml + 1);
-			int max_ops = max_ops_per_alignment * totalNumberOfAlignments;
-
-			mybuffers.max_ops_per_alignment = max_ops_per_alignment;
-			mybuffers.n_subjects = numberOfRealSubjects;
-			mybuffers.n_queries = totalNumberOfAlignments;
-
-			mybuffers.resize(totalNumberOfAlignments, // number of alignments
-							max_ops, // maximum number of align ops 
-							totalQueryBytes, // bytes of subjects
-							totalCandidateBytes); // total number of candidate candidateBytes
-
-			// write to buffers
-			mybuffers.h_cBytesPrefixSum[0] = 0;
-			mybuffers.h_rBytesPrefixSum[0] = 0;
-
-			int candidateIndex = 0;
-			size_t alignmentSubjectIndex = 0;
-			for(size_t i = 0; i < subjects.size(); i++){
-				if(activeBatches[i]){
-					const auto& query = subjects[i];
-
-					int bs = query->getNumBytes();		
-					int ls = query->getNbases();
-
-					maximumQueryLength = maximumQueryLength < ls ? ls : maximumQueryLength;
-
-					mybuffers.h_rLengths[alignmentSubjectIndex] = ls;
-					mybuffers.h_rBytesPrefixSum[alignmentSubjectIndex+1] = bs + mybuffers.h_rBytesPrefixSum[alignmentSubjectIndex];
-					mybuffers.h_rIsEncoded[alignmentSubjectIndex] = query->isCompressed();
-
-					memcpy(mybuffers.h_subjectsdata + mybuffers.h_rBytesPrefixSum[alignmentSubjectIndex], query->begin(), bs);	
-
-					for(const auto& candidate : queries[i]){
-						int b = candidate->getNumBytes();		
-						int l = candidate->getNbases();
-
-						mybuffers.h_cLengths[candidateIndex] = l;
-						mybuffers.h_cBytesPrefixSum[candidateIndex+1] = b + mybuffers.h_cBytesPrefixSum[candidateIndex];
-						mybuffers.h_cIsEncoded[candidateIndex] = candidate->isCompressed();
-
-						memcpy(mybuffers.h_queriesdata + mybuffers.h_cBytesPrefixSum[candidateIndex], candidate->begin(), b);				
-						candidateIndex++;
-					}
-					alignmentSubjectIndex++;
-				}
-			}
-
-			mybuffers.maximumQueryLength = maximumQueryLength;
-			mybuffers.maximumCandidateLength = maximumCandidateLength;
-
-			mybuffers.h_r2PerR1[0] = 0;
-
-			int r2perr1index = 1;
-			for(size_t i = 0; i < queries.size(); i++){
-				if(activeBatches[i]){
-					mybuffers.h_r2PerR1[r2perr1index] = mybuffers.h_r2PerR1[r2perr1index-1] + queries[i].size();
-					r2perr1index++;
-				}
-			}
-
-			// copy data to gpu
-			cudaMemcpyAsync(mybuffers.d_subjectsdata, 
-					mybuffers.h_subjectsdata, 
-					sizeof(char) * totalQueryBytes, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_queriesdata,
-					mybuffers.h_queriesdata, 
-					sizeof(char) * totalCandidateBytes, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_cBytesPrefixSum,
-					mybuffers.h_cBytesPrefixSum, 
-					sizeof(int) * (totalNumberOfAlignments + 1), 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_cLengths,
-					mybuffers.h_cLengths, 
-					sizeof(int) * totalNumberOfAlignments, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_cIsEncoded,
-					mybuffers.h_cIsEncoded, 
-					sizeof(int) * totalNumberOfAlignments, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_rBytesPrefixSum,
-					mybuffers.h_rBytesPrefixSum, 
-					sizeof(int) * (numberOfRealSubjects + 1), 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_rLengths,
-					mybuffers.h_rLengths, 
-					sizeof(int) * numberOfRealSubjects, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_rIsEncoded,
-					mybuffers.h_rIsEncoded, 
-					sizeof(int) * numberOfRealSubjects, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_r2PerR1,
-					mybuffers.h_r2PerR1, 
-					sizeof(int) * (numberOfRealSubjects + 1), 
-					H2D, 
-					mybuffers.stream); CUERR;
-
-			alignment::call_cuda_semi_global_align_kernel(mybuffers);
-
-			// copy result to host
-			cudaMemcpyAsync(mybuffers.h_results, 
-					mybuffers.d_results, 
-					sizeof(AlignResultCompact) * mybuffers.n_queries, 
-					D2H, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.h_ops, 
-					mybuffers.d_ops, 
-					sizeof(AlignOp) * mybuffers.max_ops_per_alignment * mybuffers.n_queries, 
-					D2H, 
-					mybuffers.stream); CUERR;
-
-			cudaStreamSynchronize(mybuffers.stream); CUERR;
-
-			// store alignments in result vector
-
-			candidateIndex = 0;
-			int previousOutputIndex = -1;
-
-			for(int i = 0; i < mybuffers.n_subjects; i++){
-
-				int outputindex = previousOutputIndex + 1;
-				while(!activeBatches[outputindex]) outputindex++;
-				previousOutputIndex = outputindex;
-
-				int nqueriesForThisSubject = mybuffers.h_r2PerR1[i+1] - mybuffers.h_r2PerR1[i];
-
-				alignments[outputindex].resize(nqueriesForThisSubject);
-
-				for(int j = 0; j < nqueriesForThisSubject; j++){
-					const auto& currentResult = mybuffers.h_results[candidateIndex];
-					alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
-												mybuffers.h_ops + candidateIndex * mybuffers.max_ops_per_alignment, 
-												true);
-					candidateIndex++; 
-				}			
-			}
-
-#else
-
 			tpa = std::chrono::system_clock::now();
 
 			cudaSetDevice(mybuffers.deviceId); CUERR;
 
-			mybuffers.resize_new(numberOfRealSubjects, totalNumberOfAlignments);
+			mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
 
 			mybuffers.n_subjects = numberOfRealSubjects;
 			mybuffers.n_queries = totalNumberOfAlignments;
@@ -499,7 +244,7 @@ namespace graphtools{
 			tpa = std::chrono::system_clock::now();
 
 			// start kernel
-			alignment::call_cuda_semi_global_align_kernel_new(mybuffers);
+			alignment::call_cuda_semi_global_align_kernel(mybuffers);
 
 			tpb = std::chrono::system_clock::now();
 		
@@ -554,10 +299,6 @@ namespace graphtools{
 			tpb = std::chrono::system_clock::now();
 		
 			mybuffers.postprocessingtime += tpb - tpa;
-
-
-
-#endif
 
 		}else{ // use cpu for alignment
 
