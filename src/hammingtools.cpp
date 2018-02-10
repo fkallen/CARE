@@ -99,6 +99,11 @@ namespace hammingtools{
 
 			cudaFreeHost(h_results); CUERR;
 			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
+			
+			cudaFree(d_lengths); CUERR;
+			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
+			cudaFreeHost(h_lengths); CUERR;
+			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
 		}
 	#endif
 		n_subjects = n_sub;
@@ -189,7 +194,7 @@ namespace hammingtools{
 
 		if(useGpu){ // use gpu for alignment
 			
-#if 0			
+#if 1			
 
 			tpa = std::chrono::system_clock::now();
 
@@ -215,7 +220,7 @@ namespace hammingtools{
 						    subjects[i]->getNumBytes());
 
 					mybuffers.h_queriesPerSubject[subjectindex] = queries[i].size();
-					mybuffers.h_lengths[subjectindex] = subjects[i]->getNbases();
+					mybuffers.h_subjectlengths[subjectindex] = subjects[i]->getNbases();		
 
 					for(size_t j = 0; j < queries[i].size(); j++){
 						assert(queries[i][j]->getNbases() <= mybuffers.max_sequence_length);
@@ -225,7 +230,7 @@ namespace hammingtools{
 							    queries[i][j]->begin(), 
 							    queries[i][j]->getNumBytes());
 
-						mybuffers.h_lengths[numberOfRealSubjects + queryindex] = queries[i][j]->getNbases();
+						mybuffers.h_querylengths[queryindex] = queries[i][j]->getNbases();
 
 						queryindex++;
 					}
@@ -259,11 +264,17 @@ namespace hammingtools{
 					sizeof(int) * mybuffers.n_subjects, 
 					H2D, 
 					mybuffers.streams[0]); CUERR;
-			cudaMemcpyAsync(mybuffers.d_lengths,
-					mybuffers.h_lengths, 
-					sizeof(int) * (numberOfRealSubjects + totalNumberOfAlignments), 
+			cudaMemcpyAsync(mybuffers.d_subjectlengths,
+					mybuffers.h_subjectlengths, 
+					sizeof(int) * (numberOfRealSubjects), 
 					H2D, 
 					mybuffers.streams[0]); CUERR;
+					
+			cudaMemcpyAsync(mybuffers.d_querylengths,
+					mybuffers.h_querylengths, 
+					sizeof(int) * (totalNumberOfAlignments), 
+					H2D, 
+					mybuffers.streams[0]); CUERR;					
 
 			cudaStreamSynchronize(mybuffers.streams[0]);
 
@@ -341,7 +352,6 @@ namespace hammingtools{
 			
 			mybuffers.resizetime += tpb - tpa;
 
-			int queryindex = 0;
 			int querysum = 0;
 			int subjectindex = 0;
 			int batchid = 0;

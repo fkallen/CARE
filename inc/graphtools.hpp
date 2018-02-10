@@ -19,17 +19,23 @@ namespace graphtools{
 		char* d_subjectsdata = nullptr;
 		char* d_queriesdata = nullptr;
 		int* d_queriesPerSubject = nullptr;
-		int* d_lengths = nullptr; //first n_subjects entries are lengths of subjects
+		int* d_subjectlengths = nullptr;
+		int* d_querylengths = nullptr;
 
 		AlignResultCompact* h_results = nullptr;
 		char* h_subjectsdata = nullptr;
 		char* h_queriesdata = nullptr;
 		int* h_queriesPerSubject = nullptr;
-		int* h_lengths = nullptr; //first n_subjects entries are lengths of subjects
+		int* h_subjectlengths = nullptr;
+		int* h_querylengths = nullptr;
+		
+		int* h_lengths = nullptr;		
+		int* d_lengths = nullptr;		
 
 		AlignerDataArrays* d_this;
 	#ifdef __NVCC__
-		cudaStream_t stream = nullptr;
+		cudaStream_t streams[8];
+		cudaStream_t stream;
 	#endif
 		int deviceId;
 

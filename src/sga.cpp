@@ -172,12 +172,12 @@ namespace graphtools{
 
 
 	#ifdef __NVCC__
-
-		size_t cuda_semi_global_alignment_getSharedMemSize(const AlignerDataArrays& buffers){
+	
+		size_t cuda_semi_global_alignment_getSharedMemSize(const sgaparams& buffers){
 
 
 			size_t smem = 0;
-			smem += sizeof(char) * (buffers.max_sequence_length + buffers.max_sequence_length); //current subject and current query
+			smem += sizeof(char) * (buffers.max_sequence_bytes + buffers.max_sequence_bytes); //current subject and current query
 			smem += sizeof(char) * (buffers.max_sequence_length+1)*SDIV(buffers.max_sequence_length+1, 4); // prevs
 			smem += sizeof(short); // padding for pointer alignment
 			smem += sizeof(short) * 3*2*(buffers.max_sequence_length + 1); // wavefronts
@@ -186,7 +186,262 @@ namespace graphtools{
 			return smem;
 		}
 
-#if 1
+
+		/*
+		align multiple queries to multiple subjects
+		*/
+		__global__
+		void cuda_semi_global_alignment_kernel(const sgaparams buffers){
+
+			const unsigned int WAVE_ROW_SIZE = 2*(buffers.max_sequence_length + 1);
+
+			extern __shared__ char smem[];
+
+			const int prevcolumncount = SDIV(buffers.max_sequence_length + 1, 4);
+
+			/* set up shared memory */
+			char* sr1 = (char*)(smem);
+			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
+			char* prevs = (char*)(sr2 + buffers.max_sequence_bytes);
+			char* tmp = (char*)(prevs + (buffers.max_sequence_length + 1)*prevcolumncount);			
+			unsigned long offset = (unsigned long)tmp % sizeof(short); //ensure correct pointer alignment for shorts
+			if(offset != 0)
+				tmp += sizeof(short) - offset;
+
+			short* scores = (short*)(tmp);
+			short* bestrow = (short*)(scores + 3 * WAVE_ROW_SIZE);
+			short* bestcol = (short*)(bestrow + 1);
+			short* bestrowscore = (short*)(bestcol + 1);
+			short* bestcolscore = (short*)(bestrowscore + 1);
+			
+			const int subjectbases = buffers.subjectlength;
+			const char* subject = buffers.subjectdata;
+			for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += blockDim.x){
+				sr1[threadid] = subject[threadid];		
+			}			
+
+			for(int queryId = blockIdx.x; queryId < buffers.n_queries; queryId += gridDim.x){
+
+				const char* query = buffers.queriesdata + queryId * buffers.sequencepitch;
+				const int querybases = buffers.querylengths[queryId];
+				for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += blockDim.x){
+					sr2[threadid] = query[threadid];			
+				}
+				
+				AlignResultCompact * const my_result_out = buffers.results + queryId;
+				AlignOp * const my_ops_out = buffers.ops + buffers.max_ops_per_alignment * queryId;
+
+
+				for (int l = threadIdx.x; l < 2*(buffers.max_sequence_length + 1); l += blockDim.x) {
+					scores[0*WAVE_ROW_SIZE+l] = 0;
+					scores[1*WAVE_ROW_SIZE+l] = 0;
+					scores[2*WAVE_ROW_SIZE+l] = 0;
+				}
+
+				for(int i = 0; i < buffers.max_sequence_length + 1; i++){
+					for (int j = threadIdx.x; j < prevcolumncount; j += blockDim.x) {
+						prevs[i * prevcolumncount + j] = 0;
+					}
+				}
+
+
+				if (threadIdx.x == 0) {
+					*bestrow = 0;
+					*bestcol = 0;
+					*bestrowscore = -32767;
+					*bestcolscore = -32767;
+				}
+
+				__syncthreads();
+
+				for (int baseRow = 2; baseRow < 2*subjectbases+1; ++baseRow) {
+		
+					const int targetrow = baseRow % 3;
+					const int indelrow = (targetrow == 0 ? 2 : targetrow - 1);
+					const int matchrow = (indelrow == 0 ? 2 : indelrow - 1);
+
+					// find all threads inside boundary and calculate the score
+					for(int threadid = threadIdx.x; threadid < querybases + 1; threadid += blockDim.x){
+
+						// row and col in 2d space
+						const int myrow = baseRow - threadid;
+						const int mycol = threadid;
+
+						// calculate entry [baseRow - threadid][threadid]
+						if((myrow > 0) && (myrow < subjectbases + 1) 
+							&& (mycol > 0) && (mycol < querybases + 1)){ 
+
+							bool ismatch = encoded_accessor(sr1, subjectbases, myrow - 1) == encoded_accessor(sr2, querybases, mycol - 1);
+
+							const short matchscore = scores[matchrow * WAVE_ROW_SIZE + threadid - 1] 
+										+ (ismatch ? buffers.ALIGNMENTSCORE_MATCH : buffers.ALIGNMENTSCORE_SUB);
+							const short insscore = scores[indelrow * WAVE_ROW_SIZE + threadid - 1] + buffers.ALIGNMENTSCORE_INS;
+							const short delscore = scores[indelrow * WAVE_ROW_SIZE + threadid] + buffers.ALIGNMENTSCORE_DEL;
+
+							short maximum = 0;
+							AlignType prev;
+							unsigned int colbyteindex = mycol / 4;
+							unsigned int colbitindex = mycol % 4;
+		
+							if (matchscore < delscore) {
+								maximum = delscore;
+								prev = ALIGNTYPE_DELETE;
+							}else{
+								maximum = matchscore;
+								prev = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+							}
+							if (maximum < insscore) {
+								maximum = insscore;
+								prev = ALIGNTYPE_INSERT;
+							}
+
+							prevs[myrow * prevcolumncount + colbyteindex] |= (prev << 2*(3-colbitindex));
+
+							scores[targetrow * WAVE_ROW_SIZE + threadid] = maximum;
+
+							// update best score in last row
+							if (myrow == subjectbases) {
+								if (*bestcolscore < maximum) {
+									*bestcolscore = maximum;
+									*bestcol = mycol;
+								}
+							}
+
+							// update best score in last column
+							if (mycol == querybases) {
+								if (*bestrowscore < maximum) {
+									*bestrowscore = maximum;
+									*bestrow = myrow;
+								}
+							}
+						}
+					}
+
+					__syncthreads();
+				}
+
+				// get alignment and alignment score
+				if (threadIdx.x == 0) {
+
+					short currow;
+					short curcol;
+
+					AlignResultCompact result;
+
+					if (*bestcolscore > *bestrowscore) {
+						currow = subjectbases;
+						curcol = *bestcol;
+						result.score = *bestcolscore;
+					}else{
+						currow = *bestrow;
+						curcol = querybases;
+						result.score = *bestrowscore;
+					}
+		
+					const int subject_end_excl = currow;
+
+					//printf("currow %d, curcol %d\n", currow, curcol);
+
+					int nOps = 0;
+					bool isValid = true;
+					AlignOp currentOp;
+
+					while(currow != 0 && curcol != 0){
+						unsigned int colbyteindex = curcol / 4;
+						unsigned int colbitindex = curcol % 4;
+						switch((prevs[currow * prevcolumncount + colbyteindex] >> 2*(3-colbitindex)) & 0x3){
+			
+						case ALIGNTYPE_MATCH:
+							curcol -= 1;
+							currow -= 1;
+							break;
+						case ALIGNTYPE_SUBSTITUTE:
+
+							currentOp.position = currow - 1;
+							currentOp.type = ALIGNTYPE_SUBSTITUTE;
+							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol - 1));
+
+							my_ops_out[nOps] = currentOp;
+							++nOps;
+
+							curcol -= 1;
+							currow -= 1;
+							break;
+						case ALIGNTYPE_DELETE:
+
+							currentOp.position = currow - 1;
+							currentOp.type = ALIGNTYPE_DELETE;
+							currentOp.base = twobitToChar(encoded_accessor(sr1, subjectbases, currow - 1));
+
+							my_ops_out[nOps] = currentOp;
+							++nOps;
+
+							curcol -= 0;
+							currow -= 1;
+							break;
+						case ALIGNTYPE_INSERT:
+
+							currentOp.position = currow;
+							currentOp.type = ALIGNTYPE_INSERT;
+							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol - 1));
+
+							my_ops_out[nOps] = currentOp;
+							++nOps;
+
+							curcol -= 1;
+							currow -= 0;
+							break;
+						default : // code should not reach here
+							isValid = false;
+							printf("alignment backtrack error");
+						}
+					}
+					result.subject_begin_incl = currow;
+					result.query_begin_incl = curcol;
+					result.overlap = subject_end_excl - result.subject_begin_incl;
+					result.shift = result.subject_begin_incl == 0 ? -result.query_begin_incl : result.subject_begin_incl;
+					result.nOps = nOps;
+					result.isNormalized = false;
+					result.isValid = isValid;
+
+					*my_result_out = result;
+				}
+			}
+		}
+
+		void call_cuda_semi_global_alignment_kernel_async(const sgaparams& buffers, cudaStream_t stream){
+
+				size_t smem = cuda_semi_global_alignment_getSharedMemSize(buffers);
+				dim3 block(std::min(512, 32 * SDIV(buffers.max_sequence_length+1, 32)), 1, 1);
+				dim3 grid(buffers.n_queries, 1, 1);
+				//dim3 grid(std::min(buffers.max_blocks, buffers.n_queries), 1, 1);
+				// start kernel
+
+				cuda_semi_global_alignment_kernel
+					<<<grid, block, smem, stream>>>(buffers);
+				CUERR;
+		}
+
+		void call_cuda_semi_global_align_kernel(const sgaparams& buffers, cudaStream_t stream){
+
+				call_cuda_semi_global_alignment_kernel_async(buffers, stream);
+
+				cudaStreamSynchronize(stream); CUERR;
+		}
+
+
+		size_t cuda_semi_global_alignment_getSharedMemSize(const AlignerDataArrays& buffers){
+
+
+			size_t smem = 0;
+			smem += sizeof(char) * (buffers.max_sequence_bytes + buffers.max_sequence_bytes); //current subject and current query
+			smem += sizeof(char) * (buffers.max_sequence_length+1)*SDIV(buffers.max_sequence_length+1, 4); // prevs
+			smem += sizeof(short); // padding for pointer alignment
+			smem += sizeof(short) * 3*2*(buffers.max_sequence_length + 1); // wavefronts
+			smem += sizeof(short) * 4; //best(row/col), best(row/col)score
+
+			return smem;
+		}
 
 		/*
 		align multiple queries to multiple subjects
@@ -202,8 +457,8 @@ namespace graphtools{
 
 			/* set up shared memory */
 			char* sr1 = (char*)(smem);
-			char* sr2 = (char*)(sr1 + buffers.max_sequence_length);
-			char* prevs = (char*)(sr2 + buffers.max_sequence_length);
+			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
+			char* prevs = (char*)(sr2 + buffers.max_sequence_bytes);
 			char* tmp = (char*)(prevs + (buffers.max_sequence_length + 1)*prevcolumncount);			
 			unsigned long offset = (unsigned long)tmp % sizeof(short); //ensure correct pointer alignment for shorts
 			if(offset != 0)
@@ -424,9 +679,10 @@ namespace graphtools{
 
 				size_t smem = cuda_semi_global_alignment_getSharedMemSize(buffers);
 				dim3 block(std::min(512, 32 * SDIV(buffers.max_sequence_length+1, 32)), 1, 1);
-				dim3 grid(std::min(buffers.max_blocks, buffers.n_queries), 1, 1);
+				//dim3 grid(std::min(buffers.max_blocks, buffers.n_queries), 1, 1);
+				dim3 grid(buffers.n_queries, 1, 1);
 				// start kernel
-
+				
 				cuda_semi_global_alignment_kernel
 					<<<grid, block, smem, buffers.stream>>>(buffers);
 				CUERR;
@@ -438,267 +694,6 @@ namespace graphtools{
 
 				cudaStreamSynchronize(buffers.stream); CUERR;
 		}
-
-#else
-
-		/*
-		align multiple queries to multiple subjects
-		*/
-		__global__
-		void cuda_semi_global_alignment_kernel(const AlignerDataArrays* buffers){
-
-			const unsigned int WAVE_ROW_SIZE = 2*(buffers->max_sequence_length + 1);
-
-			extern __shared__ char smem[];
-
-			const int prevcolumncount = SDIV(buffers->max_sequence_length + 1, 4);
-
-			/* set up shared memory */
-			char* sr1 = (char*)(smem);
-			char* sr2 = (char*)(sr1 + buffers->max_sequence_length);
-			char* prevs = (char*)(sr2 + buffers->max_sequence_length);
-			char* tmp = (char*)(prevs + (buffers->max_sequence_length + 1)*prevcolumncount);			
-			unsigned long offset = (unsigned long)tmp % sizeof(short); //ensure correct pointer alignment for shorts
-			if(offset != 0)
-				tmp += sizeof(short) - offset;
-
-			short* scores = (short*)(tmp);
-			short* bestrow = (short*)(scores + 3 * WAVE_ROW_SIZE);
-			short* bestcol = (short*)(bestrow + 1);
-			short* bestrowscore = (short*)(bestcol + 1);
-			short* bestcolscore = (short*)(bestrowscore + 1);
-
-			for(int globalQueryId = blockIdx.x; globalQueryId < buffers->n_queries; globalQueryId += gridDim.x){
-
-				int subjectId = 0;
-				int queriesPerSubjectPrefixSum = 0;
-				for(int i = 0; i < buffers->n_subjects; i++){
-					queriesPerSubjectPrefixSum += buffers->d_queriesPerSubject[i];
-					if(globalQueryId < queriesPerSubjectPrefixSum){
-						subjectId = i;
-						break;
-					}
-				}
-
-				const char* subject = buffers->d_subjectsdata + subjectId * buffers->sequencepitch;
-				const char* query = buffers->d_queriesdata + globalQueryId * buffers->sequencepitch;
-				const int subjectbases = buffers->d_lengths[subjectId];
-				const int querybases = buffers->d_lengths[buffers->n_subjects + globalQueryId];
-				AlignResultCompact * const my_result_out = buffers->d_results + globalQueryId;
-				AlignOp * const my_ops_out = buffers->d_ops + buffers->max_ops_per_alignment * globalQueryId;
-
-				//set up shared memory
-
-				for(int threadid = threadIdx.x; threadid < buffers->max_sequence_bytes; threadid += blockDim.x){
-					sr1[threadid] = subject[threadid];
-					sr2[threadid] = query[threadid];			
-				}
-
-				for (int l = threadIdx.x; l < 2*(buffers->max_sequence_length + 1); l += blockDim.x) {
-					scores[0*WAVE_ROW_SIZE+l] = 0;
-					scores[1*WAVE_ROW_SIZE+l] = 0;
-					scores[2*WAVE_ROW_SIZE+l] = 0;
-				}
-
-				for(int i = 0; i < buffers->max_sequence_length + 1; i++){
-					for (int j = threadIdx.x; j < prevcolumncount; j += blockDim.x) {
-						prevs[i * prevcolumncount + j] = 0;
-					}
-				}
-
-
-				if (threadIdx.x == 0) {
-					*bestrow = 0;
-					*bestcol = 0;
-					*bestrowscore = -32767;
-					*bestcolscore = -32767;
-				}
-
-				__syncthreads();
-
-
-
-				for (int baseRow = 2; baseRow < 2*subjectbases+1; ++baseRow) {
-		
-					const int targetrow = baseRow % 3;
-					const int indelrow = (targetrow == 0 ? 2 : targetrow - 1);
-					const int matchrow = (indelrow == 0 ? 2 : indelrow - 1);
-
-					// find all threads inside boundary and calculate the score
-					for(int threadid = threadIdx.x; threadid < querybases + 1; threadid += blockDim.x){
-
-						// row and col in 2d space
-						const int myrow = baseRow - threadid;
-						const int mycol = threadid;
-
-						// calculate entry [baseRow - threadid][threadid]
-						if((myrow > 0) && (myrow < subjectbases + 1) 
-							&& (mycol > 0) && (mycol < querybases + 1)){ 
-
-							bool ismatch = encoded_accessor(sr1, subjectbases, myrow - 1) == encoded_accessor(sr2, querybases, mycol - 1);
-
-							const short matchscore = scores[matchrow * WAVE_ROW_SIZE + threadid - 1] 
-										+ (ismatch ? buffers->ALIGNMENTSCORE_MATCH : buffers->ALIGNMENTSCORE_SUB);
-							const short insscore = scores[indelrow * WAVE_ROW_SIZE + threadid - 1] + buffers->ALIGNMENTSCORE_INS;
-							const short delscore = scores[indelrow * WAVE_ROW_SIZE + threadid] + buffers->ALIGNMENTSCORE_DEL;
-
-							short maximum = 0;
-							AlignType prev;
-							unsigned int colbyteindex = mycol / 4;
-							unsigned int colbitindex = mycol % 4;
-		
-							if (matchscore < delscore) {
-								maximum = delscore;
-								prev = ALIGNTYPE_DELETE;
-							}else{
-								maximum = matchscore;
-								prev = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
-							}
-							if (maximum < insscore) {
-								maximum = insscore;
-								prev = ALIGNTYPE_INSERT;
-							}
-
-							prevs[myrow * prevcolumncount + colbyteindex] |= (prev << 2*(3-colbitindex));
-
-							scores[targetrow * WAVE_ROW_SIZE + threadid] = maximum;
-
-							// update best score in last row
-							if (myrow == subjectbases) {
-								if (*bestcolscore < maximum) {
-									*bestcolscore = maximum;
-									*bestcol = mycol;
-								}
-							}
-
-							// update best score in last column
-							if (mycol == querybases) {
-								if (*bestrowscore < maximum) {
-									*bestrowscore = maximum;
-									*bestrow = myrow;
-								}
-							}
-						}
-					}
-
-					__syncthreads();
-				}
-
-				// get alignment and alignment score
-				if (threadIdx.x == 0) {
-
-					short currow;
-					short curcol;
-
-					AlignResultCompact result;
-
-					if (*bestcolscore > *bestrowscore) {
-						currow = subjectbases;
-						curcol = *bestcol;
-						result.score = *bestcolscore;
-					}else{
-						currow = *bestrow;
-						curcol = querybases;
-						result.score = *bestrowscore;
-					}
-		
-					const int subject_end_excl = currow;
-
-					//printf("currow %d, curcol %d\n", currow, curcol);
-
-					int nOps = 0;
-					bool isValid = true;
-					AlignOp currentOp;
-
-					while(currow != 0 && curcol != 0){
-						unsigned int colbyteindex = curcol / 4;
-						unsigned int colbitindex = curcol % 4;
-						switch((prevs[currow * prevcolumncount + colbyteindex] >> 2*(3-colbitindex)) & 0x3){
-			
-						case ALIGNTYPE_MATCH:
-							curcol -= 1;
-							currow -= 1;
-							break;
-						case ALIGNTYPE_SUBSTITUTE:
-
-							currentOp.position = currow - 1;
-							currentOp.type = ALIGNTYPE_SUBSTITUTE;
-							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol - 1));
-
-							my_ops_out[nOps] = currentOp;
-							++nOps;
-
-							curcol -= 1;
-							currow -= 1;
-							break;
-						case ALIGNTYPE_DELETE:
-
-							currentOp.position = currow - 1;
-							currentOp.type = ALIGNTYPE_DELETE;
-							currentOp.base = twobitToChar(encoded_accessor(sr1, subjectbases, currow - 1));
-
-							my_ops_out[nOps] = currentOp;
-							++nOps;
-
-							curcol -= 0;
-							currow -= 1;
-							break;
-						case ALIGNTYPE_INSERT:
-
-							currentOp.position = currow;
-							currentOp.type = ALIGNTYPE_INSERT;
-							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol - 1));
-
-							my_ops_out[nOps] = currentOp;
-							++nOps;
-
-							curcol -= 1;
-							currow -= 0;
-							break;
-						default : // code should not reach here
-							isValid = false;
-							printf("alignment backtrack error");
-						}
-					}
-					result.subject_begin_incl = currow;
-					result.query_begin_incl = curcol;
-					result.overlap = subject_end_excl - result.subject_begin_incl;
-					result.shift = result.subject_begin_incl == 0 ? -result.query_begin_incl : result.subject_begin_incl;
-					result.nOps = nOps;
-					result.isNormalized = false;
-					result.isValid = isValid;
-
-					*my_result_out = result;
-				}
-			}
-		}
-
-		void call_cuda_semi_global_alignment_kernel_async(const AlignerDataArrays& buffers){
-
-				size_t smem = cuda_semi_global_alignment_getSharedMemSize(buffers);
-				dim3 block(std::min(512, 32 * SDIV(buffers.max_sequence_length+1, 32)), 1, 1);
-				dim3 grid(std::min(buffers.max_blocks, buffers.n_queries), 1, 1);
-				// start kernel
-
-				cudaMemcpyAsync(buffers.d_this, &buffers, sizeof(AlignerDataArrays), H2D, buffers.stream); CUERR;
-
-				cuda_semi_global_alignment_kernel
-					<<<grid, block, smem, buffers.stream>>>(buffers.d_this);
-				CUERR;
-		}
-
-		void call_cuda_semi_global_align_kernel(const AlignerDataArrays& buffers){
-
-				call_cuda_semi_global_alignment_kernel_async(buffers);
-
-				cudaStreamSynchronize(buffers.stream); CUERR;
-		}
-
-
-
-#endif
-
-
 
 
 

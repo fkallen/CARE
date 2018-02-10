@@ -17,6 +17,8 @@ namespace graphtools{
 						max_sequence_length(maxseqlength), max_sequence_bytes(SDIV(maxseqlength,4)){
 		#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
+		for(int i = 0; i < 8; i++)
+			cudaStreamCreate(&streams[i]); CUERR;
 		cudaStreamCreate(&stream); CUERR;
 		cudaMalloc(&d_this, sizeof(AlignerDataArrays)); CUERR;
 
@@ -51,6 +53,12 @@ namespace graphtools{
 
 			cudaFreeHost(h_queriesPerSubject); CUERR;
 			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * newmax); CUERR;
+			
+			cudaFree(d_subjectlengths); CUERR;
+			cudaMalloc(&d_subjectlengths, sizeof(int) * newmax); CUERR;	
+			
+			cudaFreeHost(h_subjectlengths); CUERR;
+			cudaMallocHost(&h_subjectlengths, sizeof(int) * newmax); CUERR;		
 
 			max_n_subjects = newmax;
 
@@ -67,6 +75,12 @@ namespace graphtools{
 
 			cudaFreeHost(h_queriesdata); CUERR;
 			cudaMallocHost(&h_queriesdata, sequencepitch * newmax); CUERR;
+			
+			cudaFree(d_querylengths); CUERR;
+			cudaMalloc(&d_querylengths, sizeof(int) * newmax); CUERR;
+			
+			cudaFreeHost(h_querylengths); CUERR;
+			cudaMallocHost(&h_querylengths, sizeof(int) * newmax); CUERR;			
 
 			max_n_queries = newmax;
 
@@ -80,17 +94,16 @@ namespace graphtools{
 			cudaFreeHost(h_results); CUERR;
 			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
 
-			cudaFree(d_lengths); CUERR;
-			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;	
-
-			cudaFreeHost(h_lengths); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
-
 			cudaFree(d_ops); CUERR;
 			cudaFreeHost(h_ops); CUERR;
 
 			cudaMalloc(&d_ops, sizeof(AlignOp) * max_n_queries * max_ops_per_alignment); CUERR;
 			cudaMallocHost(&h_ops, sizeof(AlignOp) * max_n_queries * max_ops_per_alignment); CUERR;
+			
+			cudaFree(d_lengths); CUERR;
+			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
+			cudaFreeHost(h_lengths); CUERR;
+			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
 		}
 	#endif
 		n_subjects = n_sub;
@@ -107,18 +120,21 @@ namespace graphtools{
 			cudaFree(data.d_subjectsdata); CUERR;
 			cudaFree(data.d_queriesdata); CUERR;
 			cudaFree(data.d_queriesPerSubject); CUERR;
-			cudaFree(data.d_lengths); CUERR;
+			cudaFree(data.d_subjectlengths); CUERR;
+			cudaFree(data.d_querylengths); CUERR;
 
 			cudaFreeHost(data.h_results); CUERR;
 			cudaFreeHost(data.h_ops); CUERR;
 			cudaFreeHost(data.h_subjectsdata); CUERR;
 			cudaFreeHost(data.h_queriesdata); CUERR;		
 			cudaFreeHost(data.h_queriesPerSubject); CUERR;
-			cudaFreeHost(data.h_lengths); CUERR;
+			cudaFreeHost(data.h_subjectlengths); CUERR;
+			cudaFreeHost(data.h_querylengths); CUERR;
 
 			cudaFree(data.d_this);
-
-			cudaStreamDestroy(data.stream); CUERR;
+			
+			for(int i = 0; i < 8; i++)
+				cudaStreamDestroy(data.streams[i]); CUERR;
 		#endif
 	}
 
@@ -158,6 +174,7 @@ namespace graphtools{
 	#ifdef __NVCC__
 
 		if(useGpu){ // use gpu for alignment
+#if 0			
 			tpa = std::chrono::system_clock::now();
 
 			cudaSetDevice(mybuffers.deviceId); CUERR;
@@ -299,6 +316,140 @@ namespace graphtools{
 			tpb = std::chrono::system_clock::now();
 		
 			mybuffers.postprocessingtime += tpb - tpa;
+			
+#else
+
+			
+			tpa = std::chrono::system_clock::now();
+
+			cudaSetDevice(mybuffers.deviceId); CUERR;
+
+			mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
+
+			mybuffers.n_subjects = numberOfRealSubjects;
+			mybuffers.n_queries = totalNumberOfAlignments;
+
+			tpb = std::chrono::system_clock::now();
+			
+			mybuffers.resizetime += tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
+
+			int subjectindex = 0;
+			int querysum = 0;
+			int batchid = 0;
+			std::vector<alignment::sgaparams> params(subjects.size());
+			for(size_t i = 0; i < subjects.size(); i++){
+				if(activeBatches[i]){
+					tpa = std::chrono::system_clock::now();
+					batchid = subjectindex;
+					
+					params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
+					params[batchid].max_sequence_length = mybuffers.max_sequence_length;
+					params[batchid].max_ops_per_alignment = mybuffers.max_ops_per_alignment;
+					params[batchid].sequencepitch = mybuffers.sequencepitch;
+					params[batchid].subjectlength = subjects[i]->getNbases();
+					params[batchid].n_queries = queries[i].size();
+					params[batchid].querylengths = mybuffers.d_querylengths + querysum;
+					params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
+					params[batchid].queriesdata = mybuffers.d_queriesdata + mybuffers.sequencepitch * querysum;
+					params[batchid].results = mybuffers.d_results + querysum;
+					params[batchid].ops = mybuffers.d_ops + querysum * mybuffers.max_ops_per_alignment;					
+					params[batchid].ALIGNMENTSCORE_MATCH = mybuffers.ALIGNMENTSCORE_MATCH;
+					params[batchid].ALIGNMENTSCORE_SUB = mybuffers.ALIGNMENTSCORE_SUB;
+					params[batchid].ALIGNMENTSCORE_INS = mybuffers.ALIGNMENTSCORE_INS;
+					params[batchid].ALIGNMENTSCORE_DEL = mybuffers.ALIGNMENTSCORE_DEL;					
+					
+					int* querylengths = mybuffers.h_querylengths + querysum;
+					char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
+					char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
+					
+					assert(subjects[i]->getNbases() <= mybuffers.max_sequence_length);
+					assert(subjects[i]->getNumBytes() <= mybuffers.max_sequence_bytes);
+					
+					std::memcpy(subjectdata, subjects[i]->begin(), subjects[i]->getNumBytes());
+
+					for(size_t j = 0; j < queries[i].size(); j++){
+						assert(queries[i][j]->getNbases() <= mybuffers.max_sequence_length);
+						assert(queries[i][j]->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+						std::memcpy(queriesdata + j * mybuffers.sequencepitch,
+							    queries[i][j]->begin(), 
+							    queries[i][j]->getNumBytes());
+
+						querylengths[j] = queries[i][j]->getNbases();
+					}
+					
+					tpb = std::chrono::system_clock::now();
+		
+					mybuffers.preprocessingtime += tpb - tpa;
+					// copy data to gpu
+					cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata), 
+							subjectdata, 
+							mybuffers.sequencepitch, 
+							H2D, 
+							mybuffers.streams[batchid]); CUERR;						
+					cudaMemcpyAsync(const_cast<char*>(params[batchid].queriesdata),
+							queriesdata, 
+							mybuffers.sequencepitch * params[batchid].n_queries, 
+							H2D, 
+							mybuffers.streams[batchid]); CUERR;										
+					cudaMemcpyAsync(const_cast<int*>(params[batchid].querylengths),
+							querylengths, 
+							sizeof(int) * params[batchid].n_queries, 
+							H2D, 
+							mybuffers.streams[batchid]); CUERR;						
+					alignment::call_cuda_semi_global_alignment_kernel_async(params[batchid], mybuffers.streams[batchid]);
+								
+					querysum += queries[i].size();
+					subjectindex++;					
+				}
+			}	
+			
+			subjectindex = 0;
+			querysum = 0;
+			for(size_t i = 0; i < subjects.size(); i++){
+				if(activeBatches[i]){
+					batchid = subjectindex;
+					//copy results to host
+					AlignResultCompact* results = mybuffers.h_results + querysum;
+					AlignOp* ops = mybuffers.h_ops + querysum * mybuffers.max_ops_per_alignment;
+					const int n_queries = params[batchid].n_queries;
+					
+					cudaMemcpyAsync(results, 
+						params[batchid].results, 
+						sizeof(AlignResultCompact) * n_queries, 
+						D2H, 
+						mybuffers.streams[batchid]); CUERR;
+					cudaMemcpyAsync(ops, 
+						params[batchid].ops, 
+						sizeof(AlignOp) * n_queries * mybuffers.max_ops_per_alignment, 
+						D2H, 
+						mybuffers.streams[batchid]); CUERR;						
+						
+					cudaStreamSynchronize(mybuffers.streams[batchid]);
+					
+					tpa = std::chrono::system_clock::now();
+
+					alignments[i].resize(n_queries);
+
+					for(int j = 0; j < n_queries; j++){
+						const auto& currentResult = results[j];
+						alignments[i][j].setOpsAndDataFromAlignResultCompact(currentResult, 
+												ops + j * mybuffers.max_ops_per_alignment, 
+												true);						
+					}							
+	
+					querysum += n_queries;
+					subjectindex++;
+					
+					tpb = std::chrono::system_clock::now();
+					
+					mybuffers.postprocessingtime += tpb - tpa;				
+				}
+			}
+
+#endif			
 
 		}else{ // use cpu for alignment
 

@@ -21,8 +21,8 @@ inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 coverage=255
 #coverage=31
 
-errorrate=0.03
-m=0.6
+errorrate=0.01
+m=0.8
 
 #output path. this is used as temporary storage, too
 outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/
@@ -46,7 +46,7 @@ useQualityScores=--useQualityScores
 #kmer length
 k=16
 #hashmaps (one kmer hash value per map)
-maps=4
+maps=8
 
 #alignment scores for semiglobal alignment
 #we use a high indel penalty to focus on substitutions only. you may want to change this to include indel correction
@@ -68,7 +68,7 @@ minalignmentoverlapratio=0.35
 #correction parameters
 #during the voting phase, if at a fixed position in the read base B from the original read occurs N times and base D occurs M times,
 #then B is corrected into D if  M-N >= aa*pow(xx,N)
-xx=$(echo 'scale=2; 15/10' | bc)
+xx=$(echo 'scale=2; 12/10' | bc)
 aa=$(echo 'scale=2; 10/10' | bc)
 
 

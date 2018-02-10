@@ -143,8 +143,8 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 		minhashparams(minhashparameters), nInserterThreads(nInserterThreads_), nCorrectorThreads(
 				nCorrectorThreads_), outputPath("") {
 	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
-	correctionmode = CorrectionMode::Hamming;
-	//correctionmode = CorrectionMode::Graph;
+	//correctionmode = CorrectionMode::Hamming;
+	correctionmode = CorrectionMode::Graph;
 
 	minhasher.minparams = minhashparameters;
 
@@ -1751,6 +1751,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					<< shddata.d2htime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment postprocessing "
 					<< shddata.postprocessingtime.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment total "
+					<< getAlignmentsTimeTotal.count() << '\n';					
 			std::cout << "thread " << threadId
 					<< " : correction find good alignments "
 					<< determinegoodalignmentsTime.count() << '\n';
@@ -1787,8 +1789,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			std::cout << "thread " << threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			//std::cout << "thread " << threadId << " : alignment total "
-			//		<< getAlignmentsTimeTotal.count() << '\n';
+			std::cout << "thread " << threadId << " : alignment total "
+					<< getAlignmentsTimeTotal.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment resize buffer " << sgadata.resizetime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment preprocessing " << sgadata.preprocessingtime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment H2D " << sgadata.h2dtime.count() << '\n';

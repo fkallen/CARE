@@ -103,34 +103,26 @@ namespace hammingtools{
 				const int querybases = buffers.querylengths[queryId];
 
 				const int totalbases = subjectbases + querybases;
+				
 				int bestScore = totalbases; // score is number of mismatches
 				int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
 
+			
 				for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += BLOCKSIZE){
 					const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
 					int score = 0;
-#if 1
+
 					for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
 						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);	
 					}
-					score += totalbases - overlapsize;
-#else
-					const int lowerbound = max(-shift, 0);
-					const int upperbound = min(querybases, subjectbases - shift);
-					for(int j = 0; j < totalbases; j++){							
-							if(j < lowerbound || j >= upperbound)
-								score++;
-							else
-								score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);
-					}
-#endif
-					
+					score += totalbases - overlapsize;				
 
 					if(score < bestScore){
 						bestScore = score;
 						bestShift = shift;
 					}
 				}
+
 
 
 				// perform reduction to find smallest score in block. the corresponding shift is required, too
@@ -151,7 +143,7 @@ namespace hammingtools{
 				);
 
 				bestScore = reduced.x;
-				bestShift = reduced.y;
+				bestShift = reduced.y;		
 	
 				//make result
 				if(threadIdx.x == 0){

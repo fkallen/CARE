@@ -30,6 +30,9 @@ struct SHDdata{
 	int* h_queriesPerSubject = nullptr;
 	int* h_subjectlengths = nullptr;
 	int* h_querylengths = nullptr;
+	
+		int* h_lengths = nullptr;		
+		int* d_lengths = nullptr;		
 
 #ifdef __NVCC__
 	cudaStream_t streams[8];
