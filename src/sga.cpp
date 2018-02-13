@@ -1,5 +1,19 @@
 #include "../inc/sga.hpp"
 
+
+#ifdef __NVCC__
+#include <cooperative_groups.h>
+using namespace cooperative_groups;
+#endif
+
+#include <cstdint>
+#include <limits>
+#include <iostream>
+#include <iomanip>
+
+
+#define WARPSIZE 32
+
 namespace graphtools{
 
 	namespace alignment{
@@ -71,7 +85,25 @@ namespace graphtools{
 					scores[row][col] = maximum;
 				}
 			}
-
+#if 0
+			for (int row = 0; row < r1length + 1; ++row) {
+				if(row != 1 && (row-1)%32 == 0){
+					std::cout << std::endl;
+					std::cout << std::endl;
+					for (int col = 1; col < r2bases + 1; ++col) {
+						std::cout << "____";
+					}
+					std::cout << std::endl;
+				}
+				std::cout << std::endl;
+				for (int col = 0; col < r2bases + 1; ++col) {
+					if((col-1)%32 == 0) std::cout << " | ";
+					std::cout << std::setw(4) << scores[row][col];
+				}
+					
+				std::cout << std::endl;
+			}
+#endif
 			// extract best alignment
 
 			int currow = r1length;
@@ -186,7 +218,6 @@ namespace graphtools{
 			return smem;
 		}
 
-
 		/*
 		align multiple queries to multiple subjects
 		*/
@@ -248,8 +279,8 @@ namespace graphtools{
 				if (threadIdx.x == 0) {
 					*bestrow = 0;
 					*bestcol = 0;
-					*bestrowscore = -32767;
-					*bestcolscore = -32767;
+					*bestrowscore = SHRT_MIN;
+					*bestcolscore = SHRT_MIN;
 				}
 
 				__syncthreads();
@@ -304,6 +335,7 @@ namespace graphtools{
 								if (*bestcolscore < maximum) {
 									*bestcolscore = maximum;
 									*bestcol = mycol;
+									//printf("qborder %d : %d\n", mycol - 1, maximum);
 								}
 							}
 
@@ -312,6 +344,7 @@ namespace graphtools{
 								if (*bestrowscore < maximum) {
 									*bestrowscore = maximum;
 									*bestrow = myrow;
+									//printf("sborder %d : %d\n", myrow - 1, maximum);
 								}
 							}
 						}
@@ -409,6 +442,7 @@ namespace graphtools{
 			}
 		}
 
+
 		void call_cuda_semi_global_alignment_kernel_async(const sgaparams& buffers, cudaStream_t stream){
 
 				size_t smem = cuda_semi_global_alignment_getSharedMemSize(buffers);
@@ -422,13 +456,494 @@ namespace graphtools{
 				CUERR;
 		}
 
-		void call_cuda_semi_global_align_kernel(const sgaparams& buffers, cudaStream_t stream){
+		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream){
 
 				call_cuda_semi_global_alignment_kernel_async(buffers, stream);
 
 				cudaStreamSynchronize(stream); CUERR;
 		}
 
+		
+
+		/*
+		align multiple queries to subject
+		*/
+		__global__
+		void cuda_semi_global_alignment_warps_kernel(const sgaparams buffers){
+			
+			union BestscoreData{
+				int data;
+				struct{
+						short bestScore;
+						short bestIndex;
+				};
+			};
+			
+			extern __shared__ char smem[];
+			
+			/*if(threadIdx.x + blockDim.x * blockIdx.x == 0){
+					printf("nqueries : %d\n", buffers.n_queries);
+					for(int i = 0; i < buffers.n_queries; i++){
+						printf("length %d : %d\n", i, buffers.querylengths[i]);
+					}
+			}*/
+				
+			auto block = this_thread_block();
+			auto warp = tiled_partition<WARPSIZE>(block);
+			int warpId = block.thread_rank() / WARPSIZE;
+			int nwarps = block.size() / WARPSIZE;		
+						
+			//set up shared memory pointers
+			int prevcolumncount = SDIV(buffers.max_sequence_length, 32);
+			
+			char* sr1 = (char*)(smem);
+			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
+			char* tmp = (char*)(sr2 + buffers.max_sequence_bytes);	
+			unsigned long long offset = (unsigned long long)tmp % sizeof(unsigned long long); //ensure correct pointer alignment for unsigned long long
+			if(offset != 0)
+				tmp += sizeof(unsigned long long) - offset;
+			unsigned long long* prevs = (unsigned long long*)(tmp);
+			tmp = (char*)(prevs + buffers.max_sequence_length * prevcolumncount);	
+			offset = (unsigned long long)tmp % sizeof(short); //ensure correct pointer alignment for short
+			if(offset != 0)
+				tmp += sizeof(short) - offset;
+			short* scoreBorderSubject = (short*)(tmp);
+			short* scoreBorderQuery = (short*)(scoreBorderSubject + buffers.max_sequence_length);
+
+
+			//scoreBorderDiag stores diagonal for calculation of tile [subjecttileId, querytileId]
+			//number of rows and columns is increased by 1 to avoid boundary check at bottom end / right end
+			short* scoreBorderDiag = (short*)(scoreBorderQuery + buffers.max_sequence_length);
+			tmp = (char*)(scoreBorderDiag + 2 * (SDIV(buffers.max_sequence_length, 32)+1));	
+			offset = (unsigned long long)tmp % sizeof(BestscoreData); //ensure correct pointer alignment for short
+			if(offset != 0)
+				tmp += sizeof(BestscoreData) - offset;			
+			BestscoreData* bestRowData = (BestscoreData*)(tmp);
+			BestscoreData* bestColData = (BestscoreData*)(bestRowData + nwarps);		
+
+			const char* subject = buffers.subjectdata;
+			int subjectbases = buffers.subjectlength;
+	                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+			int subjecttiles = SDIV(subjectbases, WARPSIZE);
+			int maxTotalTiles = subjecttiles * (SDIV(buffers.max_sequence_length, 32)+1);
+			
+			for(int threadid = block.thread_rank(); threadid < buffers.max_sequence_bytes; threadid += blockDim.x){
+				sr1[threadid] = subject[threadid];		
+			}
+
+			for(int queryId = blockIdx.x; queryId < buffers.n_queries; queryId += gridDim.x){
+				//if(threadIdx.x == 0) printf("queryId %d\n", queryId);
+				const char* query = buffers.queriesdata + queryId * buffers.sequencepitch;
+				int querybases = buffers.querylengths[queryId];
+				int querytiles = SDIV(querybases, WARPSIZE);
+				
+				for(int threadid = block.thread_rank(); threadid < buffers.max_sequence_bytes; threadid += blockDim.x){
+					sr2[threadid] = query[threadid];			
+				}	
+				
+				for(int i = block.thread_rank(); i < buffers.max_sequence_length; i += blockDim.x){
+					scoreBorderSubject[i] = 0;
+					scoreBorderQuery[i] = 0;
+				}
+				
+				for(int i = block.thread_rank(); i < maxTotalTiles; i+= blockDim.x){
+					scoreBorderDiag[i] = 0;
+				}
+				
+				block.sync(); //finish shared mem writes
+				
+				int subjecttileId = warpId;
+				int subjecttileBases = subjecttileId < subjecttiles - 1 ? WARPSIZE : subjectbases - subjecttileId * WARPSIZE;
+				int globalsubjectpos = subjecttileId * WARPSIZE + warp.thread_rank();
+				char subjectbase = twobitToChar(encoded_accessor(sr1, subjectbases, globalsubjectpos));
+
+				//tiles move from left to right
+				for(int tilediagonal = 0; tilediagonal < 2*querytiles-1; tilediagonal++){
+					int querytileId = tilediagonal - warpId;
+					int querytileBases = querytileId < querytiles - 1 ? WARPSIZE : querybases - querytileId * WARPSIZE;
+					//printf("tilediag %d querytileId %d warpId %d\n", tilediagonal, querytileId, warpId);
+
+					// thread diagonals which cross the last valid row/column in tile must have
+					// validBorderDiagonalndexBegin <= threaddiagonal < validBorderDiagonalndexEndexcl
+					int validBorderDiagonalndexBegin = -1;
+					int validBorderDiagonalndexEndexcl = -1;
+					if(subjecttileBases < querytileBases){
+						validBorderDiagonalndexBegin = subjecttileBases - 1;
+						validBorderDiagonalndexEndexcl = validBorderDiagonalndexBegin + querytileBases;
+					}else{
+						validBorderDiagonalndexBegin = querytileBases - 1;
+						validBorderDiagonalndexEndexcl = validBorderDiagonalndexBegin + subjecttileBases;
+					}
+					
+					if(0 <= querytileId && querytileId < querytiles){
+						assert(subjecttileId + querytileId == tilediagonal);
+						
+						//relax diagonals in tile [subjecttileId, querytileId]						
+						
+						int globalquerypos = querytileId * WARPSIZE + warp.thread_rank();
+						
+						//initialize tile data
+						
+						char querybase = twobitToChar(encoded_accessor(sr2, querybases, globalquerypos));
+						short borderScoreSubject = scoreBorderSubject[globalsubjectpos];
+						short borderScoreQuery = scoreBorderQuery[globalquerypos];
+						//short borderScoreDiag = subjecttileId == 0 ? 0 : scoreBorderDiag[subjecttileId-1];
+						short borderScoreDiag = scoreBorderDiag[subjecttileId * (querytiles+1) + querytileId];
+
+//if(tilediagonal == 3 && querytileId == 0){ printf("thread %d: borderScoreQuery %d\n", warp.thread_rank(), borderScoreQuery);}								
+
+						
+						short scoreLeft = 0;
+						short scoreLeftLeft = 0;
+						short scoreDiag = 0;
+						short scoreUp = 0;
+						short scoreCur = 0;							
+						unsigned long long myprev = 0;
+						
+						//diagonal moves from left to right
+						for(int threaddiagonal = 0; threaddiagonal < 2 * WARPSIZE - 1; threaddiagonal++){
+							int localquerypos = threaddiagonal - warp.thread_rank();
+							int localsubjectpos = warp.thread_rank();
+							globalquerypos = querytileId * WARPSIZE + localquerypos;
+							
+							//if(threadIdx.x == 0){
+							//		printf("globalquerypos %d \n", globalquerypos);
+							//}
+							
+							//fetch scores of cells left, above, diag, which are in registers of other threads in the warp								
+							scoreLeft = scoreCur;
+							scoreDiag = warp.shfl_up(scoreLeftLeft, 1);
+							scoreUp = warp.shfl_up(scoreCur, 1);
+							short scoreUpTmp = warp.shfl(borderScoreQuery, localquerypos);
+							short scoreDiagTmp = warp.shfl(borderScoreQuery, localquerypos-1);
+													
+							//fetch next base
+							char myquerybase = warp.shfl(querybase, localquerypos);
+							
+							//printf("b thread %d, threaddiagonal %d qb %c\n", warp.thread_rank(), threaddiagonal, myquerybase);
+							
+							if(0 <= localquerypos && localquerypos < WARPSIZE){
+								assert(threaddiagonal == localquerypos + localsubjectpos);
+								
+								//first row and col need to fetch from border, which is also cached in registers
+								if(localquerypos == 0){
+									scoreLeft = borderScoreSubject;
+								}
+								if(localsubjectpos == 0){
+									scoreUp = scoreUpTmp;
+									//printf("access localquerypos %d\n", localquerypos);
+									if(localquerypos == 0){
+										scoreDiag = borderScoreDiag;
+									}else{
+										assert(globalquerypos != 0);
+//if(tilediagonal == 3 && querytileId == 0){ printf("td %d, thread %d: scoreDiag = scoreBorderQuery[globalquerypos-1] %d, %d\n", threaddiagonal, warp.thread_rank(), globalquerypos-1, scoreDiag );}	
+										scoreDiag = scoreDiagTmp; //scoreBorderQuery[globalquerypos-1];
+									}
+								}
+								
+								//printf("c thread %d, tilediagonal %d, threaddiagonal %d\n", block.thread_rank(), tilediagonal, threaddiagonal);
+								
+								bool ismatch = subjectbase == myquerybase;
+								//printf("qid %d, tile %d %d, diag %d warp %d, thread %d\n", queryId, subjecttileId, querytileId, threaddiagonal, warpId, warp.thread_rank());
+
+								short matchscore = scoreDiag 
+											+ (ismatch ? buffers.ALIGNMENTSCORE_MATCH : buffers.ALIGNMENTSCORE_SUB);
+								short insscore = scoreLeft + buffers.ALIGNMENTSCORE_INS;
+								short delscore = scoreUp + buffers.ALIGNMENTSCORE_DEL;									
+								//AlignType type;
+								if (matchscore < delscore) {
+									scoreCur = delscore;
+									myprev = (myprev << 2) | ALIGNTYPE_DELETE;
+									//type = ALIGNTYPE_DELETE;
+								}else{
+									scoreCur = matchscore;
+									myprev <<= 2;
+									myprev |= ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+									//type = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+								}
+								if (scoreCur < insscore) {
+									scoreCur = insscore;
+									myprev = (myprev << 2) | ALIGNTYPE_INSERT;
+									//type = ALIGNTYPE_INSERT;
+								}
+//if(tilediagonal == 3 && querytileId == 0){ printf("td %d, thread %d: l %d, u %d, d %d, score %d\n", threaddiagonal, warp.thread_rank(), scoreLeft, scoreUp, scoreDiag, scoreCur);}								
+								
+								if(threaddiagonal >= validBorderDiagonalndexBegin 
+								&& threaddiagonal < validBorderDiagonalndexEndexcl 
+								&& localquerypos < querytileBases 
+								&& localsubjectpos < subjecttileBases){
+									coalesced_group activethreads = coalesced_threads();
+									// on a valid diagonal, the active thread with smallest id (the thread in the top right) writes the subject border
+									// the active thread with the greatest id (the thread in the bottom left) writes the query border
+									if(activethreads.thread_rank() == 0){
+											scoreBorderSubject[globalsubjectpos] = scoreCur;
+//if(tilediagonal == 3 && querytileId == 0){ printf("td %d, thread %d write sborder %d %d\n", threaddiagonal, warp.thread_rank(), globalsubjectpos, scoreCur);}
+									}
+									if(activethreads.thread_rank() == activethreads.size()-1){
+											scoreBorderQuery[globalquerypos] = scoreCur;
+//if(tilediagonal == 3 && querytileId == 0){ printf("td %d, thread %d write qborder %d %d\n", threaddiagonal, warp.thread_rank(), globalquerypos, scoreCur);}
+
+									}
+								}								
+							}
+							
+							scoreLeftLeft = scoreLeft;
+							
+							warp.sync(); //diagonal finished
+						}
+						
+						//write prev ops							
+						prevs[globalsubjectpos * prevcolumncount + querytileId] = myprev;
+						
+
+						
+						if(warp.thread_rank() == warp.size() - 1){
+							//write diagonal entry which is used by tile [subjecttileId+1, querytileId+1]
+							scoreBorderDiag[(subjecttileId+1) * (querytiles+1) + (querytileId+1)] = scoreCur;	
+						}								
+					}
+					
+					block.sync(); //tile finished
+#if 0
+					if(block.thread_rank() == 0){
+						printf("scoreBorderSubject after tile diag %d.\n", tilediagonal);
+						for(int i = 0; i < buffers.max_sequence_length; i++){
+							printf("%4d", scoreBorderSubject[i]);
+						}
+						printf("\n");
+						printf("scoreBorderQuery after tile diag %d.\n", tilediagonal);
+						for(int i = 0; i < buffers.max_sequence_length; i++){
+							printf("%4d", scoreBorderQuery[i]);
+						}
+						printf("\n");
+					}
+					block.sync();
+#endif
+				}
+				
+				//borders contain scores of last row / last column. perform max reduction to find alignment begin
+				
+				BestscoreData rowData;
+				rowData.bestScore = SHRT_MIN;
+				rowData.bestIndex = block.thread_rank();
+				BestscoreData colData;
+				colData.bestScore = SHRT_MIN;
+				colData.bestIndex = block.thread_rank();
+				
+				if(block.thread_rank() < subjectbases){
+					//printf("sborder %d : %d\n", block.thread_rank(), scoreBorderSubject[block.thread_rank()]);
+					rowData.bestScore = scoreBorderSubject[block.thread_rank()];				
+				}
+				block.sync();
+				if(block.thread_rank() < querybases){
+					//printf("qborder %d : %d\n", block.thread_rank(), scoreBorderQuery[block.thread_rank()]);
+					colData.bestScore = scoreBorderQuery[block.thread_rank()];				
+				}				
+				
+				for (int i = warp.size() / 2; i > 0; i /= 2) {
+					BestscoreData otherdata;
+					otherdata.data = warp.shfl_down(rowData.data, i);
+					rowData = rowData.bestScore > otherdata.bestScore ? rowData : otherdata;
+				}
+				for (int i = warp.size() / 2; i > 0; i /= 2) {
+					BestscoreData otherdata;
+					otherdata.data = warp.shfl_down(colData.data, i);
+					colData = colData.bestScore > otherdata.bestScore ? colData : otherdata;
+				}
+				if(warp.thread_rank() == 0){
+					bestRowData[warpId] = rowData;
+					bestColData[warpId] = colData;
+				}
+				block.sync();
+				
+				if(block.thread_rank() == 0){
+					
+					AlignResultCompact * my_result_out = buffers.results + queryId;
+					AlignOp * my_ops_out = buffers.ops + buffers.max_ops_per_alignment * queryId;
+				
+					//perform final reduction step of warp results, then backtrack alignment
+					rowData = bestRowData[0];
+					colData = bestColData[0];
+					for(int i = 1; i < nwarps; i++){
+						rowData = bestRowData[i].bestScore > rowData.bestScore ? bestRowData[i] : rowData;
+						colData = bestColData[i].bestScore > colData.bestScore ? bestColData[i] : colData;
+					}
+					
+					short currow;
+					short curcol;
+
+					AlignResultCompact result;
+
+					if (colData.bestScore > rowData.bestScore) {
+						currow = subjectbases-1;
+						curcol = colData.bestIndex;
+						result.score = colData.bestScore;
+					}else{
+						currow = rowData.bestIndex;
+						curcol = querybases-1;
+						result.score = rowData.bestScore;
+					}
+					
+					//printf("queryId %d, currow %d, curcol %d , score %d\n", queryId, currow, curcol, result.score);
+		
+					int subject_end_excl = currow+1;
+
+					//printf("currow %d, curcol %d\n", currow, curcol);
+
+					int nOps = 0;
+					bool isValid = true;
+					AlignOp currentOp;
+					bool onceflag = false;
+					unsigned long long previousPrev = 0;
+					char previousType = 0;
+					while(currow != -1 && curcol != -1){
+						unsigned int colbyteindex = curcol / 32;
+						unsigned int colbitindex = curcol % 32;
+						previousPrev = prevs[currow * prevcolumncount + colbyteindex];
+						if(onceflag){
+							printf("queryId %d, subjectbases %d querybases %d, currow %d, curcol %d , score %d, prevs %lu %d\n", queryId, subjectbases, querybases,  currow, curcol, result.score, prevs[currow * prevcolumncount + colbyteindex], (prevs[currow * prevcolumncount + colbyteindex] >> 2*(31-colbitindex)) & 0x3);
+							onceflag = false;
+						}
+						switch((previousPrev >> 2*(31-colbitindex)) & 0x3){
+			
+						case ALIGNTYPE_MATCH:
+							curcol -= 1;
+							currow -= 1;
+							previousType = ALIGNTYPE_MATCH;
+							break;
+						case ALIGNTYPE_SUBSTITUTE:
+
+							currentOp.position = currow;
+							currentOp.type = ALIGNTYPE_SUBSTITUTE;
+							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol));
+
+							my_ops_out[nOps] = currentOp;
+							++nOps;
+
+							curcol -= 1;
+							currow -= 1;
+							previousType = ALIGNTYPE_SUBSTITUTE;
+							break;
+						case ALIGNTYPE_DELETE:
+
+							currentOp.position = currow;
+							currentOp.type = ALIGNTYPE_DELETE;
+							currentOp.base = twobitToChar(encoded_accessor(sr1, subjectbases, currow));
+
+							my_ops_out[nOps] = currentOp;
+							++nOps;
+
+							curcol -= 0;
+							currow -= 1;
+							previousType = ALIGNTYPE_DELETE;
+							break;
+						case ALIGNTYPE_INSERT:
+
+							currentOp.position = currow+1;
+							currentOp.type = ALIGNTYPE_INSERT;
+							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol));
+
+							my_ops_out[nOps] = currentOp;
+							++nOps;
+
+							curcol -= 1;
+							currow -= 0;
+							previousType = ALIGNTYPE_INSERT;
+							break;
+						default : // code should not reach here
+							isValid = false;
+							printf("alignment backtrack error");
+						}
+					}
+					//undo last advance to get correct curcol and currow
+					switch(previousType){		
+					case ALIGNTYPE_MATCH:
+						curcol += 1;
+						currow += 1;
+						break;
+					case ALIGNTYPE_SUBSTITUTE:
+						curcol += 1;
+						currow += 1;
+						break;
+					case ALIGNTYPE_DELETE:
+						curcol += 0;
+						currow += 1;
+						break;
+					case ALIGNTYPE_INSERT:
+						curcol += 1;
+						currow += 0;
+						break;
+					default : break;
+					}
+					
+					result.subject_begin_incl = max(currow, 0);
+					result.query_begin_incl = max(curcol, 0);
+					result.overlap = subject_end_excl - result.subject_begin_incl;
+					result.shift = result.subject_begin_incl == 0 ? -result.query_begin_incl : result.subject_begin_incl;
+					result.nOps = nOps;
+					result.isNormalized = false;
+					result.isValid = isValid;
+
+					//printf("currow %d, curcol %d, subject_begin_incl %d, query_begin_incl %d, overlap %d, shift %d, nOps %d\n", currow, curcol, result.subject_begin_incl, result.query_begin_incl, result.overlap, result.shift, result.nOps);
+
+					*my_result_out = result;					
+					
+					
+				}	
+			}
+		}
+		
+		void call_cuda_semi_global_alignment_warps_kernel_async(const sgaparams& buffers, cudaStream_t stream){
+
+				size_t smem = cuda_semi_global_alignment_warps_getSharedMemSize(buffers);
+				dim3 block(32 * SDIV(buffers.max_sequence_length, 32), 1, 1);
+				dim3 grid(buffers.n_queries, 1, 1);
+				//dim3 grid(1, 1, 1);
+				//dim3 grid(min(104,buffers.n_queries), 1, 1);
+				// start kernel
+
+				//printf("launch [%d %d %d] [%d %d %d] %lu\n", grid.x, grid.y, grid.z, block.x, block.y, block.z, smem);
+				cuda_semi_global_alignment_warps_kernel
+					<<<grid, block, smem, stream>>>(buffers);
+				CUERR;
+		}
+
+		void call_cuda_semi_global_alignment_warps_kernel(const sgaparams& buffers, cudaStream_t stream){
+
+				call_cuda_semi_global_alignment_warps_kernel_async(buffers, stream);
+
+				cudaStreamSynchronize(stream); CUERR;
+		}
+		
+		
+		size_t cuda_semi_global_alignment_warps_getSharedMemSize(const sgaparams& buffers){
+			int nwarps = SDIV(buffers.max_sequence_length, 32);
+
+			size_t smem = 0;
+			smem += sizeof(char) * (buffers.max_sequence_bytes + buffers.max_sequence_bytes); //current subject and current query
+			smem += sizeof(unsigned long long); // padding for prevs
+			smem += sizeof(unsigned long long) * buffers.max_sequence_length * nwarps; // prevs
+			smem += sizeof(short); // padding for pointer alignment
+			smem += sizeof(short) * 2 * buffers.max_sequence_length; //border
+			smem += sizeof(short) * 2 * (SDIV(buffers.max_sequence_length, 32) + 1); // border diags
+			smem += sizeof(int);
+			smem += sizeof(int) * 2 * nwarps; // bestscore data
+
+			return smem;
+		}
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
+		
 
 		size_t cuda_semi_global_alignment_getSharedMemSize(const AlignerDataArrays& buffers){
 
@@ -512,8 +1027,8 @@ namespace graphtools{
 				if (threadIdx.x == 0) {
 					*bestrow = 0;
 					*bestcol = 0;
-					*bestrowscore = -32767;
-					*bestcolscore = -32767;
+					*bestrowscore = SHRT_MIN;
+					*bestcolscore = SHRT_MIN;
 				}
 
 				__syncthreads();
@@ -688,7 +1203,7 @@ namespace graphtools{
 				CUERR;
 		}
 
-		void call_cuda_semi_global_align_kernel(const AlignerDataArrays& buffers){
+		void call_cuda_semi_global_alignment_kernel(const AlignerDataArrays& buffers){
 
 				call_cuda_semi_global_alignment_kernel_async(buffers);
 
@@ -738,7 +1253,7 @@ namespace graphtools{
 			const int SCORE_INSERT, const int SCORE_DELETE)
 		{
 			constexpr int WARP_SIZE2 = 32;
-			constexpr short MIN_SHORT = -32767;
+			constexpr short MIN_SHORT = SHRT_MIN;
 
 			union ShuffleData{
 				short scoreCurUp[2];

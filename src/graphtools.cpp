@@ -12,9 +12,10 @@ namespace graphtools{
 
 	AlignerDataArrays::AlignerDataArrays(int deviceId_, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel) 
 			: deviceId(deviceId_), ALIGNMENTSCORE_MATCH(scorematch), ALIGNMENTSCORE_SUB(scoresub), 
-						ALIGNMENTSCORE_INS(scoreins), ALIGNMENTSCORE_DEL(scoredel), 
-						max_ops_per_alignment(2 * (maxseqlength + 1)),
-						max_sequence_length(maxseqlength), max_sequence_bytes(SDIV(maxseqlength,4)){
+						ALIGNMENTSCORE_INS(scoreins), ALIGNMENTSCORE_DEL(scoredel), 						
+						max_sequence_length(32 * SDIV(maxseqlength, 32)), //round up to multiple of 32
+						max_sequence_bytes(SDIV(max_sequence_length,4)),
+						max_ops_per_alignment(2 * (max_sequence_length + 1)){
 		#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
 		for(int i = 0; i < 8; i++)
@@ -399,8 +400,9 @@ namespace graphtools{
 							sizeof(int) * params[batchid].n_queries, 
 							H2D, 
 							mybuffers.streams[batchid]); CUERR;						
-					alignment::call_cuda_semi_global_alignment_kernel_async(params[batchid], mybuffers.streams[batchid]);
-								
+					//alignment::call_cuda_semi_global_alignment_kernel_async(params[batchid], mybuffers.streams[batchid]);
+					alignment::call_cuda_semi_global_alignment_warps_kernel_async(params[batchid], mybuffers.streams[batchid]);
+					CUERR;			
 					querysum += queries[i].size();
 					subjectindex++;					
 				}

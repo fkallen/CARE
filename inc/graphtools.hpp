@@ -44,9 +44,9 @@ namespace graphtools{
 		int ALIGNMENTSCORE_INS = -1;
 		int ALIGNMENTSCORE_DEL = -1;
 
-		int max_ops_per_alignment = 0;
 		int max_sequence_length = 0;
 		int max_sequence_bytes = 0;
+		int max_ops_per_alignment = 0;
 		int n_subjects = 0;
 		int n_queries = 0;
 		int max_n_subjects = 0;

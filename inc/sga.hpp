@@ -32,8 +32,14 @@ namespace graphtools{
 		};
 		
 		void call_cuda_semi_global_alignment_kernel_async(const sgaparams& buffers, cudaStream_t stream);
-		void call_cuda_semi_global_align_kernel(const sgaparams& buffers, cudaStream_t stream);	
+		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream);	
 		size_t cuda_semi_global_alignment_getSharedMemSize(const sgaparams& buffers);
+		
+		
+		void call_cuda_semi_global_alignment_warps_kernel_async(const sgaparams& buffers, cudaStream_t stream);
+		void call_cuda_semi_global_alignment_warps_kernel(const sgaparams& buffers, cudaStream_t stream);	
+		size_t cuda_semi_global_alignment_warps_getSharedMemSize(const sgaparams& buffers);
+		
 		
 		
 		
@@ -44,7 +50,7 @@ namespace graphtools{
 		size_t cuda_semi_global_alignment_getSharedMemSize(const AlignerDataArrays& buffers);
 
 		void call_cuda_semi_global_alignment_kernel_async(const AlignerDataArrays& buffers);
-		void call_cuda_semi_global_align_kernel(const AlignerDataArrays& buffers);
+		void call_cuda_semi_global_alignment_kernel(const AlignerDataArrays& buffers);
 
 #endif
 
