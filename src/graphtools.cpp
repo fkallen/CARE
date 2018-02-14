@@ -167,151 +167,6 @@ namespace graphtools{
 	#ifdef __NVCC__
 
 		if(useGpu){ // use gpu for alignment
-#if 0			
-			tpa = std::chrono::system_clock::now();
-
-			cudaSetDevice(mybuffers.deviceId); CUERR;
-
-			mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
-
-			mybuffers.n_subjects = numberOfRealSubjects;
-			mybuffers.n_queries = totalNumberOfAlignments;
-
-			tpb = std::chrono::system_clock::now();
-			
-			mybuffers.resizetime += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-
-			int subjectindex = 0;
-			int queryindex = 0;
-			for(size_t i = 0; i < subjects.size(); i++){
-				if(activeBatches[i]){
-					assert(subjects[i]->getNbases() <= mybuffers.max_sequence_length);
-					assert(subjects[i]->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-					std::memcpy(mybuffers.h_subjectsdata + i * mybuffers.sequencepitch,
-						    subjects[i]->begin(), 
-						    subjects[i]->getNumBytes());
-
-					mybuffers.h_queriesPerSubject[subjectindex] = queries[i].size();
-					mybuffers.h_lengths[subjectindex] = subjects[i]->getNbases();
-
-					for(size_t j = 0; j < queries[i].size(); j++){
-						assert(queries[i][j]->getNbases() <= mybuffers.max_sequence_length);
-						assert(queries[i][j]->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-						std::memcpy(mybuffers.h_queriesdata + queryindex * mybuffers.sequencepitch,
-							    queries[i][j]->begin(), 
-							    queries[i][j]->getNumBytes());
-
-						mybuffers.h_lengths[numberOfRealSubjects + queryindex] = queries[i][j]->getNbases();
-
-						queryindex++;
-					}
-
-					subjectindex++;
-				}
-			}	
-
-			tpb = std::chrono::system_clock::now();
-		
-			mybuffers.preprocessingtime += tpb - tpa;
-
-			assert(subjectindex == numberOfRealSubjects);
-			assert(queryindex == totalNumberOfAlignments);
-
-			tpa = std::chrono::system_clock::now();
-
-			// copy data to gpu
-			cudaMemcpyAsync(mybuffers.d_subjectsdata, 
-					mybuffers.h_subjectsdata, 
-					mybuffers.sequencepitch * mybuffers.n_subjects, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_queriesdata,
-					mybuffers.h_queriesdata, 
-					mybuffers.sequencepitch * mybuffers.n_queries, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_queriesPerSubject,
-					mybuffers.h_queriesPerSubject, 
-					sizeof(int) * mybuffers.n_subjects, 
-					H2D, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.d_lengths,
-					mybuffers.h_lengths, 
-					sizeof(int) * (numberOfRealSubjects + totalNumberOfAlignments), 
-					H2D, 
-					mybuffers.stream); CUERR;
-
-			cudaStreamSynchronize(mybuffers.stream);
-
-			tpb = std::chrono::system_clock::now();
-		
-			mybuffers.h2dtime += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-
-			// start kernel
-			alignment::call_cuda_semi_global_align_kernel(mybuffers);
-
-			tpb = std::chrono::system_clock::now();
-		
-			mybuffers.alignmenttime += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-
-			// copy result to host
-			cudaMemcpyAsync(mybuffers.h_results, 
-					mybuffers.d_results, 
-					sizeof(AlignResultCompact) * mybuffers.n_queries, 
-					D2H, 
-					mybuffers.stream); CUERR;
-			cudaMemcpyAsync(mybuffers.h_ops, 
-					mybuffers.d_ops, 
-					sizeof(AlignOp) * mybuffers.max_ops_per_alignment * mybuffers.n_queries, 
-					D2H, 
-					mybuffers.stream); CUERR;
-
-			cudaStreamSynchronize(mybuffers.stream); CUERR;
-
-			tpb = std::chrono::system_clock::now();
-		
-			mybuffers.d2htime += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-
-			// store alignments in result vector
-
-			int candidateIndex = 0;
-			int previousOutputIndex = -1;
-
-			for(int i = 0; i < mybuffers.n_subjects; i++){
-
-				int outputindex = previousOutputIndex + 1;
-				while(!activeBatches[outputindex]) outputindex++;
-				previousOutputIndex = outputindex;
-
-				int nqueriesForThisSubject = mybuffers.h_queriesPerSubject[i];
-
-				alignments[outputindex].resize(nqueriesForThisSubject);
-
-				for(int j = 0; j < nqueriesForThisSubject; j++){
-					const auto& currentResult = mybuffers.h_results[candidateIndex];
-					alignments[outputindex][j].setOpsAndDataFromAlignResultCompact(currentResult, 
-												mybuffers.h_ops + candidateIndex * mybuffers.max_ops_per_alignment, 
-												true);
-					candidateIndex++; 
-				}			
-			}
-
-			tpb = std::chrono::system_clock::now();
-		
-			mybuffers.postprocessingtime += tpb - tpa;
-			
-#else
-
 			
 			tpa = std::chrono::system_clock::now();
 
@@ -337,7 +192,6 @@ namespace graphtools{
 					tpa = std::chrono::system_clock::now();
 					batchid = subjectindex;
 					
-					params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
 					params[batchid].max_sequence_length = mybuffers.max_sequence_length;
 					params[batchid].max_ops_per_alignment = mybuffers.max_ops_per_alignment;
 					params[batchid].sequencepitch = mybuffers.sequencepitch;
@@ -358,13 +212,11 @@ namespace graphtools{
 					char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
 					
 					assert(subjects[i]->getNbases() <= mybuffers.max_sequence_length);
-					assert(subjects[i]->getNumBytes() <= mybuffers.max_sequence_bytes);
 					
 					std::memcpy(subjectdata, subjects[i]->begin(), subjects[i]->getNumBytes());
 
 					for(size_t j = 0; j < queries[i].size(); j++){
 						assert(queries[i][j]->getNbases() <= mybuffers.max_sequence_length);
-						assert(queries[i][j]->getNumBytes() <= mybuffers.max_sequence_bytes);
 
 						std::memcpy(queriesdata + j * mybuffers.sequencepitch,
 							    queries[i][j]->begin(), 
@@ -440,9 +292,7 @@ namespace graphtools{
 					
 					mybuffers.postprocessingtime += tpb - tpa;				
 				}
-			}
-
-#endif			
+			}	
 
 		}else{ // use cpu for alignment
 

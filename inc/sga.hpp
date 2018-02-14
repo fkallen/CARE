@@ -15,7 +15,6 @@ namespace graphtools{
 		
 		struct sgaparams{
 			int max_sequence_length;
-			int max_sequence_bytes;
 			int max_ops_per_alignment;
 			int sequencepitch;
 			int n_queries;
@@ -32,19 +31,7 @@ namespace graphtools{
 		};
 		
 		void call_cuda_semi_global_alignment_kernel_async(const sgaparams& buffers, cudaStream_t stream);
-		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream);	
-		size_t cuda_semi_global_alignment_getSharedMemSize(const sgaparams& buffers);
-
-		void call_cuda_semi_global_alignment_kernel2_async(const sgaparams& buffers, cudaStream_t stream);
-		void call_cuda_semi_global_alignment_kernel2(const sgaparams& buffers, cudaStream_t stream);
-
-		void call_cuda_semi_global_alignment_kernel3_async(const sgaparams& buffers, cudaStream_t stream);
-		void call_cuda_semi_global_alignment_kernel3(const sgaparams& buffers, cudaStream_t stream);
-		
-		
-		void call_cuda_semi_global_alignment_warps_kernel_async(const sgaparams& buffers, cudaStream_t stream);
-		void call_cuda_semi_global_alignment_warps_kernel(const sgaparams& buffers, cudaStream_t stream);	
-		size_t cuda_semi_global_alignment_warps_getSharedMemSize(const sgaparams& buffers);
+		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream);
 
 #endif
 
