@@ -22,14 +22,6 @@ namespace graphtools{
 			cudaStreamCreate(&streams[i]); CUERR;
 		cudaStreamCreate(&stream); CUERR;
 		cudaMalloc(&d_this, sizeof(AlignerDataArrays)); CUERR;
-
-		cudaDeviceProp prop;
-		cudaGetDeviceProperties(&prop, deviceId); CUERR;
-		int numBlocksPerSM = 0;
-		dim3 block(std::min(512, 32 * SDIV(max_sequence_length+1, 32)), 1, 1);
-		size_t smem = alignment::cuda_semi_global_alignment_getSharedMemSize(*this);
-		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSM, alignment::cuda_semi_global_alignment_kernel, block.x, smem); CUERR;
-		max_blocks = numBlocksPerSM * prop.multiProcessorCount;
 		#endif
 	};
 
@@ -400,8 +392,7 @@ namespace graphtools{
 							sizeof(int) * params[batchid].n_queries, 
 							H2D, 
 							mybuffers.streams[batchid]); CUERR;						
-					//alignment::call_cuda_semi_global_alignment_kernel_async(params[batchid], mybuffers.streams[batchid]);
-					alignment::call_cuda_semi_global_alignment_warps_kernel_async(params[batchid], mybuffers.streams[batchid]);
+					alignment::call_cuda_semi_global_alignment_kernel2_async(params[batchid], mybuffers.streams[batchid]);
 					CUERR;			
 					querysum += queries[i].size();
 					subjectindex++;					

@@ -319,6 +319,7 @@ namespace hammingtools{
 			std::cout << "maxcov " << max_coverage << " <= " << (3*m) << '\n';
 		#endif
 
+			//TODO vary parameters
 			bool isHQ = avg_support >= 1.0-errorrate
 				 && min_support >= 1.0-3.0*errorrate
 				 && min_coverage >= m / 2.0 * estimatedCoverage;
@@ -391,6 +392,7 @@ namespace hammingtools{
 					status |= (1 << 2);
 		#if 1
 				//correct anchor
+//TODO vary parameters
 				bool foundAColumn = false;
 				for(int i = 0; i < int(subject.length()); i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
