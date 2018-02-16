@@ -211,10 +211,11 @@ namespace graphtools{
 
 			static_assert(MAX_SEQUENCE_LENGTH % 32 == 0, "MAX_SEQUENCE_LENGTH must be divisible by 32");
 
+			constexpr int prevsPerInt = (sizeof(int)*8/2);
+
 			__shared__ char sr1[MAX_SEQUENCE_LENGTH/4];
 			__shared__ char sr2[MAX_SEQUENCE_LENGTH/4];
-			//__shared__ char prevs[(MAX_SEQUENCE_LENGTH + 1)*(MAX_SEQUENCE_LENGTH / 4)];
-			__shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2))];
+			__shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / prevsPerInt)];
 			__shared__ short scores[3 * MAX_SEQUENCE_LENGTH];
 			__shared__ short bestrow;
 			__shared__ short bestcol;
@@ -246,11 +247,8 @@ namespace graphtools{
 				}
 
 				for(int i = 0; i < MAX_SEQUENCE_LENGTH + 1; i++){
-					/*for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH/4; j += blockDim.x) {
-						prevs[i * MAX_SEQUENCE_LENGTH/4 + j] = 0;
-					}*/
-					for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH/(sizeof(int)*8/2); j += blockDim.x) {
-						prevs[i * MAX_SEQUENCE_LENGTH/(sizeof(int)*8/2) + j] = 0;
+					for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH / prevsPerInt; j += blockDim.x) {
+						prevs[i * MAX_SEQUENCE_LENGTH / prevsPerInt + j] = 0;
 					}
 				}
 
@@ -292,27 +290,33 @@ namespace graphtools{
 						const short delscore = scoreLeft + buffers.ALIGNMENTSCORE_DEL;
 
 						short maximum = 0;
-						const unsigned int colindex = globalquerypos / (sizeof(int)*8/2);
+						const unsigned int colindex = globalquerypos / prevsPerInt;
 	
 						if (matchscore < delscore) {
 							maximum = delscore;
-							myprev <<= 2;
-							myprev |= ALIGNTYPE_DELETE;
+
+							int t = ALIGNTYPE_DELETE;
+							t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+							myprev |= t;
 						}else{
 							maximum = matchscore;
-							myprev <<= 2;
-							myprev |= ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+
+							int t = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+							t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+							myprev |= t;
 						}
 						if (maximum < insscore) {
 							maximum = insscore;
-							myprev <<= 2;
-							myprev |= ALIGNTYPE_INSERT;
+
+							int t = ALIGNTYPE_INSERT;
+							t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+							myprev |= t;
 						}
 
 						calculatedCells++;
-						if(calculatedCells == sizeof(int)*8/2 || threaddiagonal == subjectbases + querybases - 2){
+						if(calculatedCells == prevsPerInt || threaddiagonal == subjectbases + querybases - 2){
 							calculatedCells = 0;
-							prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colindex] = myprev;
+							prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colindex] = myprev;
 							myprev = 0;
 						}
 
@@ -366,13 +370,10 @@ namespace graphtools{
 					AlignOp currentOp;
 					char previousType = 0;
 					while(currow != -1 && curcol != -1){
-						//unsigned int colbyteindex = curcol / 4;
-						//unsigned int colbitindex = curcol % 4;
-						const unsigned int colbyteindex = curcol / (sizeof(int)*8/2);
-						const unsigned int colbitindex = curcol % (sizeof(int)*8/2);
+						const unsigned int colIntIndex = curcol / prevsPerInt;
+						const unsigned int col2Bitindex = curcol % prevsPerInt;
 
-						//switch((prevs[currow * (MAX_SEQUENCE_LENGTH / 4) + colbyteindex] >> 2*(3-colbitindex)) & 0x3){
-						switch((prevs[currow * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colbyteindex] >> 2*((sizeof(int)*8/2)-1-colbitindex)) & 0x3){
+						switch((prevs[currow * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colIntIndex] >> 2*(prevsPerInt-1-col2Bitindex)) & 0x3){
 			
 						case ALIGNTYPE_MATCH:
 							curcol -= 1;
@@ -499,10 +500,11 @@ namespace graphtools{
 
 			static_assert(MAX_SEQUENCE_LENGTH % 32 == 0, "MAX_SEQUENCE_LENGTH must be divisible by 32");
 
+			constexpr int prevsPerInt = (sizeof(int)*8/2);
+
 			__shared__ char sr1[MAX_SEQUENCE_LENGTH/4];
 			__shared__ char sr2[MAX_SEQUENCE_LENGTH/4];
-			//__shared__ char prevs[(MAX_SEQUENCE_LENGTH + 1)*(MAX_SEQUENCE_LENGTH / 4)];
-			__shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2))];
+			__shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / prevsPerInt)];
 			__shared__ short scores[3 * MAX_SEQUENCE_LENGTH];
 			__shared__ short bestrow;
 			__shared__ short bestcol;
@@ -522,7 +524,7 @@ namespace graphtools{
 				for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_LENGTH/4; threadid += blockDim.x){
 					sr2[threadid] = query[threadid];			
 				}
-				
+
 				for (int l = threadIdx.x; l < MAX_SEQUENCE_LENGTH; l += blockDim.x) {
 					scores[0*MAX_SEQUENCE_LENGTH+l] = 0;
 					scores[1*MAX_SEQUENCE_LENGTH+l] = 0;
@@ -530,11 +532,8 @@ namespace graphtools{
 				}
 
 				for(int i = 0; i < MAX_SEQUENCE_LENGTH + 1; i++){
-					/*for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH/4; j += blockDim.x) {
-						prevs[i * MAX_SEQUENCE_LENGTH/4 + j] = 0;
-					}*/
-					for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH/(sizeof(int)*8/2); j += blockDim.x) {
-						prevs[i * MAX_SEQUENCE_LENGTH/(sizeof(int)*8/2) + j] = 0;
+					for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH / prevsPerInt; j += blockDim.x) {
+						prevs[i * MAX_SEQUENCE_LENGTH / prevsPerInt + j] = 0;
 					}
 				}
 
@@ -576,27 +575,33 @@ namespace graphtools{
 						const short delscore = scoreLeft + buffers.ALIGNMENTSCORE_DEL;
 
 						short maximum = 0;
-						const unsigned int colindex = globalquerypos / (sizeof(int)*8/2);
+						const unsigned int colindex = globalquerypos / prevsPerInt;
 	
 						if (matchscore < delscore) {
 							maximum = delscore;
-							myprev <<= 2;
-							myprev |= ALIGNTYPE_DELETE;
+
+							int t = ALIGNTYPE_DELETE;
+							t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+							myprev |= t;
 						}else{
 							maximum = matchscore;
-							myprev <<= 2;
-							myprev |= ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+
+							int t = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+							t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+							myprev |= t;
 						}
 						if (maximum < insscore) {
 							maximum = insscore;
-							myprev <<= 2;
-							myprev |= ALIGNTYPE_INSERT;
+
+							int t = ALIGNTYPE_INSERT;
+							t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+							myprev |= t;
 						}
 
 						calculatedCells++;
-						if(calculatedCells == sizeof(int)*8/2 || threaddiagonal == subjectbases + querybases - 2){
+						if(calculatedCells == prevsPerInt || threaddiagonal == subjectbases + querybases - 2){
 							calculatedCells = 0;
-							prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colindex] = myprev;
+							prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colindex] = myprev;
 							myprev = 0;
 						}
 
@@ -651,11 +656,11 @@ namespace graphtools{
 					sgaop* const ops_out = buffers.newops + buffers.max_ops_per_alignment * queryId;
 					bool first = true;
 					while(currow != -1 && curcol != -1){
-						const unsigned int colbyteindex = curcol / (sizeof(int)*8/2);
-						const unsigned int colbitindex = curcol % (sizeof(int)*8/2);
+						const unsigned int colIntIndex = curcol / prevsPerInt;
+						const unsigned int col2Bitindex = curcol % prevsPerInt;
 
 						Direction direction;
-						switch((prevs[currow * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colbyteindex] >> 2*((sizeof(int)*8/2)-1-colbitindex)) & 0x3){
+						switch((prevs[currow * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colIntIndex] >> 2*(prevsPerInt-1-col2Bitindex)) & 0x3){
 			
 						case ALIGNTYPE_MATCH:
 							curcol -= 1;
@@ -1107,17 +1112,17 @@ namespace graphtools{
 					prevunion previousPrev{0};
 					char previousType = 0;
 					while(currow != -1 && curcol != -1){
-						unsigned int colbyteindex = curcol / 32;
-						unsigned int colbitindex = curcol % 32;
-						//previousPrev = prevs[currow * (MAX_SEQUENCE_LENGTH / 32) + colbyteindex];
-						//previousPrev = prevs[colbyteindex * MAX_SEQUENCE_LENGTH + currow];
-						previousPrev.hi = ((int*)prevs)[colbyteindex * MAX_SEQUENCE_LENGTH + currow];
-						previousPrev.lo = ((int*)prevs + querytiles * MAX_SEQUENCE_LENGTH)[colbyteindex * MAX_SEQUENCE_LENGTH + currow];
+						unsigned int colIntIndex = curcol / 32;
+						unsigned int col2Bitindex = curcol % 32;
+						//previousPrev = prevs[currow * (MAX_SEQUENCE_LENGTH / 32) + colIntIndex];
+						//previousPrev = prevs[colIntIndex * MAX_SEQUENCE_LENGTH + currow];
+						previousPrev.hi = ((int*)prevs)[colIntIndex * MAX_SEQUENCE_LENGTH + currow];
+						previousPrev.lo = ((int*)prevs + querytiles * MAX_SEQUENCE_LENGTH)[colIntIndex * MAX_SEQUENCE_LENGTH + currow];
 						if(onceflag){
-							//printf("queryId %d, subjectbases %d querybases %d, currow %d, curcol %d , score %d, prevs %lu %d\n", queryId, subjectbases, querybases,  currow, curcol, result.score, prevs[currow * prevcolumncount + colbyteindex], (prevs[currow * prevcolumncount + colbyteindex] >> 2*(31-colbitindex)) & 0x3);
+							//printf("queryId %d, subjectbases %d querybases %d, currow %d, curcol %d , score %d, prevs %lu %d\n", queryId, subjectbases, querybases,  currow, curcol, result.score, prevs[currow * prevcolumncount + colIntIndex], (prevs[currow * prevcolumncount + colIntIndex] >> 2*(31-col2Bitindex)) & 0x3);
 							onceflag = false;
 						}
-						switch((previousPrev.data >> 2*(31-colbitindex)) & 0x3){
+						switch((previousPrev.data >> 2*(31-col2Bitindex)) & 0x3){
 			
 						case ALIGNTYPE_MATCH:
 							curcol -= 1;
