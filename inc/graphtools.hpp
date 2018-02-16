@@ -1,8 +1,10 @@
 #ifndef GRAPHTOOLS_HPP
 #define GRAPHTOOLS_HPP
 
+#include "../inc/sga.hpp"
 #include "../inc/alignment.hpp"
 #include "../inc/read.hpp"
+
 
 #include <vector>
 #include <chrono>
@@ -10,7 +12,18 @@
 
 namespace graphtools{
 
+	//forward decl
+	namespace alignment{
+		struct sgaop;
+		struct sgaresult;
+	}
+
 	struct AlignerDataArrays{
+
+		alignment::sgaop* d_newops = nullptr;
+		alignment::sgaop* h_newops = nullptr;
+		alignment::sgaresult* d_newresults = nullptr;
+		alignment::sgaresult* h_newresults = nullptr;
 
 		AlignOp* d_ops = nullptr;
 		AlignOp* h_ops = nullptr;

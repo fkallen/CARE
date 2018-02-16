@@ -193,11 +193,11 @@ namespace graphtools{
 
 
 
-		AlignResult cpu_semi_global_alignment(const AlignerDataArrays& buffers, const char* subject, const char* query, int ns, int nq){
+		AlignResult cpu_semi_global_alignment(const AlignerDataArrays* buffers, const char* subject, const char* query, int ns, int nq){
 
 			return cpu_semi_global_align_internal(subject, query, ns, nq, 
-						buffers.ALIGNMENTSCORE_MATCH, buffers.ALIGNMENTSCORE_SUB, 
-						buffers.ALIGNMENTSCORE_INS, buffers.ALIGNMENTSCORE_DEL);
+						buffers->ALIGNMENTSCORE_MATCH, buffers->ALIGNMENTSCORE_SUB, 
+						buffers->ALIGNMENTSCORE_INS, buffers->ALIGNMENTSCORE_DEL);
 		}
 
 
@@ -310,7 +310,7 @@ namespace graphtools{
 						}
 
 						calculatedCells++;
-						if(calculatedCells == sizeof(int)*8/2){
+						if(calculatedCells == sizeof(int)*8/2 || threaddiagonal == subjectbases + querybases - 2){
 							calculatedCells = 0;
 							prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colindex] = myprev;
 							myprev = 0;
@@ -378,9 +378,9 @@ namespace graphtools{
 							curcol -= 1;
 							currow -= 1;
 							previousType = ALIGNTYPE_MATCH;
+
 							break;
 						case ALIGNTYPE_SUBSTITUTE:
-
 							currentOp.position = currow;
 							currentOp.type = ALIGNTYPE_SUBSTITUTE;
 							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol));
@@ -391,9 +391,9 @@ namespace graphtools{
 							curcol -= 1;
 							currow -= 1;
 							previousType = ALIGNTYPE_SUBSTITUTE;
+
 							break;
 						case ALIGNTYPE_DELETE:
-
 							currentOp.position = currow;
 							currentOp.type = ALIGNTYPE_DELETE;
 							currentOp.base = twobitToChar(encoded_accessor(sr1, subjectbases, currow));
@@ -404,9 +404,9 @@ namespace graphtools{
 							curcol -= 0;
 							currow -= 1;
 							previousType = ALIGNTYPE_DELETE;
+
 							break;
 						case ALIGNTYPE_INSERT:
-
 							currentOp.position = currow+1;
 							currentOp.type = ALIGNTYPE_INSERT;
 							currentOp.base = twobitToChar(encoded_accessor(sr2, querybases, curcol));
@@ -417,6 +417,7 @@ namespace graphtools{
 							curcol -= 1;
 							currow -= 0;
 							previousType = ALIGNTYPE_INSERT;
+
 							break;
 						default : // code should not reach here
 							isValid = false;
@@ -464,6 +465,251 @@ namespace graphtools{
 
 				// start kernel
 				switch(buffers.max_sequence_length){
+				case 32: cuda_semi_global_alignment_kernel<32><<<grid, block, 0, stream>>>(buffers); break;
+				case 64: cuda_semi_global_alignment_kernel<64><<<grid, block, 0, stream>>>(buffers); break;
+				case 96: cuda_semi_global_alignment_kernel<96><<<grid, block, 0, stream>>>(buffers); break;
+				case 128: cuda_semi_global_alignment_kernel<128><<<grid, block, 0, stream>>>(buffers); break;
+				case 160: cuda_semi_global_alignment_kernel<160><<<grid, block, 0, stream>>>(buffers); break;
+				case 192: cuda_semi_global_alignment_kernel<192><<<grid, block, 0, stream>>>(buffers); break;
+				case 224: cuda_semi_global_alignment_kernel<224><<<grid, block, 0, stream>>>(buffers); break;
+				case 256: cuda_semi_global_alignment_kernel<256><<<grid, block, 0, stream>>>(buffers); break;
+				case 288: cuda_semi_global_alignment_kernel<288><<<grid, block, 0, stream>>>(buffers); break;
+				case 320: cuda_semi_global_alignment_kernel<320><<<grid, block, 0, stream>>>(buffers); break;
+				default: assert(false); break;
+				}
+				
+
+				CUERR;
+		}
+
+		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream){
+
+				call_cuda_semi_global_alignment_kernel_async(buffers, stream);
+
+				cudaStreamSynchronize(stream); CUERR;
+		}
+
+
+
+
+
+		template<int MAX_SEQUENCE_LENGTH=128>
+		__global__
+		void cuda_semi_global_alignment_kernel2(const sgaparams buffers){
+
+			static_assert(MAX_SEQUENCE_LENGTH % 32 == 0, "MAX_SEQUENCE_LENGTH must be divisible by 32");
+
+			__shared__ char sr1[MAX_SEQUENCE_LENGTH/4];
+			__shared__ char sr2[MAX_SEQUENCE_LENGTH/4];
+			//__shared__ char prevs[(MAX_SEQUENCE_LENGTH + 1)*(MAX_SEQUENCE_LENGTH / 4)];
+			__shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2))];
+			__shared__ short scores[3 * MAX_SEQUENCE_LENGTH];
+			__shared__ short bestrow;
+			__shared__ short bestcol;
+			__shared__ short bestrowscore;
+			__shared__ short bestcolscore;
+			
+			const int subjectbases = buffers.subjectlength;
+			const char* subject = buffers.subjectdata;
+			for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_LENGTH/4; threadid += blockDim.x){
+				sr1[threadid] = subject[threadid];		
+			}			
+
+			for(int queryId = blockIdx.x; queryId < buffers.n_queries; queryId += gridDim.x){
+
+				const char* query = buffers.queriesdata + queryId * buffers.sequencepitch;
+				const int querybases = buffers.querylengths[queryId];
+				for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_LENGTH/4; threadid += blockDim.x){
+					sr2[threadid] = query[threadid];			
+				}
+				
+				for (int l = threadIdx.x; l < MAX_SEQUENCE_LENGTH; l += blockDim.x) {
+					scores[0*MAX_SEQUENCE_LENGTH+l] = 0;
+					scores[1*MAX_SEQUENCE_LENGTH+l] = 0;
+					scores[2*MAX_SEQUENCE_LENGTH+l] = 0;
+				}
+
+				for(int i = 0; i < MAX_SEQUENCE_LENGTH + 1; i++){
+					/*for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH/4; j += blockDim.x) {
+						prevs[i * MAX_SEQUENCE_LENGTH/4 + j] = 0;
+					}*/
+					for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH/(sizeof(int)*8/2); j += blockDim.x) {
+						prevs[i * MAX_SEQUENCE_LENGTH/(sizeof(int)*8/2) + j] = 0;
+					}
+				}
+
+
+				if (threadIdx.x == 0) {
+					bestrow = 0;
+					bestcol = 0;
+					bestrowscore = SHRT_MIN;
+					bestcolscore = SHRT_MIN;
+				}
+
+				__syncthreads();
+
+				const int globalsubjectpos = threadIdx.x;
+				const char subjectbase = encoded_accessor(sr1, subjectbases, globalsubjectpos);
+				int calculatedCells = 0;
+				int myprev = 0;
+
+				for (int threaddiagonal = 0; threaddiagonal < subjectbases + querybases - 1; threaddiagonal++) {
+		
+					const int targetrow = threaddiagonal % 3;
+					const int indelrow = (targetrow == 0 ? 2 : targetrow - 1);
+					const int matchrow = (indelrow == 0 ? 2 : indelrow - 1);
+					
+					const int globalquerypos = threaddiagonal - threadIdx.x;
+					const char querybase = globalquerypos < querybases ? encoded_accessor(sr2, querybases, globalquerypos) : 'F';
+
+					const short scoreDiag = globalsubjectpos == 0 ? 0 : scores[matchrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
+					const short scoreLeft = scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x];
+					const short scoreUp = globalsubjectpos == 0 ? 0 :  scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
+
+					if(globalsubjectpos >= 0 && globalsubjectpos < MAX_SEQUENCE_LENGTH
+						&& globalquerypos >= 0 && globalquerypos < MAX_SEQUENCE_LENGTH){
+
+						const bool ismatch = subjectbase == querybase;
+						const short matchscore = scoreDiag 
+									+ (ismatch ? buffers.ALIGNMENTSCORE_MATCH : buffers.ALIGNMENTSCORE_SUB);
+						const short insscore = scoreUp + buffers.ALIGNMENTSCORE_INS;
+						const short delscore = scoreLeft + buffers.ALIGNMENTSCORE_DEL;
+
+						short maximum = 0;
+						const unsigned int colindex = globalquerypos / (sizeof(int)*8/2);
+	
+						if (matchscore < delscore) {
+							maximum = delscore;
+							myprev <<= 2;
+							myprev |= ALIGNTYPE_DELETE;
+						}else{
+							maximum = matchscore;
+							myprev <<= 2;
+							myprev |= ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+						}
+						if (maximum < insscore) {
+							maximum = insscore;
+							myprev <<= 2;
+							myprev |= ALIGNTYPE_INSERT;
+						}
+
+						calculatedCells++;
+						if(calculatedCells == sizeof(int)*8/2 || threaddiagonal == subjectbases + querybases - 2){
+							calculatedCells = 0;
+							prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colindex] = myprev;
+							myprev = 0;
+						}
+
+						scores[targetrow * MAX_SEQUENCE_LENGTH + threadIdx.x] = maximum;
+
+						if (globalsubjectpos == subjectbases-1) {
+							if (bestcolscore < maximum) {
+								bestcolscore = maximum;
+								bestcol = globalquerypos;
+								//printf("qborder %d : %d\n", mycol - 1, maximum);
+							}
+						}
+
+						// update best score in last column
+						if (globalquerypos == querybases-1) {
+							if (bestrowscore < maximum) {
+								bestrowscore = maximum;
+								bestrow = globalsubjectpos;
+								//printf("sborder %d : %d\n", myrow - 1, maximum);
+							}
+						}
+					}
+
+					__syncthreads();
+				}
+
+				// get alignment and alignment score
+				if (threadIdx.x == 0) {
+
+					short currow;
+					short curcol;
+
+					sgaresult result;
+
+					if (bestcolscore > bestrowscore) {
+						currow = subjectbases-1;
+						curcol = bestcol;
+						result.score = bestcolscore;
+					}else{
+						currow = bestrow;
+						curcol = querybases-1;
+						result.score = bestrowscore;
+					}
+
+					result.subjectEnd_excl = currow + 1;
+					result.queryEnd_excl = curcol + 1;
+		
+					short nOps = 0;
+					short count = 0;
+					Direction previousDir = Direction::None;
+
+					sgaop* const ops_out = buffers.newops + buffers.max_ops_per_alignment * queryId;
+					bool first = true;
+					while(currow != -1 && curcol != -1){
+						const unsigned int colbyteindex = curcol / (sizeof(int)*8/2);
+						const unsigned int colbitindex = curcol % (sizeof(int)*8/2);
+
+						Direction direction;
+						switch((prevs[currow * (MAX_SEQUENCE_LENGTH / (sizeof(int)*8/2)) + colbyteindex] >> 2*((sizeof(int)*8/2)-1-colbitindex)) & 0x3){
+			
+						case ALIGNTYPE_MATCH:
+							curcol -= 1;
+							currow -= 1;
+							direction = Direction::Diag;
+							break;
+						case ALIGNTYPE_SUBSTITUTE:
+							curcol -= 1;
+							currow -= 1;
+							direction = Direction::Diag;
+							break;
+						case ALIGNTYPE_DELETE:
+							curcol -= 0;
+							currow -= 1;
+							direction = Direction::Up;
+							break;
+						case ALIGNTYPE_INSERT:
+							curcol -= 1;
+							currow -= 0;
+							direction = Direction::Left;
+							break;
+						default : // code should not reach here
+							printf("alignment backtrack error");
+						}
+						
+						if(!first && direction != previousDir){
+							sgaop op(count, previousDir);
+							ops_out[nOps++] = op;
+							count = 0; 
+						}
+						first = false;
+
+						count++;
+						previousDir = direction;
+					}
+					sgaop op(count, previousDir);
+					ops_out[nOps++] = op;
+
+					result.nOps = nOps;
+
+					buffers.newresults[queryId] = result;
+				}
+			}
+		}
+
+
+
+		void call_cuda_semi_global_alignment_kernel2_async(const sgaparams& buffers, cudaStream_t stream){
+
+				dim3 block(buffers.max_sequence_length, 1, 1);
+				dim3 grid(buffers.n_queries, 1, 1);
+
+				// start kernel
+				switch(buffers.max_sequence_length){
 				case 32: cuda_semi_global_alignment_kernel2<32><<<grid, block, 0, stream>>>(buffers); break;
 				case 64: cuda_semi_global_alignment_kernel2<64><<<grid, block, 0, stream>>>(buffers); break;
 				case 96: cuda_semi_global_alignment_kernel2<96><<<grid, block, 0, stream>>>(buffers); break;
@@ -481,12 +727,19 @@ namespace graphtools{
 				CUERR;
 		}
 
-		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream){
+		void call_cuda_semi_global_alignment_kernel2(const sgaparams& buffers, cudaStream_t stream){
 
 				call_cuda_semi_global_alignment_kernel2_async(buffers, stream);
 
 				cudaStreamSynchronize(stream); CUERR;
 		}
+
+
+
+
+
+
+
 
 
 //----------------------------below is unused------------------------------------------

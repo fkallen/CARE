@@ -96,7 +96,19 @@ namespace graphtools{
 			cudaFree(d_lengths); CUERR;
 			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
 			cudaFreeHost(h_lengths); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
+			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
+
+			cudaFree(d_newresults); CUERR;
+			cudaMalloc(&d_newresults, sizeof(alignment::sgaresult) * max_n_subjects * max_n_queries); CUERR;
+
+			cudaFreeHost(h_newresults); CUERR;
+			cudaMallocHost(&h_newresults, sizeof(alignment::sgaresult) * max_n_subjects * max_n_queries); CUERR;
+
+			cudaFree(d_newops); CUERR;
+			cudaMalloc(&d_newops, sizeof(alignment::sgaop) * max_n_queries * max_ops_per_alignment); CUERR;
+
+			cudaFreeHost(h_newops); CUERR;			
+			cudaMallocHost(&h_newops, sizeof(alignment::sgaop) * max_n_queries * max_ops_per_alignment); CUERR;				
 		}
 	#endif
 		n_subjects = n_sub;
@@ -123,6 +135,12 @@ namespace graphtools{
 			cudaFreeHost(data.h_queriesPerSubject); CUERR;
 			cudaFreeHost(data.h_subjectlengths); CUERR;
 			cudaFreeHost(data.h_querylengths); CUERR;
+
+			cudaFree(data.d_newops); CUERR;
+			cudaFree(data.d_newresults); CUERR;
+
+			cudaFreeHost(data.h_newops); CUERR;
+			cudaFreeHost(data.h_newresults); CUERR;
 
 			cudaFree(data.d_this);
 			
@@ -244,7 +262,7 @@ namespace graphtools{
 							sizeof(int) * params[batchid].n_queries, 
 							H2D, 
 							mybuffers.streams[batchid]); CUERR;						
-					alignment::call_cuda_semi_global_alignment_kernel2_async(params[batchid], mybuffers.streams[batchid]);
+					alignment::call_cuda_semi_global_alignment_kernel_async(params[batchid], mybuffers.streams[batchid]);
 					CUERR;			
 					querysum += queries[i].size();
 					subjectindex++;					
@@ -311,7 +329,7 @@ namespace graphtools{
 						const char* cdata = (const char*)c->begin();
 						int cbases = c->getNbases();
 
-						alignments[i][j] = alignment::cpu_semi_global_alignment(mybuffers, qdata, cdata, qbases, cbases);
+						alignments[i][j] = alignment::cpu_semi_global_alignment(&mybuffers, qdata, cdata, qbases, cbases);
 					}
 				}
 			}

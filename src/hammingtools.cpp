@@ -778,22 +778,22 @@ namespace hammingtools{
 
 			cudaStreamDestroy(buffers.stream); CUERR;
 	#else
-			delete [] h_pileup;
-			delete [] h_qual_pileup;
-			delete [] h_consensus;
-			delete [] h_support;
-			delete [] h_coverage;
-			delete [] h_origWeights;
-			delete [] h_origCoverage;
-			delete [] h_As;
-			delete [] h_Cs;
-			delete [] h_Gs;
-			delete [] h_Ts;
-			delete [] h_Aweights;
-			delete [] h_Cweights;
-			delete [] h_Gweights;
-			delete [] h_Tweights;
-			delete [] h_lengths;
+			delete [] buffers.h_pileup;
+			delete [] buffers.h_qual_pileup;
+			delete [] buffers.h_consensus;
+			delete [] buffers.h_support;
+			delete [] buffers.h_coverage;
+			delete [] buffers.h_origWeights;
+			delete [] buffers.h_origCoverage;
+			delete [] buffers.h_As;
+			delete [] buffers.h_Cs;
+			delete [] buffers.h_Gs;
+			delete [] buffers.h_Ts;
+			delete [] buffers.h_Aweights;
+			delete [] buffers.h_Cweights;
+			delete [] buffers.h_Gweights;
+			delete [] buffers.h_Tweights;
+			delete [] buffers.h_lengths;
 
 	#endif
 
