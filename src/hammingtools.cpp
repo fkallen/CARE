@@ -194,7 +194,7 @@ namespace hammingtools{
 
 		if(useGpu){ // use gpu for alignment
 			
-#if 1			
+#if 0
 
 			tpa = std::chrono::system_clock::now();
 
@@ -1083,7 +1083,7 @@ namespace hammingtools{
 			int endindex = subject.length();
 			for(int i = 0; i < nQueries; i++){
 				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
-				const int queryEndsAt = queryqualityScores[i]->length() + alignments[i].shift;
+				const int queryEndsAt = queries[i].length() + alignments[i].shift;
 				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
 				correctedQueries[i] = false;
 			}

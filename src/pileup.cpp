@@ -397,6 +397,7 @@ namespace hammingtools{
 				for(int i = 0; i < int(subject.length()); i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
 
+#if 1
 					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
 						subject[i] = buffers->h_consensus[globalIndex];
 						foundAColumn = true;
@@ -418,6 +419,34 @@ namespace hammingtools{
 							}
 						}
 					}
+#else
+
+
+#if 0
+					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
+						subject[i] = buffers->h_consensus[globalIndex];
+						foundAColumn = true;
+					}
+#else
+					if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
+						double avgsupportkregion = 0;
+						int c = 0;
+						bool kregioncoverageisgood = true;
+						for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
+							if(j != i && j >= 0 && j < int(subject.length())){
+								avgsupportkregion += buffers->h_support[subjectColumnsBegin_incl + j];
+								kregioncoverageisgood &= (buffers->h_coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
+								c++;
+							}
+						}
+						if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
+							subject[i] = buffers->h_consensus[globalIndex];
+							foundAColumn = true;
+						}
+					}
+#endif
+
+#endif
 				}
 
 				if(!foundAColumn)

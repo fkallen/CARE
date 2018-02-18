@@ -143,8 +143,8 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 		minhashparams(minhashparameters), nInserterThreads(nInserterThreads_), nCorrectorThreads(
 				nCorrectorThreads_), outputPath("") {
 	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
-	//correctionmode = CorrectionMode::Hamming;
-	correctionmode = CorrectionMode::Graph;
+	correctionmode = CorrectionMode::Hamming;
+	//correctionmode = CorrectionMode::Graph;
 
 	minhasher.minparams = minhashparameters;
 
@@ -301,6 +301,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 	minhasher.init(nReads, HASHMAP_LOAD_FACTOR);
 
 	readStorage.init(nReads);
+	readStorage.setUseQualityScores(useQualityScores);
 
 	if (CORRECT_CANDIDATE_READS_TOO) {
 		readIsProcessedVector.resize(nReads, 0);
@@ -1263,9 +1264,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						resultstringstream << header << '\n' << queryStrings[i]
 								<< '\n';
 
-						if (inputfileformat == Fileformat::FASTQ)
-							resultstringstream << '+' << '\n'
-									<< *(queryQualities[i]) << '\n';
+						if (inputfileformat == Fileformat::FASTQ){
+							resultstringstream << '+' << '\n';
+							if(useQualityScores)
+									resultstringstream << *(queryQualities[i]) << '\n';
+							else{
+								for(int k = 0; k < int(queryStrings[i].length()); k++)
+									resultstringstream << 'A';
+								resultstringstream << '\n';
+							}									
+						}
 
 						nBufferedResults++;
 					} else {
@@ -1383,9 +1391,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						resultstringstream << header << '\n' << queryStrings[i]
 								<< '\n';
 
-						if (inputfileformat == Fileformat::FASTQ)
-							resultstringstream << '+' << '\n'
-									<< *(queryQualities[i]) << '\n';
+						if (inputfileformat == Fileformat::FASTQ){
+							resultstringstream << '+' << '\n';
+							if(useQualityScores)
+									resultstringstream << *(queryQualities[i]) << '\n';
+							else{
+								for(int k = 0; k < int(queryStrings[i].length()); k++)
+									resultstringstream << 'A';
+								resultstringstream << '\n';
+							}									
+						}
 
 						nBufferedResults++;
 
@@ -1560,9 +1575,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					resultstringstream << header << '\n' << queryStrings[i]
 							<< '\n';
 
-					if (inputfileformat == Fileformat::FASTQ)
-						resultstringstream << '+' << '\n'
-								<< *(queryQualities[i]) << '\n';
+					if (inputfileformat == Fileformat::FASTQ){
+						resultstringstream << '+' << '\n';
+						if(useQualityScores)
+								resultstringstream << *(queryQualities[i]) << '\n';
+						else{
+							for(int k = 0; k < int(queryStrings[i].length()); k++)
+								resultstringstream << 'A';
+							resultstringstream << '\n';
+						}									
+					}
 
 					nBufferedResults++;
 				} else {
@@ -1623,9 +1645,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					resultstringstream << header << '\n' << newcorrected
 							<< '\n';
 
-					if (inputfileformat == Fileformat::FASTQ)
-						resultstringstream << '+' << '\n'
-								<< *(queryQualities[i]) << '\n';
+					if (inputfileformat == Fileformat::FASTQ){
+						resultstringstream << '+' << '\n';
+						if(useQualityScores)
+								resultstringstream << *(queryQualities[i]) << '\n';
+						else{
+							for(int k = 0; k < int(queryStrings[i].length()); k++)
+								resultstringstream << 'A';
+							resultstringstream << '\n';
+						}									
+					}
 
 					nBufferedResults++;
 				}

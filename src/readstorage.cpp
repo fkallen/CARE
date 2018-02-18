@@ -24,6 +24,14 @@
 		return *this;
 	}
 
+	void ReadStorage::setUseQualityScores(bool use){
+		useQualityScores = use;
+		if(!useQualityScores){
+			qualityscores.clear();
+			reverseComplqualityscores.clear();	
+		}
+	}
+
 	void ReadStorage::init(size_t nReads){
 		clear();
 
@@ -54,9 +62,11 @@
 		std::reverse(q.begin(),q.end());
 
 		headers.at(readNumber) = std::move(read.header);
-		qualityscores.at(readNumber) = std::move(read.quality);
-		reverseComplqualityscores.at(readNumber) = std::move(q);
 		sequences.at(readNumber) = std::move(seq);
+		if(useQualityScores){
+			qualityscores.at(readNumber) = std::move(read.quality);
+			reverseComplqualityscores.at(readNumber) = std::move(q);
+		}
 	}
 
 	void ReadStorage::noMoreInserts(){
@@ -169,8 +179,11 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 		Read returnvalue;
 
 		returnvalue.header = *fetchHeader_ptr(readNumber);
-		returnvalue.quality = *fetchQuality_ptr(readNumber);
 		returnvalue.sequence = fetchSequence_ptr(readNumber)->toString();
+
+		if(useQualityScores){
+			returnvalue.quality = *fetchQuality_ptr(readNumber);
+		}
 
 		return returnvalue;
 	}
@@ -180,11 +193,19 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 	}
 
     	const std::string* ReadStorage::fetchQuality_ptr(size_t readNumber) const{
-		return &(qualityscores.at(readNumber));
+		if(useQualityScores){
+			return &(qualityscores.at(readNumber));
+		}else{
+			return nullptr;
+		}
 	}
 
     	const std::string* ReadStorage::fetchReverseComplementQuality_ptr(size_t readNumber) const{
-		return &(reverseComplqualityscores.at(readNumber));
+		if(useQualityScores){
+			return &(reverseComplqualityscores.at(readNumber));
+		}else{
+			return nullptr;
+		}
 	}
 
     	const Sequence* ReadStorage::fetchSequence_ptr(size_t readNumber) const{

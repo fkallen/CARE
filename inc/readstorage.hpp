@@ -13,6 +13,7 @@
 struct ReadStorage{
 
     bool isReadOnly;
+    bool useQualityScores;
 
     std::vector<std::string> headers;
     std::vector<std::string> qualityscores;
@@ -30,6 +31,8 @@ struct ReadStorage{
 
     void clear();
     void init(size_t nReads);
+
+    void setUseQualityScores(bool use);
 
     void insertRead(size_t readNumber, const Read& read);
     void noMoreInserts();
