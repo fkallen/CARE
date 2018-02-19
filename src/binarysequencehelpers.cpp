@@ -295,3 +295,108 @@ bool get_next_encoded(const uint8_t* encoded, int encodedlength, uint8_t* nexten
 
         return success;
 }
+
+
+
+
+
+
+
+
+
+
+
+bool encode2(const char * sequence, int sequencelength, int k_, uint8_t* encoded, int encodedlength, bool failOnUnknownBase){
+
+        int k = sequencelength < k_ ? sequencelength : k_;
+
+        bool success = encodedlength * 8 >= BITS_PER_BASE * k && encoded != nullptr && sequence != nullptr;
+
+        if(success) {
+		        memset(encoded, 0, encodedlength);
+
+                for(int j = 0; j< k && success; ++j) {
+                        int byteIndex = j / 4;
+                        int pos = j % 4;
+                        switch(sequence[j]) {
+                        case 'A':
+                                encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                                break;
+                        case 'C':
+                                encoded[byteIndex] |= BASE_C << (2*(3-pos));
+                                break;
+                        case 'G':
+                                encoded[byteIndex] |= BASE_G << (2*(3-pos));
+                                break;
+                        case 'T':
+                                encoded[byteIndex] |= BASE_T << (2*(3-pos));
+                                break;
+                        default:
+                                success = !failOnUnknownBase;
+                                encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                                break;
+                        }
+                }
+        }
+
+        return success;
+}
+
+
+bool decode2(const uint8_t* encoded, int encodedlength, int k_, char* sequence, int sequencelength){
+
+        const int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
+        // sequence must store at least k chars + '\0'
+        const bool success = sequencelength > k && encoded != nullptr && sequence != nullptr;
+
+        if(success) {
+            for(int i = 0; i < k; i++){
+                const int byteIndex = i / 4;
+                const int pos = i % 4;
+                const std::uint8_t base = (encoded[byteIndex] >> (2*(3-pos))) & 0x03;
+                switch(base){
+                    case BASE_A: sequence[i] = 'A';
+                            break;
+                    case BASE_C: sequence[i] = 'C';
+                            break;
+                    case BASE_G: sequence[i] = 'G';
+                            break;
+                    case BASE_T: sequence[i] = 'T';
+                            break;
+                    default: // this cannot happen
+                            break;
+                }
+            }
+
+            sequence[k] = '\0';
+        }
+
+        return success;
+}
+
+bool encoded_to_reverse_complement_encoded2(const uint8_t* encoded, int encodedlength, uint8_t* rcencoded, int rcencodedlength, int k_){
+
+        const int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
+        const bool success = rcencodedlength * BASES_PER_BYTE >= k && encoded != nullptr && rcencoded != nullptr;
+
+        if(success) {
+                // be safe. don't assume rcencoded is already zero'd
+                memset(rcencoded, 0, rcencodedlength);
+                const int bytes = (k + 3) / 4;
+                const int unusedPositions = bytes * 4 - k;
+
+                for(int i = 0; i < bytes; i++){
+                    rcencoded[i] = REVERSE_COMPLEMENT_2BIT[encoded[bytes - 1 - i]];
+                }
+
+                if(unusedPositions > 0){
+                    rcencoded[0] <<= (2 * unusedPositions);
+                    for(int i = 1; i < bytes; i++){
+                        rcencoded[i-1] |= rcencoded[i] >> (2 * (4-unusedPositions));
+                        rcencoded[i] <<= (2 * unusedPositions);
+                    }
+                }
+        }
+
+        return success;
+}
