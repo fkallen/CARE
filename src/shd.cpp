@@ -7,16 +7,24 @@
 namespace hammingtools{
 
 	namespace alignment{
+        /*
+        		HOSTDEVICEQUALIFIER
+        		char encoded_accessor(const char* data, int bases, int index){
+        			const int unusedspaceinfirstbyte((4 - (bases % 4)) % 4); //multiple of 2 bits
+        			const int byte = (index + unusedspaceinfirstbyte) / 4;
+        			const int basepos = (index + unusedspaceinfirstbyte) % 4;
+
+        			return (data[byte] >> (3-basepos) * 2) & 0x03;
+        		}
+        */
 
 
-		HOSTDEVICEQUALIFIER
-		char encoded_accessor(const char* data, int bases, int index){
-			const int unusedspaceinfirstbyte((4 - (bases % 4)) % 4); //multiple of 2 bits
-			const int byte = (index + unusedspaceinfirstbyte) / 4;
-			const int basepos = (index + unusedspaceinfirstbyte) % 4;
-
-			return (data[byte] >> (3-basepos) * 2) & 0x03;
-		}
+        		HOSTDEVICEQUALIFIER
+        		char encoded_accessor(const char* data, int bases, int index){
+        			const int byte = index / 4;
+        			const int basepos = index % 4;
+        			return (data[byte] >> (3-basepos) * 2) & 0x03;
+        		}
 
 		HOSTDEVICEQUALIFIER
 		char twobitToChar(char bits){
@@ -38,7 +46,7 @@ namespace hammingtools{
 				int score = 0;
 
 				for(int j = std::max(-shift, 0); j < std::min(nq, ns - shift); j++){
-					score += encoded_accessor(subject, ns, j + shift) != encoded_accessor(query, nq, j);	
+					score += encoded_accessor(subject, ns, j + shift) != encoded_accessor(query, nq, j);
 				}
 
 				score += totalbases - overlapsize;
@@ -71,7 +79,7 @@ namespace hammingtools{
 #ifdef __NVCC__
 
 
-		
+
 		template<int BLOCKSIZE>
 		__global__
 		void cuda_shifted_hamming_distance(const shdparams buffers){
@@ -81,19 +89,19 @@ namespace hammingtools{
 			/* set up shared memory */
 			char* sr1 = (char*)(smem);
 			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
-			
+
 			const int subjectbases = buffers.subjectlength;
 			const char* subject = buffers.subjectdata;
 			for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += BLOCKSIZE){
-				sr1[threadid] = subject[threadid];		
+				sr1[threadid] = subject[threadid];
 			}
-						
+
 			for(int queryId = blockIdx.x; queryId < buffers.n_queries; queryId += gridDim.x){
 
 				const char* query = buffers.queriesdata + queryId * buffers.sequencepitch;
 
 				for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += BLOCKSIZE){
-					sr2[threadid] = query[threadid];			
+					sr2[threadid] = query[threadid];
 				}
 
 				__syncthreads();
@@ -103,19 +111,19 @@ namespace hammingtools{
 				const int querybases = buffers.querylengths[queryId];
 
 				const int totalbases = subjectbases + querybases;
-				
+
 				int bestScore = totalbases; // score is number of mismatches
 				int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
 
-			
+
 				for(int shift = -querybases + 1 + threadIdx.x; shift < subjectbases; shift += BLOCKSIZE){
 					const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
 					int score = 0;
 
 					for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
-						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);	
+						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);
 					}
-					score += totalbases - overlapsize;				
+					score += totalbases - overlapsize;
 
 					if(score < bestScore){
 						bestScore = score;
@@ -129,22 +137,22 @@ namespace hammingtools{
 				// pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
 				static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
-                
-                
-	
+
+
+
 				int2 myval = make_int2(bestScore, bestShift);
 				int2 reduced;
 				blockreduce<BLOCKSIZE>(
-					(unsigned long long*)&reduced, 
-					*((unsigned long long*)&myval), 
+					(unsigned long long*)&reduced,
+					*((unsigned long long*)&myval),
 					[](unsigned long long a, unsigned long long b){
-						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b; 
+						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
 					}
 				);
 
 				bestScore = reduced.x;
-				bestShift = reduced.y;		
-	
+				bestShift = reduced.y;
+
 				//make result
 				if(threadIdx.x == 0){
 
@@ -153,7 +161,7 @@ namespace hammingtools{
 					result.isValid = (bestShift != -querybases);
 					const int queryoverlapbegin_incl = max(-bestShift, 0);
 					const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-					const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;		
+					const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
 					const int opnr = bestScore - totalbases + overlapsize;
 
 					result.score = bestScore;
@@ -167,8 +175,8 @@ namespace hammingtools{
 					buffers.results[queryId] = result;
 				}
 			}
-		}	
-		
+		}
+
 		size_t shd_kernel_getSharedMemSize(const shdparams& buffer){
 
 			size_t smem = 0;
@@ -204,8 +212,8 @@ namespace hammingtools{
 			case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, stream>>>(buffer); CUERR; break;
 			default: std::cout << "error call_shd_kernel_async\n"; break;
 			}
-		}		
-		
+		}
+
 
 		template<int BLOCKSIZE>
 		__global__
@@ -216,21 +224,21 @@ namespace hammingtools{
 			/* set up shared memory */
 			char* sr1 = (char*)(smem);
 			char* sr2 = (char*)(sr1 + buffers.max_sequence_bytes);
-			
+
 			const int subjectId = batchid;
 			int queriesPerSubjectPrefixSum = 0;
 			for(int i = 0; i < batchid; i++){
 				queriesPerSubjectPrefixSum += buffers.d_queriesPerSubject[i];
 			}
 			const int queriesPerSubjectPrefixSumUp = queriesPerSubjectPrefixSum + buffers.d_queriesPerSubject[batchid];
-			
+
 			for(int globalQueryId = queriesPerSubjectPrefixSum + blockIdx.x; globalQueryId < queriesPerSubjectPrefixSumUp; globalQueryId += gridDim.x){
 
 				//setup batch. get correct pointers, store subject and query in shared mem,...
 
-				
 
-				/*int subjectId = 0;				
+
+				/*int subjectId = 0;
 				int queriesPerSubjectPrefixSum = 0;
 				for(int i = 0; i < buffers.n_subjects; i++){
 					queriesPerSubjectPrefixSum += buffers.d_queriesPerSubject[i];
@@ -245,12 +253,12 @@ namespace hammingtools{
 
 				for(int threadid = threadIdx.x; threadid < buffers.max_sequence_bytes; threadid += BLOCKSIZE){
 					sr1[threadid] = subject[threadid];
-					sr2[threadid] = query[threadid];			
+					sr2[threadid] = query[threadid];
 				}
 
 				__syncthreads(); //setup complete
-                
-                
+
+
 
 				//begin SHD algorithm
 
@@ -266,7 +274,7 @@ namespace hammingtools{
 					int score = 0;
 
 					for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
-						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);	
+						score += encoded_accessor(sr1, subjectbases, j + shift) != encoded_accessor(sr2, querybases, j);
 					}
 
 					score += totalbases - overlapsize;
@@ -282,22 +290,22 @@ namespace hammingtools{
 				// pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
 				static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
-                
-                
-	
+
+
+
 				int2 myval = make_int2(bestScore, bestShift);
 				int2 reduced;
 				blockreduce<BLOCKSIZE>(
-					(unsigned long long*)&reduced, 
-					*((unsigned long long*)&myval), 
+					(unsigned long long*)&reduced,
+					*((unsigned long long*)&myval),
 					[](unsigned long long a, unsigned long long b){
-						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b; 
+						return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
 					}
 				);
 
 				bestScore = reduced.x;
 				bestShift = reduced.y;
-	
+
 				//make result
 				if(threadIdx.x == 0){
 
@@ -306,7 +314,7 @@ namespace hammingtools{
 					result.isValid = (bestShift != -querybases);
 					const int queryoverlapbegin_incl = max(-bestShift, 0);
 					const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-					const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;		
+					const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
 					const int opnr = bestScore - totalbases + overlapsize;
 
 					result.score = bestScore;

@@ -35,5 +35,11 @@ std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit(const std::s
 std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases);
 
 
+bool encode2(const char * sequence, int sequencelength, int k_, uint8_t* encoded, int encodedlength, bool failOnUnknownBase);
+bool decode2(const uint8_t* encoded, int encodedlength, int k_, char* sequence, int sequencelength);
+bool encoded_to_reverse_complement_encoded2(const uint8_t* encoded, int encodedlength, uint8_t* rcencoded, int rcencodedlength, int k_);
+std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit2(const std::string& sequence);
+std::string decode_2bit2(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases);
+
 
 #endif

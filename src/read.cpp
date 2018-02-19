@@ -6,13 +6,13 @@
 		data.second = 0;
 	}
 
-	Sequence::Sequence(const std::string& sequence) 
+	Sequence::Sequence(const std::string& sequence)
 		: nBases(sequence.length())
 	{
-		data = encode_2bit(sequence);
+		data = encode_2bit2(sequence);
 	}
 
-	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_) 
+	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_)
 		: nBases(nBases_)
 	{
 		const int size = SDIV(nBases,4);
@@ -80,7 +80,7 @@
 
 	char Sequence::operator[](int i) const
 	{
-		const int UNUSED_BYTE_SPACE = 4 - (nBases % 4);
+		/*const int UNUSED_BYTE_SPACE = 4 - (nBases % 4);
 
 		const int byte = (i + UNUSED_BYTE_SPACE) / 4;
 		const int basepos = (i + UNUSED_BYTE_SPACE) % 4;
@@ -91,12 +91,21 @@
 		case BASE_G: return 'G';
 		case BASE_T: return 'T';
 		default: return '_';         // cannot happen
-		}
+        }*/
+        const int byte = i / 4;
+        const int basepos = i % 4;
+        switch ((data.first[byte] >> (3 - basepos) * 2) & 0x03) {
+		case BASE_A: return 'A';
+		case BASE_C: return 'C';
+		case BASE_G: return 'G';
+		case BASE_T: return 'T';
+		default: return '_';         // cannot happen
+        }
 	}
 
 	std::string Sequence::toString() const
 	{
-		return decode_2bit(data.first, nBases);
+		return decode_2bit2(data.first, nBases);
 	}
 
 	bool Sequence::operator<(const Sequence& rhs) const{
@@ -114,15 +123,15 @@
 		revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 		revcompl.data.second = getNumBytes();
 
-		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
+		bool res = encoded_to_reverse_complement_encoded2(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
 		if(!res)
 			throw std::runtime_error("could not get reverse complement of " + toString());
-		
+
 		return revcompl;
 	}
 
 	int Sequence::getNumBytes() const{
-		return data.second;	
+		return data.second;
 	}
 
 	int Sequence::getNbases() const{
@@ -159,12 +168,12 @@
 	{
 	}
 
-	SequenceGeneral::SequenceGeneral(const std::string& sequence, bool saveCompressed) 
+	SequenceGeneral::SequenceGeneral(const std::string& sequence, bool saveCompressed)
 		: nBases(sequence.length()), compressed(saveCompressed)
 	{
 
 		if(saveCompressed){
-			data = encode_2bit(sequence);			
+			data = encode_2bit(sequence);
 		}else{
 			data.first = std::make_unique<std::uint8_t[]>(nBases);
 			data.second = nBases;
@@ -172,7 +181,7 @@
 		}
 	}
 
-	SequenceGeneral::SequenceGeneral(const std::uint8_t* rawdata, int nBases_, bool isCompressed) 
+	SequenceGeneral::SequenceGeneral(const std::uint8_t* rawdata, int nBases_, bool isCompressed)
 		: nBases(nBases_), compressed(isCompressed)
 	{
 		const int size = compressed ? SDIV(nBases,4) : nBases;
@@ -309,7 +318,7 @@
 			bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
 			if(!res)
 				throw std::runtime_error("could not get reverse complement of " + toString());
-			
+
 			return revcompl;
 		}else{
 			SequenceGeneral revcompl;
@@ -335,7 +344,7 @@
 	}
 
 	int SequenceGeneral::getNumBytes() const{
-		return data.second;	
+		return data.second;
 	}
 
 	int SequenceGeneral::getNbases() const{
@@ -358,4 +367,3 @@
 		stream << seq.toString();
 		return stream;
 	}
-

@@ -400,3 +400,58 @@ bool encoded_to_reverse_complement_encoded2(const uint8_t* encoded, int encodedl
 
         return success;
 }
+
+
+
+std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit2(const std::string& sequence){
+	const std::size_t l = sequence.length();
+	const std::size_t bytes = (l + 3) / 4;
+
+	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
+
+	std::memset(encoded.get(), 0, bytes);
+
+	for(std::size_t i = 0; i < l; i++){
+		const std::size_t byteIndex = i / 4;
+		const std::size_t pos = i % 4;
+        switch(sequence[i]) {
+        case 'A':
+                encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                break;
+        case 'C':
+                encoded[byteIndex] |= BASE_C << (2*(3-pos));
+                break;
+        case 'G':
+                encoded[byteIndex] |= BASE_G << (2*(3-pos));
+                break;
+        case 'T':
+                encoded[byteIndex] |= BASE_T << (2*(3-pos));
+                break;
+        default:
+                encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                break;
+        }
+	}
+
+	return {std::move(encoded), bytes};
+}
+
+std::string decode_2bit2(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
+	std::string sequence;
+	sequence.reserve(bases);
+
+	for(std::size_t i = 0; i < bases; i++){
+		const std::size_t byteIndex = i / 4;
+		const std::size_t pos = i % 4;
+        const std::uint8_t base = (encoded[byteIndex] >> (2*(3-pos))) & 0x03;
+        switch(base){
+            case BASE_A: sequence.push_back('A'); break;
+            case BASE_C: sequence.push_back('C'); break;
+            case BASE_G: sequence.push_back('G'); break;
+            case BASE_T: sequence.push_back('T'); break;
+        default: sequence.push_back('_'); break; // cannot happen
+        }
+	}
+
+	return sequence;
+}
