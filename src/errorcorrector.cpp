@@ -63,6 +63,28 @@ constexpr bool CORRECT_CANDIDATE_READS_TOO = true;
 //constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 1.00;
 //constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.00;
 
+
+struct Candidate{
+    std::vector<std::uint64_t> readIds; // ids of reads which have the same sequence
+    const Sequence* fwdSequence;
+    const Sequence* revcomplSequence;
+    AlignResult fwdAlignment;
+    AlignResult revcomplAlignment;
+    BestAlignment_t bestAlignment;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
 struct MinhashResultsDedupBuffers {
 	const Sequence** d_candidateReads = nullptr;
 	int* d_indexlist = nullptr;
