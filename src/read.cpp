@@ -9,7 +9,7 @@
 	Sequence::Sequence(const std::string& sequence)
 		: nBases(sequence.length())
 	{
-		data = encode_2bit2(sequence);
+		data = encode_2bit(sequence);
 	}
 
 	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_)
@@ -80,18 +80,6 @@
 
 	char Sequence::operator[](int i) const
 	{
-		/*const int UNUSED_BYTE_SPACE = 4 - (nBases % 4);
-
-		const int byte = (i + UNUSED_BYTE_SPACE) / 4;
-		const int basepos = (i + UNUSED_BYTE_SPACE) % 4;
-
-		switch ((data.first[byte] >> (3 - basepos) * 2) & 0x03) {
-		case BASE_A: return 'A';
-		case BASE_C: return 'C';
-		case BASE_G: return 'G';
-		case BASE_T: return 'T';
-		default: return '_';         // cannot happen
-        }*/
         const int byte = i / 4;
         const int basepos = i % 4;
         switch ((data.first[byte] >> (3 - basepos) * 2) & 0x03) {
@@ -105,7 +93,7 @@
 
 	std::string Sequence::toString() const
 	{
-		return decode_2bit2(data.first, nBases);
+		return decode_2bit(data.first, nBases);
 	}
 
 	bool Sequence::operator<(const Sequence& rhs) const{
@@ -123,11 +111,10 @@
 		revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 		revcompl.data.second = getNumBytes();
 
-		bool res = encoded_to_reverse_complement_encoded2(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
+		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
 		if(!res)
 			throw std::runtime_error("could not get reverse complement of " + toString());
-
-		return revcompl;
+        return revcompl;
 	}
 
 	int Sequence::getNumBytes() const{

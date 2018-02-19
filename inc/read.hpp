@@ -158,7 +158,7 @@ struct FixedSizeSequence{
 		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
 		if(!res)
 			throw std::runtime_error("could not get reverse complement of " + toString());
-		
+
 		return revcompl;
 	}
 
@@ -209,7 +209,7 @@ struct Sequence {
 	static constexpr std::uint8_t BASE_T = 0x03;
 
 	std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> data;
-	int nBases = 0;
+	int nBases;
 };
 
 struct SequencePtrLess{
@@ -219,7 +219,7 @@ struct SequencePtrLess{
 		if(bases < otherbases) return true;
 		if(bases > otherbases) return false;
 
-		return (std::memcmp(lhs->begin(), rhs->begin(), lhs->getNumBytes()) < 0);			
+		return (std::memcmp(lhs->begin(), rhs->begin(), lhs->getNumBytes()) < 0);
 	}
 };
 
@@ -275,7 +275,7 @@ struct SequenceGeneralPtrLess{
 					return false;
 			}
 			return false;
-		}			
+		}
 	}
 };
 

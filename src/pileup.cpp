@@ -65,10 +65,10 @@ namespace hammingtools{
 
 		std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
 		cpu_pileup_all_in_one(const CorrectionBuffers* buffers, std::string& subject,
-						int nQueries, 
+						int nQueries,
 						std::vector<std::string>& queries,
 						const std::vector<AlignResultCompact>& alignments,
-						const std::string& subjectqualityScores, 
+						const std::string& subjectqualityScores,
 						const std::vector<const std::string*>& queryqualityScores,
 						const std::vector<int>& frequenciesPrefixSum,
 						const int startindex, const int endindex,
@@ -103,7 +103,7 @@ namespace hammingtools{
 					case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += 1; break;
 					default: std::cout << "this should not happen in pileup\n"; break;
 				}
-				buffers->h_coverage[globalIndex]++;				
+				buffers->h_coverage[globalIndex]++;
 			}
 
 			//add candidate weights
@@ -114,7 +114,7 @@ namespace hammingtools{
 			for(int i = 0; i < nQueries; i++){
 				const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
 
-				for(int j = 0; j < int(queries[i].length()); j++){					
+				for(int j = 0; j < int(queries[i].length()); j++){
 					const int globalIndex = subjectColumnsBegin_incl + alignments[i].shift + j;
 
 					for(int f = 0; f < frequenciesPrefixSum[i+1] - frequenciesPrefixSum[i]; f++){
@@ -183,7 +183,7 @@ namespace hammingtools{
 				const int freq = frequenciesPrefixSum[i+1] - prefix;
 				const int len = queries[i].length();
 
-				for(int j = 0; j < len; j++){					
+				for(int j = 0; j < len; j++){
 					const int globalIndex = subjectColumnsBegin_incl + alignments[i].shift + j;
 					double qw = 0.0;
 					for(int f = 0; f < freq; f++){
@@ -217,7 +217,7 @@ namespace hammingtools{
 				for(int f = 0; f < freq; f++){
 					const int qualityindex = prefix + f;
 					if(useQScores){
-						for(int j = 0; j < len; j++){							
+						for(int j = 0; j < len; j++){
 							buffers->h_support[j] += qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
 						}
 					}else{
@@ -276,7 +276,7 @@ namespace hammingtools{
 					case 'G': buffers->h_origCoverage[i] = buffers->h_Gs[i]; buffers->h_origWeights[i] = buffers->h_Gweights[i]; break;
 					case 'T': buffers->h_origCoverage[i] = buffers->h_Ts[i]; buffers->h_origWeights[i] = buffers->h_Tweights[i]; break;
 					default: std::cout << "this should not happen in pileup\n"; break;
-				}	
+				}
 			}
 
 			tpb = std::chrono::system_clock::now();
@@ -292,7 +292,7 @@ namespace hammingtools{
 			//get stats for subject columns
 			for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
 				assert(i < columnsToCheck);
-				
+
 				avg_support += buffers->h_support[i];
 				min_support = buffers->h_support[i] < min_support? buffers->h_support[i] : min_support;
 				max_coverage = buffers->h_coverage[i] > max_coverage ? buffers->h_coverage[i] : max_coverage;
@@ -335,38 +335,38 @@ namespace hammingtools{
 		#if 0
 				//correct candidates
 				if(correctQueries){
-			
+
 					for(int i = 0; i < nQueries; i++){
 						int queryColumnsBegin_incl = alignments[i].shift - startindex;
 						bool queryWasCorrected = false;
 						//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
-						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols 
+						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols
 							&& subjectColumnsEnd_excl + candidate_correction_new_cols >= queryColumnsBegin_incl + int(queries[i].length())){
 
 							double newColMinSupport = 1.0;
 							int newColMinCov = std::numeric_limits<int>::max();
 							//check new columns left of subject
-							for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols; 
+							for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols;
 								columnindex < subjectColumnsBegin_incl;
 								columnindex++){
 
 								assert(columnindex < columnsToCheck);
 								if(queryColumnsBegin_incl <= columnindex){
-									newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;		
+									newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
 									newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
 								}
 							}
 							//check new columns right of subject
-							for(int columnindex = subjectColumnsEnd_excl; 
-								columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols 
+							for(int columnindex = subjectColumnsEnd_excl;
+								columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols
 								&& columnindex < columnsToCheck;
 								columnindex++){
 
-								newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;		
+								newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
 								newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
 							}
 
-							if(newColMinSupport >= 1-3*errorrate 
+							if(newColMinSupport >= 1-3*errorrate
 								&& newColMinCov >= m / 2.0 * estimatedCoverage){
 								//assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
 
@@ -382,7 +382,7 @@ namespace hammingtools{
 						}
 					}
 				}
-		#endif	
+		#endif
 			}else{
 				if(avg_support < 1.0-errorrate)
 					status |= (1 << 0);
@@ -397,7 +397,7 @@ namespace hammingtools{
 				for(int i = 0; i < int(subject.length()); i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
 
-#if 1
+#if 0
 					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
 						subject[i] = buffers->h_consensus[globalIndex];
 						foundAColumn = true;
@@ -463,7 +463,7 @@ namespace hammingtools{
 
 		void cpu_pileup_create(const CorrectionBuffers* buffers, std::string& subject,
 						std::vector<std::string>& queries,
-						const std::string& subjectqualityScores, 
+						const std::string& subjectqualityScores,
 						const std::vector<const std::string*>& queryqualityScores,
 						const std::vector<AlignResultCompact>& alignments,
 						const std::vector<int>& frequenciesPrefixSum,
@@ -478,8 +478,8 @@ namespace hammingtools{
 			//copy subject to buffer
 			std::memcpy(buffers->h_pileup + 0 * buffers->max_n_columns + subjectColumnsBegin_incl, subject.data(), sizeof(char) * subject.length());
 			//copy subject quality to buffer
-			std::memcpy(buffers->h_qual_pileup + 0 * buffers->max_n_columns + subjectColumnsBegin_incl, 
-					subjectqualityScores.data(), 
+			std::memcpy(buffers->h_qual_pileup + 0 * buffers->max_n_columns + subjectColumnsBegin_incl,
+					subjectqualityScores.data(),
 					sizeof(char) * subjectqualityScores.length());
 
 			for(int i = 0; i < nQueries; i++){
@@ -490,13 +490,13 @@ namespace hammingtools{
 				//copy queries[i] to buffer
 				for(int f = 0; f < freq; f++){
 					const int row = 1 + freqSum + f;
-					std::memcpy(buffers->h_pileup + row * buffers->max_n_columns 
-									+ colOffset, 
-							queries[i].data(), 
+					std::memcpy(buffers->h_pileup + row * buffers->max_n_columns
+									+ colOffset,
+							queries[i].data(),
 							sizeof(char) * queries[i].length());
-					std::memcpy(buffers->h_qual_pileup + row * buffers->max_n_columns 
-									+ colOffset, 
-							queryqualityScores[i]->data(), 
+					std::memcpy(buffers->h_qual_pileup + row * buffers->max_n_columns
+									+ colOffset,
+							queryqualityScores[i]->data(),
 							sizeof(char) * queryqualityScores[i]->length());
 				}
 			}
@@ -504,11 +504,11 @@ namespace hammingtools{
 
 		void cpu_pileup_vote(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments,
 						const std::vector<int>& frequenciesPrefixSum,
-						const double maxErrorRate, 
+						const double maxErrorRate,
 						const bool useQScores,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl){
 
-			
+
 			int unique_sequence_index = 0;
 			//row in original pileup
 			for(int row = 0; row < buffers->n_sequences; row += 1){
@@ -527,8 +527,8 @@ namespace hammingtools{
 							double qw = 1.0;
 							if(useQScores){
 								qw *= qualweight;
-							} 		
-								
+							}
+
 							switch(base){
 								case 'A': buffers->h_Aweights[column] += qw; buffers->h_As[column] += 1; break;
 								case 'C': buffers->h_Cweights[column] += qw; buffers->h_Cs[column] += 1; break;
@@ -579,9 +579,9 @@ namespace hammingtools{
 					consWeight = buffers->h_Tweights[column];
 				}
 
-				const double columnWeight = buffers->h_Aweights[column] + buffers->h_Cweights[column] 
+				const double columnWeight = buffers->h_Aweights[column] + buffers->h_Cweights[column]
 								+ buffers->h_Gweights[column] + buffers->h_Tweights[column];
-				const int coverage = buffers->h_As[column] + buffers->h_Cs[column] 
+				const int coverage = buffers->h_As[column] + buffers->h_Cs[column]
 								+ buffers->h_Gs[column] + buffers->h_Ts[column];
 
 				buffers->h_coverage[column] = coverage;
@@ -590,13 +590,13 @@ namespace hammingtools{
 
 				if(column >= subjectColumnsBegin_incl && column < subjectColumnsEnd_excl){
 					switch(cons){
-						case 'A': 	buffers->h_origCoverage[column] = buffers->h_As[column]; 
+						case 'A': 	buffers->h_origCoverage[column] = buffers->h_As[column];
 								buffers->h_origWeights[column] = buffers->h_Aweights[column]; break;
-						case 'C': 	buffers->h_origCoverage[column] = buffers->h_Cs[column]; 
+						case 'C': 	buffers->h_origCoverage[column] = buffers->h_Cs[column];
 								buffers->h_origWeights[column] = buffers->h_Cweights[column]; break;
-						case 'G': 	buffers->h_origCoverage[column] = buffers->h_Gs[column]; 
+						case 'G': 	buffers->h_origCoverage[column] = buffers->h_Gs[column];
 								buffers->h_origWeights[column] = buffers->h_Gweights[column]; break;
-						case 'T': 	buffers->h_origCoverage[column] = buffers->h_Ts[column]; 
+						case 'T': 	buffers->h_origCoverage[column] = buffers->h_Ts[column];
 								buffers->h_origWeights[column] = buffers->h_Tweights[column]; break;
 						default:  printf("this should never happen in a subject column. w = %f\n", columnWeight); break;
 					}
@@ -611,7 +611,7 @@ namespace hammingtools{
 			for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
 				const double sup = buffers->h_support[i];
 				const int cov = buffers->h_coverage[i];
-				
+
 				avg_support += sup;
 				min_support = sup < min_support? sup : min_support;
 				max_coverage = cov > max_coverage ? cov : max_coverage;
@@ -627,10 +627,10 @@ namespace hammingtools{
 		}
 
 		int cpu_pileup_correct(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments, const std::vector<int>& frequenciesPrefixSum,
-						const int columnsToCheck, 
+						const int columnsToCheck,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						const int startindex, const int endindex,
-						const double errorrate, const int estimatedCoverage, const double m, 
+						const double errorrate, const int estimatedCoverage, const double m,
 						const bool correctQueries, int k, std::vector<bool>& correctedQueries){
 
 			const bool isHQ = buffers->avg_support >= 1.0-errorrate
@@ -642,51 +642,51 @@ namespace hammingtools{
 			if(isHQ){
 		#if 1
 				//correct anchor
-				std::memcpy(	buffers->h_pileup + subjectColumnsBegin_incl, 
-						buffers->h_consensus + subjectColumnsBegin_incl, 
+				std::memcpy(	buffers->h_pileup + subjectColumnsBegin_incl,
+						buffers->h_consensus + subjectColumnsBegin_incl,
 						sizeof(char) * buffers->h_lengths[0]);
 
 		#endif
 		#if 0
 				//correct candidates
 				if(correctQueries){
-			
+
 					for(int i = 0; i < buffers->n_sequences - 1; i++){
 						const int row = 1 + frequenciesPrefixSum[i];
 						int queryColumnsBegin_incl = alignments[i].shift - startindex;
 						bool queryWasCorrected = false;
 						//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
-						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols 
+						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols
 							&& subjectColumnsEnd_excl + candidate_correction_new_cols >= queryColumnsBegin_incl + buffers->h_lengths[1+i]){
 
 							double newColMinSupport = 1.0;
 							int newColMinCov = std::numeric_limits<int>::max();
 							//check new columns left of subject
-							for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols; 
+							for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols;
 								columnindex < subjectColumnsBegin_incl;
 								columnindex++){
 
 								assert(columnindex < columnsToCheck);
 								if(queryColumnsBegin_incl <= columnindex){
-									newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;		
+									newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
 									newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
 								}
 							}
 							//check new columns right of subject
-							for(int columnindex = subjectColumnsEnd_excl; 
-								columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols 
+							for(int columnindex = subjectColumnsEnd_excl;
+								columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols
 								&& columnindex < columnsToCheck;
 								columnindex++){
 
-								newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;		
+								newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
 								newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
 							}
 
-							if(newColMinSupport >= 1-3*errorrate 
+							if(newColMinSupport >= 1-3*errorrate
 								&& newColMinCov >= m / 2.0 * estimatedCoverage){
 
-								std::memcpy(	buffers->h_pileup + row * buffers->max_n_columns + queryColumnsBegin_incl, 
-										buffers->h_consensus + queryColumnsBegin_incl, 
+								std::memcpy(	buffers->h_pileup + row * buffers->max_n_columns + queryColumnsBegin_incl,
+										buffers->h_consensus + queryColumnsBegin_incl,
 										sizeof(char) * buffers->h_lengths[row]);
 							}
 						}
@@ -695,7 +695,7 @@ namespace hammingtools{
 						}
 					}
 				}
-		#endif	
+		#endif
 			}else{
 				if(buffers->avg_support < 1.0-errorrate)
 					status |= (1 << 0);
@@ -746,7 +746,7 @@ namespace hammingtools{
 
 
 
-		// convert a linear index to a linear index in the transpose 
+		// convert a linear index to a linear index in the transpose
 		struct transpose_index : public thrust::unary_function<size_t,size_t>
 		{
 			size_t m, n;
@@ -759,7 +759,7 @@ namespace hammingtools{
 			{
 				size_t i = linear_index / n;
 				size_t j = linear_index % n;
-	
+
 				return m * j + i;
 			}
 		};
@@ -798,7 +798,7 @@ namespace hammingtools{
 
 			printf("after transpose\n");
 			for(int j = 0; j < cols; j++){
-				for(int i = 0; i < rows; i++){				
+				for(int i = 0; i < rows; i++){
 					printf("%c", buffers->h_pileup[j * rows + i]);
 				}
 				printf("\n");
@@ -827,9 +827,9 @@ namespace hammingtools{
 		}
 
 		__global__
-		void cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
+		void cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate, 
+						const double maxErrorRate,
 						const bool useQScores){
 
 			__shared__ double smem[128];
@@ -858,8 +858,8 @@ namespace hammingtools{
 							double qw = 1.0;
 							if(useQScores){
 								qw *= qualweight;
-							} 		
-								
+							}
+
 							switch(base){
 								case 'A': Aweight += qw; As += 1; break;
 								case 'C': Cweight += qw; Cs += 1; break;
@@ -975,11 +975,11 @@ namespace hammingtools{
 				min_coverage = cov < min_coverage ? cov : min_coverage;
 			}
 
-			// block reduction			
+			// block reduction
 			double avg_support_red = 0;
 			double min_support_red = 1.0;
 			int max_coverage_red = 0;
-			int min_coverage_red = INT_MAX;		
+			int min_coverage_red = INT_MAX;
 
 			blockreduce(smem, &avg_support_red, avg_support, [](auto a, auto b){return a+b;});
 			blockreduce(smem, &min_support_red, min_support, [](auto a, auto b){return min(a,b);});
@@ -1024,21 +1024,21 @@ namespace hammingtools{
 			}
 		}
 
-		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
+		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate, 
+						const double maxErrorRate,
 						const bool useQScores){
 
-			cudaMemcpyAsync(buffers->d_this, 
-					buffers, 
-					sizeof(CorrectionBuffers), 
+			cudaMemcpyAsync(buffers->d_this,
+					buffers,
+					sizeof(CorrectionBuffers),
 					H2D, buffers->stream); CUERR;
 
 			dim3 block(64);
 			dim3 grid(nSequences);
-			cuda_pileup_vote_transposed_kernel<<<grid, block, 0, buffers->stream>>>(buffers->d_this, nSequences, nQualityScores, columnsToCheck, 
+			cuda_pileup_vote_transposed_kernel<<<grid, block, 0, buffers->stream>>>(buffers->d_this, nSequences, nQualityScores, columnsToCheck,
 												subjectColumnsBegin_incl, subjectColumnsEnd_excl,
-												maxErrorRate, 
+												maxErrorRate,
 												useQScores); CUERR;
 
 			//calculate stats of subject. min max avg coverage

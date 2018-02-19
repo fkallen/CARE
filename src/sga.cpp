@@ -18,18 +18,6 @@ namespace graphtools{
 
 	namespace alignment{
 
-/*
-		HOSTDEVICEQUALIFIER
-		char encoded_accessor(const char* data, int bases, int index){
-			const int unusedspaceinfirstbyte((4 - (bases % 4)) % 4); //multiple of 2 bits
-			const int byte = (index + unusedspaceinfirstbyte) / 4;
-			const int basepos = (index + unusedspaceinfirstbyte) % 4;
-
-			return (data[byte] >> (3-basepos) * 2) & 0x03;
-		}
-*/
-
-
 		HOSTDEVICEQUALIFIER
 		char encoded_accessor(const char* data, int bases, int index){
 			const int byte = index / 4;

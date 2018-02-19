@@ -37,276 +37,7 @@ const uint8_t REVERSE_COMPLEMENT_2BIT[256] = {
         0xf0, 0xb0, 0x70, 0x30, 0xe0, 0xa0, 0x60, 0x20, 0xd0, 0x90, 0x50, 0x10, 0xc0, 0x80, 0x40, 0x0
 };
 
-// x &= DELETE_UNUSED_BITS_2BIT[ y ] sets the leftmost 2*y bits in x to 0
-const uint8_t DELETE_UNUSED_BITS_2BIT[4] = {
-        0x3F, 0xF, 0x3, 0x0
-};
-
-std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit(const std::string& sequence){
-	const std::size_t l = sequence.length();
-	const std::size_t bytes = (l + BASES_PER_BYTE - 1) / BASES_PER_BYTE;
-	const std::size_t unusedByteSpace = (BASES_PER_BYTE - (l % BASES_PER_BYTE)) % BASES_PER_BYTE;
-
-	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
-
-	std::memset(encoded.get(), 0, bytes);
-
-	for(std::size_t i = 0; i < l; i++){
-		const std::size_t byte = (i + unusedByteSpace) / 4;
-		const std::size_t posInByte = (i + unusedByteSpace) % 4;
-                switch(sequence[i]) {
-                case 'A':
-                        encoded[byte] |=  BASE_A << ((3-posInByte) * 2);
-                        break;
-                case 'C':
-                        encoded[byte] |=  BASE_C << ((3-posInByte) * 2);
-                        break;
-                case 'G':
-                        encoded[byte] |=  BASE_G << ((3-posInByte) * 2);
-                        break;
-                case 'T':
-                        encoded[byte] |=  BASE_T << ((3-posInByte) * 2);
-                        break;
-		default:
-                        encoded[byte] |=  BASE_A << ((3-posInByte) * 2);
-                        break;
-		}
-	}
-
-	return {std::move(encoded), bytes};
-}
-
-std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
-	const std::size_t unusedByteSpace = (BASES_PER_BYTE - (bases % BASES_PER_BYTE)) % BASES_PER_BYTE;
-
-	std::string sequence;
-	sequence.reserve(bases);
-
-	for(std::size_t i = 0; i < bases; i++){
-		const std::size_t byte = (i + unusedByteSpace) / 4;
-		const std::size_t posInByte = (i + unusedByteSpace) % 4;
-		switch((encoded[byte] >> (3-posInByte) * 2) & 0x03) {
-		        case BASE_A: sequence.push_back('A'); break;
-		        case BASE_C: sequence.push_back('C'); break;
-		        case BASE_G: sequence.push_back('G'); break;
-		        case BASE_T: sequence.push_back('T'); break;
-			default: sequence.push_back('_'); break; // cannot happen
-		}
-	}
-
-	return sequence;
-}
-
-std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit_hilo(const std::string& sequence){
-	const std::size_t l = sequence.length();
-	const std::size_t bytes = 2*((l + 8 - 1) / 8);
-
-	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
-
-	return {std::move(encoded), bytes};
-}
-
-std::string decode_2bit_hilo(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
-	std::string sequence;
-	sequence.reserve(bases);
-
-
-	return sequence;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 bool encode(const char * sequence, int sequencelength, int k_, uint8_t* encoded, int encodedlength, bool failOnUnknownBase){
-
-        int k = sequencelength < k_ ? sequencelength : k_;
-
-        bool success = encodedlength * 8 >= BITS_PER_BASE * k && encoded != nullptr && sequence != nullptr;
-
-        if(success) {
-		memset(encoded, 0, encodedlength);
-
-                const int FIRST_USED_BYTE = encodedlength - (k+BASES_PER_BYTE-1)/BASES_PER_BYTE;
-                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (k % BASES_PER_BYTE)) % BASES_PER_BYTE;
-
-                int byteIndex = 0;
-                for(int j = 0; j< k && success; ++j) {
-                        byteIndex = FIRST_USED_BYTE + (UNUSED_BYTE_SPACE + j)/ 4;
-                        switch(sequence[j]) {
-                        case 'A':
-                                encoded[byteIndex] = (encoded[byteIndex] << 2) | BASE_A;
-                                break;
-                        case 'C':
-                                encoded[byteIndex] = (encoded[byteIndex] << 2) | BASE_C;
-                                break;
-                        case 'G':
-                                encoded[byteIndex] = (encoded[byteIndex] << 2) | BASE_G;
-                                break;
-                        case 'T':
-                                encoded[byteIndex] = (encoded[byteIndex] << 2) | BASE_T;
-                                break;
-                        default: //TODO : choose random base
-                                success = !failOnUnknownBase;
-				printf("fail on base %c at pos %d\n", sequence[j], j);
-                                encoded[byteIndex] = (encoded[byteIndex] << 2) | BASE_A;
-                                break;
-                        }
-                }
-        }
-
-        return success;
-}
-
-
-bool decode(const uint8_t* encoded, int encodedlength, int k_, char* sequence, int sequencelength){
-
-        int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
-
-        // sequence must store at least k chars + '\0'
-        bool success = sequencelength > k && encoded != nullptr && sequence != nullptr;
-
-        if(success) {
-                const int FIRST_USED_BYTE = encodedlength - (k+BASES_PER_BYTE-1)/BASES_PER_BYTE;
-                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (k % BASES_PER_BYTE)) % BASES_PER_BYTE;
-
-                int processed = 0;
-
-                for(int i = FIRST_USED_BYTE; i < encodedlength; i++) {
-
-                        int j = BASES_PER_BYTE - 1;
-
-                        if(i == FIRST_USED_BYTE && UNUSED_BYTE_SPACE > 0)
-                                j = BASES_PER_BYTE - UNUSED_BYTE_SPACE - 1;
-
-                        for(; j >= 0; j--) {
-                                switch((encoded[i] >> BITS_PER_BASE * j) & 0x03) {
-                                case BASE_A: sequence[processed++] = 'A';
-                                        break;
-                                case BASE_C: sequence[processed++] = 'C';
-                                        break;
-                                case BASE_G: sequence[processed++] = 'G';
-                                        break;
-                                case BASE_T: sequence[processed++] = 'T';
-                                        break;
-                                default: // this cannot happen
-                                        break;
-                                }
-                        }
-
-                }
-                sequence[processed++] = '\0';
-        }
-
-        return success;
-
-}
-
-bool encoded_to_reverse_complement_encoded(const uint8_t* encoded, int encodedlength, uint8_t* rcencoded, int rcencodedlength, int k_){
-
-        int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
-
-        bool success = rcencodedlength * BASES_PER_BYTE >= k && encoded != nullptr && rcencoded != nullptr;
-
-        if(success) {
-                // be safe. don't assume rcencoded is already zero'd
-                memset(rcencoded, 0, rcencodedlength);
-
-                const int FIRST_USED_BYTE = encodedlength - (k+BASES_PER_BYTE-1)/BASES_PER_BYTE;
-                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (k % BASES_PER_BYTE)) % BASES_PER_BYTE;
-
-
-                // reverse the order of chars and get the reverse complement of each char
-                for(int i = 0; i < encodedlength - FIRST_USED_BYTE; i++) {
-                        rcencoded[FIRST_USED_BYTE+i] = REVERSE_COMPLEMENT_2BIT[encoded[encodedlength-1-i]];
-                }
-                if(UNUSED_BYTE_SPACE > 0) {
-                        // shift data into appropriate position
-                        for(int i = encodedlength-1; i >=FIRST_USED_BYTE; i--) {
-                                rcencoded[i] >>= UNUSED_BYTE_SPACE * 2;
-                                if(i != FIRST_USED_BYTE) {
-                                        rcencoded[i] = rcencoded[i] | (rcencoded[i-1] << (4-UNUSED_BYTE_SPACE) * 2 );
-                                }
-                        }
-                }
-
-        }
-
-        return success;
-}
-
-bool get_next_encoded(const uint8_t* encoded, int encodedlength, uint8_t* nextencoded, int nextencodedlength,
-                      const char nextBase, int k_){
-
-        int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
-
-        bool success = encodedlength <= nextencodedlength && encodedlength * BASES_PER_BYTE >= k
-                        && encoded != nullptr && nextencoded != nullptr;
-
-        if(success){
-            if(nextencoded != encoded)
-                memcpy(nextencoded, encoded, encodedlength);
-
-            const int FIRST_USED_BYTE = encodedlength - (k+BASES_PER_BYTE-1)/BASES_PER_BYTE;
-            const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (k % BASES_PER_BYTE)) % BASES_PER_BYTE;
-
-            for(int j = FIRST_USED_BYTE; j < nextencodedlength; ++j){
-
-                    nextencoded[j] <<= 2;
-                    if(j < nextencodedlength-1){
-                            nextencoded[j] |= nextencoded[j+1] >> 6;
-                    }else{
-                            switch(nextBase){
-                                    case 'A': nextencoded[j] |= BASE_A;
-                                            break;
-                                    case 'C': nextencoded[j] |= BASE_C;
-                                            break;
-                                    case 'G': nextencoded[j] |= BASE_G;
-                                            break;
-                                    case 'T': nextencoded[j] |= BASE_T;
-                                            break;
-                                    default:
-                                          //TODO : choose random base
-                                            nextencoded[j] |= BASE_A;
-                                            break;
-                            }
-                    }
-            }
-            // set unused data bits in FIRST_USED_BYTE to 0
-            if(UNUSED_BYTE_SPACE != 0 )
-                    nextencoded[FIRST_USED_BYTE] &= DELETE_UNUSED_BITS_2BIT[UNUSED_BYTE_SPACE-1];
-        }
-
-        return success;
-}
-
-
-
-
-
-
-
-
-
-
-
-bool encode2(const char * sequence, int sequencelength, int k_, uint8_t* encoded, int encodedlength, bool failOnUnknownBase){
 
         int k = sequencelength < k_ ? sequencelength : k_;
 
@@ -343,7 +74,7 @@ bool encode2(const char * sequence, int sequencelength, int k_, uint8_t* encoded
 }
 
 
-bool decode2(const uint8_t* encoded, int encodedlength, int k_, char* sequence, int sequencelength){
+bool decode(const uint8_t* encoded, int encodedlength, int k_, char* sequence, int sequencelength){
 
         const int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
         // sequence must store at least k chars + '\0'
@@ -374,7 +105,7 @@ bool decode2(const uint8_t* encoded, int encodedlength, int k_, char* sequence, 
         return success;
 }
 
-bool encoded_to_reverse_complement_encoded2(const uint8_t* encoded, int encodedlength, uint8_t* rcencoded, int rcencodedlength, int k_){
+bool encoded_to_reverse_complement_encoded(const uint8_t* encoded, int encodedlength, uint8_t* rcencoded, int rcencodedlength, int k_){
 
         const int k = encodedlength * BASES_PER_BYTE < k_ ? encodedlength * BASES_PER_BYTE : k_;
         const bool success = rcencodedlength * BASES_PER_BYTE >= k && encoded != nullptr && rcencoded != nullptr;
@@ -403,7 +134,7 @@ bool encoded_to_reverse_complement_encoded2(const uint8_t* encoded, int encodedl
 
 
 
-std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit2(const std::string& sequence){
+std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit(const std::string& sequence){
 	const std::size_t l = sequence.length();
 	const std::size_t bytes = (l + 3) / 4;
 
@@ -436,7 +167,7 @@ std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit2(const std::
 	return {std::move(encoded), bytes};
 }
 
-std::string decode_2bit2(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
+std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases){
 	std::string sequence;
 	sequence.reserve(bases);
 
