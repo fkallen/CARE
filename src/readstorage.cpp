@@ -28,17 +28,17 @@
 		useQualityScores = use;
 		if(!useQualityScores){
 			qualityscores.clear();
-			reverseComplqualityscores.clear();	
+			reverseComplqualityscores.clear();
 		}
 	}
 
 	void ReadStorage::init(size_t nReads){
 		clear();
 
-		headers.resize(nReads);
+		//headers.resize(nReads);
 		qualityscores.resize(nReads);
 		reverseComplqualityscores.resize(nReads);
-		sequences.resize(nReads);		
+		sequences.resize(nReads);
 	}
 
 	void ReadStorage::clear(){
@@ -57,11 +57,11 @@
 	void ReadStorage::insertRead(size_t readNumber, const Read& read){
 		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling noMoreInserts()");
 
-		Sequence seq(read.sequence);  
+		Sequence seq(read.sequence);
 		std::string q(read.quality);
 		std::reverse(q.begin(),q.end());
 
-		headers.at(readNumber) = std::move(read.header);
+		//headers.at(readNumber) = std::move(read.header);
 		sequences.at(readNumber) = std::move(seq);
 		if(useQualityScores){
 			qualityscores.at(readNumber) = std::move(read.quality);
@@ -120,8 +120,8 @@ TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 				sequencesflat.push_back(std::move(revcompl));
 				reverseComplSequencepointers[i] = &(sequencesflat.back());
 				seqToSortedIndex[*reverseComplSequencepointers[i]] = reverseComplSequencepointers[i] - sequencesflat.data();
-				
-				
+
+
 			}else{
 				//sequence is a duplicate, read position from map
 				reverseComplSequencepointers[i] = &(sequencesflat[it->second]);
@@ -133,7 +133,7 @@ TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 
 		seqToSortedIndex.clear();
 
-#if 1	
+#if 1
 TIMERSTARTCPU(READ_STORAGE_CHECK);
 		//check
 		for(size_t i = 0; i < nSequences; i++){
@@ -189,7 +189,8 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 	}
 
 	const std::string* ReadStorage::fetchHeader_ptr(size_t readNumber) const{
-		return &(headers.at(readNumber));
+		//return &(headers.at(readNumber));
+        return nullptr;
 	}
 
     	const std::string* ReadStorage::fetchQuality_ptr(size_t readNumber) const{
@@ -249,4 +250,3 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 
 		return bytes / 1024. / 1024.;
 	}
-

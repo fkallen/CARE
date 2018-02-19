@@ -165,6 +165,7 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 
 }
 
+#if 0
 void ErrorCorrector::mergeUnorderedThreadResults(
 		const std::string& filename) const {
 
@@ -262,6 +263,128 @@ void ErrorCorrector::mergeUnorderedThreadResults(
 			std::cout << "could not remove file " << s << std::endl;
 	}
 }
+
+#else
+
+
+void ErrorCorrector::mergeUnorderedThreadResults(
+		const std::string& filename) const {
+
+	std::string name = filename;
+	std::string fileEnding = ".fq";
+
+	size_t lastdotpos = filename.find_last_of(".");
+	if (lastdotpos != std::string::npos) {
+		name = name.substr(0, lastdotpos);
+		fileEnding = filename.substr(lastdotpos);
+	}
+
+	size_t lastslashpos = filename.find_last_of("/");
+	if (lastslashpos != std::string::npos)
+		name = name.substr(lastslashpos + 1);
+
+	std::string currentOutputFilename;
+
+	if (outputFilename != "")
+		currentOutputFilename = outputPath + "/" + outputFilename;
+	else
+		currentOutputFilename = outputPath + "/" + name + "_"
+				+ std::to_string(minhashparams.k) + "_"
+				+ std::to_string(minhashparams.maps) + "_1" + "_alpha_"
+				+ std::to_string(graphalpha) + "_x_" + std::to_string(graphx)
+				+ "_corrected" + fileEnding;
+
+	std::cout << "merging into " << currentOutputFilename << std::endl;
+
+	const std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
+	std::uint32_t nreads = 0;
+
+	std::vector<Read> reads(totalNumberOfReads);
+    //read thread results and store in reads
+	for (int i = 0; i < nCorrectorThreads; i++) {
+
+        std::ifstream is(outputPath + "/" + std::to_string(i));
+        if(!is)
+            throw std::runtime_error("could not open tmp file: " + outputPath + "/" + std::to_string(i));
+
+        std::string num;
+        std::string seq;
+
+        while(true){
+            std::getline(is, num);
+    		if (!is.good())
+    			break;
+            std::getline(is, seq);
+            if (!is.good())
+                break;
+
+            nreads++;
+
+            auto readnum = std::stoull(num);
+            reads[readnum].sequence = std::move(seq);
+        }
+	}
+
+    //read original input file and set correct headers and quality scores for result reads
+    std::unique_ptr<ReadReader> reader;
+	switch (inputfileformat) {
+	case Fileformat::FASTQ:
+		reader.reset(new FastqReader(filename));
+		break;
+	case Fileformat::FASTA:
+		reader.reset(new FastaReader(filename));
+		break;
+	default:
+		assert(false && "inputfileformat");
+		break;
+	}
+
+	Read read;
+	std::uint32_t readnum = 0;
+	while (reader->getNextRead(&read, &readnum)) {
+        reads[readnum].header = std::move(read.header);
+        reads[readnum].quality = std::move(read.quality);
+		readnum++;
+	}
+
+	if (nreads != totalNumberOfReads) {
+		Read tmp;
+		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
+			return a == tmp;
+		});
+
+		std::cout << "totalNumberOfReads " << totalNumberOfReads << '\n'
+				<< "nreads " << nreads << '\n' << "asd " << asd << '\n';
+		assert(nreads == totalNumberOfReads);
+	}
+	assert(nreads == totalNumberOfReads);
+
+	Read tmp;
+	if (std::find(reads.begin(), reads.end(), tmp) != reads.end())
+		std::cout << "error" << std::endl;
+
+	std::cout << "done in a moment" << std::endl;
+	std::ofstream outputfile(currentOutputFilename);
+
+	for (const auto& read : reads) {
+		outputfile << read.header << '\n' << read.sequence << '\n';
+
+		if (inputfileformat == Fileformat::FASTQ)
+			outputfile << '+' << '\n' << read.quality << '\n';
+	}
+
+	outputfile.flush();
+	outputfile.close();
+
+	for (int i = 0; i < nCorrectorThreads; i++) {
+		std::string s = outputPath + "/" + std::to_string(i);
+		int ret = std::remove(s.c_str());
+		if (ret != 0)
+			std::cout << "could not remove file " << s << std::endl;
+	}
+}
+
+#endif
 
 void ErrorCorrector::correct(const std::string& filename) {
 	if (inputfileformat == Fileformat::FASTA)
@@ -668,7 +791,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	// the output file of this thread
 	std::ofstream outputfile(outputPath + "/" + std::to_string(threadId));
 
-	// number of buffered correction results. nBufferedResults < bufferedResultsThreshold	
+	// number of buffered correction results. nBufferedResults < bufferedResultsThreshold
 	int nBufferedResults = 0;
 
 	// buffer of correction results
@@ -757,23 +880,23 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 									/ nLocksForProcessedFlags) % batchsize;
 
 	// loop over the reads to process
-#ifdef __NVCC__									
+#ifdef __NVCC__
 	int itersUntilProfilingStops = 4;
 	//cudaProfilerStart();
-#endif	
+#endif
 
 	for (std::uint32_t currentBatchNum = firstBatch;
 			currentBatchNum < firstBatch + chunkSize; currentBatchNum += 1) {
 		const std::uint32_t readnum = currentBatchNum * batchsize; // id of first read in batch
 
 		assert(readnum < totalNumberOfReads);
-	
-#ifdef __NVCC__	
+
+#ifdef __NVCC__
 		if(itersUntilProfilingStops == 0){
 			//cudaProfilerStop();
 		}
 		itersUntilProfilingStops--;
-#endif	
+#endif
 
 		// boundary condition. cannot process more reads than the remaining reads
 		//std::uint32_t actualBatchSize = std::min(batchsize, firstRead + chunkSize - readnum);
@@ -842,7 +965,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			}
 		}
 
-#ifdef ERRORCORRECTION_TIMING		
+#ifdef ERRORCORRECTION_TIMING
 		tpa = std::chrono::system_clock::now();
 #endif
 
@@ -966,7 +1089,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 							cudaMemcpyDeviceToHost,
 							minhashresultsdedupbuffers.stream); CUERR;
 					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
-#else					
+#else
 
 					std::vector<int> indexlist(nCandidates);
 					std::iota(indexlist.begin(), indexlist.end(), 0);
@@ -1063,7 +1186,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 #if 1
 
-#ifdef ERRORCORRECTION_TIMING		
+#ifdef ERRORCORRECTION_TIMING
 		tpa = std::chrono::system_clock::now();
 #endif
 
@@ -1209,7 +1332,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 								forwardRead.push_back(false);
 							}
 						} else {
-							bad++; //both alignments are bad	
+							bad++; //both alignments are bad
 						}
 						fc += f;
 					}
@@ -1255,16 +1378,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					determinegoodalignmentsTime += tpd - tpc;
 
 					if (!correctQuery) {
-						std::string header = *readStorage.fetchHeader_ptr(
-								readnum + i);
+						resultstringstream << (readnum + i) << '\n';
+						resultstringstream << queryStrings[i] << '\n';
 
-						if (CORRECT_CANDIDATE_READS_TOO)
-							resultstringstream << (readnum + i) << ' ';
-
-						resultstringstream << header << '\n' << queryStrings[i]
-								<< '\n';
-
-						if (inputfileformat == Fileformat::FASTQ){
+						/*if (inputfileformat == Fileformat::FASTQ){
 							resultstringstream << '+' << '\n';
 							if(useQualityScores)
 									resultstringstream << *(queryQualities[i]) << '\n';
@@ -1272,8 +1389,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 								for(int k = 0; k < int(queryStrings[i].length()); k++)
 									resultstringstream << 'A';
 								resultstringstream << '\n';
-							}									
-						}
+							}
+						}*/
 
 						nBufferedResults++;
 					} else {
@@ -1383,15 +1500,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 						//bool correctedAndChanged = (queries[i]->operator!=(correctedQuery));
 
-						std::string header = *readStorage.fetchHeader_ptr(
-								readnum + i);
+                        resultstringstream << (readnum + i) << '\n';
+                        resultstringstream << queryStrings[i] << '\n';
 
-						resultstringstream << (readnum + i) << ' ';
-
-						resultstringstream << header << '\n' << queryStrings[i]
-								<< '\n';
-
-						if (inputfileformat == Fileformat::FASTQ){
+						/*if (inputfileformat == Fileformat::FASTQ){
 							resultstringstream << '+' << '\n';
 							if(useQualityScores)
 									resultstringstream << *(queryQualities[i]) << '\n';
@@ -1399,8 +1511,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 								for(int k = 0; k < int(queryStrings[i].length()); k++)
 									resultstringstream << 'A';
 								resultstringstream << '\n';
-							}									
-						}
+							}
+						}*/
 
 						nBufferedResults++;
 
@@ -1434,14 +1546,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 											const int candidateId =
 													insertedCandidateIds[candidateIdIndex];
 
-											std::string header =
-													*readStorage.fetchHeader_ptr(
-															candidateId);
-											resultstringstream << (candidateId)
-													<< ' ';
-
-											resultstringstream << header
-													<< '\n';
+                                            resultstringstream << (candidateId) << '\n';
 
 											if (forwardRead[j])
 												resultstringstream << s << '\n';
@@ -1453,7 +1558,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 														<< '\n';
 											}
 
-											if (inputfileformat
+											/*if (inputfileformat
 													== Fileformat::FASTQ) {
 												if (forwardRead[j])
 													resultstringstream << '+'
@@ -1461,7 +1566,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 															<< candidatequals[candidateIdIndex]
 															<< '\n';
 												else {
-													// candidatequals contains reverse complement scores. fetch fwd scores. 
+													// candidatequals contains reverse complement scores. fetch fwd scores.
 													auto qualptr =
 															readStorage.fetchQuality_ptr(
 																	candidateId);
@@ -1469,7 +1574,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 															<< '\n' << *qualptr
 															<< '\n';
 												}
-											}
+											}*/
 
 											nBufferedResults++;
 										}
@@ -1510,7 +1615,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					}
 				}
 
-				// for each candidate, compare its alignment to the alignment of the reverse complement. 
+				// for each candidate, compare its alignment to the alignment of the reverse complement.
 				// find the best of both, if any, and
 				// save the best alignment + additional data in these vectors
 				std::vector<AlignResult> insertedAlignments;
@@ -1557,7 +1662,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						insertedFreqs.push_back(frequencies[i][j]);
 						forwardRead.push_back(false);
 					} else {
-						bad++; //both alignments are bad	
+						bad++; //both alignments are bad
 					}
 					fc += frequencies[i][j];
 				}
@@ -1567,15 +1672,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 				//TODO don't correct if not enough good candidates
 
 				if (!correctQuery) {
-					std::string header = *readStorage.fetchHeader_ptr(
-							readnum + i);
+                    resultstringstream << (readnum + i) << '\n';
+                    resultstringstream << queryStrings[i] << '\n';
 
-					resultstringstream << (readnum + i) << ' ';
-
-					resultstringstream << header << '\n' << queryStrings[i]
-							<< '\n';
-
-					if (inputfileformat == Fileformat::FASTQ){
+					/*if (inputfileformat == Fileformat::FASTQ){
 						resultstringstream << '+' << '\n';
 						if(useQualityScores)
 								resultstringstream << *(queryQualities[i]) << '\n';
@@ -1583,8 +1683,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 							for(int k = 0; k < int(queryStrings[i].length()); k++)
 								resultstringstream << 'A';
 							resultstringstream << '\n';
-						}									
-					}
+						}
+					}*/
 
 					nBufferedResults++;
 				} else {
@@ -1637,15 +1737,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					graphbuildtime += foo1;
 					graphcorrectiontime += foo2;
 
-					std::string header = *readStorage.fetchHeader_ptr(
-							readnum + i);
+                    resultstringstream << (readnum + i) << '\n';
+                    resultstringstream << queryStrings[i] << '\n';
 
-					resultstringstream << (readnum + i) << ' ';
-
-					resultstringstream << header << '\n' << newcorrected
-							<< '\n';
-
-					if (inputfileformat == Fileformat::FASTQ){
+					/*if (inputfileformat == Fileformat::FASTQ){
 						resultstringstream << '+' << '\n';
 						if(useQualityScores)
 								resultstringstream << *(queryQualities[i]) << '\n';
@@ -1653,8 +1748,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 							for(int k = 0; k < int(queryStrings[i].length()); k++)
 								resultstringstream << 'A';
 							resultstringstream << '\n';
-						}									
-					}
+						}
+					}*/
 
 					nBufferedResults++;
 				}
@@ -1672,7 +1767,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 #endif
 
-#if 1		
+#if 1
 		// write result to output file if output buffer is full
 		if (nBufferedResults >= bufferedResultsThreshold) {
 #ifdef ERRORCORRECTION_TIMING
@@ -1704,7 +1799,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 	}
 
-#if 1	
+#if 1
 	// write remaining buffered results
 	if (nBufferedResults > 0) {
 
@@ -1725,7 +1820,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 #endif
 
 	}
-#endif	
+#endif
 
 	//final progress update
 	updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
@@ -1781,7 +1876,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			std::cout << "thread " << threadId << " : alignment postprocessing "
 					<< shddata.postprocessingtime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';					
+					<< getAlignmentsTimeTotal.count() << '\n';
 			std::cout << "thread " << threadId
 					<< " : correction find good alignments "
 					<< determinegoodalignmentsTime.count() << '\n';
@@ -1986,4 +2081,3 @@ void ErrorCorrector::setM(double m) {
 
 	m_coverage = m;
 }
-
