@@ -1,17 +1,26 @@
 #ifndef KSEQ_READER_HPP
 #define KSEQ_READER_HPP
 
-#include <zlib.h>
+#include <stdio.h>
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "read.hpp"
 #include "kseq/kseq.h"
 
-KSEQ_INIT(gzFile, gzread, gzseek);
+/*size_t fread_wrapper(FILE* fp, void* buffer, size_t count){
+    return fread(buffer, count, count, fp);
+}*/
+
+KSEQ_INIT(int, read);
 
 struct KseqReader : public ReadReader {
 private:
-	gzFile fp;
-	kseq_t *seq;
+	FILE* fp;
+	kseq_t* seq;
 	int seqnum;
 public:
 
