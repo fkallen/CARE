@@ -279,6 +279,11 @@ namespace hammingtools{
 				}
 			}
 
+            std::cout << "cons: ";
+            for(int i = 0; i < columnsToCheck; i++)
+                std::cout << buffers->h_consensus[i];
+            std::cout << std::endl;
+
 			tpb = std::chrono::system_clock::now();
 
 			majorityvotetime += tpb - tpa;

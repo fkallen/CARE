@@ -9,7 +9,7 @@ executable=./errorcorrector_gpu
 ithreads=4
 
 #number of threads to correct reads. in gpu version, when using N gpus each gpu will be used by cthreads / N threads
-cthreads=8
+cthreads=1
 
 #input file
 inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
