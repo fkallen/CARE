@@ -399,7 +399,7 @@ namespace hammingtools{
 					status |= (1 << 1);
 				if(min_coverage < m / 2.0 * estimatedCoverage)
 					status |= (1 << 2);
-		#if 1
+		#if 0
 				//correct anchor
 //TODO vary parameters
 				bool foundAColumn = false;
