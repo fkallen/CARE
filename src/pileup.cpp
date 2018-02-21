@@ -283,6 +283,10 @@ namespace hammingtools{
             for(int i = 0; i < columnsToCheck; i++)
                 std::cout << buffers->h_consensus[i];
             std::cout << std::endl;
+            std::cout << "sup: ";
+            for(int i = 0; i < columnsToCheck; i++)
+                std::cout << buffers->h_support[i];
+            std::cout << std::endl;
 
 			tpb = std::chrono::system_clock::now();
 
