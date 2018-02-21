@@ -1525,6 +1525,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                         resultstringstream << (readnum + i) << '\n';
                         resultstringstream << queryStrings[i] << '\n';
 
+                        std::cout << queryStrings[i] << std::endl;
+
 						/*if (inputfileformat == Fileformat::FASTQ){
 							resultstringstream << '+' << '\n';
 							if(useQualityScores)
