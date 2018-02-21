@@ -268,25 +268,35 @@ namespace hammingtools{
 				const double columnWeight = buffers->h_Aweights[i] + buffers->h_Cweights[i] + buffers->h_Gweights[i] + buffers->h_Tweights[i];
 				buffers->h_support[i] = consWeight / columnWeight;
 
-				//printf("i %i, %f %f %f %f\n",i, Aweights[i], Cweights[i], Gweights[i], Tweights[i]);
-
-				switch(cons){
-					case 'A': buffers->h_origCoverage[i] = buffers->h_As[i]; buffers->h_origWeights[i] = buffers->h_Aweights[i]; break;
-					case 'C': buffers->h_origCoverage[i] = buffers->h_Cs[i]; buffers->h_origWeights[i] = buffers->h_Cweights[i]; break;
-					case 'G': buffers->h_origCoverage[i] = buffers->h_Gs[i]; buffers->h_origWeights[i] = buffers->h_Gweights[i]; break;
-					case 'T': buffers->h_origCoverage[i] = buffers->h_Ts[i]; buffers->h_origWeights[i] = buffers->h_Tweights[i]; break;
-					default: std::cout << "this should not happen in pileup\n"; break;
-				}
 			}
 
-            std::cout << "cons: ";
+			    for(int i = 0; i < int(subject.length()); i++){
+				const int globalIndex = subjectColumnsBegin_incl + i;
+				switch(subject[i]){
+							case 'A':   buffers->h_origCoverage[globalIndex] = buffers->h_As[globalIndex];
+				                buffers->h_origWeights[globalIndex] = buffers->h_Aweights[globalIndex];
+				                break;
+							case 'C':   buffers->h_origCoverage[globalIndex] = buffers->h_Cs[globalIndex];
+				                buffers->h_origWeights[globalIndex] = buffers->h_Cweights[globalIndex];
+				                break;
+							case 'G':   buffers->h_origCoverage[globalIndex] = buffers->h_Gs[globalIndex];
+				                buffers->h_origWeights[globalIndex] = buffers->h_Gweights[globalIndex];
+				                break;
+							case 'T':   buffers->h_origCoverage[globalIndex] = buffers->h_Ts[globalIndex];
+				                buffers->h_origWeights[globalIndex] = buffers->h_Tweights[globalIndex];
+				                break;
+							default: std::cout << "this D should not happen in pileup\n"; break;
+						}
+			    }
+
+            /*std::cout << "cons: ";
             for(int i = 0; i < columnsToCheck; i++)
                 std::cout << buffers->h_consensus[i];
             std::cout << std::endl;
             std::cout << "sup: ";
             for(int i = 0; i < columnsToCheck; i++)
                 std::cout << buffers->h_support[i];
-            std::cout << std::endl;
+            std::cout << std::endl;*/
 
 			tpb = std::chrono::system_clock::now();
 
@@ -399,7 +409,7 @@ namespace hammingtools{
 					status |= (1 << 1);
 				if(min_coverage < m / 2.0 * estimatedCoverage)
 					status |= (1 << 2);
-		#if 0
+		#if 1
 				//correct anchor
 //TODO vary parameters
 				bool foundAColumn = false;

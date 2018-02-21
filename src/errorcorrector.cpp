@@ -1395,7 +1395,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						correctionCases[3]++;
 					}
 
-                    std::cout << counts[0] << " " << counts[1] << " " << counts[2] << std::endl;
+                    //std::cout << counts[0] << " " << counts[1] << " " << counts[2] << std::endl;
 
 					tpd = std::chrono::system_clock::now();
 
@@ -1404,7 +1404,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					if (!correctQuery) {
 						resultstringstream << (readnum + i) << '\n';
 						resultstringstream << queryStrings[i] << '\n';
-                        std::cout << "not cor: " << (readnum + i) << " " << queryStrings[i] << std::endl;
+                       // std::cout << "not cor: " << (readnum + i) << " " << queryStrings[i] << std::endl;
 
 						/*if (inputfileformat == Fileformat::FASTQ){
 							resultstringstream << '+' << '\n';
@@ -1528,7 +1528,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                         resultstringstream << (readnum + i) << '\n';
                         resultstringstream << queryStrings[i] << '\n';
 
-                        std::cout << "cor: " << (readnum + i) << " " << queryStrings[i] << std::endl;
+                       // std::cout << "cor: " << (readnum + i) << " " << queryStrings[i] << std::endl;
 
 						/*if (inputfileformat == Fileformat::FASTQ){
 							resultstringstream << '+' << '\n';
