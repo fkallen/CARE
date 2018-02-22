@@ -843,7 +843,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	int verygoodalignment = 0;
 
 	int correctionCases[4] { 0, 0, 0, 0 }; // <= 2e, <= 3e, <= 4e, no correction
-
+    int duplicates = 0;
 #if 0
 	{
 		std::lock_guard<std::mutex> lg(writelock);
@@ -889,8 +889,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	std::vector<std::vector<const std::string*>> candidateQualities(batchsize);
 	std::vector<std::vector<const std::string*>> revcomplcandidateQualities(
 			batchsize);
-	std::vector<std::map<const Sequence*, std::vector<int>, SequencePtrLess>> sequenceToIdsMaps(
-			batchsize);
+
 	std::vector<bool> activeBatches(batchsize);
 
 	const int maxReadsPerLock =
@@ -938,7 +937,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			queryQualities.resize(actualBatchSize);
 			candidateQualities.resize(actualBatchSize);
 			revcomplcandidateQualities.resize(actualBatchSize);
-			sequenceToIdsMaps.resize(actualBatchSize);
 			activeBatches.resize(actualBatchSize);
 		}
 
@@ -1153,6 +1151,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 					candidateReads[i].resize(n_unique_elements);
 					frequencies[i] = std::move(sortedFreqs);
+
+                    duplicates += nCandidates - n_unique_elements;
+                    //std::cout << nCandidates - n_unique_elements << " / " << nCandidates << std::endl;
 #endif
 
 #if 0
@@ -1890,6 +1891,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			std::cout << "thread " << threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
+            std::cout << "thread " << threadId
+                    << " : duplicates "
+                    << duplicates << '\n';
 			std::cout << "thread " << threadId << " : alignment resize buffer "
 					<< shddata.resizetime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment preprocessing "

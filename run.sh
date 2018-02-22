@@ -9,27 +9,27 @@ executable=./errorcorrector_gpu
 ithreads=4
 
 #number of threads to correct reads. in gpu version, when using N gpus each gpu will be used by cthreads / N threads
-cthreads=1
+cthreads=8
 
 #input file
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 #inputfile=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/readscorrected.fq
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
 
-coverage=21
-#coverage=255
+#coverage=21
+coverage=255
 #coverage=31
 
-errorrate=0.03
+errorrate=0.01
 m=0.6
 
 #output path. this is used as temporary storage, too
 outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/
 
 #output file
-outputfile="readscorrected_old.fq"
-#outputfile="elegans_e003_m06_h8_k16_hqAndnhq3.fq"
+#outputfile="readscorrected.fq"
+outputfile="ecolisrr11_m06_e001_h8_k16_hq_qscores.fq"
 
 #absolute output file path = outdir/outputfile
 #if --outfile is not used, absolute path will be outdir/inputfilenameWithoutEnding+_#k_#maps_1_alpha_#alpha_x_#x_corrected
