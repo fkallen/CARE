@@ -409,14 +409,14 @@ namespace hammingtools{
 					status |= (1 << 1);
 				if(min_coverage < m / 2.0 * estimatedCoverage)
 					status |= (1 << 2);
-		#if 0
+		#if 1
 				//correct anchor
 //TODO vary parameters
 				bool foundAColumn = false;
 				for(int i = 0; i < int(subject.length()); i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
 
-#if 1
+#if 0
 					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
 						subject[i] = buffers->h_consensus[globalIndex];
 						foundAColumn = true;

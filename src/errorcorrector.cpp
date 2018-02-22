@@ -1212,7 +1212,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 #ifdef ERRORCORRECTION_TIMING
 		tpa = std::chrono::system_clock::now();
 #endif
-
+#if 0
 		for (std::uint32_t i = 0; i < actualBatchSize; i++) {
 			candidateReadsAndRevcompls[i].resize(candidateReads[i].size() * 2);
 
@@ -1229,12 +1229,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			 auto d = std::distance(u, tmp.end());
 			 if(d > 0) std::cout << "killed " << d << " sequences before alignment\n";*/
 		}
-
+#endif
 #if 1
 
 		if (correctionmode == CorrectionMode::Hamming) {
-			auto alignments = hammingtools::getMultipleAlignments(shddata,
-					queries, candidateReadsAndRevcompls, activeBatches, true);
+			auto fwdalignments = hammingtools::getMultipleAlignments(shddata,
+					queries, candidateReads, activeBatches, true);
+            auto revcomplalignments = hammingtools::getMultipleAlignments(shddata,
+					queries, revComplcandidateReads, activeBatches, true);
 
 #ifdef ERRORCORRECTION_TIMING
 			tpb = std::chrono::system_clock::now();
@@ -1245,13 +1247,15 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
 				if (activeBatches[i]) {
-					if (alignments[i].size()
-							!= candidateReadsAndRevcompls[i].size()) {
+					if (fwdalignments[i].size()
+							!= candidateReads[i].size()) {
 						std::cout << readnum << '\n';
 						assert(
-								alignments[i].size()
-										== candidateReadsAndRevcompls[i].size());
+								fwdalignments[i].size()
+										== candidateReads[i].size());
 					}
+
+                    assert(fwdalignments[i].size() == revcomplalignments[i].size());
 
 					// for each candidate, compare its alignment to the alignment of the reverse complement.
 					// find the best of both, if any, and
@@ -1272,10 +1276,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 					tpc = std::chrono::system_clock::now();
 
-					for (size_t j = 0; j < alignments[i].size() / 2; j++) {
-						auto& res = alignments[i][j];
+					for (size_t j = 0; j < fwdalignments[i].size(); j++) {
+						auto& res = fwdalignments[i][j];
 						auto& revcomplres =
-								alignments[i][candidateReads[i].size() + j];
+								revcomplalignments[i][j];
 
 						int candidatelength = candidateReads[i][j]->getNbases();
 
