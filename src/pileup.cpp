@@ -340,7 +340,7 @@ namespace hammingtools{
 
 			//TODO vary parameters
 			bool isHQ = avg_support >= 1.0-errorrate
-				 && min_support >= 1.0-3.0*errorrate
+				 && min_support >= 1.0-1.0*errorrate
 				 && min_coverage >= m / 2.0 * estimatedCoverage;
 
 			if(isHQ){
@@ -409,7 +409,7 @@ namespace hammingtools{
 					status |= (1 << 1);
 				if(min_coverage < m / 2.0 * estimatedCoverage)
 					status |= (1 << 2);
-		#if 0
+		#if 1
 				//correct anchor
 //TODO vary parameters
 				bool foundAColumn = false;
