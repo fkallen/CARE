@@ -29,6 +29,8 @@
 		if(!useQualityScores){
 			qualityscores.clear();
 			reverseComplqualityscores.clear();
+			qualityscores.shrink_to_fit();
+			reverseComplqualityscores.shrink_to_fit();
 		}
 	}
 
@@ -84,6 +86,7 @@
 		}
 
 		sequences.clear();
+		sequences.shrink_to_fit();
 
 		std::vector<Sequence> tmp(sequencesflat);
 

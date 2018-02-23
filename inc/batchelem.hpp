@@ -66,8 +66,6 @@ struct BatchElem{
         activeCandidates.resize(num);
         fwdSequences.resize(num);
         revcomplSequences.resize(num);
-        fwdQualities.resize(num);
-        revcomplQualities.resize(num);
         fwdAlignments.resize(num);
         revcomplAlignments.resize(num);
         bestAlignments.resize(num);

@@ -1157,7 +1157,7 @@ cpu_pileup_all_in_one(const CorrectionBuffers* buffers, BatchElem& batchElem,
     for(size_t i = 0; i < batchElem.bestAlignments.size(); i++){
         if(batchElem.activeCandidates[i]){
             const auto& alignment = *batchElem.bestAlignments[i];
-            const auto qscores = get_qscores(i);
+            const auto& qscores = get_qscores(i);
             const std::string sequencestring = batchElem.bestSequences[i]->toString();
 
             const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
@@ -1195,7 +1195,7 @@ cpu_pileup_all_in_one(const CorrectionBuffers* buffers, BatchElem& batchElem,
     for(size_t i = 0; i < batchElem.bestAlignments.size(); i++){
         if(batchElem.activeCandidates[i]){
             const auto& alignment = *batchElem.bestAlignments[i];
-            const auto qscores = get_qscores(i);
+            const auto& qscores = get_qscores(i);
             const std::string sequencestring = batchElem.bestSequences[i]->toString();
 
             const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
@@ -1388,7 +1388,7 @@ static_assert(false, "invalid WEIGHTMODE");
             status |= (1 << 1);
         if(min_coverage < m / 2.0 * estimatedCoverage)
             status |= (1 << 2);
-#if 1
+#if 0
         //correct anchor
 //TODO vary parameters
 
@@ -1403,7 +1403,7 @@ static_assert(false, "invalid WEIGHTMODE");
                 batchElem.correctedSequence[i] = buffers->h_consensus[globalIndex];
                 foundAColumn = true;
             }else{
-//#else
+#else
             if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
                 double avgsupportkregion = 0;
                 int c = 0;

@@ -796,6 +796,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 	// buffer of correction results
 	std::stringstream resultstringstream;
+	
+	auto write_read = [&](const auto readId, const auto& sequence){
+		resultstringstream << readId << '\n';
+		resultstringstream << sequence << '\n';
+		nBufferedResults++;
+	};
 
 	// number of processed reads after previous progress update
 	// resets after each progress update
@@ -849,32 +855,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	MinhasherBuffers minhasherbuffers(deviceId);
 	MinhashResultsDedupBuffers minhashresultsdedupbuffers(deviceId);
 
-	// the query sequences fetched from ReadStorage
-	std::vector<const Sequence*> queries(batchsize);
-	std::vector < std::string > queryStrings(batchsize);
-	// the readnums of candidates for each query
-	//std::vector<std::vector<std::pair<std::uint64_t, int>>> candidateIds(batchsize);
-	std::vector < std::vector < std::uint64_t >> candidateIds(batchsize);
-
-	// the candidate sequences from candidateReadsWithFrequency
-	std::vector<std::vector<const Sequence*>> candidateReads(batchsize);
-	std::vector<std::vector<const Sequence*>> revComplcandidateReads(batchsize);
-	std::vector<std::vector<int>> frequencies(batchsize);
-	std::vector < std::vector < AlignResult >> alignmentResults(batchsize);
-	std::vector<std::vector<const Sequence*>> candidateReadsAndRevcompls(
-			batchsize);
-	std::vector<const std::string*> queryQualities(batchsize);
-	std::vector<std::vector<const std::string*>> candidateQualities(batchsize);
-	std::vector<std::vector<const std::string*>> revcomplcandidateQualities(
-			batchsize);
-
-    std::vector<std::vector<bool>> activeCandidates(
-        			batchsize);
-
-	std::vector<bool> activeBatches(batchsize);
-    std::vector<std::vector<BestAlignment_t>> bestAlignment(batchsize);
-
-
     std::vector<BatchElem> batch(batchsize);
 
 	const int maxReadsPerLock =
@@ -911,20 +891,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 		//fit vector size to actual batch size
 		if (actualBatchSize < batchsize) {
-			queries.resize(actualBatchSize);
-			queryStrings.resize(actualBatchSize);
-			candidateIds.resize(actualBatchSize);
-			candidateReads.resize(actualBatchSize);
-			revComplcandidateReads.resize(actualBatchSize);
-			frequencies.resize(actualBatchSize);
-			alignmentResults.resize(actualBatchSize);
-			candidateReadsAndRevcompls.resize(actualBatchSize);
-			queryQualities.resize(actualBatchSize);
-			candidateQualities.resize(actualBatchSize);
-			revcomplcandidateQualities.resize(actualBatchSize);
-			activeBatches.resize(actualBatchSize);
-            activeCandidates.resize(actualBatchSize);
-            bestAlignment.resize(actualBatchSize);
             batch.resize(actualBatchSize);
 		}
 
@@ -956,11 +922,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
 				if (readIsProcessedVector[readnum + i] == 0) {
 					readIsProcessedVector[readnum + i] = 1;
-					activeBatches[i] = true;
                     batch[i].active = true;
 					nProcessedQueries++;
 				} else {
-					activeBatches[i] = false;
                     batch[i].active = false;
 				}
                 batch[i].readId = readnum + i;
@@ -968,7 +932,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			}
 		} else {
 			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-				activeBatches[i] = true;
                 batch[i].active = true;
                 batch[i].readId = readnum + i;
                 batch[i].corrected = false;
@@ -995,8 +958,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
                 b.set_number_of_sequences(b.candidateIds.size());
                 b.set_number_of_unique_sequences(b.candidateIds.size());
-
-                if(b.candidateIds.size() > 0){
+				
+				if(b.candidateIds.size() == 0){
+					//no need for further processing
+					b.active = false;
+					write_read(b.readId, b.fwdSequenceString);
+				}else{
                     std::vector<std::pair<std::uint64_t, const Sequence*>> numseqpairs;
                     numseqpairs.reserve(b.candidateIds.size());
 
@@ -1160,16 +1127,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					} else { //no correction. write original sequence to output
                         correctionCases[3]++;
                         b.active = false;
-                        resultstringstream << b.readId << '\n';
-						resultstringstream << b.fwdSequenceString << '\n';
-                        nBufferedResults++;
+						write_read(b.readId, b.fwdSequenceString);
 					}
 
-                    //remove candidates which don't fit into mismatchratioThreshold
-                    for(size_t i = 0; i < b.fwdSequences.size(); i++){
-                        const double mismatchratio = double(b.bestAlignments[i]->nOps) / double(b.bestAlignments[i]->overlap);
-                        b.activeCandidates[i] = b.activeCandidates[i] && (mismatchratio < mismatchratioThreshold);
-                    }
+					if(b.active){
+						//remove candidates which don't fit into mismatchratioThreshold
+						for(size_t i = 0; i < b.activeCandidates.size(); i++){
+							if(b.activeCandidates[i]){
+								const double mismatchratio = double(b.bestAlignments[i]->nOps) / double(b.bestAlignments[i]->overlap);
+								b.activeCandidates[i] = b.activeCandidates[i] && (mismatchratio < mismatchratioThreshold);
+							}
+						}
+					}
                 }
             }
 
@@ -1207,14 +1176,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     verygoodalignment += (status == 0);
 
                     if(b.corrected){
-                        resultstringstream << b.readId << '\n';
-                        resultstringstream << b.correctedSequence << '\n';
+						write_read(b.readId, b.correctedSequence);
                     }else{
-                        resultstringstream << b.readId << '\n';
-                        resultstringstream << b.fwdSequenceString << '\n';
+						write_read(b.readId, b.fwdSequenceString);
                     }
-
-                    nBufferedResults++;
 
                     if (CORRECT_CANDIDATE_READS_TOO) {
                         for(const auto& correctedCandidate : b.correctedCandidates){
@@ -1239,18 +1204,13 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                                     }
                                 }
                                 if (savingIsOk) {
-                                    resultstringstream << (candidateId) << '\n';
-
                                     if (b.bestIsForward[correctedCandidate.index])
-                                        resultstringstream << correctedCandidate.sequence << '\n';
-                                    else { //correctedCandidate.sequence is reverse complement, make reverse complement again
-                                        const std::string fwd =
-                                                SequenceGeneral(correctedCandidate.sequence,
-                                                        false).reverseComplement().toString();
-                                        resultstringstream << fwd
-                                                << '\n';
+										write_read(candidateId, correctedCandidate.sequence);
+                                    else { 
+										//correctedCandidate.sequence is reverse complement, make reverse complement again
+                                        const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
+                                        write_read(candidateId, fwd);
                                     }
-                                    nBufferedResults++;
                                 }
                             }
                         }
