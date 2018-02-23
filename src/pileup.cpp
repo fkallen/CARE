@@ -3,6 +3,7 @@
 #include "../inc/hammingtools.hpp"
 #include "../inc/ganja/hpc_helpers.cuh"
 #include "../inc/cudareduce.cuh"
+#include "../inc/batchelem.hpp"
 
 #include <vector>
 #include <string>
@@ -1067,6 +1068,382 @@ namespace hammingtools{
 		}
 
 #endif
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
+cpu_pileup_all_in_one(const CorrectionBuffers* buffers, BatchElem& batchElem,
+                const int startindex, const int endindex,
+                const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
+                double maxErrorRate,
+                bool useQScores,
+                const bool correctQueries,
+                int estimatedCoverage,
+                double errorrate,
+                double m,
+                int k){
+
+    std::chrono::duration<double> majorityvotetime(0);
+    std::chrono::duration<double> basecorrectiontime(0);
+    std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
+    tpa = std::chrono::system_clock::now();
+
+    int status = 0;
+
+    //add subject weights
+    for(int i = 0; i < int(subject.length()); i++){
+        const int globalIndex = subjectColumnsBegin_incl + i;
+        double qw = 1.0;
+        if(useQScores)
+            qw *= qscore_to_weight[(unsigned char)subjectqualityScores[i]];
+        switch(subject[i]){
+            case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += 1; break;
+            case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += 1; break;
+            case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += 1; break;
+            case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += 1; break;
+            default: std::cout << "this should not happen in pileup\n"; break;
+        }
+        buffers->h_coverage[globalIndex]++;
+    }
+
+    //add candidate weights
+
+#define WEIGHTMODE 3
+
+#if WEIGHTMODE == 2
+
+    for(int i = 0; i < nQueries; i++){
+        const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
+        const int prefix = frequenciesPrefixSum[i];
+        const int freq = frequenciesPrefixSum[i+1] - prefix;
+        const int len = queries[i].length();
+
+        for(int j = 0; j < len; j++){
+            const int globalIndex = subjectColumnsBegin_incl + alignments[i].shift + j;
+            double qw = 0.0;
+            for(int f = 0; f < freq; f++){
+                const int qualityindex = prefix + f;
+                if(useQScores)
+                    qw += qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
+                else
+                    qw += 1.0;
+            }
+            qw *= defaultweight;
+
+            switch(queries[i][j]){
+                case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
+                case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
+                case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
+                case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
+                default: std::cout << "this should not happen in pileup\n"; break;
+            }
+            buffers->h_coverage[globalIndex] += freq;
+        }
+    }
+#elif WEIGHTMODE == 3
+
+    for(int i = 0; i < nQueries; i++){
+        const double defaultweight = 1.0 - std::sqrt(alignments[i].nOps / (alignments[i].overlap * maxErrorRate));
+        const int prefix = frequenciesPrefixSum[i];
+        const int freq = frequenciesPrefixSum[i+1] - prefix;
+        const int len = queries[i].length();
+        const int defaultcolumnoffset = subjectColumnsBegin_incl + alignments[i].shift;
+        //use h_support as temporary storage to store sum of quality weights
+        for(int f = 0; f < freq; f++){
+            const int qualityindex = prefix + f;
+            if(useQScores){
+                for(int j = 0; j < len; j++){
+                    buffers->h_support[j] += qscore_to_weight[(unsigned char)(*queryqualityScores[qualityindex])[j]];
+                }
+            }else{
+                for(int j = 0; j < len; j++){
+                    buffers->h_support[j] += 1.0;
+                }
+            }
+        }
+
+        for(int j = 0; j < len; j++){
+            const double qw = buffers->h_support[j] * defaultweight;
+            const char base = queries[i][j];
+            const int globalIndex = defaultcolumnoffset + j;
+            switch(base){
+                case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
+                case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
+                case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
+                case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
+                default: std::cout << "this should not happen in pileup\n"; break;
+            }
+            buffers->h_coverage[globalIndex] += freq;
+            buffers->h_support[j] = 0;
+        }
+    }
+#elif
+static_assert(false, "invalid WEIGHTMODE");
+#endif
+
+
+    //find consensus and support in each column
+    for(int i = 0; i < columnsToCheck; i++){
+        char cons = 'A';
+        double consWeight = buffers->h_Aweights[i];
+        if(buffers->h_Cweights[i] > consWeight){
+            cons = 'C';
+            consWeight = buffers->h_Cweights[i];
+        }
+        if(buffers->h_Gweights[i] > consWeight){
+            cons = 'G';
+            consWeight = buffers->h_Gweights[i];
+        }
+        if(buffers->h_Tweights[i] > consWeight){
+            cons = 'T';
+            consWeight = buffers->h_Tweights[i];
+        }
+        buffers->h_consensus[i] = cons;
+
+        const double columnWeight = buffers->h_Aweights[i] + buffers->h_Cweights[i] + buffers->h_Gweights[i] + buffers->h_Tweights[i];
+        buffers->h_support[i] = consWeight / columnWeight;
+
+    }
+
+        for(int i = 0; i < int(subject.length()); i++){
+        const int globalIndex = subjectColumnsBegin_incl + i;
+        switch(subject[i]){
+                    case 'A':   buffers->h_origCoverage[globalIndex] = buffers->h_As[globalIndex];
+                        buffers->h_origWeights[globalIndex] = buffers->h_Aweights[globalIndex];
+                        break;
+                    case 'C':   buffers->h_origCoverage[globalIndex] = buffers->h_Cs[globalIndex];
+                        buffers->h_origWeights[globalIndex] = buffers->h_Cweights[globalIndex];
+                        break;
+                    case 'G':   buffers->h_origCoverage[globalIndex] = buffers->h_Gs[globalIndex];
+                        buffers->h_origWeights[globalIndex] = buffers->h_Gweights[globalIndex];
+                        break;
+                    case 'T':   buffers->h_origCoverage[globalIndex] = buffers->h_Ts[globalIndex];
+                        buffers->h_origWeights[globalIndex] = buffers->h_Tweights[globalIndex];
+                        break;
+                    default: std::cout << "this D should not happen in pileup\n"; break;
+                }
+        }
+
+    /*std::cout << "cons: ";
+    for(int i = 0; i < columnsToCheck; i++)
+        std::cout << buffers->h_consensus[i];
+    std::cout << std::endl;
+    std::cout << "sup: ";
+    for(int i = 0; i < columnsToCheck; i++)
+        std::cout << buffers->h_support[i];
+    std::cout << std::endl;*/
+
+    tpb = std::chrono::system_clock::now();
+
+    majorityvotetime += tpb - tpa;
+
+    tpa = std::chrono::system_clock::now();
+
+    double avg_support = 0;
+    double min_support = 1.0;
+    int max_coverage = 0;
+    int min_coverage = std::numeric_limits<int>::max();
+    //get stats for subject columns
+    for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
+        assert(i < columnsToCheck);
+
+        avg_support += buffers->h_support[i];
+        min_support = buffers->h_support[i] < min_support? buffers->h_support[i] : min_support;
+        max_coverage = buffers->h_coverage[i] > max_coverage ? buffers->h_coverage[i] : max_coverage;
+        min_coverage = buffers->h_coverage[i] < min_coverage ? buffers->h_coverage[i] : min_coverage;
+        //printf("i %d sup %f cov %d\n", i, support[i], coverage[i]);
+    }
+    avg_support /= subject.length();
+
+    /*for(int i = 0; i < columnsToCheck; i++){
+        printf("%2c ", consensus[i]);
+    }
+    printf("\n");
+    for(int i = 0; i < columnsToCheck; i++){
+        printf("%2d ", coverage[i]);
+    }
+    printf("\n");
+    printf("%f %f %d %d\n", avg_support, min_support, max_coverage, min_coverage);*/
+
+
+#if 0
+    std::cout << "avgsup " << avg_support << " >= " << (1-errorrate) << '\n';
+    std::cout << "minsup " << min_support << " >= " << (1-2*errorrate) << '\n';
+    std::cout << "mincov " << min_coverage << " >= " << (m) << '\n';
+    std::cout << "maxcov " << max_coverage << " <= " << (3*m) << '\n';
+#endif
+
+    //TODO vary parameters
+    bool isHQ = avg_support >= 1.0-errorrate
+         && min_support >= 1.0-3.0*errorrate
+         && min_coverage >= m / 2.0 * estimatedCoverage;
+
+    if(isHQ){
+#if 1
+        //correct anchor
+        for(int i = 0; i < int(subject.length()); i++){
+            const int globalIndex = subjectColumnsBegin_incl + i;
+            subject[i] = buffers->h_consensus[globalIndex];
+        }
+#endif
+#if 0
+        //correct candidates
+        if(correctQueries){
+
+            for(int i = 0; i < nQueries; i++){
+                int queryColumnsBegin_incl = alignments[i].shift - startindex;
+                bool queryWasCorrected = false;
+                //correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
+                if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols
+                    && subjectColumnsEnd_excl + candidate_correction_new_cols >= queryColumnsBegin_incl + int(queries[i].length())){
+
+                    double newColMinSupport = 1.0;
+                    int newColMinCov = std::numeric_limits<int>::max();
+                    //check new columns left of subject
+                    for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols;
+                        columnindex < subjectColumnsBegin_incl;
+                        columnindex++){
+
+                        assert(columnindex < columnsToCheck);
+                        if(queryColumnsBegin_incl <= columnindex){
+                            newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
+                            newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
+                        }
+                    }
+                    //check new columns right of subject
+                    for(int columnindex = subjectColumnsEnd_excl;
+                        columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols
+                        && columnindex < columnsToCheck;
+                        columnindex++){
+
+                        newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
+                        newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
+                    }
+
+                    if(newColMinSupport >= 1-3*errorrate
+                        && newColMinCov >= m / 2.0 * estimatedCoverage){
+                        //assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
+
+                        for(int j = 0; j < int(queries[i].length()); j++){
+                            int columnindex = queryColumnsBegin_incl + j;
+                            queries[i][j] = buffers->h_consensus[columnindex];
+                            queryWasCorrected = true;
+                        }
+                    }
+                }
+                if(queryWasCorrected){
+                    correctedQueries[i] = true;
+                }
+            }
+        }
+#endif
+    }else{
+        if(avg_support < 1.0-errorrate)
+            status |= (1 << 0);
+        if(min_support < 1.0-3.0*errorrate)
+            status |= (1 << 1);
+        if(min_coverage < m / 2.0 * estimatedCoverage)
+            status |= (1 << 2);
+#if 1
+        //correct anchor
+//TODO vary parameters
+        bool foundAColumn = false;
+        for(int i = 0; i < int(subject.length()); i++){
+            const int globalIndex = subjectColumnsBegin_incl + i;
+
+#if 0
+            if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
+                subject[i] = buffers->h_consensus[globalIndex];
+                foundAColumn = true;
+            }else{
+                if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
+                    double avgsupportkregion = 0;
+                    int c = 0;
+                    bool kregioncoverageisgood = true;
+                    for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
+                        if(j != i && j >= 0 && j < int(subject.length())){
+                            avgsupportkregion += buffers->h_support[subjectColumnsBegin_incl + j];
+                            kregioncoverageisgood &= (buffers->h_coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
+                            c++;
+                        }
+                    }
+                    if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
+                        subject[i] = buffers->h_consensus[globalIndex];
+                        foundAColumn = true;
+                    }
+                }
+            }
+#else
+
+
+#if 1
+            if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
+                subject[i] = buffers->h_consensus[globalIndex];
+                foundAColumn = true;
+            }
+#else
+            if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
+                double avgsupportkregion = 0;
+                int c = 0;
+                bool kregioncoverageisgood = true;
+                for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
+                    if(j != i && j >= 0 && j < int(subject.length())){
+                        avgsupportkregion += buffers->h_support[subjectColumnsBegin_incl + j];
+                        kregioncoverageisgood &= (buffers->h_coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
+                        c++;
+                    }
+                }
+                if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
+                    subject[i] = buffers->h_consensus[globalIndex];
+                    foundAColumn = true;
+                }
+            }
+#endif
+
+#endif
+        }
+
+        if(!foundAColumn)
+            status |= (1 << 3);
+#endif
+    }
+
+    tpb = std::chrono::system_clock::now();
+
+    basecorrectiontime += tpb - tpa;
+
+    return std::tie(status, majorityvotetime, basecorrectiontime);
+}
 
 
 

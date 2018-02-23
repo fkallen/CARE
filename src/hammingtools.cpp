@@ -5,6 +5,8 @@
 #include "../inc/shd.hpp"
 #include "../inc/pileup.hpp"
 
+#include "../inc/batchelem.hpp"
+
 #include <stdexcept>
 #include <cstdio>
 
@@ -18,7 +20,7 @@ namespace hammingtools{
 
 
 
-	SHDdata::SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength) 
+	SHDdata::SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength)
 		: deviceId(deviceId_), max_sequence_length(maxseqlength), max_sequence_bytes(SDIV(maxseqlength,4)){
 	#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
@@ -60,13 +62,13 @@ namespace hammingtools{
 
 			cudaFreeHost(h_queriesPerSubject); CUERR;
 			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * n_sub); CUERR;
-			
+
 			cudaFree(d_subjectlengths); CUERR;
-			cudaMalloc(&d_subjectlengths, sizeof(int) * n_sub); CUERR;	
-			
+			cudaMalloc(&d_subjectlengths, sizeof(int) * n_sub); CUERR;
+
 			cudaFreeHost(h_subjectlengths); CUERR;
 			cudaMallocHost(&h_subjectlengths, sizeof(int) * n_sub); CUERR;
-			
+
 			max_n_subjects = n_sub;
 
 			resizeResult = true;
@@ -81,10 +83,10 @@ namespace hammingtools{
 
 			cudaFreeHost(h_queriesdata); CUERR;
 			cudaMallocHost(&h_queriesdata, sequencepitch * n_quer); CUERR;
-			
+
 			cudaFree(d_querylengths); CUERR;
 			cudaMalloc(&d_querylengths, sizeof(int) * n_quer); CUERR;
-			
+
 			cudaFreeHost(h_querylengths); CUERR;
 			cudaMallocHost(&h_querylengths, sizeof(int) * n_quer); CUERR;
 
@@ -99,11 +101,11 @@ namespace hammingtools{
 
 			cudaFreeHost(h_results); CUERR;
 			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
-			
+
 			cudaFree(d_lengths); CUERR;
-			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
+			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
 			cudaFreeHost(h_lengths); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;				
+			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
 		}
 	#endif
 		n_subjects = n_sub;
@@ -128,7 +130,7 @@ namespace hammingtools{
 		cudaFreeHost(data.h_queriesPerSubject); CUERR;
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
-		
+
 		for(int i = 0; i < 8; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;
 	#endif
@@ -155,13 +157,13 @@ namespace hammingtools{
 		printf("max_n_subjects %d\n", mybuffers.max_n_subjects);
 		printf("max_n_queries %d\n", mybuffers.max_n_queries);
 	}
-	
+
 	void init_once(){
         hammingtools::correction::init_once();
     }
 
-	std::vector<std::vector<AlignResultCompact>> 
-	getMultipleAlignments(SHDdata& mybuffers, 
+	std::vector<std::vector<AlignResultCompact>>
+	getMultipleAlignments(SHDdata& mybuffers,
 					const std::vector<const Sequence*>& subjects,
 					const std::vector<std::vector<const Sequence*>>& queries,
 					std::vector<bool> activeBatches, bool useGpu){
@@ -193,7 +195,7 @@ namespace hammingtools{
 	#ifdef __NVCC__
 
 		if(useGpu){ // use gpu for alignment
-			
+
 #if 0
 
 			tpa = std::chrono::system_clock::now();
@@ -203,7 +205,7 @@ namespace hammingtools{
 			mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
 
 			tpb = std::chrono::system_clock::now();
-			
+
 			mybuffers.resizetime += tpb - tpa;
 
 			tpa = std::chrono::system_clock::now();
@@ -216,18 +218,18 @@ namespace hammingtools{
 					assert(subjects[i]->getNumBytes() <= mybuffers.max_sequence_bytes);
 
 					std::memcpy(mybuffers.h_subjectsdata + i * mybuffers.sequencepitch,
-						    subjects[i]->begin(), 
+						    subjects[i]->begin(),
 						    subjects[i]->getNumBytes());
 
 					mybuffers.h_queriesPerSubject[subjectindex] = queries[i].size();
-					mybuffers.h_subjectlengths[subjectindex] = subjects[i]->getNbases();		
+					mybuffers.h_subjectlengths[subjectindex] = subjects[i]->getNbases();
 
 					for(size_t j = 0; j < queries[i].size(); j++){
 						assert(queries[i][j]->getNbases() <= mybuffers.max_sequence_length);
 						assert(queries[i][j]->getNumBytes() <= mybuffers.max_sequence_bytes);
 
 						std::memcpy(mybuffers.h_queriesdata + queryindex * mybuffers.sequencepitch,
-							    queries[i][j]->begin(), 
+							    queries[i][j]->begin(),
 							    queries[i][j]->getNumBytes());
 
 						mybuffers.h_querylengths[queryindex] = queries[i][j]->getNbases();
@@ -237,10 +239,10 @@ namespace hammingtools{
 
 					subjectindex++;
 				}
-			}	
+			}
 
 			tpb = std::chrono::system_clock::now();
-		
+
 			mybuffers.preprocessingtime += tpb - tpa;
 
 			assert(subjectindex == numberOfRealSubjects);
@@ -249,37 +251,37 @@ namespace hammingtools{
 			tpa = std::chrono::system_clock::now();
 
 			// copy data to gpu
-			cudaMemcpyAsync(mybuffers.d_subjectsdata, 
-					mybuffers.h_subjectsdata, 
-					mybuffers.sequencepitch * mybuffers.n_subjects, 
-					H2D, 
+			cudaMemcpyAsync(mybuffers.d_subjectsdata,
+					mybuffers.h_subjectsdata,
+					mybuffers.sequencepitch * mybuffers.n_subjects,
+					H2D,
 					mybuffers.streams[0]); CUERR;
 			cudaMemcpyAsync(mybuffers.d_queriesdata,
-					mybuffers.h_queriesdata, 
-					mybuffers.sequencepitch * mybuffers.n_queries, 
-					H2D, 
+					mybuffers.h_queriesdata,
+					mybuffers.sequencepitch * mybuffers.n_queries,
+					H2D,
 					mybuffers.streams[0]); CUERR;
 			cudaMemcpyAsync(mybuffers.d_queriesPerSubject,
-					mybuffers.h_queriesPerSubject, 
-					sizeof(int) * mybuffers.n_subjects, 
-					H2D, 
+					mybuffers.h_queriesPerSubject,
+					sizeof(int) * mybuffers.n_subjects,
+					H2D,
 					mybuffers.streams[0]); CUERR;
 			cudaMemcpyAsync(mybuffers.d_subjectlengths,
-					mybuffers.h_subjectlengths, 
-					sizeof(int) * (numberOfRealSubjects), 
-					H2D, 
+					mybuffers.h_subjectlengths,
+					sizeof(int) * (numberOfRealSubjects),
+					H2D,
 					mybuffers.streams[0]); CUERR;
-					
+
 			cudaMemcpyAsync(mybuffers.d_querylengths,
-					mybuffers.h_querylengths, 
-					sizeof(int) * (totalNumberOfAlignments), 
-					H2D, 
-					mybuffers.streams[0]); CUERR;					
+					mybuffers.h_querylengths,
+					sizeof(int) * (totalNumberOfAlignments),
+					H2D,
+					mybuffers.streams[0]); CUERR;
 
 			cudaStreamSynchronize(mybuffers.streams[0]);
 
 			tpb = std::chrono::system_clock::now();
-		
+
 			mybuffers.h2dtime += tpb - tpa;
 
 			tpa = std::chrono::system_clock::now();
@@ -288,28 +290,28 @@ namespace hammingtools{
 			for(int batchid = 0; batchid < numberOfRealSubjects; batchid++)
 				alignment::call_shd_kernel_async(mybuffers, batchid);
 			//alignment::call_shd_kernel(mybuffers, 0);
-			
+
 			for(int batchid = 0; batchid < numberOfRealSubjects; batchid++){
 					cudaStreamSynchronize(mybuffers.streams[batchid]);
 			}
 
 			tpb = std::chrono::system_clock::now();
-		
+
 			mybuffers.alignmenttime += tpb - tpa;
 
 			tpa = std::chrono::system_clock::now();
 
 			//copy results to host
-			cudaMemcpyAsync(mybuffers.h_results, 
-				mybuffers.d_results, 
-				sizeof(AlignResultCompact) * totalNumberOfAlignments, 
-				D2H, 
+			cudaMemcpyAsync(mybuffers.h_results,
+				mybuffers.d_results,
+				sizeof(AlignResultCompact) * totalNumberOfAlignments,
+				D2H,
 				mybuffers.streams[0]); CUERR;
 
 			cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
 
 			tpb = std::chrono::system_clock::now();
-		
+
 			mybuffers.d2htime += tpb - tpa;
 
 			tpa = std::chrono::system_clock::now();
@@ -330,17 +332,17 @@ namespace hammingtools{
 
 				for(int j = 0; j < nqueriesForThisSubject; j++){
 					alignments[outputindex][j] = mybuffers.h_results[candidateIndex];
-					candidateIndex++; 
-				}			
+					candidateIndex++;
+				}
 			}
 
 			tpb = std::chrono::system_clock::now();
-		
+
 			mybuffers.postprocessingtime += tpb - tpa;
-			
+
 #else
-			
-			
+
+
 
 			tpa = std::chrono::system_clock::now();
 
@@ -349,7 +351,7 @@ namespace hammingtools{
 			mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
 
 			tpb = std::chrono::system_clock::now();
-			
+
 			mybuffers.resizetime += tpb - tpa;
 
 			int querysum = 0;
@@ -360,7 +362,7 @@ namespace hammingtools{
 				if(activeBatches[i]){
 					tpa = std::chrono::system_clock::now();
 					batchid = subjectindex;
-					
+
 					params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
 					params[batchid].sequencepitch = mybuffers.sequencepitch;
 					params[batchid].subjectlength = subjects[i]->getNbases();
@@ -369,14 +371,14 @@ namespace hammingtools{
 					params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
 					params[batchid].queriesdata = mybuffers.d_queriesdata + mybuffers.sequencepitch * querysum;
 					params[batchid].results = mybuffers.d_results + querysum;
-					
+
 					int* querylengths = mybuffers.h_querylengths + querysum;
 					char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
 					char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
-					
+
 					assert(subjects[i]->getNbases() <= mybuffers.max_sequence_length);
 					assert(subjects[i]->getNumBytes() <= mybuffers.max_sequence_bytes);
-					
+
 					std::memcpy(subjectdata, subjects[i]->begin(), subjects[i]->getNumBytes());
 
 					for(size_t j = 0; j < queries[i].size(); j++){
@@ -384,40 +386,40 @@ namespace hammingtools{
 						assert(queries[i][j]->getNumBytes() <= mybuffers.max_sequence_bytes);
 
 						std::memcpy(queriesdata + j * mybuffers.sequencepitch,
-							    queries[i][j]->begin(), 
+							    queries[i][j]->begin(),
 							    queries[i][j]->getNumBytes());
 
 						querylengths[j] = queries[i][j]->getNbases();
 					}
-					
+
 					tpb = std::chrono::system_clock::now();
-		
+
 					mybuffers.preprocessingtime += tpb - tpa;
 
 					// copy data to gpu
-					cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata), 
-							subjectdata, 
-							mybuffers.sequencepitch, 
-							H2D, 
+					cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata),
+							subjectdata,
+							mybuffers.sequencepitch,
+							H2D,
 							mybuffers.streams[batchid]); CUERR;
 					cudaMemcpyAsync(const_cast<char*>(params[batchid].queriesdata),
-							queriesdata, 
-							mybuffers.sequencepitch * params[batchid].n_queries, 
-							H2D, 
-							mybuffers.streams[batchid]); CUERR;					
-					cudaMemcpyAsync(const_cast<int*>(params[batchid].querylengths),
-							querylengths, 
-							sizeof(int) * params[batchid].n_queries, 
-							H2D, 
+							queriesdata,
+							mybuffers.sequencepitch * params[batchid].n_queries,
+							H2D,
 							mybuffers.streams[batchid]); CUERR;
-							
+					cudaMemcpyAsync(const_cast<int*>(params[batchid].querylengths),
+							querylengths,
+							sizeof(int) * params[batchid].n_queries,
+							H2D,
+							mybuffers.streams[batchid]); CUERR;
+
 					alignment::call_shd_kernel_async(params[batchid], mybuffers.streams[batchid]);
-								
+
 					querysum += queries[i].size();
 					subjectindex++;
 				}
 			}
-			
+
 			subjectindex = 0;
 			querysum = 0;
 			for(size_t i = 0; i < subjects.size(); i++){
@@ -426,33 +428,33 @@ namespace hammingtools{
 					//copy results to host
 					AlignResultCompact* results = mybuffers.h_results + querysum;
 					const int n_queries = params[batchid].n_queries;
-					
-					cudaMemcpyAsync(results, 
-						params[batchid].results, 
-						sizeof(AlignResultCompact) * n_queries, 
-						D2H, 
+
+					cudaMemcpyAsync(results,
+						params[batchid].results,
+						sizeof(AlignResultCompact) * n_queries,
+						D2H,
 						mybuffers.streams[batchid]); CUERR;
-						
+
 					cudaStreamSynchronize(mybuffers.streams[batchid]);
-					
+
 					tpa = std::chrono::system_clock::now();
 
 					alignments[i].resize(n_queries);
 
 					for(int j = 0; j < n_queries; j++){
 						alignments[i][j] = results[j];
-					}							
-	
+					}
+
 					querysum += n_queries;
 					subjectindex++;
-					
+
 					tpb = std::chrono::system_clock::now();
-					
-					mybuffers.postprocessingtime += tpb - tpa;				
+
+					mybuffers.postprocessingtime += tpb - tpa;
 				}
-			}			
-			
-#endif			
+			}
+
+#endif
 
 		}else{ // use cpu for alignment
 
@@ -478,7 +480,7 @@ namespace hammingtools{
 			}
 
 			tpb = std::chrono::system_clock::now();
-		
+
 			mybuffers.alignmenttime += tpb - tpa;
 	#ifdef __NVCC__
 		}
@@ -689,7 +691,7 @@ namespace hammingtools{
 #else
 			delete [] h_lengths;
 			h_lengths = new int[newmaxseqs];
-			
+
 
 
 #endif
@@ -807,10 +809,10 @@ namespace hammingtools{
 
 	std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
 	performCorrection(CorrectionBuffers& buffers, std::string& subject,
-				int nQueries, 
+				int nQueries,
 				std::vector<std::string>& queries,
 				const std::vector<AlignResultCompact>& alignments,
-				const std::string& subjectqualityScores, 
+				const std::string& subjectqualityScores,
 				const std::vector<const std::string*>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
 				double maxErrorRate,
@@ -853,7 +855,7 @@ namespace hammingtools{
 
 			tpa = std::chrono::system_clock::now();
 
-			
+
 
 			buffers.resize(columnsToCheck, frequenciesPrefixSum.back()+1, frequenciesPrefixSum.back()+1);
 
@@ -863,7 +865,7 @@ namespace hammingtools{
 
 			buffers.h_lengths[0] = subject.length();
 			for(int i = 0; i < nQueries; i++){
-				buffers.h_lengths[i+1] = queries[i].length();		
+				buffers.h_lengths[i+1] = queries[i].length();
 			}
 
 			std::memcpy(buffers.h_alignments, alignments.data(), sizeof(AlignResultCompact) * nQueries);
@@ -871,7 +873,7 @@ namespace hammingtools{
 
 			correction::cpu_pileup_create(&buffers, subject,
 						queries,
-						subjectqualityScores, 
+						subjectqualityScores,
 						queryqualityScores,
 						alignments,
 						frequenciesPrefixSum,
@@ -890,17 +892,17 @@ namespace hammingtools{
 			tpc = std::chrono::system_clock::now();
 
 			// copy buffers to gpu
-			cudaMemcpyAsync(buffers.d_lengths, 
-					buffers.h_lengths, 
-					sizeof(int) * (nQueries+1), 
+			cudaMemcpyAsync(buffers.d_lengths,
+					buffers.h_lengths,
+					sizeof(int) * (nQueries+1),
 					H2D, buffers.stream); CUERR;
-			cudaMemcpyAsync(buffers.d_alignments, 
-					buffers.h_alignments, 
-					sizeof(AlignResultCompact) * nQueries, 
+			cudaMemcpyAsync(buffers.d_alignments,
+					buffers.h_alignments,
+					sizeof(AlignResultCompact) * nQueries,
 					H2D, buffers.stream); CUERR;
-			cudaMemcpyAsync(buffers.d_frequencies_prefix_sum, 
-					buffers.h_frequencies_prefix_sum, 
-					sizeof(int) * (nQueries+1), 
+			cudaMemcpyAsync(buffers.d_frequencies_prefix_sum,
+					buffers.h_frequencies_prefix_sum,
+					sizeof(int) * (nQueries+1),
 					H2D, buffers.stream); CUERR;
 
 			cudaStreamSynchronize(buffers.stream);
@@ -911,9 +913,9 @@ namespace hammingtools{
 
 			printf("%d %d %d %d %d %d %d\n", buffers.max_n_columns, buffers.n_columns, buffers.max_n_sequences, buffers.n_sequences, buffers.max_n_qualityscores, buffers.n_qualityscores, buffers.max_seq_length);
 
-			correction::call_cuda_pileup_vote_transposed_kernel(&buffers, nQueries+1, frequenciesPrefixSum.back()+1, columnsToCheck, 
+			correction::call_cuda_pileup_vote_transposed_kernel(&buffers, nQueries+1, frequenciesPrefixSum.back()+1, columnsToCheck,
 						subjectColumnsBegin_incl, subjectColumnsEnd_excl,
-						maxErrorRate, 
+						maxErrorRate,
 						useQScores);
 
 			cudaStreamSynchronize(buffers.stream); CUERR;
@@ -940,10 +942,10 @@ namespace hammingtools{
 
 			tpa = std::chrono::system_clock::now();
 
-			int status = correction::cpu_pileup_correct(&buffers, nQueries, columnsToCheck, 
+			int status = correction::cpu_pileup_correct(&buffers, nQueries, columnsToCheck,
 						subjectColumnsBegin_incl, subjectColumnsEnd_excl,
 						startindex, endindex,
-						errorrate, estimatedCoverage, m, 
+						errorrate, estimatedCoverage, m,
 						correctQueries_, kmerlength, correctedQueries);
 
 			tpb = std::chrono::system_clock::now();
@@ -954,9 +956,9 @@ namespace hammingtools{
 			subject.replace(0, buffers.h_lengths[0], buffers.h_pileup + subjectColumnsBegin_incl, buffers.h_lengths[0]);
 			for(int i = 0; i < nQueries; i++){
 				if(correctedQueries[i]){
-					queries[i].replace(0, buffers.h_lengths[1+i], 
-								buffers.h_pileup + (1+i) * buffers.max_n_columns 
-									+ subjectColumnsBegin_incl + alignments[i].shift, 
+					queries[i].replace(0, buffers.h_lengths[1+i],
+								buffers.h_pileup + (1+i) * buffers.max_n_columns
+									+ subjectColumnsBegin_incl + alignments[i].shift,
 								buffers.h_lengths[1+i]);
 				}
 			}
@@ -974,7 +976,7 @@ namespace hammingtools{
 			std::cout << "maxcov gpu " << buffers.max_coverage << " <= " << (3*m) << '\n';*/
 
 		}else{
-#endif	
+#endif
 
 //#else
 
@@ -1033,7 +1035,7 @@ namespace hammingtools{
 
 			correction::cpu_pileup_create(&buffers, subject,
 						queries,
-						subjectqualityScores, 
+						subjectqualityScores,
 						queryqualityScores,
 						alignments,
 						frequenciesPrefixSum,
@@ -1041,7 +1043,7 @@ namespace hammingtools{
 
 			correction::cpu_pileup_vote(&buffers, alignments,
 						frequenciesPrefixSum,
-						maxErrorRate, 
+						maxErrorRate,
 						useQScores,
 						subjectColumnsBegin_incl, subjectColumnsEnd_excl);
 
@@ -1051,10 +1053,10 @@ namespace hammingtools{
 			tpa = std::chrono::system_clock::now();
 
 			int status = correction::cpu_pileup_correct(&buffers, alignments, frequenciesPrefixSum,
-						columnsToCheck, 
+						columnsToCheck,
 						subjectColumnsBegin_incl, subjectColumnsEnd_excl,
 						startindex, endindex,
-						errorrate, estimatedCoverage,m, 
+						errorrate, estimatedCoverage,m,
 						correctQueries_, kmerlength, correctedQueries);
 
 			tpb = std::chrono::system_clock::now();
@@ -1066,9 +1068,9 @@ namespace hammingtools{
 			for(int i = 0; i < nQueries; i++){
 				if(correctedQueries[i]){
 					const int row = 1 + frequenciesPrefixSum[i];
-					queries[i].replace(0, buffers.h_lengths[row], 
-								buffers.h_pileup + (row) * buffers.max_n_columns 
-									+ subjectColumnsBegin_incl + alignments[i].shift, 
+					queries[i].replace(0, buffers.h_lengths[row],
+								buffers.h_pileup + (row) * buffers.max_n_columns
+									+ subjectColumnsBegin_incl + alignments[i].shift,
 								buffers.h_lengths[row]);
 				}
 			}
@@ -1120,7 +1122,7 @@ namespace hammingtools{
 			buffers.preprocessingtime += tpd - tpc;
 			tpc = std::chrono::system_clock::now();
 
-			const auto res = correction::cpu_pileup_all_in_one(&buffers, subject, nQueries, queries, alignments, 
+			const auto res = correction::cpu_pileup_all_in_one(&buffers, subject, nQueries, queries, alignments,
 						subjectqualityScores, queryqualityScores, frequenciesPrefixSum,
 						startindex, endindex,
 						columnsToCheck, subjectColumnsBegin_incl, subjectColumnsEnd_excl,
@@ -1139,7 +1141,297 @@ namespace hammingtools{
 
 	}
 
-	
+
+
+
+
+
+
+
+
+
+    void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
+
+        std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+        std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
+
+        int numberOfRealSubjects = 0;
+        int totalNumberOfAlignments = 0;
+
+        for(auto& b : batch){
+            if(b.active){
+                numberOfRealSubjects++;
+                totalNumberOfAlignments += b.fwdSequences.size();
+                totalNumberOfAlignments += b.revcomplSequences.size();
+            }
+        }
+
+        // check for empty input
+        if(totalNumberOfAlignments == 0){
+            return;
+        }
+
+    #ifdef __NVCC__
+
+        if(useGpu){ // use gpu for alignment
+
+            tpa = std::chrono::system_clock::now();
+
+            cudaSetDevice(mybuffers.deviceId); CUERR;
+
+            mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
+
+            tpb = std::chrono::system_clock::now();
+
+            mybuffers.resizetime += tpb - tpa;
+
+            int querysum = 0;
+            int subjectindex = 0;
+            int batchid = 0;
+            std::vector<alignment::shdparams> params(batch.size());
+
+            for(auto& b : batch){
+                if(b.active){
+                    tpa = std::chrono::system_clock::now();
+                    batchid = subjectindex;
+
+                    params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
+                    params[batchid].sequencepitch = mybuffers.sequencepitch;
+                    params[batchid].subjectlength = b.fwdSequence->getNbases();
+                    params[batchid].n_queries = b.fwdSequences.size() + b.revcomplSequences.size();
+                    params[batchid].querylengths = mybuffers.d_querylengths + querysum;
+                    params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
+                    params[batchid].queriesdata = mybuffers.d_queriesdata + mybuffers.sequencepitch * querysum;
+                    params[batchid].results = mybuffers.d_results + querysum;
+
+                    int* querylengths = mybuffers.h_querylengths + querysum;
+                    char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
+                    char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
+
+                    assert(b.fwdSequence->getNbases() <= mybuffers.max_sequence_length);
+                    assert(b.fwdSequence->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                    std::memcpy(subjectdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
+
+                    int count = 0;
+                    for(const auto seq : b.fwdSequences){
+                        assert(seq->getNbases() <= mybuffers.max_sequence_length);
+                        assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                        std::memcpy(queriesdata + count * mybuffers.sequencepitch,
+                                seq->begin(),
+                                seq->getNumBytes());
+
+                        querylengths[count] = seq->getNbases();
+                        count++;
+                    }
+                    for(const auto seq : b.revcomplSequences){
+                        assert(seq->getNbases() <= mybuffers.max_sequence_length);
+                        assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                        std::memcpy(queriesdata + count * mybuffers.sequencepitch,
+                                seq->begin(),
+                                seq->getNumBytes());
+
+                        querylengths[count] = seq->getNbases();
+                        count++;
+                    }
+                    assert(params[batchid].n_queries == count);
+
+                    tpb = std::chrono::system_clock::now();
+                    mybuffers.preprocessingtime += tpb - tpa;
+
+                    // copy data to gpu
+                    cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata),
+                            subjectdata,
+                            mybuffers.sequencepitch,
+                            H2D,
+                            mybuffers.streams[batchid]); CUERR;
+                    cudaMemcpyAsync(const_cast<char*>(params[batchid].queriesdata),
+                            queriesdata,
+                            mybuffers.sequencepitch * params[batchid].n_queries,
+                            H2D,
+                            mybuffers.streams[batchid]); CUERR;
+                    cudaMemcpyAsync(const_cast<int*>(params[batchid].querylengths),
+                            querylengths,
+                            sizeof(int) * params[batchid].n_queries,
+                            H2D,
+                            mybuffers.streams[batchid]); CUERR;
+
+                    // run kernel
+                    alignment::call_shd_kernel_async(params[batchid], mybuffers.streams[batchid]);
+
+                    querysum += count;
+                    subjectindex++;
+                }
+            }
+
+            subjectindex = 0;
+            querysum = 0;
+
+            for(auto& b : batch){
+                if(b.active){
+                    batchid = subjectindex;
+                    const AlignResultCompact* results = mybuffers.h_results + querysum;
+
+                    tpa = std::chrono::system_clock::now();
+
+                    cudaMemcpyAsync(results,
+                        params[batchid].results,
+                        sizeof(AlignResultCompact) * params[batchid].n_queries,
+                        D2H,
+                        mybuffers.streams[batchid]); CUERR;
+
+                    cudaStreamSynchronize(mybuffers.streams[batchid]); CUERR;
+
+                    tpb = std::chrono::system_clock::now();
+                    mybuffers.d2htime += tpb - tpa;
+                    tpa = std::chrono::system_clock::now();
+
+                    int count = 0;
+                    for(auto& alignment : b.fwdAlignments){
+                        alignment = results[count++];
+                    }
+                    for(auto& alignment : b.revcomplAlignments){
+                        alignment = results[count++];
+                    }
+
+                    tpb = std::chrono::system_clock::now();
+                    mybuffers.postprocessingtime += tpb - tpa;
+
+                    subjectindex++;
+                    querysum += params[batchid].n_queries;
+                }
+            }
+
+        }else{ // use cpu for alignment
+
+    #endif // __NVCC__
+
+            tpa = std::chrono::system_clock::now();
+
+            for(auto& b : batch){
+                if(b.active){
+                    const char* const subject = (const char*)subjects[i]->begin();
+                    const int subjectLength = subjects[i]->getNbases();
+
+                    for(size_t i = 0; i < fwdSequences.size(); i++){
+                        const char* query =  (const char*)fwdSequences[i]->begin();
+                        const int queryLength = query->getNbases();
+                        fwdAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
+                    }
+
+                    for(size_t i = 0; i < revcomplSequences.size(); i++){
+                        const char* query =  (const char*)revcomplSequences[i]->begin();
+                        const int queryLength = query->getNbases();
+                        revcomplAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
+                    }
+                }
+            }
+
+            tpb = std::chrono::system_clock::now();
+
+            mybuffers.alignmenttime += tpb - tpa;
+    #ifdef __NVCC__
+        }
+    #endif // __NVCC__
+    }
+
+
+
+
+
+    std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
+	performCorrection(CorrectionBuffers& buffers, std::vector<BatchElem> batch,
+				bool correctQueries_,
+				int estimatedCoverage,
+				double errorrate,
+				double m,
+				int kmerlength,
+				bool useGpu){
+
+			std::chrono::time_point<std::chrono::system_clock> tpc, tpd;
+
+
+
+
+			tpc = std::chrono::system_clock::now();
+
+			//determine number of columns in pileup image
+			int startindex = 0;
+			int endindex = subject.length();
+			for(int i = 0; i < nQueries; i++){
+				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
+				const int queryEndsAt = queries[i].length() + alignments[i].shift;
+				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
+				correctedQueries[i] = false;
+			}
+
+			const int columnsToCheck = endindex - startindex;
+			const int subjectColumnsBegin_incl = std::max(-startindex,0);
+			const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + subject.length();
+
+			tpd = std::chrono::system_clock::now();
+			buffers.preprocessingtime += tpd - tpc;
+			tpc = std::chrono::system_clock::now();
+
+			buffers.resize_host_cols(columnsToCheck);
+
+			tpd = std::chrono::system_clock::now();
+			buffers.resizetime += tpd - tpc;
+			tpc = std::chrono::system_clock::now();
+
+			std::memset(buffers.h_consensus, 0, sizeof(char) * buffers.n_columns);
+			std::memset(buffers.h_support, 0, sizeof(double) * buffers.n_columns);
+			std::memset(buffers.h_coverage, 0, sizeof(int) * buffers.n_columns);
+			std::memset(buffers.h_origWeights, 0, sizeof(double) * buffers.n_columns);
+			std::memset(buffers.h_origCoverage, 0, sizeof(int) * buffers.n_columns);
+			std::memset(buffers.h_As, 0, sizeof(int) * buffers.n_columns);
+			std::memset(buffers.h_Cs, 0, sizeof(int) * buffers.n_columns);
+			std::memset(buffers.h_Gs, 0, sizeof(int) * buffers.n_columns);
+			std::memset(buffers.h_Ts, 0, sizeof(int) * buffers.n_columns);
+			std::memset(buffers.h_Aweights, 0, sizeof(double) * buffers.n_columns);
+			std::memset(buffers.h_Cweights, 0, sizeof(double) * buffers.n_columns);
+			std::memset(buffers.h_Gweights, 0, sizeof(double) * buffers.n_columns);
+			std::memset(buffers.h_Tweights, 0, sizeof(double) * buffers.n_columns);
+
+			tpd = std::chrono::system_clock::now();
+			buffers.preprocessingtime += tpd - tpc;
+			tpc = std::chrono::system_clock::now();
+
+			const auto res = correction::cpu_pileup_all_in_one(&buffers, subject, nQueries, queries, alignments,
+						subjectqualityScores, queryqualityScores, frequenciesPrefixSum,
+						startindex, endindex,
+						columnsToCheck, subjectColumnsBegin_incl, subjectColumnsEnd_excl,
+						maxErrorRate, useQScores, correctedQueries, correctQueries_, estimatedCoverage, errorrate, m, kmerlength);
+
+			tpd = std::chrono::system_clock::now();
+			buffers.correctiontime += tpd - tpc;
+
+			return res;
+
+#ifdef __NVCC__
+		//}
+#endif
+
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 }// end namespace hammingtools
-

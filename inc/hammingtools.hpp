@@ -3,6 +3,7 @@
 
 #include "../inc/alignment.hpp"
 #include "../inc/read.hpp"
+#include "../inc/batchelem.hpp"
 
 #include <vector>
 #include <chrono>
@@ -30,9 +31,9 @@ struct SHDdata{
 	int* h_queriesPerSubject = nullptr;
 	int* h_subjectlengths = nullptr;
 	int* h_querylengths = nullptr;
-	
-		int* h_lengths = nullptr;		
-		int* d_lengths = nullptr;		
+
+		int* h_lengths = nullptr;
+		int* d_lengths = nullptr;
 
 #ifdef __NVCC__
 	cudaStream_t streams[8];
@@ -113,7 +114,7 @@ struct CorrectionBuffers{
 	char* d_qual_pileup_transposed = nullptr;
 
 	CorrectionBuffers* d_this = nullptr;
-	
+
 
 	int deviceId = -1;
 #ifdef __NVCC__
@@ -161,10 +162,10 @@ std::vector<std::vector<AlignResultCompact>> getMultipleAlignments(SHDdata& buff
 
 std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
 performCorrection(CorrectionBuffers& buffers, std::string& subject,
-				int nQueries, 
+				int nQueries,
 				std::vector<std::string>& queries,
 				const std::vector<AlignResultCompact>& alignments,
-				const std::string& subjectqualityScores, 
+				const std::string& subjectqualityScores,
 				const std::vector<const std::string*>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
 				double maxErrorRate,
@@ -179,7 +180,7 @@ performCorrection(CorrectionBuffers& buffers, std::string& subject,
 
 
 
-
+void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 
 
 

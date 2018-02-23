@@ -3,6 +3,7 @@
 
 #include "../inc/hammingtools.hpp"
 #include "../inc/alignment.hpp"
+#include "../inc/batchelem.hpp"
 
 #include <vector>
 #include <string>
@@ -15,10 +16,10 @@ namespace hammingtools{
 
 		std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
 		cpu_pileup_all_in_one(const CorrectionBuffers* buffers, std::string& subject,
-				int nQueries, 
+				int nQueries,
 				std::vector<std::string>& queries,
 				const std::vector<AlignResultCompact>& alignments,
-				const std::string& subjectqualityScores, 
+				const std::string& subjectqualityScores,
 				const std::vector<const std::string*>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
 				const int startindex, const int endindex,
@@ -34,7 +35,7 @@ namespace hammingtools{
 
 		void cpu_pileup_create(const CorrectionBuffers* buffers, std::string& subject,
 						std::vector<std::string>& queries,
-						const std::string& subjectqualityScores, 
+						const std::string& subjectqualityScores,
 						const std::vector<const std::string*>& queryqualityScores,
 						const std::vector<AlignResultCompact>& alignments,
 						const std::vector<int>& frequenciesPrefixSum,
@@ -42,15 +43,15 @@ namespace hammingtools{
 
 		void cpu_pileup_vote(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments,
 						const std::vector<int>& frequenciesPrefixSum,
-						const double maxErrorRate, 
+						const double maxErrorRate,
 						const bool useQScores,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl);
 
 		int cpu_pileup_correct(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments, const std::vector<int>& frequenciesPrefixSum,
-						const int columnsToCheck, 
+						const int columnsToCheck,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
 						const int startindex, const int endindex,
-						const double errorrate, const int estimatedCoverage, const double m, 
+						const double errorrate, const int estimatedCoverage, const double m,
 						const bool correctQueries, int k, std::vector<bool>& correctedQueries);
 
 #ifdef __NVCC__
@@ -61,9 +62,9 @@ namespace hammingtools{
 
 		void gpu_qual_pileup_transpose(const CorrectionBuffers* buffers);
 
-		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
+		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck,
 						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate, 
+						const double maxErrorRate,
 						const bool useQScores);
 
 #endif
