@@ -27,7 +27,7 @@ void MinhasherBuffers::grow(size_t newcapacity){
 		cudaFree(d_allMinhashResults); CUERR;
 		cudaMalloc(&d_allMinhashResults, sizeof(std::uint64_t) * newcapacity); CUERR;
 	}
-#endif	
+#endif
 	size = 0;
 	capacity = newcapacity;
 }
@@ -37,7 +37,7 @@ void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer){
 	cudaSetDevice(buffer.deviceId);
 	cudaFree(buffer.d_allMinhashResults); CUERR;
 	cudaStreamDestroy(buffer.stream); CUERR;
-#endif	
+#endif
 }
 
 Minhasher::Minhasher() : Minhasher(MinhashParameters{1,1})
@@ -45,30 +45,25 @@ Minhasher::Minhasher() : Minhasher(MinhashParameters{1,1})
 }
 
 
-Minhasher::Minhasher(const MinhashParameters& parameters) 
-		: minparams(parameters), load(0.0), minhashtime(0), maptime(0)
-{  
+Minhasher::Minhasher(const MinhashParameters& parameters)
+		: minparams(parameters), minhashtime(0), maptime(0)
+{
 }
 
 void Minhasher::init(){
 
-	init(MAX_READ_NUM, 0.80);
+	init(MAX_READ_NUM);
 }
 
-void Minhasher::init(std::uint64_t nReads, double load_){
+void Minhasher::init(std::uint64_t nReads){
 
 	if(nReads > MAX_READ_NUM+1)
 		throw std::runtime_error("Minhasher, not enough bits to enumerate all reads");
-
-	load = load_;
-
-	const std::uint64_t capacity = nReads / load;
 
 	minhashTables.resize(minparams.maps);
 	minhashTables2.resize(minparams.maps);
 
 	for (int i = 0; i < minparams.maps; ++i) {
-		minhashTables[i].reset(new oa_hash_t { capacity, hash_func {}, prob_func {} });
 		minhashTables2[i].reset(new KVMapFixed<std::uint64_t>(nReads));
 	}
 }
@@ -101,7 +96,7 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 	std::fill(isForwardStrand, isForwardStrand + numberOfHashvalues, 0);
 
 	//get hash values
-	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);	
+	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
 
 	// insert
 	for (int map = 0; map < minparams.maps; ++map) {
@@ -110,16 +105,16 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 
 		std::uint64_t value = ((readnum << 1) | isForwardStrand[map]);
 		/*if (!minhashTables[map]->add(key, value)) {
-			std::cout << "error adding key to map " << map 
-				<< ". key = " << key 
+			std::cout << "error adding key to map " << map
+				<< ". key = " << key
 				<< " , readnum = " << readnum << std::endl;
 			throw std::runtime_error(("error adding key to map. key " + key));
 		}*/
 
 		value = readnum;
 		if (!minhashTables2[map]->add(key, value)) {
-			std::cout << "error adding key to map2 " << map 
-				<< ". key = " << key 
+			std::cout << "error adding key to map2 " << map
+				<< ". key = " << key
 				<< " , readnum = " << readnum << std::endl;
 			throw std::runtime_error(("error adding key to map. key " + key));
 		}
@@ -235,7 +230,7 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
 #endif
 
 	assert(n_initial_candidates - unique_elements >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
-	
+
 	/*if(d != unique_elements){
 		std::cout << "#unique elements wrong. normal " << d << ", thrust " << unique_elements << std::endl;
 	}
@@ -322,5 +317,3 @@ void Minhasher::transform(){
 		minhashTables2[i]->freeze();
 	}
 }
-
-	

@@ -74,7 +74,7 @@ struct Minhasher {
 	std::vector<std::unique_ptr<oa_hash_t> > minhashTables;
 	std::vector<std::unique_ptr<KVMapFixed<std::uint64_t>>> minhashTables2;
 	MinhashParameters minparams;
-	double load;
+
 	std::chrono::duration<double> minhashtime;
 	std::chrono::duration<double> maptime;
 
@@ -83,7 +83,7 @@ struct Minhasher {
 	Minhasher(const MinhashParameters& parameters);
 
 	void init();
-	void init(std::uint64_t nReads, double load);
+	void init(std::uint64_t nReads);
 
 	void clear();
 

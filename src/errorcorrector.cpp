@@ -421,7 +421,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 
 	readsPerFile.insert( { filename, nReads });
 #if 1
-	minhasher.init(nReads, HASHMAP_LOAD_FACTOR);
+	minhasher.init(nReads);
 
 	readStorage.init(nReads);
 	readStorage.setUseQualityScores(useQualityScores);
@@ -483,7 +483,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 		std::cout << "total corrected reads: " << asd << std::endl;
 	}
 
-	minhasher.init(1, HASHMAP_LOAD_FACTOR);
+	minhasher.init(0);
 	readStorage.clear();
 	readIsProcessedVector.clear();
 
@@ -929,7 +929,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		}
 
         for(auto& b : batch){
-            clear_batch_element(b);
+            b.clear();
         }
 
 		if (CORRECT_CANDIDATE_READS_TOO) {
@@ -976,7 +976,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			}
 		}
 
-        std::partition(batch.begin(), batch.end(), [](auto& b){return b.active});
+        std::partition(batch.begin(), batch.end(), [](auto& b){return b.active;});
 
         tpa = std::chrono::system_clock::now();
 
@@ -1017,12 +1017,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     std::uint64_t n_unique_elements = 1;
                     b.candidateCountsPrefixSum[0] = 0;
                     b.candidateCountsPrefixSum[1] = 1;
-                    b.candidateIds[0] = numseqpairs.first;
-                    b.fwdSequences[0] = numseqpairs.second;
-                    //b.revcomplSequences[0] = readStorage.fetchReverseComplementSequence_ptr(numseqpairs.first);
-					const Sequence* prevSeq = numseqpairs.second;
+                    b.candidateIds[0] = numseqpairs[0].first;
+                    b.fwdSequences[0] = numseqpairs[0].second;
 
-					for (int k = 1; k < nCandidates; k++) {
+					const Sequence* prevSeq = numseqpairs[0].second;
+
+					for (size_t k = 1; k < numseqpairs.size(); k++) {
                         auto pair = numseqpairs[k];
                         b.candidateIds[k] = pair.first;
 						const Sequence* curSeq = pair.second;
@@ -1037,14 +1037,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					}
 
 					b.set_number_of_unique_sequences(n_unique_elements);
-                    duplicates += nCandidates - n_unique_elements;
+                    duplicates += numseqpairs.size() - n_unique_elements;
 
                     t2 = std::chrono::system_clock::now();
 					mapminhashresultsdedup += (t2 - t1);
                     t1 = std::chrono::system_clock::now();
 
-                    for(int k = 0; k < n_unique_elements; k++){
-                        int first = candidateCountsPrefixSum[k];
+                    for(size_t k = 0; k < n_unique_elements; k++){
+                        int first = b.candidateCountsPrefixSum[k];
                         b.revcomplSequences[k] = readStorage.fetchReverseComplementSequence_ptr(first);
                     }
 
@@ -1061,12 +1061,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     t2 = std::chrono::system_clock::now();
                     mapminhashresultsfetch += (t2 - t1);
 
-                    for(auto& flag : b.activeCandidates)
-                        flag = true;
-                    for(auto& flag : b.correctedCandidates)
-                        flag = false;
+                    for(size_t k = 0; k < b.activeCandidates.size(); k++)
+                        b.activeCandidates[k] = true;
 
-                    assert(candidateCountsPrefixSum.back() == b.candidateIds.size());
+                    assert(b.candidateCountsPrefixSum.back() == b.candidateIds.size());
                 }
             }
         }
@@ -1088,7 +1086,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
             //select candidates from alignments
             for(auto& b : batch){
                 if(b.active){
-                    const int querylength = queries[i]->getNbases();
+                    const int querylength = b.fwdSequence->getNbases();
 
 					int counts[3] { 0, 0, 0 };
 					int countsDedup[3] { 0, 0, 0 };
@@ -1096,10 +1094,10 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
                     // for each candidate, compare its alignment to the alignment of the reverse complement.
 					// find the best of both, if any.
-                    for(size_t i = 0; i < fwdSequences.size(); i++){
+                    for(size_t i = 0; i < b.fwdSequences.size(); i++){
                         auto& res = b.fwdAlignments[i];
                         auto& revcomplres = b.revcomplAlignments[i];
-                        const int candidatelength = fwdSequences[i]->getNbases();
+                        const int candidatelength = b.fwdSequences[i]->getNbases();
 
                         BestAlignment_t bestAlignment = get_best_alignment(res,
                                 revcomplres, querylength, candidatelength,
@@ -1107,19 +1105,19 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                                 MIN_OVERLAP_RATIO);
 
                         if(bestAlignment == BestAlignment_t::None){
-                            activeCandidates[i] = false;
-                            b.bestAlignment[i] = nullptr;
+                            b.activeCandidates[i] = false;
+                            b.bestAlignments[i] = nullptr;
                             bad++;
                         }else{
                             b.bestIsForward[i] = bestAlignment == BestAlignment_t::Forward;
                             if(b.bestIsForward[i])
-                                b.bestAlignment[i] = &res;
+                                b.bestAlignments[i] = &res;
                             else
-                                b.bestAlignment[i] = &revcomplres;
-                            const double mismatchratio = double(b.bestAlignment[i]->nOps) / double(b.bestAlignment[i]->overlap);
-                            const int f = candidateCountsPrefixSum[i+1] - candidateCountsPrefixSum[i];
+                                b.bestAlignments[i] = &revcomplres;
+                            const double mismatchratio = double(b.bestAlignments[i]->nOps) / double(b.bestAlignments[i]->overlap);
+                            const int f = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
                             if(mismatchratio >= 4 * errorrate){
-                                activeCandidates[i] = false;
+                                b.activeCandidates[i] = false;
                             }else{
     							if (mismatchratio < 2 * errorrate) {
     								counts[0] += f;
@@ -1134,9 +1132,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
     								countsDedup[2]++;
     							}
                                 if(b.bestIsForward[i])
-                                    b.bestSequences[i] = fwdSequences[i];
+                                    b.bestSequences[i] = b.fwdSequences[i];
                                 else
-                                    b.bestSequences[i] = revcomplSequences[i];
+                                    b.bestSequences[i] = b.revcomplSequences[i];
                             }
                         }
                     }
@@ -1148,20 +1146,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					// if there are not enough alignments, do not correct
 
 					const int countThreshold = estimatedCoverage * m_coverage;
-					bool correctQuery = false;
+
 					double mismatchratioThreshold = 0;
-					int candidatecount = 0;
 					if (counts[0] >= countThreshold) {
 						mismatchratioThreshold = 2 * errorrate;
-						candidatecount = countsDedup[0];
 						correctionCases[0]++;
 					} else if (counts[1] >= countThreshold) {
 						mismatchratioThreshold = 3 * errorrate;
-						candidatecount = countsDedup[1];
 						correctionCases[1]++;
 					} else if (counts[2] >= countThreshold) {
 						mismatchratioThreshold = 4 * errorrate;
-						candidatecount = countsDedup[2];
 						correctionCases[2]++;
 					} else { //no correction. write original sequence to output
                         correctionCases[3]++;
@@ -1170,6 +1164,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						resultstringstream << b.fwdSequenceString << '\n';
                         nBufferedResults++;
 					}
+
+                    //remove candidates which don't fit into mismatchratioThreshold
+                    for(size_t i = 0; i < b.fwdSequences.size(); i++){
+                        const double mismatchratio = double(b.bestAlignments[i]->nOps) / double(b.bestAlignments[i]->overlap);
+                        b.activeCandidates[i] = b.activeCandidates[i] && (mismatchratio < mismatchratioThreshold);
+                    }
                 }
             }
 
@@ -1187,12 +1187,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     std::chrono::duration<double> foo2;
                     std::tie(status, foo1, foo2) =
                             hammingtools::performCorrection(
-                                    hcorrectionbuffers, queryStrings[i],
-                                    candidatecount, candidateStrings,
-                                    insertedAlignments, *queryQualities[i],
-                                    candidatequals, frequenciesPrefixSum,
+                                    hcorrectionbuffers, b,
                                     MAX_MISMATCH_RATIO, useQualityScores,
-                                    saveThisCandidate,
                                     CORRECT_CANDIDATE_READS_TOO,
                                     estimatedCoverage, errorrate,
                                     m_coverage, minhashparams.k, true);
@@ -1211,11 +1207,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     verygoodalignment += (status == 0);
 
                     if(b.corrected){
-                        resultstringstream << (readnum + i) << '\n';
-                        resultstringstream << correctedSequence << '\n';
+                        resultstringstream << b.readId << '\n';
+                        resultstringstream << b.correctedSequence << '\n';
                     }else{
-                        resultstringstream << (readnum + i) << '\n';
-                        resultstringstream << fwdSequenceString << '\n';
+                        resultstringstream << b.readId << '\n';
+                        resultstringstream << b.fwdSequenceString << '\n';
                     }
 
                     nBufferedResults++;
@@ -1467,7 +1463,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 	}
 
-#if 1
 	// write remaining buffered results
 	if (nBufferedResults > 0) {
 

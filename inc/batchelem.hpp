@@ -10,7 +10,7 @@
 struct CorrectedCandidate{
     std::uint64_t index;
     std::string sequence;
-}
+};
 
 struct BatchElem{
     bool active;

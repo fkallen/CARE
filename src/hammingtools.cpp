@@ -1272,7 +1272,7 @@ namespace hammingtools{
             for(auto& b : batch){
                 if(b.active){
                     batchid = subjectindex;
-                    const AlignResultCompact* results = mybuffers.h_results + querysum;
+                    AlignResultCompact* results = mybuffers.h_results + querysum;
 
                     tpa = std::chrono::system_clock::now();
 
@@ -1312,19 +1312,19 @@ namespace hammingtools{
 
             for(auto& b : batch){
                 if(b.active){
-                    const char* const subject = (const char*)subjects[i]->begin();
-                    const int subjectLength = subjects[i]->getNbases();
+                    const char* const subject = (const char*)b.fwdSequence->begin();
+                    const int subjectLength = b.fwdSequence->getNbases();
 
-                    for(size_t i = 0; i < fwdSequences.size(); i++){
-                        const char* query =  (const char*)fwdSequences[i]->begin();
-                        const int queryLength = query->getNbases();
-                        fwdAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
+                    for(size_t i = 0; i < b.fwdSequences.size(); i++){
+                        const char* query =  (const char*)b.fwdSequences[i]->begin();
+                        const int queryLength = b.fwdSequences[i]->getNbases();
+                        b.fwdAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
                     }
 
-                    for(size_t i = 0; i < revcomplSequences.size(); i++){
-                        const char* query =  (const char*)revcomplSequences[i]->begin();
-                        const int queryLength = query->getNbases();
-                        revcomplAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
+                    for(size_t i = 0; i < b.revcomplSequences.size(); i++){
+                        const char* query =  (const char*)b.revcomplSequences[i]->begin();
+                        const int queryLength = b.revcomplSequences[i]->getNbases();
+                        b.revcomplAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
                     }
                 }
             }
@@ -1342,7 +1342,9 @@ namespace hammingtools{
 
 
     std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-	performCorrection(CorrectionBuffers& buffers, std::vector<BatchElem> batch,
+	performCorrection(CorrectionBuffers& buffers, BatchElem& batchElem,
+                double maxErrorRate,
+                bool useQScores,
 				bool correctQueries_,
 				int estimatedCoverage,
 				double errorrate,
@@ -1350,26 +1352,28 @@ namespace hammingtools{
 				int kmerlength,
 				bool useGpu){
 
+            assert(batchElem.active && "batchElem.active");
+
 			std::chrono::time_point<std::chrono::system_clock> tpc, tpd;
-
-
-
 
 			tpc = std::chrono::system_clock::now();
 
 			//determine number of columns in pileup image
 			int startindex = 0;
-			int endindex = subject.length();
-			for(int i = 0; i < nQueries; i++){
-				startindex = alignments[i].shift < startindex ? alignments[i].shift : startindex;
-				const int queryEndsAt = queries[i].length() + alignments[i].shift;
-				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
-				correctedQueries[i] = false;
-			}
+			int endindex = batchElem.fwdSequenceString.length();
+
+            for(size_t i = 0; i < batchElem.activeCandidates.size(); i++){
+                if(batchElem.activeCandidates[i]){
+                    const int shift = batchElem.bestAlignments[i]->shift;
+                    startindex = shift < startindex ? shift : startindex;
+    				const int queryEndsAt = batchElem.bestSequences[i]->getNbases() + shift;
+    				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
+                }
+            }
 
 			const int columnsToCheck = endindex - startindex;
 			const int subjectColumnsBegin_incl = std::max(-startindex,0);
-			const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + subject.length();
+			const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + batchElem.fwdSequenceString.length();
 
 			tpd = std::chrono::system_clock::now();
 			buffers.preprocessingtime += tpd - tpc;
@@ -1399,11 +1403,10 @@ namespace hammingtools{
 			buffers.preprocessingtime += tpd - tpc;
 			tpc = std::chrono::system_clock::now();
 
-			const auto res = correction::cpu_pileup_all_in_one(&buffers, subject, nQueries, queries, alignments,
-						subjectqualityScores, queryqualityScores, frequenciesPrefixSum,
+			const auto res = correction::cpu_pileup_all_in_one(&buffers, batchElem,
 						startindex, endindex,
 						columnsToCheck, subjectColumnsBegin_incl, subjectColumnsEnd_excl,
-						maxErrorRate, useQScores, correctedQueries, correctQueries_, estimatedCoverage, errorrate, m, kmerlength);
+						maxErrorRate, useQScores, correctQueries_, estimatedCoverage, errorrate, m, kmerlength);
 
 			tpd = std::chrono::system_clock::now();
 			buffers.correctiontime += tpd - tpc;

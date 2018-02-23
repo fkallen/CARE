@@ -182,6 +182,17 @@ performCorrection(CorrectionBuffers& buffers, std::string& subject,
 
 void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 
+std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
+performCorrection(CorrectionBuffers& buffers, BatchElem& batchElem,
+            double maxErrorRate,
+            bool useQScores,
+            bool correctQueries_,
+            int estimatedCoverage,
+            double errorrate,
+            double m,
+            int kmerlength,
+            bool useGpu);
+
 
 
 } //end namespace hammingtools

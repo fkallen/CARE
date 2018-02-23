@@ -69,6 +69,27 @@ namespace hammingtools{
 
 #endif
 
+
+
+
+
+
+
+
+
+std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
+cpu_pileup_all_in_one(const CorrectionBuffers* buffers, BatchElem& batchElem,
+                const int startindex, const int endindex,
+                const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
+                double maxErrorRate,
+                bool useQScores,
+                const bool correctQueries,
+                int estimatedCoverage,
+                double errorrate,
+                double m,
+                int k);
+
+
 	}
 
 }
