@@ -28,7 +28,7 @@ m=0.6
 outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/
 
 #output file
-outputfile="readscorrected.fq"
+outputfile="readscorrectednew.fq"
 #outputfile="ecolisrr11_m06_e001_h8_k16_hq_qscores.fq"
 
 #absolute output file path = outdir/outputfile

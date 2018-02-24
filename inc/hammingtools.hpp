@@ -155,31 +155,6 @@ void cuda_cleanup_CorrectionBuffers(CorrectionBuffers& buffers);
 
 void init_once();
 
-//we assume that each sequence has the same length and same number of bytes which is specified in SHDdata buffer if useGPU = true
-std::vector<std::vector<AlignResultCompact>> getMultipleAlignments(SHDdata& buffer, const std::vector<const Sequence*>& subjects,
-			   const std::vector<std::vector<const Sequence*>>& queries,
-			   std::vector<bool> activeBatches, bool useGpu);
-
-std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-performCorrection(CorrectionBuffers& buffers, std::string& subject,
-				int nQueries,
-				std::vector<std::string>& queries,
-				const std::vector<AlignResultCompact>& alignments,
-				const std::string& subjectqualityScores,
-				const std::vector<const std::string*>& queryqualityScores,
-				const std::vector<int>& frequenciesPrefixSum,
-				double maxErrorRate,
-				bool useQScores,
-				std::vector<bool>& correctedQueries,
-				bool correctQueries_,
-				int estimatedCoverage,
-				double errorrate,
-				double m,
-				int kmerlength,
-				bool useGpu);
-
-
-
 void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 
 std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
