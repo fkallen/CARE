@@ -66,70 +66,22 @@ struct SHDdata{
 };
 
 struct CorrectionBuffers{
-//work memory
-	char* d_consensus = nullptr;
-	double* d_support = nullptr;
-	int* d_coverage = nullptr;
-	double* d_origWeights = nullptr;
-	int* d_origCoverage = nullptr;
-	int* d_As = nullptr;
-	int* d_Cs = nullptr;
-	int* d_Gs = nullptr;
-	int* d_Ts = nullptr;
-	double* d_Aweights = nullptr;
-	double* d_Cweights = nullptr;
-	double* d_Gweights = nullptr;
-	double* d_Tweights = nullptr;
-
-	int* h_As = nullptr;
-	int* h_Cs = nullptr;
-	int* h_Gs = nullptr;
-	int* h_Ts = nullptr;
-	double* h_Aweights = nullptr;
-	double* h_Cweights = nullptr;
-	double* h_Gweights = nullptr;
-	double* h_Tweights = nullptr;
-
-//transfer memory
-	int* d_lengths = nullptr;
-	AlignResultCompact* d_alignments = nullptr;
-	int* d_frequencies_prefix_sum = nullptr;
-
-	int* h_lengths = nullptr;
-	AlignResultCompact* h_alignments = nullptr;
-	int* h_frequencies_prefix_sum = nullptr;
-
-	char* h_consensus = nullptr;
-	double* h_support = nullptr;
-	int* h_coverage = nullptr;
-	double* h_origWeights = nullptr;
-	int* h_origCoverage = nullptr;
-
-	char* h_pileup = nullptr;
-	char* d_pileup = nullptr;
-	char* d_pileup_transposed = nullptr;
-
-	char* h_qual_pileup = nullptr;
-	char* d_qual_pileup = nullptr;
-	char* d_qual_pileup_transposed = nullptr;
-
-	CorrectionBuffers* d_this = nullptr;
-
-
-	int deviceId = -1;
-#ifdef __NVCC__
-	cudaStream_t stream = nullptr;
-	cublasHandle_t handle;
-#endif
+	std::unique_ptr<int[]> h_As;
+	std::unique_ptr<int[]> h_Cs;
+	std::unique_ptr<int[]> h_Gs;
+	std::unique_ptr<int[]> h_Ts;
+	std::unique_ptr<double[]> h_Aweights;
+	std::unique_ptr<double[]> h_Cweights;
+	std::unique_ptr<double[]> h_Gweights;
+	std::unique_ptr<double[]> h_Tweights;
+	std::unique_ptr<char[]> h_consensus;
+	std::unique_ptr<double[]> h_support;
+	std::unique_ptr<int[]> h_coverage;
+	std::unique_ptr<double[]> h_origWeights;
+	std::unique_ptr<int[]> h_origCoverage;
 
 	int max_n_columns = 0;
 	int n_columns = 0;
-	int max_n_sequences = 0;
-	int n_sequences = 0;
-	int max_n_qualityscores = 0;
-	int n_qualityscores = 0;
-
-	int max_seq_length = -1;
 
 	double avg_support = 0;
 	double min_support = 0;
@@ -143,15 +95,13 @@ struct CorrectionBuffers{
 	std::chrono::duration<double> d2htime{0};
 	std::chrono::duration<double> postprocessingtime{0};
 
-	CorrectionBuffers(int id, int maxseqlength);
-	void resize(int cols, int nsequences, int nqualityscores);
-	void resize_host_cols(int cols);
+	void resize(int cols);
+	void reset();
 };
 
 void print_SHDdata(const SHDdata& data);
 
 void cuda_cleanup_SHDdata(SHDdata& data);
-void cuda_cleanup_CorrectionBuffers(CorrectionBuffers& buffers);
 
 void init_once();
 

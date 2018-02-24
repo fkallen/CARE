@@ -163,318 +163,60 @@ namespace hammingtools{
     }
 
 
-	CorrectionBuffers::CorrectionBuffers(int id, int maxseqlength){
-		deviceId = id;
-		max_seq_length = maxseqlength;
-		//printf("CorrectionBuffers id %d maxseqlength %d\n", id, maxseqlength);
-	#ifdef __NVCC__
-		cudaSetDevice(deviceId); CUERR;
-		cudaStreamCreate(&stream); CUERR;
-		cudaMalloc(&d_this, sizeof(CorrectionBuffers)); CUERR;
-		//cublasCreate(&handle);
-	#endif
-	}
+	void CorrectionBuffers::resize(int cols){
 
-	void CorrectionBuffers::resize_host_cols(int cols){
 		if(cols > max_n_columns){
 			const int newmaxcols = 1.5 * cols;
-#ifdef __NVCC__
-			cudaFreeHost(h_consensus); CUERR;
-			cudaFreeHost(h_support); CUERR;
-			cudaFreeHost(h_coverage); CUERR;
-			cudaFreeHost(h_origWeights); CUERR;
-			cudaFreeHost(h_origCoverage); CUERR;
-			cudaFreeHost(h_As); CUERR;
-			cudaFreeHost(h_Cs); CUERR;
-			cudaFreeHost(h_Gs); CUERR;
-			cudaFreeHost(h_Ts); CUERR;
-			cudaFreeHost(h_Aweights); CUERR;
-			cudaFreeHost(h_Cweights); CUERR;
-			cudaFreeHost(h_Gweights); CUERR;
-			cudaFreeHost(h_Tweights); CUERR;
 
-			cudaMallocHost(&h_consensus, sizeof(char) * newmaxcols); CUERR;
-			cudaMallocHost(&h_support, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_coverage, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_origWeights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_origCoverage, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_As, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Cs, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Gs, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Ts, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Aweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Cweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Gweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Tweights, sizeof(double) * newmaxcols); CUERR;
-#else
+			h_consensus.reset();
+			h_support.reset();
+			h_coverage.reset();
+			h_origWeights.reset();
+			h_origCoverage.reset();
+			h_As.reset();
+			h_Cs.reset();
+			h_Gs.reset();
+			h_Ts.reset();
+			h_Aweights.reset();
+			h_Cweights.reset();
+			h_Gweights.reset();
+			h_Tweights.reset();
+			
+			h_consensus.reset(new char[newmaxcols]);
+			h_support.reset(new double[newmaxcols]);
+			h_coverage.reset(new int[newmaxcols]);
+			h_origWeights.reset(new double[newmaxcols]);
+			h_origCoverage.reset(new int[newmaxcols]);
+			h_As.reset(new int[newmaxcols]);
+			h_Cs.reset(new int[newmaxcols]);
+			h_Gs.reset(new int[newmaxcols]);
+			h_Ts.reset(new int[newmaxcols]);
+			h_Aweights.reset(new double[newmaxcols]);
+			h_Cweights.reset(new double[newmaxcols]);
+			h_Gweights.reset(new double[newmaxcols]);
+			h_Tweights.reset(new double[newmaxcols]);
 
-			delete [] h_consensus;
-			delete [] h_support;
-			delete [] h_coverage;
-			delete [] h_origWeights;
-			delete [] h_origCoverage;
-			delete [] h_As;
-			delete [] h_Cs;
-			delete [] h_Gs;
-			delete [] h_Ts;
-			delete [] h_Aweights;
-			delete [] h_Cweights;
-			delete [] h_Gweights;
-			delete [] h_Tweights;
-
-			h_consensus = new char[newmaxcols];
-			h_support = new double[newmaxcols];
-			h_coverage = new int[newmaxcols];
-			h_origWeights = new double[newmaxcols];
-			h_origCoverage = new int[newmaxcols];
-			h_As = new int[newmaxcols];
-			h_Cs = new int[newmaxcols];
-			h_Gs = new int[newmaxcols];
-			h_Ts = new int[newmaxcols];
-			h_Aweights = new double[newmaxcols];
-			h_Cweights = new double[newmaxcols];
-			h_Gweights = new double[newmaxcols];
-			h_Tweights = new double[newmaxcols];
-#endif
 			max_n_columns = newmaxcols;
 		}
 
 		n_columns = cols;
 	}
-
-	void CorrectionBuffers::resize(int cols, int nsequences, int nqualityscores){
-#ifdef __NVCC__
-		cudaSetDevice(deviceId); CUERR;
-#endif
-		bool resizepileup = false;
-		bool resizequalpileup;
-		if(cols > max_n_columns){
-			const int newmaxcols = 1.5 * cols;
-#ifdef __NVCC__
-			cudaFree(d_consensus); CUERR;
-			cudaFree(d_support); CUERR;
-			cudaFree(d_coverage); CUERR;
-			cudaFree(d_origWeights); CUERR;
-			cudaFree(d_origCoverage); CUERR;
-			cudaFree(d_As); CUERR;
-			cudaFree(d_Cs); CUERR;
-			cudaFree(d_Gs); CUERR;
-			cudaFree(d_Ts); CUERR;
-			cudaFree(d_Aweights); CUERR;
-			cudaFree(d_Cweights); CUERR;
-			cudaFree(d_Gweights); CUERR;
-			cudaFree(d_Tweights); CUERR;
-
-			cudaFreeHost(h_consensus); CUERR;
-			cudaFreeHost(h_support); CUERR;
-			cudaFreeHost(h_coverage); CUERR;
-			cudaFreeHost(h_origWeights); CUERR;
-			cudaFreeHost(h_origCoverage); CUERR;
-			cudaFreeHost(h_As); CUERR;
-			cudaFreeHost(h_Cs); CUERR;
-			cudaFreeHost(h_Gs); CUERR;
-			cudaFreeHost(h_Ts); CUERR;
-			cudaFreeHost(h_Aweights); CUERR;
-			cudaFreeHost(h_Cweights); CUERR;
-			cudaFreeHost(h_Gweights); CUERR;
-			cudaFreeHost(h_Tweights); CUERR;
-
-			cudaMalloc(&d_consensus, sizeof(char) * newmaxcols); CUERR;
-			cudaMalloc(&d_support, sizeof(double) * newmaxcols); CUERR;
-			cudaMalloc(&d_coverage, sizeof(int) * newmaxcols); CUERR;
-			cudaMalloc(&d_origWeights, sizeof(double) * newmaxcols); CUERR;
-			cudaMalloc(&d_origCoverage, sizeof(int) * newmaxcols); CUERR;
-			cudaMalloc(&d_As, sizeof(int) * newmaxcols); CUERR;
-			cudaMalloc(&d_Cs, sizeof(int) * newmaxcols); CUERR;
-			cudaMalloc(&d_Gs, sizeof(int) * newmaxcols); CUERR;
-			cudaMalloc(&d_Ts, sizeof(int) * newmaxcols); CUERR;
-			cudaMalloc(&d_Aweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMalloc(&d_Cweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMalloc(&d_Gweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMalloc(&d_Tweights, sizeof(double) * newmaxcols); CUERR;
-
-			cudaMallocHost(&h_consensus, sizeof(char) * newmaxcols); CUERR;
-			cudaMallocHost(&h_support, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_coverage, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_origWeights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_origCoverage, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_As, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Cs, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Gs, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Ts, sizeof(int) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Aweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Cweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Gweights, sizeof(double) * newmaxcols); CUERR;
-			cudaMallocHost(&h_Tweights, sizeof(double) * newmaxcols); CUERR;
-#else
-
-			delete [] h_consensus;
-			delete [] h_support;
-			delete [] h_coverage;
-			delete [] h_origWeights;
-			delete [] h_origCoverage;
-			delete [] h_As;
-			delete [] h_Cs;
-			delete [] h_Gs;
-			delete [] h_Ts;
-			delete [] h_Aweights;
-			delete [] h_Cweights;
-			delete [] h_Gweights;
-			delete [] h_Tweights;
-
-			h_consensus = new char[newmaxcols];
-			h_support = new double[newmaxcols];
-			h_coverage = new int[newmaxcols];
-			h_origWeights = new double[newmaxcols];
-			h_origCoverage = new int[newmaxcols];
-			h_As = new int[newmaxcols];
-			h_Cs = new int[newmaxcols];
-			h_Gs = new int[newmaxcols];
-			h_Ts = new int[newmaxcols];
-			h_Aweights = new double[newmaxcols];
-			h_Cweights = new double[newmaxcols];
-			h_Gweights = new double[newmaxcols];
-			h_Tweights = new double[newmaxcols];
-#endif
-			max_n_columns = newmaxcols;
-			resizepileup = true;
-			resizequalpileup = true;
-		}
-
-		if(nsequences > max_n_sequences){
-			const int newmaxseqs = 1.5 * nsequences;
-
-#ifdef __NVCC__
-			cudaFree(d_lengths); CUERR;
-			cudaFree(d_alignments); CUERR;
-			cudaFree(d_frequencies_prefix_sum); CUERR;
-			cudaFreeHost(h_lengths); CUERR;
-			cudaFreeHost(h_alignments); CUERR;
-			cudaFreeHost(h_frequencies_prefix_sum); CUERR;
-
-			cudaMalloc(&d_lengths, sizeof(int) * newmaxseqs); CUERR;
-			cudaMalloc(&d_alignments, sizeof(AlignResultCompact) * newmaxseqs); CUERR;
-			cudaMalloc(&d_frequencies_prefix_sum, sizeof(int) * newmaxseqs); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * newmaxseqs); CUERR;
-			cudaMallocHost(&h_alignments, sizeof(AlignResultCompact) * newmaxseqs); CUERR;
-			cudaMallocHost(&h_frequencies_prefix_sum, sizeof(int) * (newmaxseqs+1)); CUERR;
-#else
-			delete [] h_lengths;
-			h_lengths = new int[newmaxseqs];
-
-
-
-#endif
-			max_n_sequences = newmaxseqs;
-			resizepileup = true;
-		}
-
-		if(nqualityscores > max_n_qualityscores){
-			const int newmaxqscores = 1.5 * nqualityscores;
-
-			max_n_qualityscores = newmaxqscores;
-
-			resizequalpileup = true;
-		}
-
-		if(resizepileup){
-#ifdef __NVCC__
-			cudaFree(d_pileup); CUERR;
-			cudaFree(d_pileup_transposed); CUERR;
-			cudaFreeHost(h_pileup); CUERR;
-
-			cudaMalloc(&d_pileup, sizeof(char) * max_n_sequences * max_n_columns); CUERR;
-			cudaMalloc(&d_pileup_transposed, sizeof(char) * max_n_sequences * max_n_columns); CUERR;
-			cudaMallocHost(&h_pileup, sizeof(char) * max_n_sequences * max_n_columns); CUERR;
-#else
-			delete [] h_pileup;
-			h_pileup = new char[max_n_sequences * max_n_columns];
-
-#endif
-		}
-
-		if(resizequalpileup){
-#ifdef __NVCC__
-			cudaFree(d_qual_pileup); CUERR;
-			cudaFree(d_qual_pileup_transposed); CUERR;
-			cudaFreeHost(h_qual_pileup); CUERR;
-
-			cudaMalloc(&d_qual_pileup, sizeof(char) * max_n_qualityscores * max_n_columns); CUERR;
-			cudaMalloc(&d_qual_pileup_transposed, sizeof(char) * max_n_qualityscores * max_n_columns); CUERR;
-			cudaMallocHost(&h_qual_pileup, sizeof(char) * max_n_qualityscores * max_n_columns); CUERR;
-#else
-			delete [] h_qual_pileup;
-			h_qual_pileup = new char[max_n_sequences * max_n_columns];
-
-#endif
-		}
-
-
-		n_columns = cols;
-		n_sequences = nsequences;
-		n_qualityscores = nqualityscores;
+	
+	void CorrectionBuffers::reset(){
+			std::memset(h_consensus.get(), 0, sizeof(char) * n_columns);
+			std::memset(h_support.get(), 0, sizeof(double) * n_columns);
+			std::memset(h_coverage.get(), 0, sizeof(int) * n_columns);
+			std::memset(h_origWeights.get(), 0, sizeof(double) * n_columns);
+			std::memset(h_origCoverage.get(), 0, sizeof(int) * n_columns);
+			std::memset(h_As.get(), 0, sizeof(int) * n_columns);
+			std::memset(h_Cs.get(), 0, sizeof(int) * n_columns);
+			std::memset(h_Gs.get(), 0, sizeof(int) * n_columns);
+			std::memset(h_Ts.get(), 0, sizeof(int) * n_columns);
+			std::memset(h_Aweights.get(), 0, sizeof(double) * n_columns);
+			std::memset(h_Cweights.get(), 0, sizeof(double) * n_columns);
+			std::memset(h_Gweights.get(), 0, sizeof(double) * n_columns);
+			std::memset(h_Tweights.get(), 0, sizeof(double) * n_columns);		
 	}
-
-	void cuda_cleanup_CorrectionBuffers(CorrectionBuffers& buffers){
-	#ifdef __NVCC__
-			cudaSetDevice(buffers.deviceId); CUERR;
-
-			cudaFree(buffers.d_consensus); CUERR;
-			cudaFree(buffers.d_support); CUERR;
-			cudaFree(buffers.d_coverage); CUERR;
-			cudaFree(buffers.d_origWeights); CUERR;
-			cudaFree(buffers.d_origCoverage); CUERR;
-			cudaFree(buffers.d_As); CUERR;
-			cudaFree(buffers.d_Cs); CUERR;
-			cudaFree(buffers.d_Gs); CUERR;
-			cudaFree(buffers.d_Ts); CUERR;
-			cudaFree(buffers.d_Aweights); CUERR;
-			cudaFree(buffers.d_Cweights); CUERR;
-			cudaFree(buffers.d_Gweights); CUERR;
-			cudaFree(buffers.d_Tweights); CUERR;
-			cudaFree(buffers.d_pileup); CUERR;
-			cudaFree(buffers.d_pileup_transposed); CUERR;
-			cudaFree(buffers.d_qual_pileup); CUERR;
-			cudaFree(buffers.d_qual_pileup_transposed); CUERR;
-
-			cudaFree(buffers.d_lengths); CUERR;
-			cudaFree(buffers.d_alignments); CUERR;
-			cudaFree(buffers.d_frequencies_prefix_sum); CUERR;
-			cudaFreeHost(buffers.h_lengths); CUERR;
-			cudaFreeHost(buffers.h_alignments); CUERR;
-			cudaFreeHost(buffers.h_frequencies_prefix_sum); CUERR;
-			cudaFreeHost(buffers.h_pileup); CUERR;
-			cudaFreeHost(buffers.h_qual_pileup); CUERR;
-
-			cudaFree(buffers.d_this); CUERR;
-
-			cudaStreamDestroy(buffers.stream); CUERR;
-	#else
-			delete [] buffers.h_pileup;
-			delete [] buffers.h_qual_pileup;
-			delete [] buffers.h_consensus;
-			delete [] buffers.h_support;
-			delete [] buffers.h_coverage;
-			delete [] buffers.h_origWeights;
-			delete [] buffers.h_origCoverage;
-			delete [] buffers.h_As;
-			delete [] buffers.h_Cs;
-			delete [] buffers.h_Gs;
-			delete [] buffers.h_Ts;
-			delete [] buffers.h_Aweights;
-			delete [] buffers.h_Cweights;
-			delete [] buffers.h_Gweights;
-			delete [] buffers.h_Tweights;
-			delete [] buffers.h_lengths;
-
-	#endif
-
-			buffers.max_n_columns = 0;
-			buffers.max_n_sequences = 0;
-			buffers.max_n_qualityscores = 0;
-
-	}
-
 
     void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
 
@@ -705,25 +447,13 @@ namespace hammingtools{
 			buffers.preprocessingtime += tpd - tpc;
 			tpc = std::chrono::system_clock::now();
 
-			buffers.resize_host_cols(columnsToCheck);
+			buffers.resize(columnsToCheck);
 
 			tpd = std::chrono::system_clock::now();
 			buffers.resizetime += tpd - tpc;
 			tpc = std::chrono::system_clock::now();
 
-			std::memset(buffers.h_consensus, 0, sizeof(char) * buffers.n_columns);
-			std::memset(buffers.h_support, 0, sizeof(double) * buffers.n_columns);
-			std::memset(buffers.h_coverage, 0, sizeof(int) * buffers.n_columns);
-			std::memset(buffers.h_origWeights, 0, sizeof(double) * buffers.n_columns);
-			std::memset(buffers.h_origCoverage, 0, sizeof(int) * buffers.n_columns);
-			std::memset(buffers.h_As, 0, sizeof(int) * buffers.n_columns);
-			std::memset(buffers.h_Cs, 0, sizeof(int) * buffers.n_columns);
-			std::memset(buffers.h_Gs, 0, sizeof(int) * buffers.n_columns);
-			std::memset(buffers.h_Ts, 0, sizeof(int) * buffers.n_columns);
-			std::memset(buffers.h_Aweights, 0, sizeof(double) * buffers.n_columns);
-			std::memset(buffers.h_Cweights, 0, sizeof(double) * buffers.n_columns);
-			std::memset(buffers.h_Gweights, 0, sizeof(double) * buffers.n_columns);
-			std::memset(buffers.h_Tweights, 0, sizeof(double) * buffers.n_columns);
+			buffers.reset();
 
 			tpd = std::chrono::system_clock::now();
 			buffers.preprocessingtime += tpd - tpc;

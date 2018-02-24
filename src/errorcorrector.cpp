@@ -847,8 +847,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
 	hammingtools::SHDdata shddata(deviceId, SDIV(nThreads, deviceIds.size()),
 			maximum_sequence_length);
-	hammingtools::CorrectionBuffers hcorrectionbuffers(deviceId,
-			maximum_sequence_length);
+	hammingtools::CorrectionBuffers hcorrectionbuffers;
 	graphtools::AlignerDataArrays sgadata(deviceId, maximum_sequence_length, ALIGNMENTSCORE_MATCH,
 			ALIGNMENTSCORE_SUB, ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL);
 
@@ -1569,7 +1568,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
 	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
 	cuda_cleanup_MinhashResultsDedupBuffers(minhashresultsdedupbuffers);
-	hammingtools::cuda_cleanup_CorrectionBuffers(hcorrectionbuffers);
 }
 
 std::uint64_t ErrorCorrector::getReadPos(const std::string& readheader) const {
