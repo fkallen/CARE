@@ -326,23 +326,21 @@ namespace hammingtools{
                             H2D,
                             mybuffers.streams[batchid]); CUERR;
 
-                    // run kernel
+                    // start kernel
                     alignment::call_shd_kernel_async(params[batchid], mybuffers.streams[batchid]);
 
                     querysum += count;
                     subjectindex++;
                 }
             }
-
+            
             subjectindex = 0;
             querysum = 0;
-
+			//initialize transfer d2h
             for(auto& b : batch){
                 if(b.active){
                     batchid = subjectindex;
                     AlignResultCompact* results = mybuffers.h_results + querysum;
-
-                    tpa = std::chrono::system_clock::now();
 
                     cudaMemcpyAsync(results,
                         params[batchid].results,
@@ -350,10 +348,22 @@ namespace hammingtools{
                         D2H,
                         mybuffers.streams[batchid]); CUERR;
 
+                    subjectindex++;
+                    querysum += params[batchid].n_queries;
+                }
+            }            
+
+            subjectindex = 0;
+            querysum = 0;
+
+			//wait for d2h transfer to complete and fetch results
+            for(auto& b : batch){
+                if(b.active){
+                    batchid = subjectindex;
+                    AlignResultCompact* results = mybuffers.h_results + querysum;
+
                     cudaStreamSynchronize(mybuffers.streams[batchid]); CUERR;
 
-                    tpb = std::chrono::system_clock::now();
-                    mybuffers.d2htime += tpb - tpa;
                     tpa = std::chrono::system_clock::now();
 
                     int count = 0;
