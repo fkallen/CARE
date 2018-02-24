@@ -1012,7 +1012,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
                     for(size_t k = 0; k < n_unique_elements; k++){
                         int first = b.candidateCountsPrefixSum[k];
-                        b.revcomplSequences[k] = readStorage.fetchReverseComplementSequence_ptr(first);
+                        b.revcomplSequences[k] = readStorage.fetchReverseComplementSequence_ptr(b.candidateIds[first]);
+						//std::cout << b.readId << " " <<  (b.candidateCountsPrefixSum[k+1]-b.candidateCountsPrefixSum[k]) << " " << b.fwdSequences[k]->toString() << " " << b.revcomplSequences[k]->toString() << std::endl;
                     }
 
                     for(size_t k = 0; k < b.candidateIds.size(); k++){
@@ -1139,6 +1140,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 							}
 						}
 					}
+					
+					/*if(b.active)
+						std::cout << b.readId << " correct\n";
+					else
+						std::cout << b.readId << " not correct\n";*/
                 }
             }
 
