@@ -75,13 +75,6 @@ cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
     std::chrono::duration<double> majorityvotetime(0);
     std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
 
-    auto get_qscores = [&](auto i){
-        if(batchElem.bestIsForward[i])
-            return batchElem.fwdQualities;
-        else
-            return batchElem.revcomplQualities;
-    };
-
     tpa = std::chrono::system_clock::now();
 
     const int subjectlength = batchElem.fwdSequenceString.length();
@@ -113,87 +106,84 @@ cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
 
 #if WEIGHTMODE == 2
 
-    for(size_t i = 0; i < batchElem.bestAlignments.size(); i++){
-        if(batchElem.activeCandidates[i]){
-            const auto& alignment = *batchElem.bestAlignments[i];
-            const auto& qscores = get_qscores(i);
-            const std::string sequencestring = batchElem.bestSequences[i]->toString();
+    for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
+		const auto& alignment = batchElem.bestAlignments[i];
+		const std::string sequencestring = batchElem.bestSequences[i]->toString();
 
-            const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
-            const int len = sequencestring.length();
-            const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
+		const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
+		const int len = sequencestring.length();
+		const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
 
-            for(int j = 0; j < len; j++){
-                const int globalIndex = subjectColumnsBegin_incl + alignment.shift + j;
-                double qw = 0.0;
-                for(int f = 0; f < freq; f++){
-                    const std::string* scores = qscores[batchElem.candidateCountsPrefixSum[i] + f];
-                    if(useQScores)
-                        qw += qscore_to_weight[(unsigned char)(*scores)[j]];
-                    else
-                        qw += 1.0;
-                }
-                qw *= defaultweight;
-                const char base = sequencestring[j];
-                switch(base){
-                    case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
-                    case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
-                    case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
-                    case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
-                    default: std::cout << "this B should not happen in pileup\n"; break;
-                }
-                buffers->h_coverage[globalIndex] += freq;
-            }
-        }
+		for(int j = 0; j < len; j++){
+			const int globalIndex = subjectColumnsBegin_incl + alignment.shift + j;
+			double qw = 0.0;
+			for(int f = 0; f < freq; f++){
+				const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
+				if(useQScores)
+					qw += qscore_to_weight[(unsigned char)(*scores)[j]];
+				else
+					qw += 1.0;
+			}
+			qw *= defaultweight;
+			const char base = sequencestring[j];
+			switch(base){
+				case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
+				case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
+				case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
+				case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
+				default: std::cout << "this B should not happen in pileup\n"; break;
+			}
+			buffers->h_coverage[globalIndex] += freq;
+		}
     }
 
 
 #elif WEIGHTMODE == 3
 
+    for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
+//TIMERSTARTCPU(prepare);		
+		const auto& alignment = batchElem.bestAlignments[i];
+		//const std::string sequencestring = batchElem.bestSequences[i]->toString();
 
-    for(size_t i = 0; i < batchElem.bestAlignments.size(); i++){
-        if(batchElem.activeCandidates[i]){
-            const auto& alignment = *batchElem.bestAlignments[i];
-            const auto& qscores = get_qscores(i);
-            //const std::string sequencestring = batchElem.bestSequences[i]->toString();
+		const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
+		//const int len = sequencestring.length();
+		const int len = batchElem.bestSequences[i]->getNbases();
+		const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
+		const int defaultcolumnoffset = subjectColumnsBegin_incl + alignment.shift;
+//TIMERSTOPCPU(prepare);
+//TIMERSTARTCPU(addquality);		
+		//use h_support as temporary storage to store sum of quality weights
+		for(int f = 0; f < freq; f++){
+			const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
+			if(useQScores){
+				for(int j = 0; j < len; j++){
+					buffers->h_support[j] += qscore_to_weight[(unsigned char)(*scores)[j]];
+				}
+			}else{
+				for(int j = 0; j < len; j++){
+					buffers->h_support[j] += 1.0;
+				}
+			}
+		}
+//TIMERSTOPCPU(addquality);
+//TIMERSTARTCPU(addbase);		
+		for(int j = 0; j < len; j++){
+			const int globalIndex = defaultcolumnoffset + j;
+			const double qw = buffers->h_support[j] * defaultweight;
+			//const char base = sequencestring[j];
+			const char base = (*batchElem.bestSequences[i])[j];
 
-            const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
-            //const int len = sequencestring.length();
-			const int len = batchElem.bestSequences[i]->getNbases();
-            const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
-            const int defaultcolumnoffset = subjectColumnsBegin_incl + alignment.shift;
-
-            //use h_support as temporary storage to store sum of quality weights
-            for(int f = 0; f < freq; f++){
-                const std::string* scores = qscores[batchElem.candidateCountsPrefixSum[i] + f];
-                if(useQScores){
-                    for(int j = 0; j < len; j++){
-                        buffers->h_support[j] += qscore_to_weight[(unsigned char)(*scores)[j]];
-                    }
-                }else{
-                    for(int j = 0; j < len; j++){
-                        buffers->h_support[j] += 1.0;
-                    }
-                }
-            }
-
-            for(int j = 0; j < len; j++){
-                const int globalIndex = defaultcolumnoffset + j;
-                const double qw = buffers->h_support[j] * defaultweight;
-                //const char base = sequencestring[j];
-				const char base = (*batchElem.bestSequences[i])[j];
-
-                switch(base){
-                    case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
-                    case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
-                    case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
-                    case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
-                    default: std::cout << "this C should not happen in pileup\n"; break;
-                }
-                buffers->h_coverage[globalIndex] += freq;
-                buffers->h_support[j] = 0;
-            }
-        }
+			switch(base){
+				case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
+				case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
+				case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
+				case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
+				default: std::cout << "this C should not happen in pileup\n"; break;
+			}
+			buffers->h_coverage[globalIndex] += freq;
+			buffers->h_support[j] = 0;
+		}
+//TIMERSTOPCPU(addbase);		
     }
 
 #elif
@@ -319,7 +309,7 @@ cpu_correct(const CorrectionBuffers* buffers, BatchElem& batchElem,
         //correct candidates
         if(correctQueries){
 
-            for(int i = 0; i < nQueries; i++){
+            for(int i = 0; i < batchElem.n_unique_candidates; i++){
                 int queryColumnsBegin_incl = alignments[i].shift - startindex;
                 bool queryWasCorrected = false;
                 //correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject

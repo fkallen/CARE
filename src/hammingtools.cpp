@@ -440,13 +440,11 @@ namespace hammingtools{
 			int startindex = 0;
 			int endindex = batchElem.fwdSequenceString.length();
 
-            for(size_t i = 0; i < batchElem.activeCandidates.size(); i++){
-                if(batchElem.activeCandidates[i]){
-                    const int shift = batchElem.bestAlignments[i]->shift;
-                    startindex = shift < startindex ? shift : startindex;
-    				const int queryEndsAt = batchElem.bestSequences[i]->getNbases() + shift;
-    				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
-                }
+            for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
+				const int shift = batchElem.bestAlignments[i].shift;
+				startindex = shift < startindex ? shift : startindex;
+				const int queryEndsAt = batchElem.bestSequences[i]->getNbases() + shift;
+				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
             }
 
 			const int columnsToCheck = endindex - startindex;

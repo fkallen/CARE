@@ -20,6 +20,9 @@ struct BatchElem{
 	std::string fwdSequenceString;
     const std::string* fwdQuality;
     std::string correctedSequence;
+	
+	size_t n_unique_candidates;
+	size_t n_candidates;
 
     std::vector<std::uint64_t> candidateIds;
     std::vector<int> candidateCountsPrefixSum;
@@ -27,12 +30,13 @@ struct BatchElem{
     std::vector<bool> activeCandidates;
     std::vector<const Sequence*> fwdSequences;
     std::vector<const Sequence*> revcomplSequences;
-    std::vector<const std::string*> fwdQualities;
-	std::vector<const std::string*> revcomplQualities;
+    //std::vector<const std::string*> fwdQualities;
+	//std::vector<const std::string*> revcomplQualities;
     std::vector<AlignResultCompact> fwdAlignments;
     std::vector<AlignResultCompact> revcomplAlignments;
-    std::vector<AlignResultCompact*> bestAlignments;
+    std::vector<AlignResultCompact> bestAlignments;
     std::vector<const Sequence*> bestSequences;
+	std::vector<const std::string*> bestQualities;
     std::vector<bool> bestIsForward;
     std::vector<CorrectedCandidate> correctedCandidates;
 
@@ -45,20 +49,22 @@ struct BatchElem{
         candidateCountsPrefixSum.clear();
         fwdSequences.clear();
         activeCandidates.clear();
-        fwdQualities.clear();
+        //fwdQualities.clear();
         revcomplSequences.clear();
-        revcomplQualities.clear();
+        //revcomplQualities.clear();
         fwdAlignments.clear();
         revcomplAlignments.clear();
         bestAlignments.clear();
         bestSequences.clear();
         bestIsForward.clear();
         correctedCandidates.clear();
+		bestQualities.clear();
     }
 
     void set_number_of_sequences(std::uint64_t num){
-        fwdQualities.resize(num);
-        revcomplQualities.resize(num);
+        //fwdQualities.resize(num);
+        //revcomplQualities.resize(num);
+		bestQualities.resize(num);
     }
 
     void set_number_of_unique_sequences(std::uint64_t num){

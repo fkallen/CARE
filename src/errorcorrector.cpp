@@ -948,12 +948,12 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                 b.fwdQuality = readStorage.fetchQuality_ptr(b.readId);
                 b.fwdSequenceString = b.fwdSequence->toString();
 
-                tpa = std::chrono::system_clock::now();
+                tpc = std::chrono::system_clock::now();
                 b.candidateIds = minhasher.getCandidates(minhasherbuffers, b.fwdSequenceString);
                 //remove self from candidates
                 b.candidateIds.erase(std::find(b.candidateIds.begin(), b.candidateIds.end(), b.readId));
-                tpb = std::chrono::system_clock::now();
-        		getCandidatesTimeTotal += tpb - tpa;
+                tpd = std::chrono::system_clock::now();
+        		getCandidatesTimeTotal += tpd - tpc;
 
                 b.set_number_of_sequences(b.candidateIds.size());
                 b.set_number_of_unique_sequences(b.candidateIds.size());
@@ -1015,7 +1015,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						//std::cout << b.readId << " " <<  (b.candidateCountsPrefixSum[k+1]-b.candidateCountsPrefixSum[k]) << " " << b.fwdSequences[k]->toString() << " " << b.revcomplSequences[k]->toString() << std::endl;
                     }
 
-                    for(size_t k = 0; k < b.candidateIds.size(); k++){
+                    /*for(size_t k = 0; k < b.candidateIds.size(); k++){
                         std::uint64_t id = b.candidateIds[k];
                         b.fwdQualities[k] = readStorage.fetchQuality_ptr(id);
                     }
@@ -1023,13 +1023,16 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     for(size_t k = 0; k < b.candidateIds.size(); k++){
                         std::uint64_t id = b.candidateIds[k];
                         b.revcomplQualities[k] = readStorage.fetchReverseComplementQuality_ptr(id);
-                    }
+                    }*/
 
                     t2 = std::chrono::system_clock::now();
                     mapminhashresultsfetch += (t2 - t1);
 
                     for(size_t k = 0; k < b.activeCandidates.size(); k++)
                         b.activeCandidates[k] = true;
+					
+					b.n_unique_candidates = b.fwdSequences.size();
+					b.n_candidates = b.candidateIds.size();
 
                     assert(b.candidateCountsPrefixSum.back() == b.candidateIds.size());
                 }
@@ -1062,8 +1065,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     // for each candidate, compare its alignment to the alignment of the reverse complement.
 					// find the best of both, if any.
                     for(size_t i = 0; i < b.fwdSequences.size(); i++){
-                        auto& res = b.fwdAlignments[i];
-                        auto& revcomplres = b.revcomplAlignments[i];
+                        const auto& res = b.fwdAlignments[i];
+                        const auto& revcomplres = b.revcomplAlignments[i];
                         const int candidatelength = b.fwdSequences[i]->getNbases();
 
                         BestAlignment_t bestAlignment = get_best_alignment(res,
@@ -1073,15 +1076,14 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
                         if(bestAlignment == BestAlignment_t::None){
                             b.activeCandidates[i] = false;
-                            b.bestAlignments[i] = nullptr;
                             bad++;
                         }else{
-                            b.bestIsForward[i] = bestAlignment == BestAlignment_t::Forward;
-                            if(b.bestIsForward[i])
-                                b.bestAlignments[i] = &res;
-                            else
-                                b.bestAlignments[i] = &revcomplres;
-                            const double mismatchratio = double(b.bestAlignments[i]->nOps) / double(b.bestAlignments[i]->overlap);
+                            const double mismatchratio = [&](){
+								if(bestAlignment == BestAlignment_t::Forward) 
+									return double(res.nOps) / double(res.overlap);
+								else
+									return double(revcomplres.nOps) / double(revcomplres.overlap);
+							}();
                             const int f = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
                             if(mismatchratio >= 4 * errorrate){
                                 b.activeCandidates[i] = false;
@@ -1097,11 +1099,27 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
     							if (mismatchratio < 4 * errorrate) {
     								counts[2] += f;
     								countsDedup[2]++;
-    							}
-                                if(b.bestIsForward[i])
+    							}	
+    							
+								const int begin = b.candidateCountsPrefixSum[i];
+								const int count = b.candidateCountsPrefixSum[i+1] - begin;	
+                                if(bestAlignment == BestAlignment_t::Forward){
+									b.bestIsForward[i] = true;
                                     b.bestSequences[i] = b.fwdSequences[i];
-                                else
+									b.bestAlignments[i] = res;
+									for(int j = 0; j < count; j++){
+										std::uint64_t id = b.candidateIds[begin + j];
+										b.bestQualities[begin + j] = readStorage.fetchQuality_ptr(id);
+									}									
+								}else{
+									b.bestIsForward[i] = false;
                                     b.bestSequences[i] = b.revcomplSequences[i];
+									b.bestAlignments[i] = revcomplres;
+									for(int j = 0; j < count; j++){
+										std::uint64_t id = b.candidateIds[begin + j];
+										b.bestQualities[begin + j] = readStorage.fetchReverseComplementQuality_ptr(id);
+									}									
+								}
                             }
                         }
                     }
@@ -1132,12 +1150,33 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 					if(b.active){
 						//remove candidates which don't fit into mismatchratioThreshold
+						size_t activeposition_unique = 0;
+						size_t activeposition = 0;
 						for(size_t i = 0; i < b.activeCandidates.size(); i++){
 							if(b.activeCandidates[i]){
-								const double mismatchratio = double(b.bestAlignments[i]->nOps) / double(b.bestAlignments[i]->overlap);
-								b.activeCandidates[i] = b.activeCandidates[i] && (mismatchratio < mismatchratioThreshold);
+								const double mismatchratio = double(b.bestAlignments[i].nOps) / double(b.bestAlignments[i].overlap);
+								const bool notremoved = mismatchratio < mismatchratioThreshold;
+								if(notremoved){									
+									b.fwdSequences[activeposition_unique] = b.fwdSequences[i];
+									b.revcomplSequences[activeposition_unique] = b.revcomplSequences[i];
+									b.bestAlignments[activeposition_unique] = b.bestAlignments[i];
+									b.bestSequences[activeposition_unique] = b.bestSequences[i];
+									b.bestIsForward[activeposition_unique] = b.bestIsForward[i];
+									
+									const int begin = b.candidateCountsPrefixSum[i];
+									const int count = b.candidateCountsPrefixSum[i+1] - begin;									
+									for(int j = 0; j < count; j++){
+										b.candidateIds[activeposition] = b.candidateIds[begin + j];
+										b.bestQualities[activeposition] = b.bestQualities[begin + j];
+										activeposition++;
+									}
+									b.candidateCountsPrefixSum[activeposition_unique+1] = b.candidateCountsPrefixSum[activeposition_unique] + count;
+									activeposition_unique++;
+								}
 							}
 						}
+						b.n_unique_candidates = activeposition_unique;
+						b.n_candidates = activeposition;
 					}
 					
 					/*if(b.active)
