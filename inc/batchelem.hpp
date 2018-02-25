@@ -36,6 +36,7 @@ struct BatchElem{
     std::vector<AlignResultCompact> revcomplAlignments;
     std::vector<AlignResultCompact> bestAlignments;
     std::vector<const Sequence*> bestSequences;
+	std::vector<std::string> bestSequenceStrings;
 	std::vector<const std::string*> bestQualities;
     std::vector<bool> bestIsForward;
     std::vector<CorrectedCandidate> correctedCandidates;
@@ -56,6 +57,7 @@ struct BatchElem{
         revcomplAlignments.clear();
         bestAlignments.clear();
         bestSequences.clear();
+		bestSequenceStrings.clear();
         bestIsForward.clear();
         correctedCandidates.clear();
 		bestQualities.clear();
@@ -76,6 +78,7 @@ struct BatchElem{
         revcomplAlignments.resize(num);
         bestAlignments.resize(num);
         bestSequences.resize(num);
+		bestSequenceStrings.resize(num);
         bestIsForward.resize(num);
     }
 };

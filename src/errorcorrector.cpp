@@ -824,7 +824,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 	std::uint32_t firstBatch = threadId * minBatchesPerThread;
 	// the last thread is responsible for leftover batches. set chunk size accordingly.
-	std::uint32_t chunkSize =
+	std::uint32_t chunkSize = 
 			(threadId == nThreads - 1 && threadId > 0) ?
 					minBatchesPerThread + totalNumberOfBatches % nThreads :
 					minBatchesPerThread;
@@ -1060,16 +1060,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
-			tpa = std::chrono::system_clock::now();
 
             //select candidates from alignments
             for(auto& b : batch){
                 if(b.active){
+					
                     const int querylength = b.fwdSequence->getNbases();
 
 					int counts[3] { 0, 0, 0 };
 					int countsDedup[3] { 0, 0, 0 };
                     int bad = 0;
+					
+					tpc = std::chrono::system_clock::now();
 
                     // for each candidate, compare its alignment to the alignment of the reverse complement.
 					// find the best of both, if any.
@@ -1156,7 +1158,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                         b.active = false;
 						write_read(b.readId, b.fwdSequenceString);
 					}
-
+					
+					tpd = std::chrono::system_clock::now();
+					determinegoodalignmentsTime += tpd - tpc;					
+					tpc = std::chrono::system_clock::now();
+					
 					if(b.active){
 						//remove candidates which don't fit into mismatchratioThreshold
 						size_t activeposition_unique = 0;
@@ -1170,6 +1176,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 									b.revcomplSequences[activeposition_unique] = b.revcomplSequences[i];
 									b.bestAlignments[activeposition_unique] = b.bestAlignments[i];
 									b.bestSequences[activeposition_unique] = b.bestSequences[i];
+									b.bestSequenceStrings[activeposition_unique] = b.bestSequences[i]->toString();
 									b.bestIsForward[activeposition_unique] = b.bestIsForward[i];
 									
 									const int begin = b.candidateCountsPrefixSum[i];
@@ -1188,6 +1195,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 						b.n_candidates = activeposition;
 					}
 					
+					tpd = std::chrono::system_clock::now();
+					fetchgoodcandidatesTime += tpd - tpc;					
+					
 					/*if(b.active)
 						std::cout << b.readId << " correct\n";
 					else
@@ -1195,8 +1205,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                 }
             }
 
-            tpb = std::chrono::system_clock::now();
-            determinegoodalignmentsTime += tpb - tpa;
             tpa = std::chrono::system_clock::now();
 
             //perform correction
