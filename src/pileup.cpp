@@ -108,7 +108,7 @@ cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
 
     for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
 		const auto& alignment = batchElem.bestAlignments[i];
-		const std::string sequencestring = batchElem.bestSequences[i]->toString();
+		//const std::string sequencestring = batchElem.bestSequences[i]->toString();
 
 		const double defaultweight = 1.0 - std::sqrt(alignment.nOps / (alignment.overlap * maxErrorRate));
 		const int len = sequencestring.length();
@@ -125,7 +125,8 @@ cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
 					qw += 1.0;
 			}
 			qw *= defaultweight;
-			const char base = sequencestring[j];
+			//const char base = sequencestring[j];
+			const char base = (*batchElem.bestSequences[i])[j];
 			switch(base){
 				case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
 				case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
@@ -153,24 +154,25 @@ cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
 //TIMERSTOPCPU(prepare);
 //TIMERSTARTCPU(addquality);		
 		//use h_support as temporary storage to store sum of quality weights
-		for(int f = 0; f < freq; f++){
-			const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
-			if(useQScores){
+		if(useQScores){
+			for(int f = 0; f < freq; f++){
+				const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
 				for(int j = 0; j < len; j++){
 					buffers->h_support[j] += qscore_to_weight[(unsigned char)(*scores)[j]];
 				}
-			}else{
-				for(int j = 0; j < len; j++){
-					buffers->h_support[j] += 1.0;
-				}
 			}
+		}else{
+				for(int j = 0; j < len; j++){
+					buffers->h_support[j] += freq;
+				}			
 		}
 //TIMERSTOPCPU(addquality);
-//TIMERSTARTCPU(addbase);		
+//TIMERSTARTCPU(addbase);
+		//const std::string candidateSequence = batchElem.bestSequences[i]->toString();
 		for(int j = 0; j < len; j++){
 			const int globalIndex = defaultcolumnoffset + j;
 			const double qw = buffers->h_support[j] * defaultweight;
-			//const char base = sequencestring[j];
+			//const char base = candidateSequence[j];
 			const char base = (*batchElem.bestSequences[i])[j];
 
 			switch(base){

@@ -796,12 +796,21 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 	// buffer of correction results
 	std::stringstream resultstringstream;
-	
+
+#if 1	
 	auto write_read = [&](const auto readId, const auto& sequence){
-		resultstringstream << readId << '\n';
-		resultstringstream << sequence << '\n';
+		auto& stream = outputfile;
+		stream << readId << '\n';
+		stream << sequence << '\n';
+	};
+#else	
+	auto write_read = [&](const auto readId, const auto& sequence){
+		auto& stream = resultstringstream;
+		stream << readId << '\n';
+		stream << sequence << '\n';
 		nBufferedResults++;
 	};
+#endif	
 
 	// number of processed reads after previous progress update
 	// resets after each progress update
@@ -1435,10 +1444,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		}
 #endif
 
-
-#if 1
 		// write result to output file if output buffer is full
-		if (nBufferedResults >= bufferedResultsThreshold) {
+		/*if (nBufferedResults >= bufferedResultsThreshold) {
 
 			tpa = std::chrono::system_clock::now();
 
@@ -1454,7 +1461,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			tpb = std::chrono::system_clock::now();
 			fileoutputTimeTotal += tpb - tpa;
 
-		}
+		}*/
 
 		// update local progress
 		progressprocessedReads += actualBatchSize;
@@ -1468,7 +1475,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	}
 
 	// write remaining buffered results
-	if (nBufferedResults > 0) {
+	/*if (nBufferedResults > 0) {
 
 
 		tpa = std::chrono::system_clock::now();
@@ -1484,8 +1491,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		tpb = std::chrono::system_clock::now();
 		fileoutputTimeTotal += tpb - tpa;
 
-	}
-#endif
+	}*/
+
 
 	//final progress update
 	updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
