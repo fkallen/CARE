@@ -31,6 +31,7 @@ struct ReadStorage{
 
     void clear();
     void init(size_t nReads);
+    void destroy();
 
     void setUseQualityScores(bool use);
 

@@ -56,6 +56,16 @@
 		isReadOnly = false;
 	}
 
+	void ReadStorage::destroy(){
+		clear();
+		headers.shrink_to_fit();
+		qualityscores.shrink_to_fit();
+		reverseComplqualityscores.shrink_to_fit();
+		sequencepointers.shrink_to_fit();
+		reverseComplSequencepointers.shrink_to_fit();
+		all_unique_sequences.shrink_to_fit();
+	}
+
 	void ReadStorage::insertRead(size_t readNumber, const Read& read){
 		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling noMoreInserts()");
 

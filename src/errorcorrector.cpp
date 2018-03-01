@@ -484,7 +484,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 	}
 
 	minhasher.init(0);
-	readStorage.clear();
+	readStorage.destroy();
 	readIsProcessedVector.clear();
 
 #endif
