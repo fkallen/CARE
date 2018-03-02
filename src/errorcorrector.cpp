@@ -11,6 +11,7 @@
 
 
 #include "../inc/batchelem.hpp"
+#include "../inc/pileup.hpp"
 
 #include <cstdint>
 #include <thread>
@@ -866,6 +867,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
     std::vector<BatchElem> batch(batchsize,
             BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
 
+    std::vector<hammingtools::correction::PileupImage> pileupImages(batchsize,
+        hammingtools::correction::PileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k));
+
 	const int maxReadsPerLock =
 			(!CORRECT_CANDIDATE_READS_TOO) ?
 					1 :
@@ -901,6 +905,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		//fit vector size to actual batch size
 		if (actualBatchSize < batchsize) {
             batch.resize(actualBatchSize, BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
+            pileupImages.resize(actualBatchSize,
+                hammingtools::correction::PileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k));
 		}
 
         for(auto& b : batch){
