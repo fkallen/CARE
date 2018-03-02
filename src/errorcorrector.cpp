@@ -1026,34 +1026,23 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
             tpa = std::chrono::system_clock::now();
 
-            //perform correction
-            for(auto& b : batch){
+            for(size_t i = 0; i < batch.size(); i++){
+                BatchElem& b = batch[i];
                 if(b.active){
                     tpc = std::chrono::system_clock::now();
 
-                    int status;
-                    std::chrono::duration<double> foo1;
-                    std::chrono::duration<double> foo2;
-                    std::tie(status, foo1, foo2) =
-                            hammingtools::performCorrection(
-                                    hcorrectionbuffers, b,
-                                    MAX_MISMATCH_RATIO, useQualityScores,
-                                    CORRECT_CANDIDATE_READS_TOO,
-                                    estimatedCoverage, errorrate,
-                                    m_coverage, minhashparams.k, true);
+                    pileupImages[i].correct_batch_elem(b);
 
                     tpd = std::chrono::system_clock::now();
-
                     readcorrectionTimeTotal += tpd - tpc;
 
-                    majorityvotetime += foo1;
-                    basecorrectiontime += foo2;
+                    majorityvotetime += pileupImages[i].timings.findconsensustime;
+                    basecorrectiontime += pileupImages[i].timings.correctiontime;
 
-                    avgsupportfail += (((status >> 0) & 1) == 1);
-                    minsupportfail += (((status >> 1) & 1) == 1);
-                    mincoveragefail += (((status >> 2) & 1) == 1);
-                    sobadcouldnotcorrect += (((status >> 3) & 1) == 1);
-                    verygoodalignment += (status == 0);
+                    avgsupportfail += pileupImages[i].properties.failedAvgSupport;
+                    minsupportfail += pileupImages[i].properties.failedMinSupport;
+                    mincoveragefail += pileupImages[i].properties.failedMinCoverage;
+                    verygoodalignment += pileupImages[i].properties.isHQ;
 
                     if(b.corrected){
 						write_read(b.readId, b.correctedSequence);
@@ -1097,6 +1086,8 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     }
                 }
             }
+
+
 			tpb = std::chrono::system_clock::now();
             correctReadTimeTotal += tpb - tpa;
 
