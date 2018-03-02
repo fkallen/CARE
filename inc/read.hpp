@@ -24,7 +24,7 @@ struct FixedSizeSequence{
 	static constexpr int DATA_BYTES = SDIV(MAX_LEN, 4);
 
 	uint8_t data[DATA_BYTES];
-	int length = 0;
+	int length_ = 0;
 
 	HOSTDEVICEQUALIFIER
 	constexpr int getNumBytes() const{
@@ -33,7 +33,7 @@ struct FixedSizeSequence{
 
 	HOSTDEVICEQUALIFIER
 	int length() const{
-		return length;
+		return length_;
 	}
 
 	HOSTDEVICEQUALIFIER
@@ -41,13 +41,13 @@ struct FixedSizeSequence{
 		memset(data, 0, DATA_BYTES);
 	}
 
-	FixedSizeSequence(const std::string& sequence) : length(sequence.size()){
+	FixedSizeSequence(const std::string& sequence) : length_(sequence.size()){
 		if(sequence.size() > MAX_LEN || !encode(sequence.c_str(), sequence.size(), sequence.size(), data, DATA_BYTES, true)){
 			throw std::runtime_error("could not encode sequence");
 		}
 	}
 
-	FixedSizeSequence(const uint8_t* rawdata, int nBases_) : length(nBases_){
+	FixedSizeSequence(const uint8_t* rawdata, int nBases_) : length_(nBases_){
 		if(nBases_ > MAX_LEN){
 			throw std::runtime_error("could not encode sequence");
 		}
@@ -61,7 +61,7 @@ struct FixedSizeSequence{
 
 	HOSTDEVICEQUALIFIER
 	FixedSizeSequence& operator=(const FixedSizeSequence& other){
-		length = other.length;
+		length() = other.length();
 		memcpy(data, other.data, sizeof(uint8_t) * DATA_BYTES);
 	}
 
