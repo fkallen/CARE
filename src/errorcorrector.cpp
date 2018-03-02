@@ -1128,7 +1128,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 				std::vector<int> insertedFreqs;
 				std::vector<bool> forwardRead;
 
-				const int querylength = queries[i]->getNbases();
+				const int querylength = queries[i]->length();
 
 				int bad = 0;
 				int fc = 0;
@@ -1137,7 +1137,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					auto& revcomplres = alignments[i][candidateReads[i].size()
 							+ j];
 
-					int candidatelength = candidateReads[i][j]->getNbases();
+					int candidatelength = candidateReads[i][j]->length();
 
 					BestAlignment_t best = get_best_alignment(res.arc,
 							revcomplres.arc, querylength, candidatelength,

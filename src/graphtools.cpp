@@ -213,7 +213,7 @@ namespace graphtools{
 					params[batchid].max_sequence_length = mybuffers.max_sequence_length;
 					params[batchid].max_ops_per_alignment = mybuffers.max_ops_per_alignment;
 					params[batchid].sequencepitch = mybuffers.sequencepitch;
-					params[batchid].subjectlength = subjects[i]->getNbases();
+					params[batchid].subjectlength = subjects[i]->length();
 					params[batchid].n_queries = queries[i].size();
 					params[batchid].querylengths = mybuffers.d_querylengths + querysum;
 					params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
@@ -229,18 +229,18 @@ namespace graphtools{
 					char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
 					char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
 					
-					assert(subjects[i]->getNbases() <= mybuffers.max_sequence_length);
+					assert(subjects[i]->length() <= mybuffers.max_sequence_length);
 					
 					std::memcpy(subjectdata, subjects[i]->begin(), subjects[i]->getNumBytes());
 
 					for(size_t j = 0; j < queries[i].size(); j++){
-						assert(queries[i][j]->getNbases() <= mybuffers.max_sequence_length);
+						assert(queries[i][j]->length() <= mybuffers.max_sequence_length);
 
 						std::memcpy(queriesdata + j * mybuffers.sequencepitch,
 							    queries[i][j]->begin(), 
 							    queries[i][j]->getNumBytes());
 
-						querylengths[j] = queries[i][j]->getNbases();
+						querylengths[j] = queries[i][j]->length();
 					}
 					
 					tpb = std::chrono::system_clock::now();
@@ -322,12 +322,12 @@ namespace graphtools{
 				if(activeBatches[i]){
 					const auto& query = subjects[i];
 					const char* qdata = (const char*) query->begin();
-					int qbases = query->getNbases();
+					int qbases = query->length();
 
 					for(size_t j = 0; j < queries[i].size(); j++){
 						const auto& c = queries[i][j];
 						const char* cdata = (const char*)c->begin();
-						int cbases = c->getNbases();
+						int cbases = c->length();
 
 						alignments[i][j] = alignment::cpu_semi_global_alignment(&mybuffers, qdata, cdata, qbases, cbases);
 					}

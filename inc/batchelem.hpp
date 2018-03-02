@@ -210,12 +210,12 @@ struct BatchElem{
 
         int counts[3] { 0, 0, 0 };
 
-        const int querylength = fwdSequence->getNbases();
+        const int querylength = fwdSequence->length();
 
         for(size_t i = 0; i < fwdSequences.size(); i++){
             const auto& res = fwdAlignments[i];
             const auto& revcomplres = revcomplAlignments[i];
-            const int candidatelength = fwdSequences[i]->getNbases();
+            const int candidatelength = fwdSequences[i]->length();
 
             BestAlignment_t bestAlignment = get_best_alignment(res,
                     revcomplres, querylength, candidatelength,

@@ -172,7 +172,7 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 		quality_weights.reserve(n_unique_forward_sequences);
 
 		for(auto pair : seqToIds){
-			const int len = pair.first->getNbases();
+			const int len = pair.first->length();
 			std::vector<float> weights(0.0f, len);
 			for(size_t id : pair.second){
 				const std::string* qptr = fetchQuality_ptr(id);

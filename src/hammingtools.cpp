@@ -265,7 +265,7 @@ namespace hammingtools{
 
                     params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
                     params[batchid].sequencepitch = mybuffers.sequencepitch;
-                    params[batchid].subjectlength = b.fwdSequence->getNbases();
+                    params[batchid].subjectlength = b.fwdSequence->length();
                     params[batchid].n_queries = b.fwdSequences.size() + b.revcomplSequences.size();
                     params[batchid].querylengths = mybuffers.d_querylengths + querysum;
                     params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
@@ -276,32 +276,32 @@ namespace hammingtools{
                     char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
                     char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
 
-                    assert(b.fwdSequence->getNbases() <= mybuffers.max_sequence_length);
+                    assert(b.fwdSequence->length() <= mybuffers.max_sequence_length);
                     assert(b.fwdSequence->getNumBytes() <= mybuffers.max_sequence_bytes);
 
                     std::memcpy(subjectdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
 
                     int count = 0;
                     for(const auto seq : b.fwdSequences){
-                        assert(seq->getNbases() <= mybuffers.max_sequence_length);
+                        assert(seq->length() <= mybuffers.max_sequence_length);
                         assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
 
                         std::memcpy(queriesdata + count * mybuffers.sequencepitch,
                                 seq->begin(),
                                 seq->getNumBytes());
 
-                        querylengths[count] = seq->getNbases();
+                        querylengths[count] = seq->length();
                         count++;
                     }
                     for(const auto seq : b.revcomplSequences){
-                        assert(seq->getNbases() <= mybuffers.max_sequence_length);
+                        assert(seq->length() <= mybuffers.max_sequence_length);
                         assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
 
                         std::memcpy(queriesdata + count * mybuffers.sequencepitch,
                                 seq->begin(),
                                 seq->getNumBytes());
 
-                        querylengths[count] = seq->getNbases();
+                        querylengths[count] = seq->length();
                         count++;
                     }
                     assert(params[batchid].n_queries == count);
@@ -391,17 +391,17 @@ namespace hammingtools{
             for(auto& b : batch){
                 if(b.active){
                     const char* const subject = (const char*)b.fwdSequence->begin();
-                    const int subjectLength = b.fwdSequence->getNbases();
+                    const int subjectLength = b.fwdSequence->length();
 
                     for(size_t i = 0; i < b.fwdSequences.size(); i++){
                         const char* query =  (const char*)b.fwdSequences[i]->begin();
-                        const int queryLength = b.fwdSequences[i]->getNbases();
+                        const int queryLength = b.fwdSequences[i]->length();
                         b.fwdAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
                     }
 
                     for(size_t i = 0; i < b.revcomplSequences.size(); i++){
                         const char* query =  (const char*)b.revcomplSequences[i]->begin();
-                        const int queryLength = b.revcomplSequences[i]->getNbases();
+                        const int queryLength = b.revcomplSequences[i]->length();
                         b.revcomplAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
                     }
                 }
@@ -443,7 +443,7 @@ namespace hammingtools{
             for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
 				const int shift = batchElem.bestAlignments[i].shift;
 				startindex = shift < startindex ? shift : startindex;
-				const int queryEndsAt = batchElem.bestSequences[i]->getNbases() + shift;
+				const int queryEndsAt = batchElem.bestSequences[i]->length() + shift;
 				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
             }
 

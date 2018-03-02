@@ -32,7 +32,7 @@ struct FixedSizeSequence{
 	}
 
 	HOSTDEVICEQUALIFIER
-	int getNbases() const{
+	int length() const{
 		return length;
 	}
 
@@ -68,7 +68,7 @@ struct FixedSizeSequence{
 	HOSTDEVICEQUALIFIER
 	bool operator==(const FixedSizeSequence& rhs) const
 	{
-		if(getNbases() != rhs.getNbases()) return false;
+		if(length() != rhs.length()) return false;
 		return (memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
 	}
 
@@ -90,8 +90,8 @@ struct FixedSizeSequence{
 
 	HOSTDEVICEQUALIFIER
 	bool operator<(const FixedSizeSequence& rhs) const{
-		const int bases = getNbases();
-		const int otherbases = rhs.getNbases();
+		const int bases = length();
+		const int otherbases = rhs.length();
 		if(bases < otherbases) return true;
 		if(bases > otherbases) return false;
 
@@ -100,8 +100,8 @@ struct FixedSizeSequence{
 
 	HOSTDEVICEQUALIFIER
 	char operator[](int i) const{
-                const int FIRST_USED_BYTE = getNumBytes() - SDIV(getNbases(), BASES_PER_BYTE);
-                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (getNbases() % BASES_PER_BYTE)) % BASES_PER_BYTE;
+                const int FIRST_USED_BYTE = getNumBytes() - SDIV(length(), BASES_PER_BYTE);
+                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (length() % BASES_PER_BYTE)) % BASES_PER_BYTE;
 		const int byte = FIRST_USED_BYTE + (i + UNUSED_BYTE_SPACE) / BASES_PER_BYTE;
 		const int basepos = (i + UNUSED_BYTE_SPACE) % BASES_PER_BYTE;
 
@@ -115,8 +115,8 @@ struct FixedSizeSequence{
 
 	HOSTDEVICEQUALIFIER
 	void setBase(int pos, char base){
-                const int FIRST_USED_BYTE = getNumBytes() - SDIV(getNbases(), BASES_PER_BYTE);
-                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (getNbases() % BASES_PER_BYTE)) % BASES_PER_BYTE;
+                const int FIRST_USED_BYTE = getNumBytes() - SDIV(length(), BASES_PER_BYTE);
+                const int UNUSED_BYTE_SPACE = (BASES_PER_BYTE - (length() % BASES_PER_BYTE)) % BASES_PER_BYTE;
 		const int byte = FIRST_USED_BYTE + (pos + UNUSED_BYTE_SPACE) / BASES_PER_BYTE;
 		const int basepos = (pos + UNUSED_BYTE_SPACE) % BASES_PER_BYTE;
 
@@ -145,7 +145,7 @@ struct FixedSizeSequence{
 
 	std::string toString() const{
 		char buf[MAX_LEN+1];
-		bool b = decode(data, getNumBytes(), getNbases(), buf, getNbases()+1);
+		bool b = decode(data, getNumBytes(), length(), buf, length()+1);
 		if(!b)
 			throw std::runtime_error("could not decode sequence");
 		return std::string(buf);
@@ -153,9 +153,9 @@ struct FixedSizeSequence{
 
 	FixedSizeSequence reverseComplement() const{
 		FixedSizeSequence revcompl;
-		revcompl.length = getNbases();
+		revcompl.length = length();
 
-		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
+		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
 		if(!res)
 			throw std::runtime_error("could not get reverse complement of " + toString());
 
@@ -197,7 +197,7 @@ struct Sequence {
 	std::string toString() const;
 	Sequence reverseComplement() const;
 	int getNumBytes() const;
-	int getNbases() const;
+	int length() const;
 	bool isCompressed() const;
 	std::uint8_t* begin() const;
 	std::uint8_t* end() const;
@@ -214,8 +214,8 @@ struct Sequence {
 
 struct SequencePtrLess{
 	bool operator() (const Sequence* lhs, const Sequence* rhs) const{
-		const int bases = lhs->getNbases();
-		const int otherbases = rhs->getNbases();
+		const int bases = lhs->length();
+		const int otherbases = rhs->length();
 		if(bases < otherbases) return true;
 		if(bases > otherbases) return false;
 
@@ -242,7 +242,7 @@ struct SequenceGeneral {
 	std::string toString() const;
 	SequenceGeneral reverseComplement() const;
 	int getNumBytes() const;
-	int getNbases() const;
+	int length() const;
 	bool isCompressed() const;
 	std::uint8_t* begin() const;
 	std::uint8_t* end() const;
@@ -260,8 +260,8 @@ struct SequenceGeneral {
 
 struct SequenceGeneralPtrLess{
 	bool operator() (const SequenceGeneral* lhs, const SequenceGeneral* rhs) const{
-		const int bases = lhs->getNbases();
-		const int otherbases = rhs->getNbases();
+		const int bases = lhs->length();
+		const int otherbases = rhs->length();
 		if(bases < otherbases) return true;
 		if(bases > otherbases) return false;
 
