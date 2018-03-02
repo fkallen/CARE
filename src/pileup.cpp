@@ -368,12 +368,12 @@ namespace hammingtools{
 				for(int i = 0; i < subjectlength; i++){
 					const int globalIndex = subjectColumnsBegin_incl + i;
 
-		#if 1
+		#if 0
 					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
 						batchElem.correctedSequence[i] = buffers->h_consensus[globalIndex];
 						foundAColumn = true;
-					}else{
-		//#else
+					}//else{
+		#else
 					if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
 						double avgsupportkregion = 0;
 						int c = 0;
@@ -391,7 +391,7 @@ namespace hammingtools{
 						}
 					}
 
-				}
+				//}
 		#endif
 				}
 
