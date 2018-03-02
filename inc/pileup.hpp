@@ -14,27 +14,6 @@ namespace hammingtools{
 
 		void init_once();
 
-		std::chrono::duration<double>
-		cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
-						const int startindex, const int endindex,
-						const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate,
-						const bool useQScores);
-
-		void cpu_find_consensus(const CorrectionBuffers* buffers, const BatchElem& batchElem,
-						const int columnsToCheck, const int subjectColumnsBegin_incl);
-
-		std::tuple<int,std::chrono::duration<double>>
-		cpu_correct(const CorrectionBuffers* buffers, BatchElem& batchElem,
-						const int startindex, const int endindex,
-						const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate,
-						const bool correctQueries,
-						const int estimatedCoverage,
-						const double errorrate,
-						const double m,
-						const int k);
-
         struct PileupProperties{
             double avg_support;
             double min_support;
@@ -105,10 +84,10 @@ namespace hammingtools{
             PileupImage(bool useQScores, bool correctQueries, int estimatedCoverage,
                         double maxErrorRate, double errorrate, double m, double k);
 
-            PileupImage(const PileupImage& other);
-            PileupImage(PileupImage&& other);
-            PileupImage& operator=(const PileupImage& other);
-            PileupImage& operator=(PileupImage&& other);
+            // PileupImage(const PileupImage& other);
+            // PileupImage(PileupImage&& other);
+            // PileupImage& operator=(const PileupImage& other);
+            // PileupImage& operator=(PileupImage&& other);
 
             void resize(int cols);
             void clear();

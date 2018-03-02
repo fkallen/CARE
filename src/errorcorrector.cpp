@@ -513,13 +513,26 @@ void ErrorCorrector::insertFile(const std::string& filename,
 	std::uint32_t readnum = 0;
 	std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
 	std::uint64_t progressprocessedReads = 0;
+    int Ncount = 0;
+    char bases[4]{'A', 'C', 'G', 'T'};
+    int maxlength = 0;
+    int minlength = std::numeric_limits<int>::max();
 
 	while (reader->getNextRead(&read, &readnum)) {
 
 		//replace 'N' with 'A'
-		for(auto& c : read.sequence)
-		if(c == 'N')
-		c = 'A';
+        for(auto& c : read.sequence){
+            if(c == 'N'){
+                c = bases[Ncount];
+                Ncount = (Ncount + 1) % 4;
+            }
+        }
+
+        int len = int(read.sequence.length());
+        if(len > maxlength)
+            maxlength = len;
+        if(len < minlength)
+            minlength = len;
 
 		if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
 
@@ -533,6 +546,9 @@ void ErrorCorrector::insertFile(const std::string& filename,
 			progressprocessedReads = 0;
 		}
 	}
+    std::cout << "min sequence length " << minlength << ", max sequence length " << maxlength << '\n';
+
+    maximum_sequence_length = maxlength;
 
 	progress = 0;
 
@@ -855,9 +871,9 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	//printf("max seq length = %d\n", maximum_sequence_length);
 	int deviceId =
 			deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-	hammingtools::SHDdata shddata(deviceId, SDIV(nThreads, deviceIds.size()),
+	hammingtools::SHDdata shddata(deviceId, 1,
 			maximum_sequence_length);
-	hammingtools::CorrectionBuffers hcorrectionbuffers;
+
 	graphtools::AlignerDataArrays sgadata(deviceId, maximum_sequence_length, ALIGNMENTSCORE_MATCH,
 			ALIGNMENTSCORE_SUB, ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL);
 
@@ -867,8 +883,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
     std::vector<BatchElem> batch(batchsize,
             BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
 
-    std::vector<hammingtools::correction::PileupImage> pileupImages(batchsize,
-        hammingtools::correction::PileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k));
+    hammingtools::correction::PileupImage pileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k);
 
 	const int maxReadsPerLock =
 			(!CORRECT_CANDIDATE_READS_TOO) ?
@@ -905,9 +920,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		//fit vector size to actual batch size
 		if (actualBatchSize < batchsize) {
             batch.resize(actualBatchSize, BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
-            pileupImages.resize(actualBatchSize,
-                hammingtools::correction::PileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k));
-		}
+        }
 
         for(auto& b : batch){
             b.set_read_id(readnum + (&b - &batch[0]));
@@ -1030,19 +1043,19 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                 BatchElem& b = batch[i];
                 if(b.active){
                     tpc = std::chrono::system_clock::now();
-
-                    pileupImages[i].correct_batch_elem(b);
+                    
+                    pileupImage.correct_batch_elem(b);
 
                     tpd = std::chrono::system_clock::now();
                     readcorrectionTimeTotal += tpd - tpc;
 
-                    majorityvotetime += pileupImages[i].timings.findconsensustime;
-                    basecorrectiontime += pileupImages[i].timings.correctiontime;
+                    majorityvotetime += pileupImage.timings.findconsensustime;
+                    basecorrectiontime += pileupImage.timings.correctiontime;
 
-                    avgsupportfail += pileupImages[i].properties.failedAvgSupport;
-                    minsupportfail += pileupImages[i].properties.failedMinSupport;
-                    mincoveragefail += pileupImages[i].properties.failedMinCoverage;
-                    verygoodalignment += pileupImages[i].properties.isHQ;
+                    avgsupportfail += pileupImage.properties.failedAvgSupport;
+                    minsupportfail += pileupImage.properties.failedMinSupport;
+                    mincoveragefail += pileupImage.properties.failedMinCoverage;
+                    verygoodalignment += pileupImage.properties.isHQ;
 
                     if(b.corrected){
 						write_read(b.readId, b.correctedSequence);
@@ -1384,18 +1397,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					<< readcorrectionTimeTotal.count() << '\n';
 			std::cout << "thread " << threadId << " : correctReadTimeTotal "
 					<< correctReadTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup resize buffer "
-					<< hcorrectionbuffers.resizetime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup preprocessing "
-					<< hcorrectionbuffers.preprocessingtime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup H2D "
-					<< hcorrectionbuffers.h2dtime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup calculation "
-					<< hcorrectionbuffers.correctiontime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup D2H "
-					<< hcorrectionbuffers.d2htime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup postprocessing "
-					<< hcorrectionbuffers.postprocessingtime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup resize buffer "
+			// 		<< hcorrectionbuffers.resizetime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup preprocessing "
+			// 		<< hcorrectionbuffers.preprocessingtime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup H2D "
+			// 		<< hcorrectionbuffers.h2dtime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup calculation "
+			// 		<< hcorrectionbuffers.correctiontime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup D2H "
+			// 		<< hcorrectionbuffers.d2htime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup postprocessing "
+			// 		<< hcorrectionbuffers.postprocessingtime.count() << '\n';
 		} else if (correctionmode == CorrectionMode::Graph) {
 			std::cout << "thread " << threadId << " : getCandidatesTimeTotal "
 					<< getCandidatesTimeTotal.count() << '\n';

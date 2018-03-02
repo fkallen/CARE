@@ -64,366 +64,6 @@ namespace hammingtools{
 			#endif
 		}
 
-		std::chrono::duration<double>
-		cpu_add_weights(const CorrectionBuffers* buffers, const BatchElem& batchElem,
-						const int startindex, const int endindex,
-						const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate,
-						const bool useQScores){
-
-			std::chrono::duration<double> majorityvotetime(0);
-			std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-
-			tpa = std::chrono::system_clock::now();
-
-			const int subjectlength = batchElem.fwdSequenceString.length();
-
-			//add subject weights
-			for(int i = 0; i < subjectlength; i++){
-				const int globalIndex = subjectColumnsBegin_incl + i;
-				double qw = 1.0;
-				if(useQScores)
-					qw *= qscore_to_weight[(unsigned char)(*batchElem.fwdQuality)[i]];
-
-				const char base = batchElem.fwdSequenceString[i];
-				switch(base){
-					case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += 1; break;
-					case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += 1; break;
-					case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += 1; break;
-					case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += 1; break;
-					default: std::cout << "this A should not happen in pileup\n"; break;
-				}
-				buffers->h_coverage[globalIndex]++;
-			}
-
-			//add candidate weights
-
-		//TIMERSTARTCPU(addcandidates);
-
-		#define WEIGHTMODE 3
-
-
-		#if WEIGHTMODE == 2
-
-			for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-				const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i].nOps / (batchElem.bestAlignments[i].overlap * maxErrorRate));
-				const int len = batchElem.bestSequenceStrings[i].length();
-				const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
-
-				for(int j = 0; j < len; j++){
-					const int globalIndex = subjectColumnsBegin_incl + batchElem.bestAlignments[i].shift + j;
-					double qw = 0.0;
-					for(int f = 0; f < freq; f++){
-						const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
-						if(useQScores)
-							qw += qscore_to_weight[(unsigned char)(*scores)[j]];
-						else
-							qw += 1.0;
-					}
-					qw *= defaultweight;
-					const char base = batchElem.bestSequenceStrings[i][j];
-					//const char base = (*batchElem.bestSequences[i])[j];
-					switch(base){
-						case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
-						case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
-						case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
-						case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
-						default: std::cout << "this B should not happen in pileup\n"; break;
-					}
-					buffers->h_coverage[globalIndex] += freq;
-				}
-			}
-
-
-		#elif WEIGHTMODE == 3
-
-			for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-		//TIMERSTARTCPU(prepare);
-
-				const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i].nOps / (batchElem.bestAlignments[i].overlap * maxErrorRate));
-				const int len = batchElem.bestSequenceStrings[i].length();
-				const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
-				const int defaultcolumnoffset = subjectColumnsBegin_incl + batchElem.bestAlignments[i].shift;
-		//TIMERSTOPCPU(prepare);
-		//TIMERSTARTCPU(addquality);
-				//use h_support as temporary storage to store sum of quality weights
-				if(useQScores){
-					for(int f = 0; f < freq; f++){
-						const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
-						for(int j = 0; j < len; j++){
-							buffers->h_support[j] += qscore_to_weight[(unsigned char)(*scores)[j]];
-						}
-					}
-				}else{
-						for(int j = 0; j < len; j++){
-							buffers->h_support[j] += freq;
-						}
-				}
-		//TIMERSTOPCPU(addquality);
-		//TIMERSTARTCPU(addbase);
-				for(int j = 0; j < len; j++){
-					const int globalIndex = defaultcolumnoffset + j;
-					const double qw = buffers->h_support[j] * defaultweight;
-					const char base = batchElem.bestSequenceStrings[i][j];
-					//const char base = (*batchElem.bestSequences[i])[j];
-
-					switch(base){
-						case 'A': buffers->h_Aweights[globalIndex] += qw; buffers->h_As[globalIndex] += freq; break;
-						case 'C': buffers->h_Cweights[globalIndex] += qw; buffers->h_Cs[globalIndex] += freq; break;
-						case 'G': buffers->h_Gweights[globalIndex] += qw; buffers->h_Gs[globalIndex] += freq; break;
-						case 'T': buffers->h_Tweights[globalIndex] += qw; buffers->h_Ts[globalIndex] += freq; break;
-						default: std::cout << "this C should not happen in pileup\n"; break;
-					}
-					buffers->h_coverage[globalIndex] += freq;
-					buffers->h_support[j] = 0;
-				}
-		//TIMERSTOPCPU(addbase);
-			}
-
-		#elif
-		static_assert(false, "invalid WEIGHTMODE");
-		#endif
-
-		//TIMERSTOPCPU(addcandidates);
-
-			tpb = std::chrono::system_clock::now();
-
-			majorityvotetime += tpb - tpa;
-
-			return majorityvotetime;
-		}
-
-
-
-
-		void
-		cpu_find_consensus(const CorrectionBuffers* buffers, const BatchElem& batchElem,
-						const int columnsToCheck, const int subjectColumnsBegin_incl){
-
-		//TIMERSTARTCPU(findconsensus);
-			//find consensus and support in each column
-			for(int i = 0; i < columnsToCheck; i++){
-				char cons = 'A';
-				double consWeight = buffers->h_Aweights[i];
-				if(buffers->h_Cweights[i] > consWeight){
-					cons = 'C';
-					consWeight = buffers->h_Cweights[i];
-				}
-				if(buffers->h_Gweights[i] > consWeight){
-					cons = 'G';
-					consWeight = buffers->h_Gweights[i];
-				}
-				if(buffers->h_Tweights[i] > consWeight){
-					cons = 'T';
-					consWeight = buffers->h_Tweights[i];
-				}
-				buffers->h_consensus[i] = cons;
-
-				const double columnWeight = buffers->h_Aweights[i] + buffers->h_Cweights[i] + buffers->h_Gweights[i] + buffers->h_Tweights[i];
-				buffers->h_support[i] = consWeight / columnWeight;
-			}
-
-			const int subjectlength = batchElem.fwdSequenceString.length();
-
-			for(int i = 0; i < subjectlength; i++){
-				const int globalIndex = subjectColumnsBegin_incl + i;
-				const char base = batchElem.fwdSequenceString[i];
-				switch(base){
-					case 'A':   buffers->h_origCoverage[globalIndex] = buffers->h_As[globalIndex];
-								buffers->h_origWeights[globalIndex] = buffers->h_Aweights[globalIndex];
-								break;
-					case 'C':   buffers->h_origCoverage[globalIndex] = buffers->h_Cs[globalIndex];
-								buffers->h_origWeights[globalIndex] = buffers->h_Cweights[globalIndex];
-								break;
-					case 'G':   buffers->h_origCoverage[globalIndex] = buffers->h_Gs[globalIndex];
-								buffers->h_origWeights[globalIndex] = buffers->h_Gweights[globalIndex];
-								break;
-					case 'T':   buffers->h_origCoverage[globalIndex] = buffers->h_Ts[globalIndex];
-								buffers->h_origWeights[globalIndex] = buffers->h_Tweights[globalIndex];
-								break;
-					default: std::cout << "this D should not happen in pileup\n"; break;
-				}
-			}
-		//TIMERSTOPCPU(findconsensus);
-
-		}
-
-
-
-		std::tuple<int,std::chrono::duration<double>>
-		cpu_correct(const CorrectionBuffers* buffers, BatchElem& batchElem,
-						const int startindex, const int endindex,
-						const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate,
-						const bool correctQueries,
-						const int estimatedCoverage,
-						const double errorrate,
-						const double m,
-						const int k){
-
-			std::chrono::duration<double> basecorrectiontime(0);
-			std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-			int status = 0;
-
-			tpa = std::chrono::system_clock::now();
-
-			double avg_support = 0;
-			double min_support = 1.0;
-			int max_coverage = 0;
-			int min_coverage = std::numeric_limits<int>::max();
-			//get stats for subject columns
-			for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
-				assert(i < columnsToCheck);
-
-				avg_support += buffers->h_support[i];
-				min_support = buffers->h_support[i] < min_support? buffers->h_support[i] : min_support;
-				max_coverage = buffers->h_coverage[i] > max_coverage ? buffers->h_coverage[i] : max_coverage;
-				min_coverage = buffers->h_coverage[i] < min_coverage ? buffers->h_coverage[i] : min_coverage;
-			}
-			const int subjectlength = batchElem.fwdSequenceString.length();
-			avg_support /= subjectlength;
-
-
-			batchElem.correctedSequence.resize(subjectlength);
-
-			//TODO vary parameters
-			bool isHQ = avg_support >= 1.0-errorrate
-				&& min_support >= 1.0-3.0*errorrate
-				&& min_coverage >= m / 2.0 * estimatedCoverage;
-
-			if(isHQ){
-		#if 1
-				//correct anchor
-				for(int i = 0; i < subjectlength; i++){
-					const int globalIndex = subjectColumnsBegin_incl + i;
-					batchElem.correctedSequence[i] = buffers->h_consensus[globalIndex];
-				}
-				batchElem.corrected = true;
-		#endif
-		#if 0
-				//correct candidates
-				if(correctQueries){
-
-					for(int i = 0; i < batchElem.n_unique_candidates; i++){
-						int queryColumnsBegin_incl = alignments[i].shift - startindex;
-						bool queryWasCorrected = false;
-						//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
-						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols
-							&& subjectColumnsEnd_excl + candidate_correction_new_cols >= queryColumnsBegin_incl + int(queries[i].length())){
-
-							double newColMinSupport = 1.0;
-							int newColMinCov = std::numeric_limits<int>::max();
-							//check new columns left of subject
-							for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols;
-								columnindex < subjectColumnsBegin_incl;
-								columnindex++){
-
-								assert(columnindex < columnsToCheck);
-								if(queryColumnsBegin_incl <= columnindex){
-									newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
-									newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
-								}
-							}
-							//check new columns right of subject
-							for(int columnindex = subjectColumnsEnd_excl;
-								columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols
-								&& columnindex < columnsToCheck;
-								columnindex++){
-
-								newColMinSupport = buffers->h_support[columnindex] < newColMinSupport ? buffers->h_support[columnindex] : newColMinSupport;
-								newColMinCov = buffers->h_coverage[columnindex] < newColMinCov ? buffers->h_coverage[columnindex] : newColMinCov;
-							}
-
-							if(newColMinSupport >= 1-3*errorrate
-								&& newColMinCov >= m / 2.0 * estimatedCoverage){
-								//assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
-
-								for(int j = 0; j < int(queries[i].length()); j++){
-									int columnindex = queryColumnsBegin_incl + j;
-									queries[i][j] = buffers->h_consensus[columnindex];
-									queryWasCorrected = true;
-								}
-							}
-						}
-						if(queryWasCorrected){
-							correctedQueries[i] = true;
-						}
-					}
-				}
-		#endif
-			}else{
-				if(avg_support < 1.0-errorrate)
-					status |= (1 << 0);
-				if(min_support < 1.0-3.0*errorrate)
-					status |= (1 << 1);
-				if(min_coverage < m / 2.0 * estimatedCoverage)
-					status |= (1 << 2);
-		#if 1
-				//correct anchor
-		//TODO vary parameters
-
-				batchElem.correctedSequence = batchElem.fwdSequenceString;
-
-				bool foundAColumn = false;
-				for(int i = 0; i < subjectlength; i++){
-					const int globalIndex = subjectColumnsBegin_incl + i;
-
-		#if 0
-					if(buffers->h_support[globalIndex] >= 1.0-3.0*errorrate){
-						batchElem.correctedSequence[i] = buffers->h_consensus[globalIndex];
-						foundAColumn = true;
-					}//else{
-		#else
-					if(buffers->h_support[globalIndex] > 0.5 && buffers->h_origCoverage[globalIndex] < m / 2.0 * estimatedCoverage){
-						double avgsupportkregion = 0;
-						int c = 0;
-						bool kregioncoverageisgood = true;
-						for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
-							if(j != i && j >= 0 && j < subjectlength){
-								avgsupportkregion += buffers->h_support[subjectColumnsBegin_incl + j];
-								kregioncoverageisgood &= (buffers->h_coverage[subjectColumnsBegin_incl + j] >= m / 2.0 * estimatedCoverage);
-								c++;
-							}
-						}
-						if(kregioncoverageisgood && avgsupportkregion / c >= 1.0-errorrate){
-							batchElem.correctedSequence[i] = buffers->h_consensus[globalIndex];
-							foundAColumn = true;
-						}
-					}
-
-				//}
-		#endif
-				}
-
-				batchElem.corrected = foundAColumn;
-
-				if(!foundAColumn)
-					status |= (1 << 3);
-
-		#endif
-			}
-
-			tpb = std::chrono::system_clock::now();
-
-			basecorrectiontime += tpb - tpa;
-
-			return std::tie(status, basecorrectiontime);
-		}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         PileupImage::PileupImage(bool useQScores, bool correctQueries, int estimatedCoverage,
                     double maxErrorRate, double errorrate, double m, double k){
             correctionSettings.useQScores = useQScores;
@@ -435,64 +75,64 @@ namespace hammingtools{
             correctionSettings.k = k;
         }
 
-        PileupImage::PileupImage(const PileupImage& other){
-            *this = other;
-        }
-
-        PileupImage::PileupImage(PileupImage&& other){
-            *this = std::move(other);
-        }
-
-        PileupImage& PileupImage::operator=(const PileupImage& other){
-            resize(other.max_n_columns);
-            std::memcpy(h_As.get(), other.h_As.get(), sizeof(int) * other.max_n_columns);
-            std::memcpy(h_Cs.get(), other.h_Cs.get(), sizeof(int) * other.max_n_columns);
-            std::memcpy(h_Gs.get(), other.h_Gs.get(), sizeof(int) * other.max_n_columns);
-            std::memcpy(h_Ts.get(), other.h_Ts.get(), sizeof(int) * other.max_n_columns);
-            std::memcpy(h_Aweights.get(), other.h_Aweights.get(), sizeof(double) * other.max_n_columns);
-            std::memcpy(h_Cweights.get(), other.h_Cweights.get(), sizeof(double) * other.max_n_columns);
-            std::memcpy(h_Gweights.get(), other.h_Gweights.get(), sizeof(double) * other.max_n_columns);
-            std::memcpy(h_Tweights.get(), other.h_Tweights.get(), sizeof(double) * other.max_n_columns);
-            std::memcpy(h_consensus.get(), other.h_consensus.get(), sizeof(char) * other.max_n_columns);
-            std::memcpy(h_support.get(), other.h_support.get(), sizeof(double) * other.max_n_columns);
-            std::memcpy(h_coverage.get(), other.h_coverage.get(), sizeof(int) * other.max_n_columns);
-            std::memcpy(h_origWeights.get(), other.h_origWeights.get(), sizeof(double) * other.max_n_columns);
-            std::memcpy(h_origCoverage.get(), other.h_origCoverage.get(), sizeof(int) * other.max_n_columns);
-
-            n_columns = other.n_columns;
-            properties = other.properties;
-            columnProperties = other.columnProperties;
-            correctionSettings = other.correctionSettings;
-            timings = other.timings;
-            taskTimings = other.taskTimings;
-
-            return *this;
-        }
-
-        PileupImage& PileupImage::operator=(PileupImage&& other){
-            h_As = std::move(other.h_As);
-            h_Cs = std::move(other.h_Cs);
-            h_Gs = std::move(other.h_Gs);
-            h_Ts = std::move(other.h_Ts);
-            h_Aweights = std::move(other.h_Aweights);
-            h_Cweights = std::move(other.h_Cweights);
-            h_Gweights = std::move(other.h_Gweights);
-            h_Tweights = std::move(other.h_Tweights);
-            h_consensus = std::move(other.h_consensus);
-            h_support = std::move(other.h_support);
-            h_coverage = std::move(other.h_coverage);
-            h_origWeights = std::move(other.h_origWeights);
-            h_origCoverage = std::move(other.h_origCoverage);
-
-            n_columns = other.n_columns;
-            properties = other.properties;
-            columnProperties = other.columnProperties;
-            correctionSettings = other.correctionSettings;
-            timings = other.timings;
-            taskTimings = other.taskTimings;
-
-            return *this;
-        }
+        // PileupImage::PileupImage(const PileupImage& other){
+        //     *this = other;
+        // }
+        //
+        // PileupImage::PileupImage(PileupImage&& other){
+        //     *this = std::move(other);
+        // }
+        //
+        // PileupImage& PileupImage::operator=(const PileupImage& other){
+        //     resize(other.max_n_columns);
+        //     std::memcpy(h_As.get(), other.h_As.get(), sizeof(int) * other.max_n_columns);
+        //     std::memcpy(h_Cs.get(), other.h_Cs.get(), sizeof(int) * other.max_n_columns);
+        //     std::memcpy(h_Gs.get(), other.h_Gs.get(), sizeof(int) * other.max_n_columns);
+        //     std::memcpy(h_Ts.get(), other.h_Ts.get(), sizeof(int) * other.max_n_columns);
+        //     std::memcpy(h_Aweights.get(), other.h_Aweights.get(), sizeof(double) * other.max_n_columns);
+        //     std::memcpy(h_Cweights.get(), other.h_Cweights.get(), sizeof(double) * other.max_n_columns);
+        //     std::memcpy(h_Gweights.get(), other.h_Gweights.get(), sizeof(double) * other.max_n_columns);
+        //     std::memcpy(h_Tweights.get(), other.h_Tweights.get(), sizeof(double) * other.max_n_columns);
+        //     std::memcpy(h_consensus.get(), other.h_consensus.get(), sizeof(char) * other.max_n_columns);
+        //     std::memcpy(h_support.get(), other.h_support.get(), sizeof(double) * other.max_n_columns);
+        //     std::memcpy(h_coverage.get(), other.h_coverage.get(), sizeof(int) * other.max_n_columns);
+        //     std::memcpy(h_origWeights.get(), other.h_origWeights.get(), sizeof(double) * other.max_n_columns);
+        //     std::memcpy(h_origCoverage.get(), other.h_origCoverage.get(), sizeof(int) * other.max_n_columns);
+        //
+        //     n_columns = other.n_columns;
+        //     properties = other.properties;
+        //     columnProperties = other.columnProperties;
+        //     correctionSettings = other.correctionSettings;
+        //     timings = other.timings;
+        //     taskTimings = other.taskTimings;
+        //
+        //     return *this;
+        // }
+        //
+        // PileupImage& PileupImage::operator=(PileupImage&& other){
+        //     h_As = std::move(other.h_As);
+        //     h_Cs = std::move(other.h_Cs);
+        //     h_Gs = std::move(other.h_Gs);
+        //     h_Ts = std::move(other.h_Ts);
+        //     h_Aweights = std::move(other.h_Aweights);
+        //     h_Cweights = std::move(other.h_Cweights);
+        //     h_Gweights = std::move(other.h_Gweights);
+        //     h_Tweights = std::move(other.h_Tweights);
+        //     h_consensus = std::move(other.h_consensus);
+        //     h_support = std::move(other.h_support);
+        //     h_coverage = std::move(other.h_coverage);
+        //     h_origWeights = std::move(other.h_origWeights);
+        //     h_origCoverage = std::move(other.h_origCoverage);
+        //
+        //     n_columns = other.n_columns;
+        //     properties = other.properties;
+        //     columnProperties = other.columnProperties;
+        //     correctionSettings = other.correctionSettings;
+        //     timings = other.timings;
+        //     taskTimings = other.taskTimings;
+        //
+        //     return *this;
+        // }
 
 
         void PileupImage::resize(int cols){
@@ -528,6 +168,20 @@ namespace hammingtools{
     			h_Gweights.reset(new double[newmaxcols]);
     			h_Tweights.reset(new double[newmaxcols]);
 
+                assert(h_consensus.get() != nullptr);
+                assert(h_support.get() != nullptr);
+                assert(h_coverage.get() != nullptr);
+                assert(h_origWeights.get() != nullptr);
+                assert(h_origCoverage.get() != nullptr);
+                assert(h_As.get() != nullptr);
+                assert(h_Cs.get() != nullptr);
+                assert(h_Gs.get() != nullptr);
+                assert(h_Ts.get() != nullptr);
+                assert(h_Aweights.get() != nullptr);
+                assert(h_Cweights.get() != nullptr);
+                assert(h_Gweights.get() != nullptr);
+                assert(h_Tweights.get() != nullptr);
+
     			max_n_columns = newmaxcols;
     		}
 
@@ -548,12 +202,6 @@ namespace hammingtools{
     			std::memset(h_Cweights.get(), 0, sizeof(double) * n_columns);
     			std::memset(h_Gweights.get(), 0, sizeof(double) * n_columns);
     			std::memset(h_Tweights.get(), 0, sizeof(double) * n_columns);
-
-                columnProperties.startindex = 0;
-                columnProperties.endindex = 0;
-                columnProperties.columnsToCheck = 0;
-                columnProperties.subjectColumnsBegin_incl = 0;
-                columnProperties.subjectColumnsEnd_excl = 0;
 
                 properties.avg_support = 0;
                 properties.min_support = 0;
@@ -583,14 +231,14 @@ namespace hammingtools{
             timings.findconsensustime += tpd - tpc;
 
             tpc = std::chrono::system_clock::now();
-            cpu_find_consensus(batchElem);
+            //cpu_find_consensus(batchElem);
             tpd = std::chrono::system_clock::now();
             taskTimings.executiontime += tpd - tpc;
             tt.executiontime += tpd - tpc;
             timings.findconsensustime += tpd - tpc;
 
             tpc = std::chrono::system_clock::now();
-            cpu_correct(batchElem);
+            //cpu_correct(batchElem);
             tpd = std::chrono::system_clock::now();
             taskTimings.executiontime += tpd - tpc;
             tt.executiontime += tpd - tpc;
@@ -626,7 +274,9 @@ namespace hammingtools{
 
             //add subject weights
             for(int i = 0; i < subjectlength; i++){
+
                 const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
+                assert(globalIndex < max_n_columns);
                 double qw = 1.0;
                 if(correctionSettings.useQScores)
                     qw *= qscore_to_weight[(unsigned char)(*batchElem.fwdQuality)[i]];
@@ -658,6 +308,7 @@ namespace hammingtools{
 
                 for(int j = 0; j < len; j++){
                     const int globalIndex = columnProperties.subjectColumnsBegin_incl + batchElem.bestAlignments[i].shift + j;
+                    assert(globalIndex < max_n_columns);
                     double qw = 0.0;
                     for(int f = 0; f < freq; f++){
                         const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
@@ -709,15 +360,21 @@ namespace hammingtools{
         //TIMERSTARTCPU(addbase);
                 for(int j = 0; j < len; j++){
                     const int globalIndex = defaultcolumnoffset + j;
+                    assert(globalIndex < max_n_columns);
+                    assert(j < max_n_columns);
+                    assert(i < batchElem.bestSequenceStrings.size());
                     const double qw = h_support[j] * defaultweight;
                     const char base = batchElem.bestSequenceStrings[i][j];
                     //const char base = (*batchElem.bestSequences[i])[j];
-
                     switch(base){
-                        case 'A': h_Aweights[globalIndex] += qw; h_As[globalIndex] += freq; break;
-                        case 'C': h_Cweights[globalIndex] += qw; h_Cs[globalIndex] += freq; break;
-                        case 'G': h_Gweights[globalIndex] += qw; h_Gs[globalIndex] += freq; break;
-                        case 'T': h_Tweights[globalIndex] += qw; h_Ts[globalIndex] += freq; break;
+                        case 'A': h_Aweights[globalIndex] += qw; h_As[globalIndex] += freq;
+                        break;
+                        case 'C': h_Cweights[globalIndex] += qw; h_Cs[globalIndex] += freq;
+                        break;
+                        case 'G': h_Gweights[globalIndex] += qw; h_Gs[globalIndex] += freq;
+                        break;
+                        case 'T': h_Tweights[globalIndex] += qw; h_Ts[globalIndex] += freq;
+                        break;
                         default: std::cout << "this C should not happen in pileup\n"; break;
                     }
                     h_coverage[globalIndex] += freq;

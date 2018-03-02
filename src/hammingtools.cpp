@@ -162,62 +162,6 @@ namespace hammingtools{
         hammingtools::correction::init_once();
     }
 
-
-	void CorrectionBuffers::resize(int cols){
-
-		if(cols > max_n_columns){
-			const int newmaxcols = 1.5 * cols;
-
-			h_consensus.reset();
-			h_support.reset();
-			h_coverage.reset();
-			h_origWeights.reset();
-			h_origCoverage.reset();
-			h_As.reset();
-			h_Cs.reset();
-			h_Gs.reset();
-			h_Ts.reset();
-			h_Aweights.reset();
-			h_Cweights.reset();
-			h_Gweights.reset();
-			h_Tweights.reset();
-			
-			h_consensus.reset(new char[newmaxcols]);
-			h_support.reset(new double[newmaxcols]);
-			h_coverage.reset(new int[newmaxcols]);
-			h_origWeights.reset(new double[newmaxcols]);
-			h_origCoverage.reset(new int[newmaxcols]);
-			h_As.reset(new int[newmaxcols]);
-			h_Cs.reset(new int[newmaxcols]);
-			h_Gs.reset(new int[newmaxcols]);
-			h_Ts.reset(new int[newmaxcols]);
-			h_Aweights.reset(new double[newmaxcols]);
-			h_Cweights.reset(new double[newmaxcols]);
-			h_Gweights.reset(new double[newmaxcols]);
-			h_Tweights.reset(new double[newmaxcols]);
-
-			max_n_columns = newmaxcols;
-		}
-
-		n_columns = cols;
-	}
-	
-	void CorrectionBuffers::reset(){
-			std::memset(h_consensus.get(), 0, sizeof(char) * n_columns);
-			std::memset(h_support.get(), 0, sizeof(double) * n_columns);
-			std::memset(h_coverage.get(), 0, sizeof(int) * n_columns);
-			std::memset(h_origWeights.get(), 0, sizeof(double) * n_columns);
-			std::memset(h_origCoverage.get(), 0, sizeof(int) * n_columns);
-			std::memset(h_As.get(), 0, sizeof(int) * n_columns);
-			std::memset(h_Cs.get(), 0, sizeof(int) * n_columns);
-			std::memset(h_Gs.get(), 0, sizeof(int) * n_columns);
-			std::memset(h_Ts.get(), 0, sizeof(int) * n_columns);
-			std::memset(h_Aweights.get(), 0, sizeof(double) * n_columns);
-			std::memset(h_Cweights.get(), 0, sizeof(double) * n_columns);
-			std::memset(h_Gweights.get(), 0, sizeof(double) * n_columns);
-			std::memset(h_Tweights.get(), 0, sizeof(double) * n_columns);		
-	}
-
     void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
 
         std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
@@ -333,7 +277,7 @@ namespace hammingtools{
                     subjectindex++;
                 }
             }
-            
+
             subjectindex = 0;
             querysum = 0;
 			//initialize transfer d2h
@@ -351,7 +295,7 @@ namespace hammingtools{
                     subjectindex++;
                     querysum += params[batchid].n_queries;
                 }
-            }            
+            }
 
             subjectindex = 0;
             querysum = 0;
@@ -414,99 +358,6 @@ namespace hammingtools{
         }
     #endif // __NVCC__
     }
-
-
-
-
-
-    std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-	performCorrection(CorrectionBuffers& buffers, BatchElem& batchElem,
-                double maxErrorRate,
-                bool useQScores,
-				bool correctQueries,
-				int estimatedCoverage,
-				double errorrate,
-				double m,
-				int kmerlength,
-				bool useGpu){
-
-            assert(batchElem.active && "batchElem.active");
-
-			std::chrono::time_point<std::chrono::system_clock> tpc, tpd;
-
-			tpc = std::chrono::system_clock::now();
-
-			//determine number of columns in pileup image
-			int startindex = 0;
-			int endindex = batchElem.fwdSequenceString.length();
-
-            for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-				const int shift = batchElem.bestAlignments[i].shift;
-				startindex = shift < startindex ? shift : startindex;
-				const int queryEndsAt = batchElem.bestSequences[i]->length() + shift;
-				endindex = queryEndsAt > endindex ? queryEndsAt : endindex;
-            }
-
-			const int columnsToCheck = endindex - startindex;
-			const int subjectColumnsBegin_incl = std::max(-startindex,0);
-			const int subjectColumnsEnd_excl = subjectColumnsBegin_incl + batchElem.fwdSequenceString.length();
-
-			tpd = std::chrono::system_clock::now();
-			buffers.preprocessingtime += tpd - tpc;
-			tpc = std::chrono::system_clock::now();
-
-			buffers.resize(columnsToCheck);
-
-			tpd = std::chrono::system_clock::now();
-			buffers.resizetime += tpd - tpc;
-			tpc = std::chrono::system_clock::now();
-
-			buffers.reset();
-
-			tpd = std::chrono::system_clock::now();
-			buffers.preprocessingtime += tpd - tpc;
-			tpc = std::chrono::system_clock::now();
-
-			auto majorityvotetime = correction::cpu_add_weights(&buffers, batchElem,
-																			startindex, endindex,
-																			columnsToCheck, subjectColumnsBegin_incl, subjectColumnsEnd_excl,
-																			maxErrorRate,
-																			useQScores);	
-				
-			correction::cpu_find_consensus(&buffers, batchElem,
-							columnsToCheck,subjectColumnsBegin_incl);
-				
-			auto status_and_time = correction::cpu_correct(&buffers, batchElem,
-												startindex, endindex,
-												columnsToCheck, subjectColumnsBegin_incl, subjectColumnsEnd_excl,
-												maxErrorRate,
-												correctQueries,
-												estimatedCoverage,
-												errorrate,
-												m,
-												kmerlength);
-
-			tpd = std::chrono::system_clock::now();
-			buffers.correctiontime += tpd - tpc;
-
-			return std::tie(std::get<0>(status_and_time), majorityvotetime, std::get<1>(status_and_time));
-	}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
