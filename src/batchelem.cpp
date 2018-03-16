@@ -44,6 +44,10 @@
         bestIsForward.clear();
         correctedCandidates.clear();
 		bestQualities.clear();
+
+        fwdAlignOps.clear();
+        revcomplAlignOps.clear();
+        bestAlignOps.clear();
     }
 
     void BatchElem::set_number_of_sequences(std::uint64_t num){
@@ -61,6 +65,10 @@
         bestSequences.resize(num);
 		bestSequenceStrings.resize(num);
         bestIsForward.resize(num);
+
+        fwdAlignOps.resize(num);
+        revcomplAlignOps.resize(num);
+        bestAlignOps.resize(num);
     }
 
     void BatchElem::set_read_id(std::uint64_t id){

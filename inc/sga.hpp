@@ -39,7 +39,7 @@ namespace graphtools{
 			HOSTDEVICEQUALIFIER
 			short count() const{
 				return data >> 2;
-			}			
+			}
 		};
 
 		struct sgaresult{
@@ -61,7 +61,7 @@ namespace graphtools{
 			int ALIGNMENTSCORE_MATCH = 1;
 			int ALIGNMENTSCORE_SUB = -1;
 			int ALIGNMENTSCORE_INS = -1;
-			int ALIGNMENTSCORE_DEL = -1;			
+			int ALIGNMENTSCORE_DEL = -1;
 			const int* __restrict__ querylengths;
 			const char* __restrict__ subjectdata;
 			const char* __restrict__ queriesdata;
@@ -75,7 +75,7 @@ namespace graphtools{
 
 
 
-		
+
 		void call_cuda_semi_global_alignment_kernel_async(const sgaparams& buffers, cudaStream_t stream);
 		void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream_t stream);
 

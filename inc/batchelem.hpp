@@ -50,6 +50,10 @@ struct BatchElem{
     std::vector<bool> bestIsForward;
     std::vector<CorrectedCandidate> correctedCandidates;
 
+    std::vector<std::vector<AlignOp>> fwdAlignOps;
+    std::vector<std::vector<AlignOp>> revcomplAlignOps;
+    std::vector<std::vector<AlignOp>> bestAlignOps;
+
     double mismatchratioThreshold;
 
     //constant batch independent data

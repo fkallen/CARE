@@ -1,7 +1,8 @@
 #ifndef GRAPH_HPP
 #define GRAPH_HPP
 
-#include "../inc/alignment.hpp"
+#include "alignment.hpp"
+#include "batchelem.hpp"
 
 #include <vector>
 #include <string>
@@ -9,6 +10,19 @@
 namespace graphtools{
 
 	namespace correction{
+
+        struct TaskTimings{
+        	std::chrono::duration<double> preprocessingtime{0};
+        	std::chrono::duration<double> h2dtime{0};
+        	std::chrono::duration<double> executiontime{0};
+        	std::chrono::duration<double> d2htime{0};
+        	std::chrono::duration<double> postprocessingtime{0};
+        };
+
+        struct GraphTimings{
+            std::chrono::duration<double> buildtime{0};
+            std::chrono::duration<double> correctiontime{0};
+        };
 
 		struct ErrorGraph {
 
@@ -44,47 +58,39 @@ namespace graphtools{
 				std::vector<char> chs;
 			};
 
+            GraphTimings timings;
+            TaskTimings taskTimings;
 
-			/*std::vector<int> edgemax;
-			std::vector<int> edgemin;
-			std::vector<int> origpos;*/
+    		std::string read;
 
-			std::vector<ErrorGraph::LinkOperation> previousLinkOperations;
-			AlignResult* previousAlignResult;
-
-			std::uint32_t readid = 0;
-
-			int nodes = 0;
-			int startNode;
-			int endNode;
-			std::vector<Vertex> vertices;
-
-			const char* read;
-			int readLength;
-			const char* readqualityscores;
 			bool useQscores = false;
+            double max_mismatch_ratio;
+            double alpha;
+            double x;
+
+            int endNode; // the last node which belongs to the read
+			std::vector<Vertex> vertices;
 
 			int insertCalls = 0;
 			int totalInsertedAlignments = 0;
 
-
 			std::vector<int> topoIndices; // the vertex ids topologically sorted
-
 			std::vector<int> finalPath;
 
 			ErrorGraph();
 
-			ErrorGraph(const char* seq, int seqlength, const char* qualityScores, bool useQscores, const int nTimes = 1);
+			ErrorGraph(bool useQscores, double max_mismatch_ratio, double alpha, double x);
 
 			// initialize the graph with the read
-			void init(const char* seq, int seqlength, const char* qualityScores, bool useQscores_, const int nTimes = 1);
+			void init(const std::string& seq, const std::string& qualityScores);
 
 			// add new node, but don't add edges yet
 			// return the index of the new node in the vertices vector
 			int addNewNode(const char base);
 
 			// insert alignment into graph
-			void insertAlignment(AlignResult& alignment, const char* qualityScores, double maxErrorRate, const int nTimes = 1);
+			void insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
+                                 const std::string* qualityScores, int nTimes = 1);
 
 			// insert edge (from --weight--> to)
 			// to == -1 means it is unknown if to is already in the graph
@@ -92,10 +98,10 @@ namespace graphtools{
 			int makeLink(const int from, const int to, const char base_of_to, const double weight, const int nTimes = 1);
 
 			// for each edge calculate the probability of using this edge
-			void calculateEdgeProbabilities(double alpha, double x);
+			void calculateEdgeProbabilities();
 
 			// extract corrected read from graph
-			std::string getCorrectedRead(double alpha, double x);
+			std::string getCorrectedRead();
 
 			// print vertices and edges to files prefix+"vertices.txt" and prefix+"edges.txt"
 			void dumpGraph(std::string prefix = "") const;
@@ -103,9 +109,11 @@ namespace graphtools{
 			// make sure the topologic sort is valid
 			void assertTopologicallySorted() const;
 
-			void normalizeAlignment(AlignResult& alignment) const;
+			void normalizeAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops) const;
 
-			std::vector<LinkOperation> makeLinkOperations(const AlignResult& alignment) const;
+			std::vector<LinkOperation> makeLinkOperations(const AlignResultCompact& alignment, const std::vector<AlignOp>& ops) const;
+
+            TaskTimings correct_batch_elem(BatchElem& batchElem);
 
 		};
 
@@ -113,11 +121,11 @@ namespace graphtools{
 
 		std::tuple<std::chrono::duration<double>,std::chrono::duration<double>> correct_cpu(std::string& subject,
 				std::vector<AlignResult>& alignments,
-				const std::string& subjectqualityScores, 
+				const std::string& subjectqualityScores,
 				const std::vector<const std::string*>& queryqualityScores,
 				const std::vector<int>& frequenciesPrefixSum,
 				bool useQScores,
-				double MAX_MISMATCH_RATIO,
+				double max_mismatch_ratio,
 				double graphalpha,
 				double graphx);
 
