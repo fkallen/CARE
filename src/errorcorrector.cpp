@@ -499,6 +499,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 void ErrorCorrector::insertFile(const std::string& filename,
 		bool buildHashmap) {
 
+//single-threaded insertion
 #if 0
 	std::unique_ptr<ReadReader> reader;
 
@@ -552,6 +553,7 @@ void ErrorCorrector::insertFile(const std::string& filename,
 
 	progress = 0;
 
+//multi-threaded insertion
 #else
 
 	std::vector<std::future<std::pair<int,int>>> inserterThreads;
@@ -669,29 +671,6 @@ void ErrorCorrector::insertFile(const std::string& filename,
 }
 
 void ErrorCorrector::errorcorrectFile(const std::string& filename) {
-#if 1
-
-#if 0
-	std::vector<std::thread> consumerthreads;
-
-	// spawn work on other threads
-	for (int threadId = 1; threadId < nCorrectorThreads; ++threadId) {
-		consumerthreads.emplace_back(&ErrorCorrector::errorcorrectWork,
-				this,
-				threadId, nCorrectorThreads,
-				filename);
-	}
-
-	// run work on this thread
-
-	errorcorrectWork(0, nCorrectorThreads, filename);
-
-	// wait for other threads
-	for (int i = 0; i < consumerthreads.size(); ++i )
-	consumerthreads[i].join();
-
-#else
-
 	std::vector < std::thread > consumerthreads;
 
 	// spawn work on other threads
@@ -702,87 +681,6 @@ void ErrorCorrector::errorcorrectFile(const std::string& filename) {
 
 	for (auto& thread : consumerthreads)
 		thread.join();
-
-#endif
-
-#else
-
-	std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
-
-	std::vector<EC_Thread_Data> threadData;
-
-	for (int threadId = 0; threadId < nCorrectorThreads; threadId++) {
-		// perform block distribution of reads to the threads. thread will process reads [firstRead, firstRead + chunkSize[
-		std::uint32_t firstRead = 0;
-		std::uint32_t chunkSize = totalNumberOfReads / nCorrectorThreads;
-		std::uint32_t leftover = totalNumberOfReads % nCorrectorThreads;
-
-		if(threadId < leftover)
-		chunkSize++;
-
-		if(threadId < leftover) {
-			firstRead = threadId * chunkSize;
-		} else {
-			firstRead = leftover * (chunkSize + 1) + (threadId - leftover) * chunkSize;
-		}
-
-		bool useGPU = deviceIds.size() > 0;
-
-		//chunkSize = 4;
-
-		threadData.emplace_back(threadId, threadId % deviceIds.size(), useGPU, &readStorage, &minhasher,
-				graphx, graphalpha,
-				firstRead, firstRead + chunkSize, batchsize,
-				outputPath, &writelock);
-	}
-
-	std::vector<std::thread> correctorThreads;
-
-	for (int threadId = 0; threadId < nCorrectorThreads; threadId++) {
-
-		correctorThreads.emplace_back(&EC_Thread_Data::correct, std::ref(threadData[threadId]));
-		//correctorThreads.emplace_back([&](){threadData[threadId].correct();});
-	}
-
-	std::cout << std::endl;
-
-	bool correctionDone = false;
-	while(!correctionDone) {
-		/*std::cout << "\rProgress per Thread: ";
-		 for(int i = 0; i < nCorrectorThreads; i++){
-		 std::cout << (i == 0 ? "t": ", t") << i << ": " << (threadData[i].progress * 100.0) << "%";
-		 }
-		 std::cout << std::flush;
-
-		 std::this_thread::sleep_for(std::chrono::seconds(5));
-
-		 bool newDone = true;
-		 for(int i = 0; i < nCorrectorThreads; i++)
-		 newDone &= threadData[i].done;
-
-		 correctionDone = newDone;*/
-		std::uint32_t progress = 0;
-		bool newDone = true;
-		for(int i = 0; i < nCorrectorThreads; i++) {
-			newDone &= threadData[i].done;
-			progress += threadData[i].nProcessedReads;
-		}
-		correctionDone = newDone;
-
-		printf("Progress: %3.2f %%\r" , ((progress * 1.0 / totalNumberOfReads) * 100.0));
-		std::cout << std::flush;
-
-		std::this_thread::sleep_for(std::chrono::seconds(10));
-	}
-
-	std::cout << std::endl;
-
-	std::cout << "done."<< std::endl;
-
-	for (int i = 0; i < nCorrectorThreads; ++i )
-	correctorThreads[i].join();
-
-#endif
 }
 
 void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
@@ -1043,7 +941,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                 BatchElem& b = batch[i];
                 if(b.active){
                     tpc = std::chrono::system_clock::now();
-                    
+
                     pileupImage.correct_batch_elem(b);
 
                     tpd = std::chrono::system_clock::now();
