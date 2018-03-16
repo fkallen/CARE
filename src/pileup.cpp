@@ -75,64 +75,64 @@ namespace hammingtools{
             correctionSettings.k = k;
         }
 
-        // PileupImage::PileupImage(const PileupImage& other){
-        //     *this = other;
-        // }
-        //
-        // PileupImage::PileupImage(PileupImage&& other){
-        //     *this = std::move(other);
-        // }
-        //
-        // PileupImage& PileupImage::operator=(const PileupImage& other){
-        //     resize(other.max_n_columns);
-        //     std::memcpy(h_As.get(), other.h_As.get(), sizeof(int) * other.max_n_columns);
-        //     std::memcpy(h_Cs.get(), other.h_Cs.get(), sizeof(int) * other.max_n_columns);
-        //     std::memcpy(h_Gs.get(), other.h_Gs.get(), sizeof(int) * other.max_n_columns);
-        //     std::memcpy(h_Ts.get(), other.h_Ts.get(), sizeof(int) * other.max_n_columns);
-        //     std::memcpy(h_Aweights.get(), other.h_Aweights.get(), sizeof(double) * other.max_n_columns);
-        //     std::memcpy(h_Cweights.get(), other.h_Cweights.get(), sizeof(double) * other.max_n_columns);
-        //     std::memcpy(h_Gweights.get(), other.h_Gweights.get(), sizeof(double) * other.max_n_columns);
-        //     std::memcpy(h_Tweights.get(), other.h_Tweights.get(), sizeof(double) * other.max_n_columns);
-        //     std::memcpy(h_consensus.get(), other.h_consensus.get(), sizeof(char) * other.max_n_columns);
-        //     std::memcpy(h_support.get(), other.h_support.get(), sizeof(double) * other.max_n_columns);
-        //     std::memcpy(h_coverage.get(), other.h_coverage.get(), sizeof(int) * other.max_n_columns);
-        //     std::memcpy(h_origWeights.get(), other.h_origWeights.get(), sizeof(double) * other.max_n_columns);
-        //     std::memcpy(h_origCoverage.get(), other.h_origCoverage.get(), sizeof(int) * other.max_n_columns);
-        //
-        //     n_columns = other.n_columns;
-        //     properties = other.properties;
-        //     columnProperties = other.columnProperties;
-        //     correctionSettings = other.correctionSettings;
-        //     timings = other.timings;
-        //     taskTimings = other.taskTimings;
-        //
-        //     return *this;
-        // }
-        //
-        // PileupImage& PileupImage::operator=(PileupImage&& other){
-        //     h_As = std::move(other.h_As);
-        //     h_Cs = std::move(other.h_Cs);
-        //     h_Gs = std::move(other.h_Gs);
-        //     h_Ts = std::move(other.h_Ts);
-        //     h_Aweights = std::move(other.h_Aweights);
-        //     h_Cweights = std::move(other.h_Cweights);
-        //     h_Gweights = std::move(other.h_Gweights);
-        //     h_Tweights = std::move(other.h_Tweights);
-        //     h_consensus = std::move(other.h_consensus);
-        //     h_support = std::move(other.h_support);
-        //     h_coverage = std::move(other.h_coverage);
-        //     h_origWeights = std::move(other.h_origWeights);
-        //     h_origCoverage = std::move(other.h_origCoverage);
-        //
-        //     n_columns = other.n_columns;
-        //     properties = other.properties;
-        //     columnProperties = other.columnProperties;
-        //     correctionSettings = other.correctionSettings;
-        //     timings = other.timings;
-        //     taskTimings = other.taskTimings;
-        //
-        //     return *this;
-        // }
+        PileupImage::PileupImage(const PileupImage& other){
+            *this = other;
+        }
+
+        PileupImage::PileupImage(PileupImage&& other){
+            *this = std::move(other);
+        }
+
+        PileupImage& PileupImage::operator=(const PileupImage& other){
+            resize(other.max_n_columns);
+            std::memcpy(h_As.get(), other.h_As.get(), sizeof(int) * other.max_n_columns);
+            std::memcpy(h_Cs.get(), other.h_Cs.get(), sizeof(int) * other.max_n_columns);
+            std::memcpy(h_Gs.get(), other.h_Gs.get(), sizeof(int) * other.max_n_columns);
+            std::memcpy(h_Ts.get(), other.h_Ts.get(), sizeof(int) * other.max_n_columns);
+            std::memcpy(h_Aweights.get(), other.h_Aweights.get(), sizeof(double) * other.max_n_columns);
+            std::memcpy(h_Cweights.get(), other.h_Cweights.get(), sizeof(double) * other.max_n_columns);
+            std::memcpy(h_Gweights.get(), other.h_Gweights.get(), sizeof(double) * other.max_n_columns);
+            std::memcpy(h_Tweights.get(), other.h_Tweights.get(), sizeof(double) * other.max_n_columns);
+            std::memcpy(h_consensus.get(), other.h_consensus.get(), sizeof(char) * other.max_n_columns);
+            std::memcpy(h_support.get(), other.h_support.get(), sizeof(double) * other.max_n_columns);
+            std::memcpy(h_coverage.get(), other.h_coverage.get(), sizeof(int) * other.max_n_columns);
+            std::memcpy(h_origWeights.get(), other.h_origWeights.get(), sizeof(double) * other.max_n_columns);
+            std::memcpy(h_origCoverage.get(), other.h_origCoverage.get(), sizeof(int) * other.max_n_columns);
+
+            n_columns = other.n_columns;
+            properties = other.properties;
+            columnProperties = other.columnProperties;
+            correctionSettings = other.correctionSettings;
+            timings = other.timings;
+            taskTimings = other.taskTimings;
+
+            return *this;
+        }
+
+        PileupImage& PileupImage::operator=(PileupImage&& other){
+            h_As = std::move(other.h_As);
+            h_Cs = std::move(other.h_Cs);
+            h_Gs = std::move(other.h_Gs);
+            h_Ts = std::move(other.h_Ts);
+            h_Aweights = std::move(other.h_Aweights);
+            h_Cweights = std::move(other.h_Cweights);
+            h_Gweights = std::move(other.h_Gweights);
+            h_Tweights = std::move(other.h_Tweights);
+            h_consensus = std::move(other.h_consensus);
+            h_support = std::move(other.h_support);
+            h_coverage = std::move(other.h_coverage);
+            h_origWeights = std::move(other.h_origWeights);
+            h_origCoverage = std::move(other.h_origCoverage);
+
+            n_columns = other.n_columns;
+            properties = other.properties;
+            columnProperties = other.columnProperties;
+            correctionSettings = other.correctionSettings;
+            timings = other.timings;
+            taskTimings = other.taskTimings;
+
+            return *this;
+        }
 
 
         void PileupImage::resize(int cols){
@@ -231,14 +231,14 @@ namespace hammingtools{
             timings.findconsensustime += tpd - tpc;
 
             tpc = std::chrono::system_clock::now();
-            //cpu_find_consensus(batchElem);
+            cpu_find_consensus(batchElem);
             tpd = std::chrono::system_clock::now();
             taskTimings.executiontime += tpd - tpc;
             tt.executiontime += tpd - tpc;
             timings.findconsensustime += tpd - tpc;
 
             tpc = std::chrono::system_clock::now();
-            //cpu_correct(batchElem);
+            cpu_correct(batchElem);
             tpd = std::chrono::system_clock::now();
             taskTimings.executiontime += tpd - tpc;
             tt.executiontime += tpd - tpc;
@@ -538,12 +538,12 @@ namespace hammingtools{
 				for(int i = 0; i < subjectlength; i++){
 					const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
 
-		#if 0
-					if(h_support[globalIndex] >= 1.0-3.0*errorrate){
+		#if 1
+					if(h_support[globalIndex] >= 1.0-3.0*correctionSettings.errorrate){
 						batchElem.correctedSequence[i] = h_consensus[globalIndex];
 						foundAColumn = true;
-					}//else{
-		#else
+					}else{
+		//#else
                     const double limit = correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
 					if(h_support[globalIndex] > 0.5 && h_origCoverage[globalIndex] < limit){
 						double avgsupportkregion = 0;
@@ -563,7 +563,7 @@ namespace hammingtools{
 						}
 					}
 
-				//}
+				}
 		#endif
 				}
 

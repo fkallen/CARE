@@ -84,10 +84,10 @@ namespace hammingtools{
             PileupImage(bool useQScores, bool correctQueries, int estimatedCoverage,
                         double maxErrorRate, double errorrate, double m, double k);
 
-            // PileupImage(const PileupImage& other);
-            // PileupImage(PileupImage&& other);
-            // PileupImage& operator=(const PileupImage& other);
-            // PileupImage& operator=(PileupImage&& other);
+            PileupImage(const PileupImage& other);
+            PileupImage(PileupImage&& other);
+            PileupImage& operator=(const PileupImage& other);
+            PileupImage& operator=(PileupImage&& other);
 
             void resize(int cols);
             void clear();
