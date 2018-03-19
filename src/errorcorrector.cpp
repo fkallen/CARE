@@ -12,6 +12,7 @@
 
 #include "../inc/batchelem.hpp"
 #include "../inc/pileup.hpp"
+#include "../inc/graph.hpp"
 
 #include <cstdint>
 #include <thread>
@@ -51,9 +52,6 @@
 //#define USE_REVCOMPL_FLAG
 
 //constexpr int MAX_THREADS_PER_GPU = 30;
-
-// how many correction results should be buffered before writing the correction results to file
-constexpr int bufferedResultsThreshold = 1000;
 
 // update global progress after correcting a multiple of this many reads
 constexpr std::uint64_t progressThreshold = 5000;
@@ -144,8 +142,8 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 		minhashparams(minhashparameters), nInserterThreads(nInserterThreads_), nCorrectorThreads(
 				nCorrectorThreads_), outputPath("") {
 	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
-	correctionmode = CorrectionMode::Hamming;
-	//correctionmode = CorrectionMode::Graph;
+	//correctionmode = CorrectionMode::Hamming;
+	correctionmode = CorrectionMode::Graph;
 
 	minhasher.minparams = minhashparameters;
 
@@ -165,108 +163,6 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 #endif
 
 }
-
-#if 0
-void ErrorCorrector::mergeUnorderedThreadResults(
-		const std::string& filename) const {
-
-	std::string name = filename;
-	std::string fileEnding = ".fq";
-
-	size_t lastdotpos = filename.find_last_of(".");
-	if (lastdotpos != std::string::npos) {
-		name = name.substr(0, lastdotpos);
-		fileEnding = filename.substr(lastdotpos);
-	}
-
-	size_t lastslashpos = filename.find_last_of("/");
-	if (lastslashpos != std::string::npos)
-		name = name.substr(lastslashpos + 1);
-
-	std::string currentOutputFilename;
-
-	if (outputFilename != "")
-		currentOutputFilename = outputPath + "/" + outputFilename;
-	else
-		currentOutputFilename = outputPath + "/" + name + "_"
-				+ std::to_string(minhashparams.k) + "_"
-				+ std::to_string(minhashparams.maps) + "_1" + "_alpha_"
-				+ std::to_string(graphalpha) + "_x_" + std::to_string(graphx)
-				+ "_corrected" + fileEnding;
-
-	std::cout << "merging into " << currentOutputFilename << std::endl;
-
-	const std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
-	std::uint32_t nreads = 0;
-
-	std::vector<Read> reads(totalNumberOfReads);
-	for (int i = 0; i < nCorrectorThreads; i++) {
-
-		std::unique_ptr<ReadReader> reader;
-		switch (inputfileformat) {
-		case Fileformat::FASTQ:
-			reader.reset(new FastqReader(outputPath + "/" + std::to_string(i)));
-			break;
-		case Fileformat::FASTA:
-			reader.reset(new FastaReader(outputPath + "/" + std::to_string(i)));
-			break;
-
-		default:
-			assert(false && "merge inputfileformat");
-			break;
-		}
-
-		Read read;
-
-		while (reader->getNextRead(&read, nullptr)) {
-			nreads++;
-			//std::cout << nreads << std::endl;
-			auto spacepos = read.header.find(" ");
-			auto readnum = std::stoull(read.header.substr(0, spacepos));
-			read.header.erase(0, spacepos + 1);
-			reads[readnum] = std::move(read);
-		}
-	}
-
-	if (nreads != totalNumberOfReads) {
-		Read tmp;
-		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
-			return a == tmp;
-		});
-
-		std::cout << "totalNumberOfReads " << totalNumberOfReads << '\n'
-				<< "nreads " << nreads << '\n' << "asd " << asd << '\n';
-		assert(nreads == totalNumberOfReads);
-	}
-	assert(nreads == totalNumberOfReads);
-
-	Read tmp;
-	if (std::find(reads.begin(), reads.end(), tmp) != reads.end())
-		std::cout << "error" << std::endl;
-
-	std::cout << "done in a moment" << std::endl;
-	std::ofstream outputfile(currentOutputFilename);
-
-	for (const auto& read : reads) {
-		outputfile << read.header << '\n' << read.sequence << '\n';
-
-		if (inputfileformat == Fileformat::FASTQ)
-			outputfile << '+' << '\n' << read.quality << '\n';
-	}
-
-	outputfile.flush();
-	outputfile.close();
-
-	for (int i = 0; i < nCorrectorThreads; i++) {
-		std::string s = outputPath + "/" + std::to_string(i);
-		int ret = std::remove(s.c_str());
-		if (ret != 0)
-			std::cout << "could not remove file " << s << std::endl;
-	}
-}
-
-#else
-
 
 void ErrorCorrector::mergeUnorderedThreadResults(
 		const std::string& filename) const {
@@ -384,8 +280,6 @@ void ErrorCorrector::mergeUnorderedThreadResults(
 			std::cout << "could not remove file " << s << std::endl;
 	}
 }
-
-#endif
 
 void ErrorCorrector::correct(const std::string& filename) {
 	if (inputfileformat == Fileformat::FASTA)
@@ -689,13 +583,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	std::chrono::duration<double> getCandidatesTimeTotal(0);
 	std::chrono::duration<double> mapMinhashResultsToSequencesTimeTotal(0);
 	std::chrono::duration<double> getAlignmentsTimeTotal(0);
-	std::chrono::duration<double> correctReadTimeTotal(0);
 	std::chrono::duration<double> determinegoodalignmentsTime(0);
 	std::chrono::duration<double> fetchgoodcandidatesTime(0);
 	std::chrono::duration<double> majorityvotetime(0);
 	std::chrono::duration<double> basecorrectiontime(0);
 	std::chrono::duration<double> readcorrectionTimeTotal(0);
-	std::chrono::duration<double> fileoutputTimeTotal(0);
 	std::chrono::duration<double> mapminhashresultsdedup(0);
 	std::chrono::duration<double> mapminhashresultsfetch(0);
 	std::chrono::duration<double> graphbuildtime(0);
@@ -706,26 +598,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	// the output file of this thread
 	std::ofstream outputfile(outputPath + "/" + std::to_string(threadId));
 
-	// number of buffered correction results. nBufferedResults < bufferedResultsThreshold
-	int nBufferedResults = 0;
-
-	// buffer of correction results
-	std::stringstream resultstringstream;
-
-#if 1
 	auto write_read = [&](const auto readId, const auto& sequence){
 		auto& stream = outputfile;
 		stream << readId << '\n';
 		stream << sequence << '\n';
 	};
-#else
-	auto write_read = [&](const auto readId, const auto& sequence){
-		auto& stream = resultstringstream;
-		stream << readId << '\n';
-		stream << sequence << '\n';
-		nBufferedResults++;
-	};
-#endif
 
 	// number of processed reads after previous progress update
 	// resets after each progress update
@@ -782,6 +659,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
             BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
 
     hammingtools::correction::PileupImage pileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k);
+    graphtools::correction::ErrorGraph errorgraph(useQualityScores, MAX_MISMATCH_RATIO, graphalpha, graphx);
 
 	const int maxReadsPerLock =
 			(!CORRECT_CANDIDATE_READS_TOO) ?
@@ -892,50 +770,54 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 		tpb = std::chrono::system_clock::now();
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
-#if 1
+
+        tpa = std::chrono::system_clock::now();
+        if (correctionmode == CorrectionMode::Hamming) {
+            hammingtools::getMultipleAlignments(shddata, batch, true);
+        }else if (correctionmode == CorrectionMode::Graph){
+            graphtools::getMultipleAlignments(sgadata, batch, true);
+        }else{
+            throw std::runtime_error("Alignment: invalid correction mode.");
+        }
+
+        tpb = std::chrono::system_clock::now();
+        getAlignmentsTimeTotal += tpb - tpa;
+
+        //select candidates from alignments
+        for(auto& b : batch){
+            if(b.active){
+
+                tpc = std::chrono::system_clock::now();
+
+                DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
+
+                if(Astats.correctionCases[3] > 0){
+                    //no correction because not enough good alignments. write original sequence to output
+                    write_read(b.readId, b.fwdSequenceString);
+                }
+
+                tpd = std::chrono::system_clock::now();
+                determinegoodalignmentsTime += tpd - tpc;
+
+                correctionCases[0] += Astats.correctionCases[0];
+                correctionCases[1] += Astats.correctionCases[1];
+                correctionCases[2] += Astats.correctionCases[2];
+                correctionCases[3] += Astats.correctionCases[3];
+
+                tpc = std::chrono::system_clock::now();
+
+                if(b.active){
+                    //move candidates which are used for correction to the front
+                    b.prepare_good_candidates();
+                }
+
+                tpd = std::chrono::system_clock::now();
+                fetchgoodcandidatesTime += tpd - tpc;
+            }
+        }
 
 		if (correctionmode == CorrectionMode::Hamming) {
-            tpa = std::chrono::system_clock::now();
 
-            hammingtools::getMultipleAlignments(shddata, batch, true);
-
-			tpb = std::chrono::system_clock::now();
-			getAlignmentsTimeTotal += tpb - tpa;
-
-            //select candidates from alignments
-            for(auto& b : batch){
-                if(b.active){
-
-					tpc = std::chrono::system_clock::now();
-
-                    DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
-
-                    if(Astats.correctionCases[3] > 0){
-                        //no correction because not enough good alignments. write original sequence to output
-                        write_read(b.readId, b.fwdSequenceString);
-                    }
-
-                    tpd = std::chrono::system_clock::now();
-					determinegoodalignmentsTime += tpd - tpc;
-
-                    correctionCases[0] += Astats.correctionCases[0];
-                    correctionCases[1] += Astats.correctionCases[1];
-                    correctionCases[2] += Astats.correctionCases[2];
-                    correctionCases[3] += Astats.correctionCases[3];
-
-					tpc = std::chrono::system_clock::now();
-
-					if(b.active){
-						//move candidates which are used for correction to the front
-						b.prepare_good_candidates();
-					}
-
-					tpd = std::chrono::system_clock::now();
-					fetchgoodcandidatesTime += tpd - tpc;
-                }
-            }
-
-            tpa = std::chrono::system_clock::now();
 
             for(size_t i = 0; i < batch.size(); i++){
                 BatchElem& b = batch[i];
@@ -997,200 +879,28 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
                     }
                 }
             }
+        }else if (correctionmode == CorrectionMode::Graph){
 
+                for(size_t i = 0; i < batch.size(); i++){
+                    BatchElem& b = batch[i];
+                    if(b.active){
+                        tpc = std::chrono::system_clock::now();
 
-			tpb = std::chrono::system_clock::now();
-            correctReadTimeTotal += tpb - tpa;
+                        errorgraph.correct_batch_elem(b);
 
+                        tpd = std::chrono::system_clock::now();
+                        readcorrectionTimeTotal += tpd - tpc;
 
-
-
-		} else {
-#if 0
-			auto alignments = graphtools::getMultipleAlignments(sgadata,
-					queries, candidateReadsAndRevcompls, activeBatches, true);
-
-
-			tpb = std::chrono::system_clock::now();
-			getAlignmentsTimeTotal += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-
-			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-				if (activeBatches[i]) {
-					if (alignments[i].size()
-							!= candidateReadsAndRevcompls[i].size()) {
-						std::cout << readnum << '\n';
-						assert(
-								alignments[i].size()
-										== candidateReadsAndRevcompls[i].size());
-					}
-				}
-
-				// for each candidate, compare its alignment to the alignment of the reverse complement.
-				// find the best of both, if any, and
-				// save the best alignment + additional data in these vectors
-				std::vector<AlignResult> insertedAlignments;
-				std::vector<const Sequence*> insertedSequences;
-				std::vector < std::uint64_t > insertedCandidateIds;
-				std::vector<int> insertedFreqs;
-				std::vector<bool> forwardRead;
-
-				const int querylength = queries[i]->length();
-
-				int bad = 0;
-				int fc = 0;
-				for (size_t j = 0; j < alignments[i].size() / 2; j++) {
-					auto& res = alignments[i][j];
-					auto& revcomplres = alignments[i][candidateReads[i].size()
-							+ j];
-
-					int candidatelength = candidateReads[i][j]->length();
-
-					BestAlignment_t best = get_best_alignment(res.arc,
-							revcomplres.arc, querylength, candidatelength,
-							MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO);
-
-					if (best == BestAlignment_t::Forward) {
-						const Sequence* seq = candidateReads[i][j];
-
-						insertedAlignments.push_back(std::move(res));
-						insertedSequences.push_back(seq);
-						insertedCandidateIds.insert(insertedCandidateIds.cend(),
-								candidateIds[i].cbegin() + fc,
-								candidateIds[i].cbegin() + fc
-										+ frequencies[i][j]);
-						insertedFreqs.push_back(frequencies[i][j]);
-						forwardRead.push_back(true);
-					} else if (best == BestAlignment_t::ReverseComplement) {
-						const Sequence* revseq = revComplcandidateReads[i][j];
-
-						insertedAlignments.push_back(std::move(revcomplres));
-						insertedSequences.push_back(revseq);
-						insertedCandidateIds.insert(insertedCandidateIds.cend(),
-								candidateIds[i].cbegin() + fc,
-								candidateIds[i].cbegin() + fc
-										+ frequencies[i][j]);
-						insertedFreqs.push_back(frequencies[i][j]);
-						forwardRead.push_back(false);
-					} else {
-						bad++; //both alignments are bad
-					}
-					fc += frequencies[i][j];
-				}
-
-				bool correctQuery = true;
-
-				//TODO don't correct if not enough good candidates
-
-				if (!correctQuery) {
-                    resultstringstream << (readnum + i) << '\n';
-                    resultstringstream << queryStrings[i] << '\n';
-
-					/*if (inputfileformat == Fileformat::FASTQ){
-						resultstringstream << '+' << '\n';
-						if(useQualityScores)
-								resultstringstream << *(queryQualities[i]) << '\n';
-						else{
-							for(int k = 0; k < int(queryStrings[i].length()); k++)
-								resultstringstream << 'A';
-							resultstringstream << '\n';
-						}
-					}*/
-
-					nBufferedResults++;
-				} else {
-
-					// Now, use the good alignments for error correction. use errorgraph for correction.
-
-					std::vector<int> frequenciesPrefixSum(
-							insertedAlignments.size() + 1, 0);
-					std::vector<const std::string*> candidatequals;
-					candidatequals.reserve(insertedAlignments.size());
-
-					int qualindex = 0;
-					for (size_t j = 0; j < insertedAlignments.size(); j++) {
-						const int freq = insertedFreqs[j];
-						frequenciesPrefixSum[j + 1] = frequenciesPrefixSum[j]
-								+ freq;
-						if (forwardRead[j]) {
-							for (int f = 0; f < freq; f++) {
-								candidatequals.push_back(
-										readStorage.fetchQuality_ptr(
-												insertedCandidateIds[qualindex
-														+ f]));
-							}
-						} else {
-							for (int f = 0; f < freq; f++) {
-								candidatequals.push_back(
-										readStorage.fetchReverseComplementQuality_ptr(
-												insertedCandidateIds[qualindex
-														+ f]));
-							}
-						}
-						qualindex += freq;
-					}
-
-					std::string newcorrected = queryStrings[i];
-
-					tpc = std::chrono::system_clock::now();
-
-					std::chrono::duration<double> foo1;
-					std::chrono::duration<double> foo2;
-					std::tie(foo1, foo2) = graphtools::performCorrection(
-							newcorrected, insertedAlignments,
-							*queryQualities[i], candidatequals,
-							frequenciesPrefixSum, useQualityScores,
-							MAX_MISMATCH_RATIO, graphalpha, graphx);
-
-					tpd = std::chrono::system_clock::now();
-
-					readcorrectionTimeTotal += tpd - tpc;
-					graphbuildtime += foo1;
-					graphcorrectiontime += foo2;
-
-                    resultstringstream << (readnum + i) << '\n';
-                    resultstringstream << queryStrings[i] << '\n';
-
-					/*if (inputfileformat == Fileformat::FASTQ){
-						resultstringstream << '+' << '\n';
-						if(useQualityScores)
-								resultstringstream << *(queryQualities[i]) << '\n';
-						else{
-							for(int k = 0; k < int(queryStrings[i].length()); k++)
-								resultstringstream << 'A';
-							resultstringstream << '\n';
-						}
-					}*/
-
-					nBufferedResults++;
-				}
-			}
-
-			tpb = std::chrono::system_clock::now();
-			correctReadTimeTotal += tpb - tpa;
-#endif
-		}
-#endif
-
-		// write result to output file if output buffer is full
-		/*if (nBufferedResults >= bufferedResultsThreshold) {
-
-			tpa = std::chrono::system_clock::now();
-
-
-			std::lock_guard < std::mutex > lg(writelock);
-
-			outputfile << resultstringstream.rdbuf();
-			nBufferedResults = 0;
-			resultstringstream.str(std::string());
-			resultstringstream.clear();
-
-
-			tpb = std::chrono::system_clock::now();
-			fileoutputTimeTotal += tpb - tpa;
-
-		}*/
+                        if(b.corrected){
+    						write_read(b.readId, b.correctedSequence);
+                        }else{
+    						write_read(b.readId, b.fwdSequenceString);
+                        }
+                    }
+                }
+        }else{
+            throw std::runtime_error("Correction: invalid correction mode.");
+        }
 
 		// update local progress
 		progressprocessedReads += actualBatchSize;
@@ -1200,28 +910,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
 			progressprocessedReads = 0;
 		}
-
 	}
-
-	// write remaining buffered results
-	/*if (nBufferedResults > 0) {
-
-
-		tpa = std::chrono::system_clock::now();
-
-		std::lock_guard < std::mutex > lg(writelock);
-
-		outputfile << resultstringstream.rdbuf();
-		nBufferedResults = 0;
-		resultstringstream.str(std::string());
-		resultstringstream.clear();
-
-
-		tpb = std::chrono::system_clock::now();
-		fileoutputTimeTotal += tpb - tpa;
-
-	}*/
-
 
 	//final progress update
 	updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
@@ -1288,13 +977,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					<< " : correction fetch good data "
 					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadId << " : pileup vote "
-					<< majorityvotetime.count() << '\n';
+					<< pileupImage.timings.findconsensustime.count() << '\n';
 			std::cout << "thread " << threadId << " : pileup correct "
-					<< basecorrectiontime.count() << '\n';
+					<< pileupImage.timings.correctiontime.count() << '\n';
 			std::cout << "thread " << threadId << " : correction calculation "
 					<< readcorrectionTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : correctReadTimeTotal "
-					<< correctReadTimeTotal.count() << '\n';
 			// std::cout << "thread " << threadId << " : pileup resize buffer "
 			// 		<< hcorrectionbuffers.resizetime.count() << '\n';
 			// std::cout << "thread " << threadId << " : pileup preprocessing "
@@ -1325,16 +1012,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			std::cout << "thread " << threadId << " : alignment calculation " << sgadata.alignmenttime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment D2H " << sgadata.d2htime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';
-			//std::cout << "thread " << threadId << " : correction find good alignments " << determinegoodalignmentsTime.count() << '\n';
-			//std::cout << "thread " << threadId << " : correction fetch good data " << fetchgoodcandidatesTime.count() << '\n';
+            std::cout << "thread " << threadId
+					<< " : correction find good alignments "
+					<< determinegoodalignmentsTime.count() << '\n';
+			std::cout << "thread " << threadId
+					<< " : correction fetch good data "
+					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadId << " : graph build "
 					<< graphbuildtime.count() << '\n';
 			std::cout << "thread " << threadId << " : graph correct "
 					<< graphcorrectiontime.count() << '\n';
 			std::cout << "thread " << threadId << " : correction calculation "
 					<< readcorrectionTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : correctReadTimeTotal "
-					<< correctReadTimeTotal.count() << '\n';
 		}
 	}
 #endif

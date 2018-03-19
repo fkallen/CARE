@@ -52,7 +52,7 @@ struct BatchElem{
 
     std::vector<std::vector<AlignOp>> fwdAlignOps;
     std::vector<std::vector<AlignOp>> revcomplAlignOps;
-    std::vector<std::vector<AlignOp>> bestAlignOps;
+    std::vector<std::vector<AlignOp>*> bestAlignOps;
 
     double mismatchratioThreshold;
 

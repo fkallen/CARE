@@ -60,57 +60,11 @@ namespace graphtools{
 		ErrorGraph::Edge::Edge(int t, double w) : to(t), weight(w), canBeUsed(true){}
 
 		ErrorGraph::Vertex::Vertex(char b) : base(b){
-		#ifdef LOGBASEDPATH
 			bestPathProb = std::numeric_limits<double>::lowest();
-		#else
-			bestPathProb = 0.0;
-		#endif
 		}
 
 		ErrorGraph::LinkOperation::LinkOperation():from(0), to(0), isOriginal(false){}
 		ErrorGraph::LinkOperation::LinkOperation(int f, int t, bool o):from(f), to(t), isOriginal(o){}
-
-
-        TaskTimings ErrorGraph::correct_batch_elem(BatchElem& b){
-            init(b.fwdSequenceString, *b.fwdQuality);
-
-            TaskTimings tt;
-            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
-
-			tpa = std::chrono::system_clock::now();
-
-            for(size_t i = 0; i < b.n_unique_candidates; i++){
-                auto& alignment = b.bestAlignments[i];
-                auto& alignOps = b.bestAlignOps[i];
-                const int freq = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
-
-				graphtools::correction::split_subs(alignOps, b.fwdSequenceString);
-
-				for(int f = 0; f < freq; f++){
-					const int qualindex = b.candidateCountsPrefixSum[i] + f;
-					const std::string* qual = b.bestQualities[qualindex];
-					insertAlignment(alignment, alignOps, qual, 1);
-				}
-			}
-
-			tpb = std::chrono::system_clock::now();
-
-			timings.buildtime += tpb - tpa;
-            taskTimings.preprocessingtime += tpb - tpa;
-            tt.preprocessingtime = tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-			// let the graph to its work
-			b.correctedSequence = getCorrectedRead();
-
-			tpb = std::chrono::system_clock::now();
-
-            timings.correctiontime += tpb - tpa;
-            taskTimings.executiontime += tpb - tpa;
-            tt.executiontime = tpb - tpa;
-
-            return tt;
-        }
 
 		ErrorGraph::ErrorGraph() : ErrorGraph(false, 1.0, 1.0, 1.0){}
 
@@ -122,8 +76,9 @@ namespace graphtools{
 		void ErrorGraph::init(const std::string& seq, const std::string& qualityScores){
 			assert(seq.length() > 0);
 
+            clearVectors();
+
 			read = seq;
-			vertices.clear();
 
 			double weight;
 			int newindex;
@@ -165,6 +120,12 @@ namespace graphtools{
 			vertices.push_back(Vertex(base));
 			return vertices.size() - 1;
 		}
+
+        void ErrorGraph::clearVectors(){
+            vertices.clear();
+            topoIndices.clear();
+            finalPath.clear();
+        }
 
 		// insert alignment nTimes into the graph
         void ErrorGraph::insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
@@ -383,19 +344,6 @@ namespace graphtools{
 
 			std::string correctedRead;
 			//double prob = std::exp(vertices[endNode].bestPathProb);
-
-			/*cr.edgemax = edgemax;
-			cr.edgemax = edgemin;
-			cr.edgemax = origpos;*/
-
-		/*std::cout << "b\n";
-		std::cout << cr.origpos.size() << '\n';
-				for(int i = 0; i < cr.origpos.size(); i++){
-					std::cout << cr.origpos[i] << '\n';
-					std::cout << cr.edgemin[i] << '\n';
-					std::cout << cr.edgemax[i] << '\n';
-				}*/
-
 
 			// backtrack to extract corrected read
 			std::string rcorrectedRead = "";
@@ -625,6 +573,48 @@ namespace graphtools{
 				}
 			}
 		}
+
+        TaskTimings ErrorGraph::correct_batch_elem(BatchElem& b){
+            init(b.fwdSequenceString, *b.fwdQuality);
+
+            TaskTimings tt;
+            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
+			tpa = std::chrono::system_clock::now();
+
+            for(size_t i = 0; i < b.n_unique_candidates; i++){
+                auto& alignment = b.bestAlignments[i];
+                auto& alignOps = b.bestAlignOps[i];
+                const int freq = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
+
+				graphtools::correction::split_subs(*alignOps, b.fwdSequenceString);
+
+				for(int f = 0; f < freq; f++){
+					const int qualindex = b.candidateCountsPrefixSum[i] + f;
+					const std::string* qual = b.bestQualities[qualindex];
+					insertAlignment(alignment, *alignOps, qual, 1);
+				}
+			}
+			tpb = std::chrono::system_clock::now();
+
+			timings.buildtime += tpb - tpa;
+            taskTimings.preprocessingtime += tpb - tpa;
+            tt.preprocessingtime = tpb - tpa;
+
+			tpa = std::chrono::system_clock::now();
+			// let the graph to its work
+			b.correctedSequence = getCorrectedRead();
+
+			tpb = std::chrono::system_clock::now();
+
+            timings.correctiontime += tpb - tpa;
+            taskTimings.executiontime += tpb - tpa;
+            tt.executiontime = tpb - tpa;
+
+            b.corrected = true;
+
+            return tt;
+        }
 
 	}
 }

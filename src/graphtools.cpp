@@ -276,9 +276,8 @@ namespace graphtools{
                     querysum += count;
                     subjectindex++;
 
-                    b.fwdAlignOps.resize(mybuffers.max_ops_per_alignment * b.fwdSequences.size());
-                    b.revcomplAlignOps.resize(mybuffers.max_ops_per_alignment * b.revcomplSequences.size());
-                    b.bestAlignOps.resize(mybuffers.max_ops_per_alignment * b.fwdSequences.size());
+                    b.fwdAlignOps.resize(b.fwdSequences.size());
+                    b.revcomplAlignOps.resize(b.revcomplSequences.size());
 				}
 			}
 
@@ -324,19 +323,27 @@ namespace graphtools{
                     tpa = std::chrono::system_clock::now();
 
                     int count = 0;
+                    int localcount = 0;
                     for(auto& alignment : b.fwdAlignments){
+
                         alignment = results[count];
-                        std::copy(ops + count * mybuffers.max_ops_per_alignment,
-                                  ops + (count + 1) * mybuffers.max_ops_per_alignment,
-                                  b.fwdAlignOps[count].begin());
+                        b.fwdAlignOps[localcount].resize(alignment.nOps);
+                        std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
+                                  ops + count * mybuffers.max_ops_per_alignment + alignment.nOps,
+                                  b.fwdAlignOps[localcount].begin());
                         count++;
+                        localcount++;
                     }
+                    localcount = 0;
                     for(auto& alignment : b.revcomplAlignments){
+
                         alignment = results[count];
+                        b.revcomplAlignOps[localcount].resize(alignment.nOps);
                         std::copy(ops + count * mybuffers.max_ops_per_alignment,
-                                  ops + (count + 1) * mybuffers.max_ops_per_alignment,
-                                  b.revcomplAlignOps[count].begin());
+                                  ops + count * mybuffers.max_ops_per_alignment + alignment.nOps,
+                                  b.revcomplAlignOps[localcount].begin());
                         count++;
+                        localcount++;
                     }
 
 

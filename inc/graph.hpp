@@ -88,6 +88,8 @@ namespace graphtools{
 			// return the index of the new node in the vertices vector
 			int addNewNode(const char base);
 
+            void clearVectors();              
+
 			// insert alignment into graph
 			void insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
                                  const std::string* qualityScores, int nTimes = 1);

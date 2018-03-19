@@ -65,9 +65,6 @@
         bestSequences.resize(num);
 		bestSequenceStrings.resize(num);
         bestIsForward.resize(num);
-
-        fwdAlignOps.resize(num);
-        revcomplAlignOps.resize(num);
         bestAlignOps.resize(num);
     }
 
@@ -198,6 +195,8 @@
                         bestIsForward[i] = true;
                         bestSequences[i] = fwdSequences[i];
                         bestAlignments[i] = res;
+                        bestAlignOps[i] = &fwdAlignOps[i];
+                        assert(bestAlignOps[i] != nullptr);
                         for(int j = 0; j < candidateCount; j++){
                             const std::uint64_t id = candidateIds[begin + j];
                             bestQualities[begin + j] = readStorage->fetchQuality_ptr(id);
@@ -206,6 +205,8 @@
                         bestIsForward[i] = false;
                         bestSequences[i] = revcomplSequences[i];
                         bestAlignments[i] = revcomplres;
+                        bestAlignOps[i] = &revcomplAlignOps[i];
+                        assert(bestAlignOps[i] != nullptr);
                         for(int j = 0; j < candidateCount; j++){
                             const std::uint64_t id = candidateIds[begin + j];
                             bestQualities[begin + j] = readStorage->fetchReverseComplementQuality_ptr(id);
@@ -251,6 +252,7 @@
                     fwdSequences[activeposition_unique] = fwdSequences[i];
                     revcomplSequences[activeposition_unique] = revcomplSequences[i];
                     bestAlignments[activeposition_unique] = bestAlignments[i];
+                    bestAlignOps[activeposition_unique] = bestAlignOps[i];
                     bestSequences[activeposition_unique] = bestSequences[i];
                     bestSequenceStrings[activeposition_unique] = bestSequences[i]->toString();
                     bestIsForward[activeposition_unique] = bestIsForward[i];
