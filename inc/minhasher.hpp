@@ -51,30 +51,16 @@ void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer);
 struct Minhasher {
 
 	// configure hash map
+	using key_t = std::uint64_t;
+	static constexpr int bits_key = sizeof(key_t) * 8;
+	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
 
-	// bits_key bits are used to store kmer hash value. if hash value has more bits, leftover bits are discarded
-	// bits_val - 1 bits are used to store read id
-	// last bit is used internally
-	static constexpr int bits_key = 32;
-	static constexpr int bits_val = 32;
-
-	static_assert(bits_key > 0, "bits_key == 0!!!");
-	static_assert(bits_val > 0, "bits_val == 0!!!");
-	static_assert((bits_key + bits_val) == 64, "invalid key/value partition in hashmap");
-
-	static constexpr std::uint64_t hv_bitmask = (std::uint64_t(1) << bits_key) - 1;
-	static constexpr std::uint64_t MAX_READ_NUM = (std::uint64_t(1) << (bits_val-1)) - 1;
-
-	using hash_func = mueller_hash_uint32_t;
-	using prob_func = linear_probing_scheme_t;
-	using oa_hash_t = OpenAddressingMultiHashMap<uint64_t, bits_key, bits_val,
-					   hash_func,prob_func>;
 
 	// the actual hash maps
-	std::vector<std::unique_ptr<oa_hash_t> > minhashTables;
-	std::vector<std::unique_ptr<KVMapFixed<std::uint64_t>>> minhashTables2;
+	std::vector<std::unique_ptr<KVMapFixed<key_t>>> minhashTables;
 	MinhashParameters minparams;
-	double load;
+	std::uint64_t nReads;
+
 	std::chrono::duration<double> minhashtime;
 	std::chrono::duration<double> maptime;
 
@@ -82,8 +68,7 @@ struct Minhasher {
 
 	Minhasher(const MinhashParameters& parameters);
 
-	void init();
-	void init(std::uint64_t nReads, double load);
+	void init(std::uint64_t nReads);
 
 	void clear();
 

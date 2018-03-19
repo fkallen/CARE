@@ -4,6 +4,7 @@
 #include "../inc/sga.hpp"
 #include "../inc/alignment.hpp"
 #include "../inc/read.hpp"
+#include "../inc/batchelem.hpp"
 
 
 #include <vector>
@@ -12,7 +13,7 @@
 
 namespace graphtools{
 
-	//forward decl
+    //forward decl
 	namespace alignment{
 		struct sgaop;
 		struct sgaresult;
@@ -41,9 +42,9 @@ namespace graphtools{
 		int* h_queriesPerSubject = nullptr;
 		int* h_subjectlengths = nullptr;
 		int* h_querylengths = nullptr;
-		
-		int* h_lengths = nullptr;		
-		int* d_lengths = nullptr;		
+
+		int* h_lengths = nullptr;
+		int* d_lengths = nullptr;
 
 		AlignerDataArrays* d_this;
 	#ifdef __NVCC__
@@ -85,20 +86,7 @@ namespace graphtools{
 
 	void init_once();
 
-	std::vector<std::vector<AlignResult>> 
-	getMultipleAlignments(AlignerDataArrays& buffer, const std::vector<const Sequence*>& subjects,
-			   const std::vector<std::vector<const Sequence*>>& queries,
-			   std::vector<bool> activeBatches, bool useGpu);
-
-	std::tuple<std::chrono::duration<double>,std::chrono::duration<double>> performCorrection(std::string& subject,
-				std::vector<AlignResult>& alignments,
-				const std::string& subjectqualityScores, 
-				const std::vector<const std::string*>& queryqualityScores,
-				const std::vector<int>& frequenciesPrefixSum,
-				bool useQScores,
-				double MAX_MISMATCH_RATIO,
-				double graphalpha,
-				double graphx);
+	void getMultipleAlignments(AlignerDataArrays& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 
 } //namespace end
 

@@ -9,6 +9,11 @@
 #include "../inc/hammingtools.hpp"
 #include "../inc/graphtools.hpp"
 
+
+#include "../inc/batchelem.hpp"
+#include "../inc/pileup.hpp"
+#include "../inc/graph.hpp"
+
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -48,41 +53,13 @@
 
 //constexpr int MAX_THREADS_PER_GPU = 30;
 
-// how many correction results should be buffered before writing the correction results to file
-constexpr int bufferedResultsThreshold = 1000;
-
 // update global progress after correcting a multiple of this many reads
 constexpr std::uint64_t progressThreshold = 5000;
 
 //the most probable path in the errorgraph must have a probability of at least MINIMUM_CORRECTION_PROBABILITY
 //constexpr double MINIMUM_CORRECTION_PROBABILITY = 0.0;
 
-constexpr double HASHMAP_LOAD_FACTOR = 0.8;
-
-constexpr bool CORRECT_CANDIDATE_READS_TOO = true;
-//constexpr double CANDIDATE_CORRECTION_MIN_OVERLAP_FACTOR = 1.00;
-//constexpr double CANDIDATE_CORRECTION_MAX_MISMATCH_RATIO = 0.00;
-
-
-struct Candidate{
-    std::vector<std::uint64_t> readIds; // ids of reads which have the same sequence
-    const Sequence* fwdSequence;
-    const Sequence* revcomplSequence;
-    AlignResult fwdAlignment;
-    AlignResult revcomplAlignment;
-    BestAlignment_t bestAlignment;
-};
-
-
-
-
-
-
-
-
-
-
-
+constexpr bool CORRECT_CANDIDATE_READS_TOO = false;
 
 
 struct MinhashResultsDedupBuffers {
@@ -187,147 +164,39 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 
 }
 
-#if 0
-void ErrorCorrector::mergeUnorderedThreadResults(
-		const std::string& filename) const {
-
-	std::string name = filename;
-	std::string fileEnding = ".fq";
-
-	size_t lastdotpos = filename.find_last_of(".");
-	if (lastdotpos != std::string::npos) {
-		name = name.substr(0, lastdotpos);
-		fileEnding = filename.substr(lastdotpos);
-	}
-
-	size_t lastslashpos = filename.find_last_of("/");
-	if (lastslashpos != std::string::npos)
-		name = name.substr(lastslashpos + 1);
-
-	std::string currentOutputFilename;
-
-	if (outputFilename != "")
-		currentOutputFilename = outputPath + "/" + outputFilename;
-	else
-		currentOutputFilename = outputPath + "/" + name + "_"
-				+ std::to_string(minhashparams.k) + "_"
-				+ std::to_string(minhashparams.maps) + "_1" + "_alpha_"
-				+ std::to_string(graphalpha) + "_x_" + std::to_string(graphx)
-				+ "_corrected" + fileEnding;
-
-	std::cout << "merging into " << currentOutputFilename << std::endl;
-
-	const std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
-	std::uint32_t nreads = 0;
-
-	std::vector<Read> reads(totalNumberOfReads);
-	for (int i = 0; i < nCorrectorThreads; i++) {
-
-		std::unique_ptr<ReadReader> reader;
-		switch (inputfileformat) {
-		case Fileformat::FASTQ:
-			reader.reset(new FastqReader(outputPath + "/" + std::to_string(i)));
-			break;
-		case Fileformat::FASTA:
-			reader.reset(new FastaReader(outputPath + "/" + std::to_string(i)));
-			break;
-
-		default:
-			assert(false && "merge inputfileformat");
-			break;
-		}
-
-		Read read;
-
-		while (reader->getNextRead(&read, nullptr)) {
-			nreads++;
-			//std::cout << nreads << std::endl;
-			auto spacepos = read.header.find(" ");
-			auto readnum = std::stoull(read.header.substr(0, spacepos));
-			read.header.erase(0, spacepos + 1);
-			reads[readnum] = std::move(read);
-		}
-	}
-
-	if (nreads != totalNumberOfReads) {
-		Read tmp;
-		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
-			return a == tmp;
-		});
-
-		std::cout << "totalNumberOfReads " << totalNumberOfReads << '\n'
-				<< "nreads " << nreads << '\n' << "asd " << asd << '\n';
-		assert(nreads == totalNumberOfReads);
-	}
-	assert(nreads == totalNumberOfReads);
-
-	Read tmp;
-	if (std::find(reads.begin(), reads.end(), tmp) != reads.end())
-		std::cout << "error" << std::endl;
-
-	std::cout << "done in a moment" << std::endl;
-	std::ofstream outputfile(currentOutputFilename);
-
-	for (const auto& read : reads) {
-		outputfile << read.header << '\n' << read.sequence << '\n';
-
-		if (inputfileformat == Fileformat::FASTQ)
-			outputfile << '+' << '\n' << read.quality << '\n';
-	}
-
-	outputfile.flush();
-	outputfile.close();
-
-	for (int i = 0; i < nCorrectorThreads; i++) {
-		std::string s = outputPath + "/" + std::to_string(i);
-		int ret = std::remove(s.c_str());
-		if (ret != 0)
-			std::cout << "could not remove file " << s << std::endl;
-	}
+/*
+    Deletes every file in vector filenames
+*/
+void deleteFiles(std::vector<std::string> filenames){
+    for (const auto& filename : filenames) {
+        int ret = std::remove(filename.c_str());
+        if (ret != 0){
+            const std::string errormessage = "Could not remove file " + filename;
+            std::perror(errormessage.c_str());
+        }
+    }
 }
 
-#else
+/*
+    Merges temporary results with unordered reads into single file outputfile with ordered reads.
+    Temporary result files are expected to be in format:
 
+    readnumber
+    sequence
+    readnumber
+    sequence
+    ...
+*/
+void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                      Fileformat originalFormat,
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile){
+    std::vector<Read> reads(expectedNumReads);
+    std::uint32_t nreads = 0;
 
-void ErrorCorrector::mergeUnorderedThreadResults(
-		const std::string& filename) const {
-
-	std::string name = filename;
-	std::string fileEnding = ".fq";
-
-	size_t lastdotpos = filename.find_last_of(".");
-	if (lastdotpos != std::string::npos) {
-		name = name.substr(0, lastdotpos);
-		fileEnding = filename.substr(lastdotpos);
-	}
-
-	size_t lastslashpos = filename.find_last_of("/");
-	if (lastslashpos != std::string::npos)
-		name = name.substr(lastslashpos + 1);
-
-	std::string currentOutputFilename;
-
-	if (outputFilename != "")
-		currentOutputFilename = outputPath + "/" + outputFilename;
-	else
-		currentOutputFilename = outputPath + "/" + name + "_"
-				+ std::to_string(minhashparams.k) + "_"
-				+ std::to_string(minhashparams.maps) + "_1" + "_alpha_"
-				+ std::to_string(graphalpha) + "_x_" + std::to_string(graphx)
-				+ "_corrected" + fileEnding;
-
-	std::cout << "merging into " << currentOutputFilename << std::endl;
-
-	const std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
-	std::uint32_t nreads = 0;
-
-	std::vector<Read> reads(totalNumberOfReads);
-    //read thread results and store in reads
-	for (int i = 0; i < nCorrectorThreads; i++) {
-
-        std::ifstream is(outputPath + "/" + std::to_string(i));
+    for(const auto& filename : filesToMerge){
+        std::ifstream is(filename);
         if(!is)
-            throw std::runtime_error("could not open tmp file: " + outputPath + "/" + std::to_string(i));
+            throw std::runtime_error("could not open tmp file: " + filename);
 
         std::string num;
         std::string seq;
@@ -345,23 +214,26 @@ void ErrorCorrector::mergeUnorderedThreadResults(
             auto readnum = std::stoull(num);
             reads[readnum].sequence = std::move(seq);
         }
+    }
+
+    if (nreads != expectedNumReads){
+		std::cout << "WARNING. Expected " << expectedNumReads
+                  << " reads in results, but found only "
+                  << nreads << " reads. Results may not be correct!" << std::endl;
 	}
 
-    //read original input file and set correct headers and quality scores for result reads
     std::unique_ptr<ReadReader> reader;
-	switch (inputfileformat) {
+	switch (originalFormat) {
 	case Fileformat::FASTQ:
-		reader.reset(new FastqReader(filename));
+		reader.reset(new FastqReader(originalReadFile));
 		break;
 	case Fileformat::FASTA:
-		reader.reset(new FastaReader(filename));
-		break;
+		throw std::runtime_error("Merging FASTA is currently not supported.");
 	default:
-		assert(false && "inputfileformat");
-		break;
+		throw std::runtime_error("Merging: Invalid file format.");
 	}
 
-	Read read;
+    Read read;
 	std::uint32_t readnum = 0;
 	while (reader->getNextRead(&read, &readnum)) {
         reads[readnum].header = std::move(read.header);
@@ -369,44 +241,18 @@ void ErrorCorrector::mergeUnorderedThreadResults(
 		readnum++;
 	}
 
-	if (nreads != totalNumberOfReads) {
-		Read tmp;
-		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
-			return a == tmp;
-		});
-
-		std::cout << "totalNumberOfReads " << totalNumberOfReads << '\n'
-				<< "nreads " << nreads << '\n' << "asd " << asd << '\n';
-		assert(nreads == totalNumberOfReads);
-	}
-	assert(nreads == totalNumberOfReads);
-
-	Read tmp;
-	if (std::find(reads.begin(), reads.end(), tmp) != reads.end())
-		std::cout << "error" << std::endl;
-
-	std::cout << "done in a moment" << std::endl;
-	std::ofstream outputfile(currentOutputFilename);
+	std::ofstream outputstream(outputfile);
 
 	for (const auto& read : reads) {
-		outputfile << read.header << '\n' << read.sequence << '\n';
+		outputstream << read.header << '\n' << read.sequence << '\n';
 
-		if (inputfileformat == Fileformat::FASTQ)
-			outputfile << '+' << '\n' << read.quality << '\n';
+		if (originalFormat == Fileformat::FASTQ)
+			outputstream << '+' << '\n' << read.quality << '\n';
 	}
 
-	outputfile.flush();
-	outputfile.close();
-
-	for (int i = 0; i < nCorrectorThreads; i++) {
-		std::string s = outputPath + "/" + std::to_string(i);
-		int ret = std::remove(s.c_str());
-		if (ret != 0)
-			std::cout << "could not remove file " << s << std::endl;
-	}
+	outputstream.flush();
+	outputstream.close();
 }
-
-#endif
 
 void ErrorCorrector::correct(const std::string& filename) {
 	if (inputfileformat == Fileformat::FASTA)
@@ -443,7 +289,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 
 	readsPerFile.insert( { filename, nReads });
 #if 1
-	minhasher.init(nReads, HASHMAP_LOAD_FACTOR);
+	minhasher.init(nReads);
 
 	readStorage.init(nReads);
 	readStorage.setUseQualityScores(useQualityScores);
@@ -490,6 +336,12 @@ void ErrorCorrector::correct(const std::string& filename) {
 	readStorage.noMoreInserts();
 	TIMERSTOPCPU(readstorage_transform);
 
+    std::vector<std::string> tmpfiles;
+    for(int i = 0; i < nCorrectorThreads; i++){
+        //tmpfiles.emplace_back(outputPath + "/" + filename + "_tmp_" + std::to_string(i));
+        tmpfiles.emplace_back(outputPath + "/" + std::to_string(i));
+    }
+
 	std::cout << "begin correct" << std::endl;
 
 	TIMERSTARTCPU(CORRECT);
@@ -505,14 +357,15 @@ void ErrorCorrector::correct(const std::string& filename) {
 		std::cout << "total corrected reads: " << asd << std::endl;
 	}
 
-	minhasher.init(1, HASHMAP_LOAD_FACTOR);
-	readStorage.clear();
+	minhasher.init(0);
+	readStorage.destroy();
 	readIsProcessedVector.clear();
 
 #endif
 	std::cout << "begin merge" << std::endl;
 
-	mergeUnorderedThreadResults(filename);
+    mergeResultFiles(nReads, filename, inputfileformat, tmpfiles, outputPath + "/" + outputFilename);
+    deleteFiles(tmpfiles);
 
 	std::cout << "end merge" << std::endl;
 }
@@ -520,6 +373,7 @@ void ErrorCorrector::correct(const std::string& filename) {
 void ErrorCorrector::insertFile(const std::string& filename,
 		bool buildHashmap) {
 
+//single-threaded insertion
 #if 0
 	std::unique_ptr<ReadReader> reader;
 
@@ -534,13 +388,26 @@ void ErrorCorrector::insertFile(const std::string& filename,
 	std::uint32_t readnum = 0;
 	std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
 	std::uint64_t progressprocessedReads = 0;
+    int Ncount = 0;
+    char bases[4]{'A', 'C', 'G', 'T'};
+    int maxlength = 0;
+    int minlength = std::numeric_limits<int>::max();
 
 	while (reader->getNextRead(&read, &readnum)) {
 
 		//replace 'N' with 'A'
-		for(auto& c : read.sequence)
-		if(c == 'N')
-		c = 'A';
+        for(auto& c : read.sequence){
+            if(c == 'N'){
+                c = bases[Ncount];
+                Ncount = (Ncount + 1) % 4;
+            }
+        }
+
+        int len = int(read.sequence.length());
+        if(len > maxlength)
+            maxlength = len;
+        if(len < minlength)
+            minlength = len;
 
 		if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
 
@@ -554,9 +421,13 @@ void ErrorCorrector::insertFile(const std::string& filename,
 			progressprocessedReads = 0;
 		}
 	}
+    std::cout << "min sequence length " << minlength << ", max sequence length " << maxlength << '\n';
+
+    maximum_sequence_length = maxlength;
 
 	progress = 0;
 
+//multi-threaded insertion
 #else
 
 	std::vector<std::future<std::pair<int,int>>> inserterThreads;
@@ -674,29 +545,6 @@ void ErrorCorrector::insertFile(const std::string& filename,
 }
 
 void ErrorCorrector::errorcorrectFile(const std::string& filename) {
-#if 1
-
-#if 0
-	std::vector<std::thread> consumerthreads;
-
-	// spawn work on other threads
-	for (int threadId = 1; threadId < nCorrectorThreads; ++threadId) {
-		consumerthreads.emplace_back(&ErrorCorrector::errorcorrectWork,
-				this,
-				threadId, nCorrectorThreads,
-				filename);
-	}
-
-	// run work on this thread
-
-	errorcorrectWork(0, nCorrectorThreads, filename);
-
-	// wait for other threads
-	for (int i = 0; i < consumerthreads.size(); ++i )
-	consumerthreads[i].join();
-
-#else
-
 	std::vector < std::thread > consumerthreads;
 
 	// spawn work on other threads
@@ -707,87 +555,6 @@ void ErrorCorrector::errorcorrectFile(const std::string& filename) {
 
 	for (auto& thread : consumerthreads)
 		thread.join();
-
-#endif
-
-#else
-
-	std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
-
-	std::vector<EC_Thread_Data> threadData;
-
-	for (int threadId = 0; threadId < nCorrectorThreads; threadId++) {
-		// perform block distribution of reads to the threads. thread will process reads [firstRead, firstRead + chunkSize[
-		std::uint32_t firstRead = 0;
-		std::uint32_t chunkSize = totalNumberOfReads / nCorrectorThreads;
-		std::uint32_t leftover = totalNumberOfReads % nCorrectorThreads;
-
-		if(threadId < leftover)
-		chunkSize++;
-
-		if(threadId < leftover) {
-			firstRead = threadId * chunkSize;
-		} else {
-			firstRead = leftover * (chunkSize + 1) + (threadId - leftover) * chunkSize;
-		}
-
-		bool useGPU = deviceIds.size() > 0;
-
-		//chunkSize = 4;
-
-		threadData.emplace_back(threadId, threadId % deviceIds.size(), useGPU, &readStorage, &minhasher,
-				graphx, graphalpha,
-				firstRead, firstRead + chunkSize, batchsize,
-				outputPath, &writelock);
-	}
-
-	std::vector<std::thread> correctorThreads;
-
-	for (int threadId = 0; threadId < nCorrectorThreads; threadId++) {
-
-		correctorThreads.emplace_back(&EC_Thread_Data::correct, std::ref(threadData[threadId]));
-		//correctorThreads.emplace_back([&](){threadData[threadId].correct();});
-	}
-
-	std::cout << std::endl;
-
-	bool correctionDone = false;
-	while(!correctionDone) {
-		/*std::cout << "\rProgress per Thread: ";
-		 for(int i = 0; i < nCorrectorThreads; i++){
-		 std::cout << (i == 0 ? "t": ", t") << i << ": " << (threadData[i].progress * 100.0) << "%";
-		 }
-		 std::cout << std::flush;
-
-		 std::this_thread::sleep_for(std::chrono::seconds(5));
-
-		 bool newDone = true;
-		 for(int i = 0; i < nCorrectorThreads; i++)
-		 newDone &= threadData[i].done;
-
-		 correctionDone = newDone;*/
-		std::uint32_t progress = 0;
-		bool newDone = true;
-		for(int i = 0; i < nCorrectorThreads; i++) {
-			newDone &= threadData[i].done;
-			progress += threadData[i].nProcessedReads;
-		}
-		correctionDone = newDone;
-
-		printf("Progress: %3.2f %%\r" , ((progress * 1.0 / totalNumberOfReads) * 100.0));
-		std::cout << std::flush;
-
-		std::this_thread::sleep_for(std::chrono::seconds(10));
-	}
-
-	std::cout << std::endl;
-
-	std::cout << "done."<< std::endl;
-
-	for (int i = 0; i < nCorrectorThreads; ++i )
-	correctorThreads[i].join();
-
-#endif
 }
 
 void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
@@ -796,13 +563,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	std::chrono::duration<double> getCandidatesTimeTotal(0);
 	std::chrono::duration<double> mapMinhashResultsToSequencesTimeTotal(0);
 	std::chrono::duration<double> getAlignmentsTimeTotal(0);
-	std::chrono::duration<double> correctReadTimeTotal(0);
 	std::chrono::duration<double> determinegoodalignmentsTime(0);
 	std::chrono::duration<double> fetchgoodcandidatesTime(0);
 	std::chrono::duration<double> majorityvotetime(0);
 	std::chrono::duration<double> basecorrectiontime(0);
 	std::chrono::duration<double> readcorrectionTimeTotal(0);
-	std::chrono::duration<double> fileoutputTimeTotal(0);
 	std::chrono::duration<double> mapminhashresultsdedup(0);
 	std::chrono::duration<double> mapminhashresultsfetch(0);
 	std::chrono::duration<double> graphbuildtime(0);
@@ -813,11 +578,11 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	// the output file of this thread
 	std::ofstream outputfile(outputPath + "/" + std::to_string(threadId));
 
-	// number of buffered correction results. nBufferedResults < bufferedResultsThreshold
-	int nBufferedResults = 0;
-
-	// buffer of correction results
-	std::stringstream resultstringstream;
+	auto write_read = [&](const auto readId, const auto& sequence){
+		auto& stream = outputfile;
+		stream << readId << '\n';
+		stream << sequence << '\n';
+	};
 
 	// number of processed reads after previous progress update
 	// resets after each progress update
@@ -861,36 +626,20 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	//printf("max seq length = %d\n", maximum_sequence_length);
 	int deviceId =
 			deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-	hammingtools::SHDdata shddata(deviceId, SDIV(nThreads, deviceIds.size()),
+	hammingtools::SHDdata shddata(deviceId, 1,
 			maximum_sequence_length);
-	hammingtools::CorrectionBuffers hcorrectionbuffers(deviceId,
-			maximum_sequence_length);
+
 	graphtools::AlignerDataArrays sgadata(deviceId, maximum_sequence_length, ALIGNMENTSCORE_MATCH,
 			ALIGNMENTSCORE_SUB, ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL);
 
 	MinhasherBuffers minhasherbuffers(deviceId);
 	MinhashResultsDedupBuffers minhashresultsdedupbuffers(deviceId);
 
-	// the query sequences fetched from ReadStorage
-	std::vector<const Sequence*> queries(batchsize);
-	std::vector < std::string > queryStrings(batchsize);
-	// the readnums of candidates for each query
-	//std::vector<std::vector<std::pair<std::uint64_t, int>>> candidateIds(batchsize);
-	std::vector < std::vector < std::uint64_t >> candidateIds(batchsize);
+    std::vector<BatchElem> batch(batchsize,
+            BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
 
-	// the candidate sequences from candidateReadsWithFrequency
-	std::vector<std::vector<const Sequence*>> candidateReads(batchsize);
-	std::vector<std::vector<const Sequence*>> revComplcandidateReads(batchsize);
-	std::vector<std::vector<int>> frequencies(batchsize);
-	std::vector < std::vector < AlignResult >> alignmentResults(batchsize);
-	std::vector<std::vector<const Sequence*>> candidateReadsAndRevcompls(
-			batchsize);
-	std::vector<const std::string*> queryQualities(batchsize);
-	std::vector<std::vector<const std::string*>> candidateQualities(batchsize);
-	std::vector<std::vector<const std::string*>> revcomplcandidateQualities(
-			batchsize);
-
-	std::vector<bool> activeBatches(batchsize);
+    hammingtools::correction::PileupImage pileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k);
+    graphtools::correction::ErrorGraph errorgraph(useQualityScores, MAX_MISMATCH_RATIO, graphalpha, graphx);
 
 	const int maxReadsPerLock =
 			(!CORRECT_CANDIDATE_READS_TOO) ?
@@ -926,19 +675,13 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 		//fit vector size to actual batch size
 		if (actualBatchSize < batchsize) {
-			queries.resize(actualBatchSize);
-			queryStrings.resize(actualBatchSize);
-			candidateIds.resize(actualBatchSize);
-			candidateReads.resize(actualBatchSize);
-			revComplcandidateReads.resize(actualBatchSize);
-			frequencies.resize(actualBatchSize);
-			alignmentResults.resize(actualBatchSize);
-			candidateReadsAndRevcompls.resize(actualBatchSize);
-			queryQualities.resize(actualBatchSize);
-			candidateQualities.resize(actualBatchSize);
-			revcomplcandidateQualities.resize(actualBatchSize);
-			activeBatches.resize(actualBatchSize);
-		}
+            batch.resize(actualBatchSize, BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
+        }
+
+        for(auto& b : batch){
+            b.set_read_id(readnum + (&b - &batch[0]));
+            nProcessedQueries++;
+        }
 
 		if (CORRECT_CANDIDATE_READS_TOO) {
 			int batchlockindex = readnum / maxReadsPerLock;
@@ -964,857 +707,180 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
 				if (readIsProcessedVector[readnum + i] == 0) {
 					readIsProcessedVector[readnum + i] = 1;
-					activeBatches[i] = true;
-					nProcessedQueries++;
 				} else {
-					activeBatches[i] = false;
-				}
-			}
-		} else {
-			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-				activeBatches[i] = true;
-				nProcessedQueries++;
-			}
-		}
-
-		// fetch the reads of current batch from the readstorage
-		for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-			if (activeBatches[i]) {
-				queries[i] = readStorage.fetchSequence_ptr(readnum + i);
-				queryQualities[i] = readStorage.fetchQuality_ptr(readnum + i);
-			}
-		}
-
-#ifdef ERRORCORRECTION_TIMING
-		tpa = std::chrono::system_clock::now();
-#endif
-
-		// for each read of the current batch, find their correction candidates
-		for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-			if (activeBatches[i]) {
-				queryStrings[i] = queries[i]->toString();
-//				std::cout << "get candidates of read id " << (readnum + i) <<'\n';
-				candidateIds[i] = minhasher.getCandidates(minhasherbuffers,
-						queryStrings[i]);
-			}
-		}
-
-#ifdef ERRORCORRECTION_TIMING
-		tpb = std::chrono::system_clock::now();
-		getCandidatesTimeTotal += tpb - tpa;
-
-		tpa = std::chrono::system_clock::now();
-#endif
-
-
-		for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-			if (activeBatches[i]) {
-				const int nCandidates = candidateIds[i].size();
-				if (nCandidates > 0) {
-					candidateReads[i].resize(nCandidates);
-
-					std::chrono::time_point < std::chrono::system_clock > t1 =
-							std::chrono::system_clock::now();
-
-					for (int k = 0; k < nCandidates; k++) {
-						candidateReads[i][k] = readStorage.fetchSequence_ptr(
-								candidateIds[i][k]);
-					}
-
-					std::chrono::time_point < std::chrono::system_clock > t2 =
-							std::chrono::system_clock::now();
-
-					mapminhashresultsfetch += (t2 - t1);
-
-					t1 = std::chrono::system_clock::now();
-
-					int n_unique_elements = -1;
-
-//#ifdef __NVCC__
-#if 0
-					cudaSetDevice(minhashresultsdedupbuffers.deviceId);
-					minhashresultsdedupbuffers.resize_initial_results(nCandidates);
-
-					thrust::device_ptr<const Sequence*> d_candidateReads_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_candidateReads);
-					thrust::device_ptr<int> d_indexlist_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_indexlist);
-
-					cudaMemcpyAsync(d_candidateReads_ptr.get(),
-							candidateReads[i].data(),
-							sizeof(const Sequence*) * nCandidates,
-							cudaMemcpyHostToDevice,
-							minhashresultsdedupbuffers.stream); CUERR;
-					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
-
-//std::cout << "readnum " << readnum << ", i " << i << std::endl;
-
-					//thrust::copy(candidateReads[i].begin(), candidateReads[i].end(), d_candidateReads_ptr);
-					thrust::sequence(thrust::cuda::par.on(minhashresultsdedupbuffers.stream),
-							d_indexlist_ptr,
-							d_indexlist_ptr + nCandidates);
-					thrust::sort_by_key(thrust::cuda::par.on(minhashresultsdedupbuffers.stream),
-							d_candidateReads_ptr,
-							d_candidateReads_ptr + nCandidates,
-							d_indexlist_ptr);
-
-					//sort candidateIds by indexlist
-					//thrust::copy(d_indexlist_ptr, d_indexlist_ptr + nCandidates, minhashresultsdedupbuffers.h_indexlist);
-					cudaMemcpyAsync(minhashresultsdedupbuffers.h_indexlist,
-							d_indexlist_ptr.get(),
-							sizeof(int) * nCandidates,
-							cudaMemcpyDeviceToHost,
-							minhashresultsdedupbuffers.stream); CUERR;
-					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
-
-					std::vector<std::uint64_t> tmp(nCandidates);
-					for(int k = 0; k < nCandidates; k++) {
-						tmp[k] = candidateIds[i][minhashresultsdedupbuffers.h_indexlist[k]];
-					}
-					candidateIds[i] = std::move(tmp);
-
-					// count unique sequences
-					n_unique_elements = thrust::inner_product(thrust::cuda::par.on(minhashresultsdedupbuffers.stream),
-							d_candidateReads_ptr,
-							d_candidateReads_ptr + nCandidates - 1,
-							d_candidateReads_ptr + 1,
-							int(1),
-							thrust::plus<int>(),
-							thrust::not_equal_to<const Sequence*>());
-
-					minhashresultsdedupbuffers.resize_unique_results(n_unique_elements);
-
-					thrust::device_ptr<const Sequence*> d_uniqueSequences_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_uniqueSequences);
-					thrust::device_ptr<int> d_frequencies_ptr = thrust::device_pointer_cast(minhashresultsdedupbuffers.d_frequencies);
-
-					// save unique sequences and their frequencies
-					thrust::reduce_by_key(thrust::cuda::par.on(minhashresultsdedupbuffers.stream),
-							d_candidateReads_ptr, d_candidateReads_ptr + nCandidates,
-							thrust::constant_iterator<int>(1),
-							d_uniqueSequences_ptr,
-							d_frequencies_ptr);
-
-					candidateReads[i].resize(n_unique_elements);
-					//thrust::copy(d_uniqueSequences_ptr, d_uniqueSequences_ptr + n_unique_elements, candidateReads[i].begin());
-					cudaMemcpyAsync(candidateReads[i].data(),
-							d_uniqueSequences_ptr.get(),
-							sizeof(const Sequence*) * n_unique_elements,
-							cudaMemcpyDeviceToHost,
-							minhashresultsdedupbuffers.stream); CUERR;
-					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
-
-					frequencies[i].resize(n_unique_elements);
-					//thrust::copy(d_frequencies_ptr, d_frequencies_ptr + n_unique_elements, frequencies[i].begin());
-					cudaMemcpyAsync(frequencies[i].data(),
-							d_frequencies_ptr.get(),
-							sizeof(int) * n_unique_elements,
-							cudaMemcpyDeviceToHost,
-							minhashresultsdedupbuffers.stream); CUERR;
-					cudaStreamSynchronize(minhashresultsdedupbuffers.stream); CUERR;
-#else
-
-					std::vector<int> indexlist(nCandidates);
-					std::iota(indexlist.begin(), indexlist.end(), 0);
-
-					//sort indexlist in order of sequence strings
-					std::sort(indexlist.begin(), indexlist.end(),
-							[&](int l, int r) {
-								return candidateReads[i][l] < candidateReads[i][r];
-							});
-
-					//sort sequences
-					std::sort(candidateReads[i].begin(),
-							candidateReads[i].end());
-
-					//sort candidateIds by indexlist
-					std::vector < std::uint64_t > tmp(nCandidates);
-					for (int k = 0; k < nCandidates; k++) {
-						tmp[k] = candidateIds[i][indexlist[k]];
-					}
-					candidateIds[i] = std::move(tmp);
-
-					// kind of like std::unique(candidateReads[i].begin(), candidateReads[i].end()),
-					// but also count number of duplicates for each unique entry(inclusive) in sortedFreqs
-					std::vector<int> sortedFreqs(1, 1);
-					const Sequence* prevSeq = candidateReads[i][0];
-					n_unique_elements = 1;
-					for (int k = 1; k < nCandidates; k++) {
-						const Sequence* curSeq = candidateReads[i][k];
-						if (prevSeq == curSeq) {
-							assert(*prevSeq == *curSeq);
-							sortedFreqs.back()++;}
-						else {
-							sortedFreqs.push_back(1);
-							candidateReads[i][n_unique_elements] = curSeq;
-							n_unique_elements++;
-						}
-						prevSeq = curSeq;
-					}
-
-					candidateReads[i].resize(n_unique_elements);
-					frequencies[i] = std::move(sortedFreqs);
-
-                    duplicates += nCandidates - n_unique_elements;
-                    //std::cout << nCandidates - n_unique_elements << " / " << nCandidates << std::endl;
-#endif
-
-#if 0
-					if(uniquecount != n_unique_elements) {
-						std::cout << "sequence dedup #unique elements wrong " << i << ". normal " << uniquecount << ", thrust " << n_unique_elements << std::endl;
-					}
-					for(int k = 0; k< uniquecount; k++) {
-						if(candidateReads[i][k] != copy[k]) {
-							std::cout << "sequence dedup unique element wrong " << i << " " << k << ". normal " << candidateReads[i][k] << ", thrust " << copy[k] << std::endl;
-						}
-						if(frequencies[i][k] != freqstmp[k]) {
-							std::cout << "sequence dedup freq wrong " << i << " " << k << ". normal " << frequencies[i][k] << ", thrust " << freqstmp[k] << std::endl;
-						}
-					}
-#endif
-					//check
-					int freqsum = 0;
-					for (const auto f : frequencies[i])
-						freqsum += f;
-					assert(freqsum == nCandidates);
-
-					t2 = std::chrono::system_clock::now();
-
-					mapminhashresultsdedup += (t2 - t1);
-
-					revComplcandidateReads[i].resize(n_unique_elements);
-
-					t1 = std::chrono::system_clock::now();
-
-					int fc = 0;
-					for (int k = 0; k < n_unique_elements; k++) {
-						revComplcandidateReads[i][k] =
-								readStorage.fetchReverseComplementSequence_ptr(
-										candidateIds[i][fc]);
-						fc += frequencies[i][k];
-					}
-					t2 = std::chrono::system_clock::now();
-
-					mapminhashresultsfetch += (t2 - t1);
+                    batch[i].active = false;
+                    nProcessedQueries--;
 				}
 			}
 		}
 
-		/*for(int i = 0; i < candidateReads[0].size(); i++){
+        std::partition(batch.begin(), batch.end(), [](auto& b){return b.active;});
 
-		 std::cout << candidateReads[0][i]->toString() << " " << frequencies[0][i] << std::endl;
-		 }*/
+        tpa = std::chrono::system_clock::now();
 
-#ifdef ERRORCORRECTION_TIMING
+        for(auto& b : batch){
+            if(b.active){
+                b.fetch_query_data_from_readstorage();
+
+                tpc = std::chrono::system_clock::now();
+                b.set_candidate_ids(minhasher.getCandidates(minhasherbuffers, b.fwdSequenceString));
+                tpd = std::chrono::system_clock::now();
+        		getCandidatesTimeTotal += tpd - tpc;
+
+				if(b.candidateIds.size() == 0){
+					//no need for further processing
+					b.active = false;
+					write_read(b.readId, b.fwdSequenceString);
+				}else{
+                    b.make_unique_sequences();
+                    duplicates += b.get_number_of_duplicate_sequences();
+
+                    //t2 = std::chrono::system_clock::now();
+					//mapminhashresultsdedup += (t2 - t1);
+                    //t1 = std::chrono::system_clock::now();
+
+                    b.fetch_revcompl_sequences_from_readstorage();
+
+                    //t2 = std::chrono::system_clock::now();
+                    //mapminhashresultsfetch += (t2 - t1);
+                }
+            }
+        }
+
 		tpb = std::chrono::system_clock::now();
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
-#endif
 
-#if 1
 
-#ifdef ERRORCORRECTION_TIMING
-		tpa = std::chrono::system_clock::now();
-#endif
+        tpa = std::chrono::system_clock::now();
+        if (correctionmode == CorrectionMode::Hamming) {
+            hammingtools::getMultipleAlignments(shddata, batch, true);
+        }else if (correctionmode == CorrectionMode::Graph){
+            graphtools::getMultipleAlignments(sgadata, batch, true);
+        }else{
+            throw std::runtime_error("Alignment: invalid correction mode.");
+        }
 
-		for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-			candidateReadsAndRevcompls[i].resize(candidateReads[i].size() * 2);
+        tpb = std::chrono::system_clock::now();
+        getAlignmentsTimeTotal += tpb - tpa;
 
-			std::copy(candidateReads[i].begin(), candidateReads[i].end(),
-					candidateReadsAndRevcompls[i].begin());
+        //select candidates from alignments
+        for(auto& b : batch){
+            if(b.active){
 
-			std::copy(revComplcandidateReads[i].begin(),
-					revComplcandidateReads[i].end(),
-					candidateReadsAndRevcompls[i].begin()
-							+ candidateReads[i].size());
+                tpc = std::chrono::system_clock::now();
 
-			/*std::vector<const Sequence*> tmp(candidateReadsAndRevcompls[i]);
-			 auto u = std::unique(tmp.begin(), tmp.end());
-			 auto d = std::distance(u, tmp.end());
-			 if(d > 0) std::cout << "killed " << d << " sequences before alignment\n";*/
-		}
+                DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
 
-#if 1
+                if(Astats.correctionCases[3] > 0){
+                    //no correction because not enough good alignments. write original sequence to output
+                    write_read(b.readId, b.fwdSequenceString);
+                }
+
+                tpd = std::chrono::system_clock::now();
+                determinegoodalignmentsTime += tpd - tpc;
+
+                correctionCases[0] += Astats.correctionCases[0];
+                correctionCases[1] += Astats.correctionCases[1];
+                correctionCases[2] += Astats.correctionCases[2];
+                correctionCases[3] += Astats.correctionCases[3];
+
+                tpc = std::chrono::system_clock::now();
+
+                if(b.active){
+                    //move candidates which are used for correction to the front
+                    b.prepare_good_candidates();
+                }
+
+                tpd = std::chrono::system_clock::now();
+                fetchgoodcandidatesTime += tpd - tpc;
+            }
+        }
 
 		if (correctionmode == CorrectionMode::Hamming) {
-			auto alignments = hammingtools::getMultipleAlignments(shddata,
-					queries, candidateReadsAndRevcompls, activeBatches, true);
 
-#ifdef ERRORCORRECTION_TIMING
-			tpb = std::chrono::system_clock::now();
-			getAlignmentsTimeTotal += tpb - tpa;
 
-			tpa = std::chrono::system_clock::now();
-#endif
-
-			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-				if (activeBatches[i]) {
-					if (alignments[i].size()
-							!= candidateReadsAndRevcompls[i].size()) {
-						std::cout << readnum << '\n';
-						assert(
-								alignments[i].size()
-										== candidateReadsAndRevcompls[i].size());
-					}
-
-					// for each candidate, compare its alignment to the alignment of the reverse complement.
-					// find the best of both, if any, and
-					// save the best alignment + additional data in these vectors
-					std::vector<AlignResultCompact> insertedAlignments;
-					std::vector<const Sequence*> insertedSequences;
-					std::vector < std::uint64_t > insertedCandidateIds;
-					std::vector<int> insertedFreqs;
-					std::vector<bool> forwardRead;
-
-					const int querylength = queries[i]->getNbases();
-
-					int counts[3] { 0, 0, 0 };
-					int countsDedup[3] { 0, 0, 0 };
-
-					int bad = 0;
-					int fc = 0;
-
-					tpc = std::chrono::system_clock::now();
-
-					for (size_t j = 0; j < alignments[i].size() / 2; j++) {
-						auto& res = alignments[i][j];
-						auto& revcomplres =
-								alignments[i][candidateReads[i].size() + j];
-
-						int candidatelength = candidateReads[i][j]->getNbases();
-
-						BestAlignment_t best = get_best_alignment(res,
-								revcomplres, querylength, candidatelength,
-								MAX_MISMATCH_RATIO, MIN_OVERLAP,
-								MIN_OVERLAP_RATIO);
-
-						const int f = frequencies[i][j];
-
-						if (best == BestAlignment_t::Forward) {
-							bool useIt = true;
-							const double mismatchratio = double(res.nOps)
-									/ double(res.overlap);
-
-							if (mismatchratio < 2 * errorrate) {
-								counts[0] += f;
-								countsDedup[0]++;
-							}
-							if (mismatchratio < 3 * errorrate) {
-								counts[1] += f;
-								countsDedup[1]++;
-							}
-							if (mismatchratio < 4 * errorrate) {
-								counts[2] += f;
-								countsDedup[2]++;
-							} else {
-								useIt = false;
-							}
-
-							if (useIt) {
-								const Sequence* seq = candidateReads[i][j];
-
-								insertedAlignments.push_back(std::move(res));
-								insertedSequences.push_back(seq);
-								insertedCandidateIds.insert(
-										insertedCandidateIds.cend(),
-										candidateIds[i].cbegin() + fc,
-										candidateIds[i].cbegin() + fc + f);
-								insertedFreqs.push_back(f);
-								forwardRead.push_back(true);
-							}
-
-						} else if (best == BestAlignment_t::ReverseComplement) {
-							bool useIt = true;
-							const double mismatchratio = double(
-									revcomplres.nOps)
-									/ double(revcomplres.overlap);
-
-							if (mismatchratio < 2 * errorrate) {
-								counts[0] += f;
-								countsDedup[0]++;
-							}
-							if (mismatchratio < 3 * errorrate) {
-								counts[1] += f;
-								countsDedup[1]++;
-							}
-							if (mismatchratio < 4 * errorrate) {
-								counts[2] += f;
-								countsDedup[2]++;
-							} else {
-								useIt = false;
-							}
-
-							if (useIt) {
-								const Sequence* revseq =
-										revComplcandidateReads[i][j];
-
-								insertedAlignments.push_back(
-										std::move(revcomplres));
-								insertedSequences.push_back(revseq);
-								insertedCandidateIds.insert(
-										insertedCandidateIds.cend(),
-										candidateIds[i].cbegin() + fc,
-										candidateIds[i].cbegin() + fc + f);
-								insertedFreqs.push_back(f);
-								forwardRead.push_back(false);
-							}
-						} else {
-							bad++; //both alignments are bad
-						}
-						fc += f;
-					}
-
-					// check errorrate of good alignments. we want at least m_coverage * estimatedCoverage alignments.
-					// if possible, we want to use only alignments with a max mismatch ratio of 2*errorrate
-					// if there are not enough alignments, use max mismatch ratio of 3*errorrate
-					// if there are not enough alignments, use max mismatch ratio of 4*errorrate
-					// if there are not enough alignments, do not correct
-
-					const int countThreshold = estimatedCoverage * m_coverage;
-					bool correctQuery = false;
-					double mismatchratioThreshold = 0;
-					int candidatecount = 0;
-					if (counts[0] >= countThreshold) {
-
-						correctQuery = true;
-						mismatchratioThreshold = 2 * errorrate;
-						candidatecount = countsDedup[0];
-						correctionCases[0]++;
-
-					} else if (counts[1] >= countThreshold) {
-
-						correctQuery = true;
-						mismatchratioThreshold = 3 * errorrate;
-						candidatecount = countsDedup[1];
-						correctionCases[1]++;
-
-					} else if (counts[2] >= countThreshold) {
-
-						correctQuery = true;
-						mismatchratioThreshold = 4 * errorrate;
-						candidatecount = countsDedup[2];
-						correctionCases[2]++;
-
-					} else {
-						correctQuery = false; //no correction
-						correctionCases[3]++;
-					}
-
-                    //std::cout << counts[0] << " " << counts[1] << " " << counts[2] << std::endl;
-
-					tpd = std::chrono::system_clock::now();
-
-					determinegoodalignmentsTime += tpd - tpc;
-
-					if (!correctQuery) {
-						resultstringstream << (readnum + i) << '\n';
-						resultstringstream << queryStrings[i] << '\n';
-                       // std::cout << "not cor: " << (readnum + i) << " " << queryStrings[i] << std::endl;
-
-						/*if (inputfileformat == Fileformat::FASTQ){
-							resultstringstream << '+' << '\n';
-							if(useQualityScores)
-									resultstringstream << *(queryQualities[i]) << '\n';
-							else{
-								for(int k = 0; k < int(queryStrings[i].length()); k++)
-									resultstringstream << 'A';
-								resultstringstream << '\n';
-							}
-						}*/
-
-						nBufferedResults++;
-					} else {
-						tpc = std::chrono::system_clock::now();
-						//collect selected alignments
-						std::vector<int> frequenciesPrefixSum(
-								candidatecount + 1, 0);
-
-						int newindex = 0;
-						auto it = insertedCandidateIds.begin();
-						auto it2 = insertedCandidateIds.begin();
-						for (size_t k = 0; k < insertedAlignments.size(); k++) {
-							auto& a = insertedAlignments[k];
-							const double mismatchratio = double(a.nOps)
-									/ double(a.overlap);
-							if (mismatchratio < mismatchratioThreshold) {
-								insertedAlignments[newindex] = std::move(a);
-								insertedSequences[newindex] =
-										insertedSequences[k];
-								insertedFreqs[newindex] = insertedFreqs[k];
-								frequenciesPrefixSum[newindex + 1] =
-										frequenciesPrefixSum[newindex]
-												+ insertedFreqs[k];
-								forwardRead[newindex] = forwardRead[k];
-								it = std::copy(it2, it2 + insertedFreqs[k], it);
-								newindex++;
-							}
-							it2 += insertedFreqs[k];
-						}
-						if (candidatecount != newindex) {
-							std::cout << "candidatecount " << candidatecount
-									<< ", newindex " << newindex << " "
-									<< counts[0] << " " << counts[1] << " "
-									<< counts[2] << " " << countsDedup[0] << " "
-									<< countsDedup[1] << " " << countsDedup[2]
-									<< '\n';
-							assert(candidatecount == newindex);
-						}
-
-						//get sequence strings and quality strings for candidates
-						std::vector < std::string > candidateStrings;
-						std::vector<const std::string*> candidatequals;
-						candidateStrings.reserve(candidatecount);
-						candidatequals.reserve(frequenciesPrefixSum.back());
-
-						int qualindex = 0;
-						for (int j = 0; j < candidatecount; j++) {
-							candidateStrings.push_back(
-									insertedSequences[j]->toString());
-							const int freq = insertedFreqs[j];
-							if (forwardRead[j]) {
-								for (int f = 0; f < freq; f++) {
-									candidatequals.push_back(
-											readStorage.fetchQuality_ptr(
-													insertedCandidateIds[qualindex
-															+ f]));
-								}
-							} else {
-								for (int f = 0; f < freq; f++) {
-									candidatequals.push_back(
-											readStorage.fetchReverseComplementQuality_ptr(
-													insertedCandidateIds[qualindex
-															+ f]));
-								}
-							}
-							qualindex += freq;
-						}
-
-						tpd = std::chrono::system_clock::now();
-
-						fetchgoodcandidatesTime += tpd - tpc;
-
-						std::vector<bool> saveThisCandidate(candidatecount,
-								false);
-
-						tpc = std::chrono::system_clock::now();
-
-						int status;
-						std::chrono::duration<double> foo1;
-						std::chrono::duration<double> foo2;
-						std::tie(status, foo1, foo2) =
-								hammingtools::performCorrection(
-										hcorrectionbuffers, queryStrings[i],
-										candidatecount, candidateStrings,
-										insertedAlignments, *queryQualities[i],
-										candidatequals, frequenciesPrefixSum,
-										MAX_MISMATCH_RATIO, useQualityScores,
-										saveThisCandidate,
-										CORRECT_CANDIDATE_READS_TOO,
-										estimatedCoverage, errorrate,
-										m_coverage, minhashparams.k, true);
-
-						tpd = std::chrono::system_clock::now();
-
-						readcorrectionTimeTotal += tpd - tpc;
-
-						majorityvotetime += foo1;
-						basecorrectiontime += foo2;
-
-						avgsupportfail += (((status >> 0) & 1) == 1);
-						minsupportfail += (((status >> 1) & 1) == 1);
-						mincoveragefail += (((status >> 2) & 1) == 1);
-						sobadcouldnotcorrect += (((status >> 3) & 1) == 1);
-						verygoodalignment += (status == 0);
-
-						//assert(correctedQuery.size() == queryStrings[i].size());
-
-						//bool correctedAndChanged = (queries[i]->operator!=(correctedQuery));
-
-                        resultstringstream << (readnum + i) << '\n';
-                        resultstringstream << queryStrings[i] << '\n';
-
-                       // std::cout << "cor: " << (readnum + i) << " " << queryStrings[i] << std::endl;
-
-						/*if (inputfileformat == Fileformat::FASTQ){
-							resultstringstream << '+' << '\n';
-							if(useQualityScores)
-									resultstringstream << *(queryQualities[i]) << '\n';
-							else{
-								for(int k = 0; k < int(queryStrings[i].length()); k++)
-									resultstringstream << 'A';
-								resultstringstream << '\n';
-							}
-						}*/
-
-						nBufferedResults++;
-
-						if (CORRECT_CANDIDATE_READS_TOO) {
-							int candidateIdIndex = 0;
-							for (int j = 0; j < candidatecount; j++) {
-								for (int f = 0; f < insertedFreqs[j]; f++) {
-									if (saveThisCandidate[j]) {
-										//check that candidate has not been corrected yet
-										const int candidateId =
-												insertedCandidateIds[candidateIdIndex];
-										const int batchlockindex = candidateId
-												/ maxReadsPerLock;
-										bool savingIsOk = false;
-										if (readIsProcessedVector[candidateId]
-												== 0) {
-											std::unique_lock < std::mutex
-													> lock(
-															locksForProcessedFlags[batchlockindex]);
-											if (readIsProcessedVector[candidateId]
-													== 0) {
-												readIsProcessedVector[candidateId] =
-														1; // we will process this read
-												lock.unlock();
-												savingIsOk = true;
-												nCorrectedCandidates++;
-											}
-										}
-										if (savingIsOk) {
-											auto& s = candidateStrings[j];
-											const int candidateId =
-													insertedCandidateIds[candidateIdIndex];
-
-                                            resultstringstream << (candidateId) << '\n';
-
-											if (forwardRead[j])
-												resultstringstream << s << '\n';
-											else { //s is reverse complement, make reverse complement again
-												std::string fwd =
-														SequenceGeneral(s,
-																false).reverseComplement().toString();
-												resultstringstream << fwd
-														<< '\n';
-											}
-
-											/*if (inputfileformat
-													== Fileformat::FASTQ) {
-												if (forwardRead[j])
-													resultstringstream << '+'
-															<< '\n'
-															<< candidatequals[candidateIdIndex]
-															<< '\n';
-												else {
-													// candidatequals contains reverse complement scores. fetch fwd scores.
-													auto qualptr =
-															readStorage.fetchQuality_ptr(
-																	candidateId);
-													resultstringstream << '+'
-															<< '\n' << *qualptr
-															<< '\n';
-												}
-											}*/
-
-											nBufferedResults++;
-										}
-									}
-									candidateIdIndex++;
-								}
-							}
-						}
-					}
-				}
-			}
-#ifdef ERRORCORRECTION_TIMING
-			tpb = std::chrono::system_clock::now();
-			correctReadTimeTotal += tpb - tpa;
-#endif
-			//std::exit(-1);
-
-		} else {
-
-			auto alignments = graphtools::getMultipleAlignments(sgadata,
-					queries, candidateReadsAndRevcompls, activeBatches, true);
-
-#ifdef ERRORCORRECTION_TIMING
-			tpb = std::chrono::system_clock::now();
-			getAlignmentsTimeTotal += tpb - tpa;
-
-			tpa = std::chrono::system_clock::now();
-#endif
-
-			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-				if (activeBatches[i]) {
-					if (alignments[i].size()
-							!= candidateReadsAndRevcompls[i].size()) {
-						std::cout << readnum << '\n';
-						assert(
-								alignments[i].size()
-										== candidateReadsAndRevcompls[i].size());
-					}
-				}
-
-				// for each candidate, compare its alignment to the alignment of the reverse complement.
-				// find the best of both, if any, and
-				// save the best alignment + additional data in these vectors
-				std::vector<AlignResult> insertedAlignments;
-				std::vector<const Sequence*> insertedSequences;
-				std::vector < std::uint64_t > insertedCandidateIds;
-				std::vector<int> insertedFreqs;
-				std::vector<bool> forwardRead;
-
-				const int querylength = queries[i]->getNbases();
-
-				int bad = 0;
-				int fc = 0;
-				for (size_t j = 0; j < alignments[i].size() / 2; j++) {
-					auto& res = alignments[i][j];
-					auto& revcomplres = alignments[i][candidateReads[i].size()
-							+ j];
-
-					int candidatelength = candidateReads[i][j]->getNbases();
-
-					BestAlignment_t best = get_best_alignment(res.arc,
-							revcomplres.arc, querylength, candidatelength,
-							MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO);
-
-					if (best == BestAlignment_t::Forward) {
-						const Sequence* seq = candidateReads[i][j];
-
-						insertedAlignments.push_back(std::move(res));
-						insertedSequences.push_back(seq);
-						insertedCandidateIds.insert(insertedCandidateIds.cend(),
-								candidateIds[i].cbegin() + fc,
-								candidateIds[i].cbegin() + fc
-										+ frequencies[i][j]);
-						insertedFreqs.push_back(frequencies[i][j]);
-						forwardRead.push_back(true);
-					} else if (best == BestAlignment_t::ReverseComplement) {
-						const Sequence* revseq = revComplcandidateReads[i][j];
-
-						insertedAlignments.push_back(std::move(revcomplres));
-						insertedSequences.push_back(revseq);
-						insertedCandidateIds.insert(insertedCandidateIds.cend(),
-								candidateIds[i].cbegin() + fc,
-								candidateIds[i].cbegin() + fc
-										+ frequencies[i][j]);
-						insertedFreqs.push_back(frequencies[i][j]);
-						forwardRead.push_back(false);
-					} else {
-						bad++; //both alignments are bad
-					}
-					fc += frequencies[i][j];
-				}
-
-				bool correctQuery = true;
-
-				//TODO don't correct if not enough good candidates
-
-				if (!correctQuery) {
-                    resultstringstream << (readnum + i) << '\n';
-                    resultstringstream << queryStrings[i] << '\n';
-
-					/*if (inputfileformat == Fileformat::FASTQ){
-						resultstringstream << '+' << '\n';
-						if(useQualityScores)
-								resultstringstream << *(queryQualities[i]) << '\n';
-						else{
-							for(int k = 0; k < int(queryStrings[i].length()); k++)
-								resultstringstream << 'A';
-							resultstringstream << '\n';
-						}
-					}*/
-
-					nBufferedResults++;
-				} else {
-
-					// Now, use the good alignments for error correction. use errorgraph for correction.
-
-					std::vector<int> frequenciesPrefixSum(
-							insertedAlignments.size() + 1, 0);
-					std::vector<const std::string*> candidatequals;
-					candidatequals.reserve(insertedAlignments.size());
-
-					int qualindex = 0;
-					for (size_t j = 0; j < insertedAlignments.size(); j++) {
-						const int freq = insertedFreqs[j];
-						frequenciesPrefixSum[j + 1] = frequenciesPrefixSum[j]
-								+ freq;
-						if (forwardRead[j]) {
-							for (int f = 0; f < freq; f++) {
-								candidatequals.push_back(
-										readStorage.fetchQuality_ptr(
-												insertedCandidateIds[qualindex
-														+ f]));
-							}
-						} else {
-							for (int f = 0; f < freq; f++) {
-								candidatequals.push_back(
-										readStorage.fetchReverseComplementQuality_ptr(
-												insertedCandidateIds[qualindex
-														+ f]));
-							}
-						}
-						qualindex += freq;
-					}
-
-					std::string newcorrected = queryStrings[i];
-
-					tpc = std::chrono::system_clock::now();
-
-					std::chrono::duration<double> foo1;
-					std::chrono::duration<double> foo2;
-					std::tie(foo1, foo2) = graphtools::performCorrection(
-							newcorrected, insertedAlignments,
-							*queryQualities[i], candidatequals,
-							frequenciesPrefixSum, useQualityScores,
-							MAX_MISMATCH_RATIO, graphalpha, graphx);
-
-					tpd = std::chrono::system_clock::now();
-
-					readcorrectionTimeTotal += tpd - tpc;
-					graphbuildtime += foo1;
-					graphcorrectiontime += foo2;
-
-                    resultstringstream << (readnum + i) << '\n';
-                    resultstringstream << queryStrings[i] << '\n';
-
-					/*if (inputfileformat == Fileformat::FASTQ){
-						resultstringstream << '+' << '\n';
-						if(useQualityScores)
-								resultstringstream << *(queryQualities[i]) << '\n';
-						else{
-							for(int k = 0; k < int(queryStrings[i].length()); k++)
-								resultstringstream << 'A';
-							resultstringstream << '\n';
-						}
-					}*/
-
-					nBufferedResults++;
-				}
-			}
-
-#ifdef ERRORCORRECTION_TIMING
-			tpb = std::chrono::system_clock::now();
-			correctReadTimeTotal += tpb - tpa;
-#endif
-		}
-#endif
-
-		//std::cout << "foo" << std::endl;
-		//std::exit(-1);
-
-#endif
-
-#if 1
-		// write result to output file if output buffer is full
-		if (nBufferedResults >= bufferedResultsThreshold) {
-#ifdef ERRORCORRECTION_TIMING
-			tpa = std::chrono::system_clock::now();
-#endif
-
-			std::lock_guard < std::mutex > lg(writelock);
-
-			outputfile << resultstringstream.rdbuf();
-			nBufferedResults = 0;
-			resultstringstream.str(std::string());
-			resultstringstream.clear();
-
-#ifdef ERRORCORRECTION_TIMING
-			tpb = std::chrono::system_clock::now();
-			fileoutputTimeTotal += tpb - tpa;
-#endif
-		}
-#endif
+            for(size_t i = 0; i < batch.size(); i++){
+                BatchElem& b = batch[i];
+                if(b.active){
+                    tpc = std::chrono::system_clock::now();
+
+                    pileupImage.correct_batch_elem(b);
+
+                    tpd = std::chrono::system_clock::now();
+                    readcorrectionTimeTotal += tpd - tpc;
+
+                    majorityvotetime += pileupImage.timings.findconsensustime;
+                    basecorrectiontime += pileupImage.timings.correctiontime;
+
+                    avgsupportfail += pileupImage.properties.failedAvgSupport;
+                    minsupportfail += pileupImage.properties.failedMinSupport;
+                    mincoveragefail += pileupImage.properties.failedMinCoverage;
+                    verygoodalignment += pileupImage.properties.isHQ;
+
+                    if(b.corrected){
+						write_read(b.readId, b.correctedSequence);
+                    }else{
+						write_read(b.readId, b.fwdSequenceString);
+                    }
+
+                    if (CORRECT_CANDIDATE_READS_TOO) {
+                        for(const auto& correctedCandidate : b.correctedCandidates){
+                            const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1] - b.candidateCountsPrefixSum[correctedCandidate.index];
+                            for(int f = 0; f < count; f++){
+                                const int candidateId = b.candidateIds[count + f];
+                                const int batchlockindex = candidateId
+                                        / maxReadsPerLock;
+                                bool savingIsOk = false;
+                                if (readIsProcessedVector[candidateId]
+                                        == 0) {
+                                    std::unique_lock < std::mutex
+                                            > lock(
+                                                    locksForProcessedFlags[batchlockindex]);
+                                    if (readIsProcessedVector[candidateId]
+                                            == 0) {
+                                        readIsProcessedVector[candidateId] =
+                                                1; // we will process this read
+                                        lock.unlock();
+                                        savingIsOk = true;
+                                        nCorrectedCandidates++;
+                                    }
+                                }
+                                if (savingIsOk) {
+                                    if (b.bestIsForward[correctedCandidate.index])
+										write_read(candidateId, correctedCandidate.sequence);
+                                    else {
+										//correctedCandidate.sequence is reverse complement, make reverse complement again
+                                        const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
+                                        write_read(candidateId, fwd);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }else if (correctionmode == CorrectionMode::Graph){
+
+                for(size_t i = 0; i < batch.size(); i++){
+                    BatchElem& b = batch[i];
+                    if(b.active){
+                        tpc = std::chrono::system_clock::now();
+
+                        errorgraph.correct_batch_elem(b);
+
+                        tpd = std::chrono::system_clock::now();
+                        readcorrectionTimeTotal += tpd - tpc;
+
+                        if(b.corrected){
+    						write_read(b.readId, b.correctedSequence);
+                        }else{
+    						write_read(b.readId, b.fwdSequenceString);
+                        }
+                    }
+                }
+        }else{
+            throw std::runtime_error("Correction: invalid correction mode.");
+        }
 
 		// update local progress
 		progressprocessedReads += actualBatchSize;
@@ -1824,31 +890,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
 			progressprocessedReads = 0;
 		}
-
 	}
-
-#if 1
-	// write remaining buffered results
-	if (nBufferedResults > 0) {
-
-#ifdef ERRORCORRECTION_TIMING
-		tpa = std::chrono::system_clock::now();
-#endif
-
-		std::lock_guard < std::mutex > lg(writelock);
-
-		outputfile << resultstringstream.rdbuf();
-		nBufferedResults = 0;
-		resultstringstream.str(std::string());
-		resultstringstream.clear();
-
-#ifdef ERRORCORRECTION_TIMING
-		tpb = std::chrono::system_clock::now();
-		fileoutputTimeTotal += tpb - tpa;
-#endif
-
-	}
-#endif
 
 	//final progress update
 	updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
@@ -1878,7 +920,7 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 
 	}
 
-#ifdef ERRORCORRECTION_TIMING
+#if 1
 	{
 		if (correctionmode == CorrectionMode::Hamming) {
 			std::lock_guard < std::mutex > lg(writelock);
@@ -1915,25 +957,23 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 					<< " : correction fetch good data "
 					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadId << " : pileup vote "
-					<< majorityvotetime.count() << '\n';
+					<< pileupImage.timings.findconsensustime.count() << '\n';
 			std::cout << "thread " << threadId << " : pileup correct "
-					<< basecorrectiontime.count() << '\n';
+					<< pileupImage.timings.correctiontime.count() << '\n';
 			std::cout << "thread " << threadId << " : correction calculation "
 					<< readcorrectionTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : correctReadTimeTotal "
-					<< correctReadTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup resize buffer "
-					<< hcorrectionbuffers.resizetime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup preprocessing "
-					<< hcorrectionbuffers.preprocessingtime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup H2D "
-					<< hcorrectionbuffers.h2dtime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup calculation "
-					<< hcorrectionbuffers.correctiontime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup D2H "
-					<< hcorrectionbuffers.d2htime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup postprocessing "
-					<< hcorrectionbuffers.postprocessingtime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup resize buffer "
+			// 		<< hcorrectionbuffers.resizetime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup preprocessing "
+			// 		<< hcorrectionbuffers.preprocessingtime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup H2D "
+			// 		<< hcorrectionbuffers.h2dtime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup calculation "
+			// 		<< hcorrectionbuffers.correctiontime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup D2H "
+			// 		<< hcorrectionbuffers.d2htime.count() << '\n';
+			// std::cout << "thread " << threadId << " : pileup postprocessing "
+			// 		<< hcorrectionbuffers.postprocessingtime.count() << '\n';
 		} else if (correctionmode == CorrectionMode::Graph) {
 			std::cout << "thread " << threadId << " : getCandidatesTimeTotal "
 					<< getCandidatesTimeTotal.count() << '\n';
@@ -1952,16 +992,18 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 			std::cout << "thread " << threadId << " : alignment calculation " << sgadata.alignmenttime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment D2H " << sgadata.d2htime.count() << '\n';
 			std::cout << "thread " << threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';
-			//std::cout << "thread " << threadId << " : correction find good alignments " << determinegoodalignmentsTime.count() << '\n';
-			//std::cout << "thread " << threadId << " : correction fetch good data " << fetchgoodcandidatesTime.count() << '\n';
+            std::cout << "thread " << threadId
+					<< " : correction find good alignments "
+					<< determinegoodalignmentsTime.count() << '\n';
+			std::cout << "thread " << threadId
+					<< " : correction fetch good data "
+					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadId << " : graph build "
 					<< graphbuildtime.count() << '\n';
 			std::cout << "thread " << threadId << " : graph correct "
 					<< graphcorrectiontime.count() << '\n';
 			std::cout << "thread " << threadId << " : correction calculation "
 					<< readcorrectionTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : correctReadTimeTotal "
-					<< correctReadTimeTotal.count() << '\n';
 		}
 	}
 #endif
@@ -1970,48 +1012,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
 	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
 	cuda_cleanup_MinhashResultsDedupBuffers(minhashresultsdedupbuffers);
-	hammingtools::cuda_cleanup_CorrectionBuffers(hcorrectionbuffers);
-}
-
-std::uint64_t ErrorCorrector::getReadPos(const std::string& readheader) const {
-	char dir = 'f';
-	auto slash = readheader.find("/");
-	if (slash != std::string::npos) {
-		dir = readheader[slash + 1];
-	}
-
-	if (dir != '1' && dir != '2') {
-		std::cout << "dir = " << dir << std::endl;
-		std::cout << readheader << std::endl;
-		throw std::runtime_error("getReadPos : unexpected header format");
-	}
-
-	/* the following code extracts the position of the read from the header
-	 i.e. if the header is @gi|556503834|ref|NC_000913.3|_4064476_4064981_0:0:0_0:0:0_0/1 , we need to extract 4064476
-	 */
-	// don't know if / how many '_' are used in read header. need to find all '_' and then count backwards to get to wanted position
-	std::vector<int> locations;
-	for (size_t i = 0; i < readheader.size(); i++)
-		if (readheader[i] == '_')
-			locations.push_back(i);
-
-	int offset_left;
-	int offset_right;
-	if (dir == '1') {
-		offset_left = 5;
-		offset_right = 4;
-	} else {  //dir == '2'
-		offset_left = 4;
-		offset_right = 3;
-	}
-
-	int substringpos = locations[locations.size() - offset_left] + 1;
-	int substringlength = locations[locations.size() - offset_right]
-			- locations[locations.size() - offset_left];
-
-	const std::uint64_t pos = std::stoll(
-			readheader.substr(substringpos, substringlength));
-	return pos;
 }
 
 void ErrorCorrector::setOutputPath(const std::string& path) {

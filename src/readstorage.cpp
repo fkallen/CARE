@@ -29,6 +29,8 @@
 		if(!useQualityScores){
 			qualityscores.clear();
 			reverseComplqualityscores.clear();
+			qualityscores.shrink_to_fit();
+			reverseComplqualityscores.shrink_to_fit();
 		}
 	}
 
@@ -52,6 +54,16 @@
 		all_unique_sequences.clear();
 
 		isReadOnly = false;
+	}
+
+	void ReadStorage::destroy(){
+		clear();
+		headers.shrink_to_fit();
+		qualityscores.shrink_to_fit();
+		reverseComplqualityscores.shrink_to_fit();
+		sequencepointers.shrink_to_fit();
+		reverseComplSequencepointers.shrink_to_fit();
+		all_unique_sequences.shrink_to_fit();
 	}
 
 	void ReadStorage::insertRead(size_t readNumber, const Read& read){
@@ -84,6 +96,7 @@
 		}
 
 		sequences.clear();
+		sequences.shrink_to_fit();
 
 		std::vector<Sequence> tmp(sequencesflat);
 
@@ -159,7 +172,7 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 		quality_weights.reserve(n_unique_forward_sequences);
 
 		for(auto pair : seqToIds){
-			const int len = pair.first->getNbases();
+			const int len = pair.first->length();
 			std::vector<float> weights(0.0f, len);
 			for(size_t id : pair.second){
 				const std::string* qptr = fetchQuality_ptr(id);

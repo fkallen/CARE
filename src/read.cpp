@@ -59,7 +59,7 @@
 
 	bool Sequence::operator==(const Sequence& rhs) const
 	{
-		if(getNbases() != rhs.getNbases()) return false;
+		if(length() != rhs.length()) return false;
 		return (std::memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
 	}
 
@@ -97,8 +97,8 @@
 	}
 
 	bool Sequence::operator<(const Sequence& rhs) const{
-		const int bases = getNbases();
-		const int otherbases = rhs.getNbases();
+		const int bases = length();
+		const int otherbases = rhs.length();
 		if(bases < otherbases) return true;
 		if(bases > otherbases) return false;
 
@@ -107,11 +107,11 @@
 
 	Sequence Sequence::reverseComplement() const{
 		Sequence revcompl;
-		revcompl.nBases = getNbases();
+		revcompl.nBases = length();
 		revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 		revcompl.data.second = getNumBytes();
 
-		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
+		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
 		if(!res)
 			throw std::runtime_error("could not get reverse complement of " + toString());
         return revcompl;
@@ -121,7 +121,7 @@
 		return data.second;
 	}
 
-	int Sequence::getNbases() const{
+	int Sequence::length() const{
 		return nBases;
 	}
 
@@ -217,12 +217,12 @@
 
 	bool SequenceGeneral::operator==(const SequenceGeneral& rhs) const
 	{
-		if(getNbases() != rhs.getNbases()) return false;
+		if(length() != rhs.length()) return false;
 
 		if(isCompressed() == rhs.isCompressed())
 			return (std::memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
 		else{
-			for(int i = 0; i < getNbases(); i++){
+			for(int i = 0; i < length(); i++){
 				if (begin()[i] != rhs.begin()[i])
 					return false;
 			}
@@ -276,8 +276,8 @@
 	}
 
 	bool SequenceGeneral::operator<(const SequenceGeneral& rhs) const{
-		const int bases = getNbases();
-		const int otherbases = rhs.getNbases();
+		const int bases = length();
+		const int otherbases = rhs.length();
 		if(bases < otherbases) return true;
 		if(bases > otherbases) return false;
 
@@ -297,19 +297,19 @@
 	SequenceGeneral SequenceGeneral::reverseComplement() const{
 		if(isCompressed()){
 			SequenceGeneral revcompl;
-			revcompl.nBases = getNbases();
+			revcompl.nBases = length();
 			revcompl.compressed = true;
 			revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 			revcompl.data.second = getNumBytes();
 
-			bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), getNbases());
+			bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
 			if(!res)
 				throw std::runtime_error("could not get reverse complement of " + toString());
 
 			return revcompl;
 		}else{
 			SequenceGeneral revcompl;
-			revcompl.nBases = getNbases();
+			revcompl.nBases = length();
 			revcompl.compressed = false;
 			revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 			revcompl.data.second = getNumBytes();
@@ -334,7 +334,7 @@
 		return data.second;
 	}
 
-	int SequenceGeneral::getNbases() const{
+	int SequenceGeneral::length() const{
 		return nBases;
 	}
 

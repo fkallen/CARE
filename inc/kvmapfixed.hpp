@@ -85,8 +85,8 @@ struct KVMapFixed{
 			std::cout << "KVMapFixed: want to get key " << key << " but writes are still allowed. Need to call freeze() beforehand\n";
 			return {};
 		}
-		std::uint64_t* first = keys.get();
-		std::uint64_t* last = first + nKeys;
+		key_t* first = keys.get();
+		key_t* last = first + nKeys;
 
 		auto range = std::equal_range(first, last, key);
 		if(range.first == last) return {};

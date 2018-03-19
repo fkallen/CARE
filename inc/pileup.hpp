@@ -3,6 +3,7 @@
 
 #include "../inc/hammingtools.hpp"
 #include "../inc/alignment.hpp"
+#include "../inc/batchelem.hpp"
 
 #include <vector>
 #include <string>
@@ -13,60 +14,91 @@ namespace hammingtools{
 
 		void init_once();
 
-		std::tuple<int,std::chrono::duration<double>,std::chrono::duration<double>>
-		cpu_pileup_all_in_one(const CorrectionBuffers* buffers, std::string& subject,
-				int nQueries, 
-				std::vector<std::string>& queries,
-				const std::vector<AlignResultCompact>& alignments,
-				const std::string& subjectqualityScores, 
-				const std::vector<const std::string*>& queryqualityScores,
-				const std::vector<int>& frequenciesPrefixSum,
-				const int startindex, const int endindex,
-				const int columnsToCheck, const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-				double maxErrorRate,
-				bool useQScores,
-				std::vector<bool>& correctedQueries,
-				bool correctQueries_,
-				int estimatedCoverage,
-				double errorrate,
-				double m,
-				int k);
+        struct PileupProperties{
+            double avg_support;
+            double min_support;
+            int max_coverage;
+            int min_coverage;
+            bool isHQ;
+            bool failedAvgSupport;
+            bool failedMinSupport;
+            bool failedMinCoverage;
+        };
 
-		void cpu_pileup_create(const CorrectionBuffers* buffers, std::string& subject,
-						std::vector<std::string>& queries,
-						const std::string& subjectqualityScores, 
-						const std::vector<const std::string*>& queryqualityScores,
-						const std::vector<AlignResultCompact>& alignments,
-						const std::vector<int>& frequenciesPrefixSum,
-						const int subjectColumnsBegin_incl);
+        struct PileupColumnProperties{
+            int startindex;
+            int endindex;
+            int columnsToCheck;
+            int subjectColumnsBegin_incl;
+            int subjectColumnsEnd_excl;
+        };
 
-		void cpu_pileup_vote(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments,
-						const std::vector<int>& frequenciesPrefixSum,
-						const double maxErrorRate, 
-						const bool useQScores,
-						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl);
+        struct PileupCorrectionSettings{
+            bool useQScores;
+            bool correctQueries;
+            int estimatedCoverage;
+            double maxErrorRate;
+            double errorrate;
+            double m;
+            double k;
+        };
 
-		int cpu_pileup_correct(CorrectionBuffers* buffers, const std::vector<AlignResultCompact>& alignments, const std::vector<int>& frequenciesPrefixSum,
-						const int columnsToCheck, 
-						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const int startindex, const int endindex,
-						const double errorrate, const int estimatedCoverage, const double m, 
-						const bool correctQueries, int k, std::vector<bool>& correctedQueries);
+        struct TaskTimings{
+        	std::chrono::duration<double> preprocessingtime{0};
+        	std::chrono::duration<double> h2dtime{0};
+        	std::chrono::duration<double> executiontime{0};
+        	std::chrono::duration<double> d2htime{0};
+        	std::chrono::duration<double> postprocessingtime{0};
+        };
 
-#ifdef __NVCC__
+        struct PileupTimings{
+            std::chrono::duration<double> findconsensustime{0};
+            std::chrono::duration<double> correctiontime{0};
+        };
 
+        struct PileupImage{
+            //buffers
+            std::unique_ptr<int[]> h_As;
+            std::unique_ptr<int[]> h_Cs;
+            std::unique_ptr<int[]> h_Gs;
+            std::unique_ptr<int[]> h_Ts;
+            std::unique_ptr<double[]> h_Aweights;
+            std::unique_ptr<double[]> h_Cweights;
+            std::unique_ptr<double[]> h_Gweights;
+            std::unique_ptr<double[]> h_Tweights;
+            std::unique_ptr<char[]> h_consensus;
+            std::unique_ptr<double[]> h_support;
+            std::unique_ptr<int[]> h_coverage;
+            std::unique_ptr<double[]> h_origWeights;
+            std::unique_ptr<int[]> h_origCoverage;
 
+            int max_n_columns = 0; //number of elements per buffer
+            int n_columns = 0; //number of used elements per buffer
 
-		void gpu_pileup_transpose(const CorrectionBuffers* buffers);
+            PileupProperties properties;
+            PileupColumnProperties columnProperties;
+            PileupCorrectionSettings correctionSettings;
+            PileupTimings timings;
+            TaskTimings taskTimings;
 
-		void gpu_qual_pileup_transpose(const CorrectionBuffers* buffers);
+            PileupImage(bool useQScores, bool correctQueries, int estimatedCoverage,
+                        double maxErrorRate, double errorrate, double m, double k);
 
-		void call_cuda_pileup_vote_transposed_kernel(CorrectionBuffers* buffers, const int nSequences, const int nQualityScores, const int columnsToCheck, 
-						const int subjectColumnsBegin_incl, const int subjectColumnsEnd_excl,
-						const double maxErrorRate, 
-						const bool useQScores);
+            PileupImage(const PileupImage& other);
+            PileupImage(PileupImage&& other);
+            PileupImage& operator=(const PileupImage& other);
+            PileupImage& operator=(PileupImage&& other);
 
-#endif
+            void resize(int cols);
+            void clear();
+
+            TaskTimings correct_batch_elem(BatchElem& batchElem);
+            void init_from_batch_elem(const BatchElem& batchElem);
+            void cpu_add_weights(const BatchElem& batchElem);
+            void cpu_find_consensus(const BatchElem& batchElem);
+            void cpu_correct(BatchElem& batchElem);
+        };
+
 
 	}
 

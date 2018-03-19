@@ -29,8 +29,34 @@ struct AlignOp {
 	AlignOp(){}
 
 	HOSTDEVICEQUALIFIER
-	AlignOp(short p, AlignType t, char b) 
+	AlignOp(short p, AlignType t, char b)
 		: position(p), type(t), base(b){}
+
+    HOSTDEVICEQUALIFIER
+	AlignOp(const AlignOp& other){
+        *this = other;
+    }
+
+    HOSTDEVICEQUALIFIER
+	AlignOp(AlignOp&& other){
+        *this = std::move(other);
+    }
+
+    HOSTDEVICEQUALIFIER
+	AlignOp& operator=(const AlignOp& other){
+        position = other.position;
+        type = other.type;
+        base = other.base;
+        return *this;
+    }
+
+    HOSTDEVICEQUALIFIER
+	AlignOp& operator=(AlignOp&& other){
+        position = other.position;
+        type = other.type;
+        base = other.base;
+        return *this;
+    }
 
 	HOSTDEVICEQUALIFIER
 	bool operator==(const AlignOp& other) const{
@@ -49,7 +75,7 @@ struct AlignOp {
 			case ALIGNTYPE_SUBSTITUTE : return "S"; break;
 			case ALIGNTYPE_INSERT : return "I"; break;
 			case ALIGNTYPE_DELETE : return "D"; break;
-			}		
+			}
 		};
 		stream << op.position << " " << TYPE(op.type) << " " << op.base;
 		return stream;
@@ -63,7 +89,7 @@ struct AlignOp {
 			case ALIGNTYPE_INSERT : return "I";
 			case ALIGNTYPE_DELETE : return "D";
 			default: return "INVALID";
-			}		
+			}
 		};
 		stream << op.position << " " << TYPE(op.type) << " " << op.base;
 		return stream;
@@ -153,7 +179,7 @@ int split_subs(AlignResult& alignment, const char* subject);
 
 
 // Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments
-BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment, 
+BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment,
 				int querylength, int candidatelength,
 				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO);
 

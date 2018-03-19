@@ -10,7 +10,6 @@
 #include <string>
 #include <vector>
 
-#define LOGBASEDPATH
 #define ASSERT_TOPOLOGIC_SORT
 
 namespace graphtools{
@@ -38,8 +37,7 @@ namespace graphtools{
 		}
 
 		// split substitutions in alignment into deletion + insertion
-		int split_subs(AlignResult& alignment, const char* subject){
-			auto& ops = alignment.operations;
+		int split_subs(std::vector<AlignOp>& ops, const std::string& subject){
 			int splitted_subs = 0;
 			for(auto it = ops.begin(); it != ops.end(); it++){
 				if(it->type == ALIGNTYPE_SUBSTITUTE){
@@ -62,33 +60,25 @@ namespace graphtools{
 		ErrorGraph::Edge::Edge(int t, double w) : to(t), weight(w), canBeUsed(true){}
 
 		ErrorGraph::Vertex::Vertex(char b) : base(b){
-		#ifdef LOGBASEDPATH
 			bestPathProb = std::numeric_limits<double>::lowest();
-		#else
-			bestPathProb = 0.0;
-		#endif
 		}
 
 		ErrorGraph::LinkOperation::LinkOperation():from(0), to(0), isOriginal(false){}
 		ErrorGraph::LinkOperation::LinkOperation(int f, int t, bool o):from(f), to(t), isOriginal(o){}
 
-		ErrorGraph::ErrorGraph(){}
+		ErrorGraph::ErrorGraph() : ErrorGraph(false, 1.0, 1.0, 1.0){}
 
-		ErrorGraph::ErrorGraph(const char* seq, int seqlength, const char* qualityScores, bool useQscores_, const int nTimes){
-			init(seq, seqlength, qualityScores, useQscores_, nTimes);
-		}
+		ErrorGraph::ErrorGraph(bool useQscores_, double max_mismatch_ratio_, double alpha_, double x_)
+                    : useQscores(useQscores_), max_mismatch_ratio(max_mismatch_ratio_),
+                      alpha(alpha_), x(x_){}
 
 
-		void ErrorGraph::init(const char* seq, int seqlength, const char* qualityScores, bool useQscores_, const int nTimes)
-		{
-			assert(seqlength > 0);
+		void ErrorGraph::init(const std::string& seq, const std::string& qualityScores){
+			assert(seq.length() > 0);
 
-			useQscores = useQscores_;
-			readqualityscores = qualityScores;
-			readLength = seqlength;
+            clearVectors();
+
 			read = seq;
-
-			vertices.clear();
 
 			double weight;
 			int newindex;
@@ -97,20 +87,16 @@ namespace graphtools{
 			newindex = addNewNode('S');
 			topoIndices.push_back(newindex);
 
-		#ifdef LOGBASEDPATH
 			vertices[newindex].bestPathProb = 0.0;
-		#else
-			vertices[newindex].bestPathProb = 1.0;
-		#endif
 
-			for (int i = 0; i < readLength; ++i) {
+			for (int i = 0; i < int(read.length()); ++i) {
 				base = read[i];
 				newindex = addNewNode(base);
 				topoIndices.push_back(newindex);
 
 				double initialWeight = useQscores ? qscore_to_weight[(unsigned char)qualityScores[i]] : 1.0;
 
-				weight = initialWeight * nTimes;
+				weight = initialWeight;
 
 				Edge edge(newindex, weight);
 				vertices[newindex - 1].edges.push_back(edge);
@@ -119,55 +105,53 @@ namespace graphtools{
 
 			newindex = addNewNode('E');
 			topoIndices.push_back(newindex);
-			weight = 1.0 * nTimes;
+			weight = 1.0;
 			Edge edge(newindex, weight);
 			vertices[newindex - 1].edges.push_back(edge);
 			vertices[newindex - 1].outedgeweightsum += weight;
 
-			startNode = 0;
-			endNode = nodes - 1;
+			endNode = vertices.size() - 1;
 		}
 
 		// add new node, but don't add edges yet
 		// return the index of the new node in the vertices vector
 		int ErrorGraph::addNewNode(const char base)
 		{
-			nodes++;
 			vertices.push_back(Vertex(base));
-			return nodes - 1;
+			return vertices.size() - 1;
 		}
 
-		// insert alignment nTimes into the graph
-		void ErrorGraph::insertAlignment(AlignResult& alignment, const char* qualityScores, double maxErrorRate, const int nTimes)
-		{
+        void ErrorGraph::clearVectors(){
+            vertices.clear();
+            topoIndices.clear();
+            finalPath.clear();
+        }
 
-			assert(!(useQscores && !qualityScores));
+		// insert alignment nTimes into the graph
+        void ErrorGraph::insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
+                                 const std::string* qualityScores_, const int nTimes){
+
+			assert(!(useQscores && !qualityScores_));
+            const std::string& qualityScores = *qualityScores_;
 
 			insertCalls++;
 			totalInsertedAlignments += nTimes;
 
-			const double weight = 1 - std::sqrt(alignment.arc.nOps / (alignment.arc.overlap * maxErrorRate));
-			//std::cout << "overlapError : " << alignment.arc.nOps << " overlapSize : " << alignment.arc.overlap << " maxErrorRate : " << maxErrorRate << " weight : " << weight << std::endl;
+			const double weight = 1 - std::sqrt(alignment.nOps / (alignment.overlap * max_mismatch_ratio));
 
-			int last_a = alignment.arc.subject_begin_incl + alignment.arc.overlap;
+			int last_a = alignment.subject_begin_incl + alignment.overlap;
 
-			normalizeAlignment(alignment); //returns immediatly if already normalized (e.g. by previous insert)
+			normalizeAlignment(alignment, ops); //returns immediatly if already normalized (e.g. by previous insert)
 
-			//if(&alignment != previousAlignResult){
-				previousLinkOperations = makeLinkOperations(alignment);
-			//}
+			const auto& linkOps = makeLinkOperations(alignment, ops);
 
-			previousAlignResult = &alignment;
-
-			const auto& linkOps = previousLinkOperations;
-
-			int prev_node = alignment.arc.subject_begin_incl;
+			int prev_node = alignment.subject_begin_incl;
 
 			if (prev_node != 0) {
 				prev_node = -1;
 			}
 
-			int qindex = alignment.arc.query_begin_incl;
+			int qindex = alignment.query_begin_incl;
 
 			for (const auto& op : linkOps) {
 
@@ -175,10 +159,10 @@ namespace graphtools{
 					for (int j = op.from; j < op.to; j++) {
 						if (prev_node == -1) {
 							prev_node = j + 1;
-						}else{					
+						}else{
 							double qweight = weight;
 							if(useQscores){
-								if(qindex < alignment.arc.query_begin_incl + alignment.arc.overlap){
+								if(qindex < alignment.query_begin_incl + alignment.overlap){
 									qweight *= qscore_to_weight[(unsigned char)qualityScores[qindex]];
 								}
 							}
@@ -195,7 +179,7 @@ namespace graphtools{
 						}else{
 							double qweight = weight;
 							if(useQscores){
-								if(qindex < alignment.arc.query_begin_incl + alignment.arc.overlap){
+								if(qindex < alignment.query_begin_incl + alignment.overlap){
 									qweight *= qscore_to_weight[(unsigned char)qualityScores[qindex]];
 								}
 							}
@@ -206,7 +190,7 @@ namespace graphtools{
 				}
 			}
 
-			if (last_a == readLength && prev_node != -1) {
+			if (last_a == int(read.length()) && prev_node != -1) {
 				makeLink(prev_node, endNode, 'E', weight);
 			}
 		}
@@ -278,7 +262,7 @@ namespace graphtools{
 		}
 
 
-		void ErrorGraph::calculateEdgeProbabilities(double alpha, double x)
+		void ErrorGraph::calculateEdgeProbabilities()
 		{
 
 			for (size_t i = 0; i < vertices.size(); ++i) {
@@ -310,8 +294,8 @@ namespace graphtools{
 
 
 				if(originalEdge != -1){
-			
-					// original edge is preferred 
+
+					// original edge is preferred
 					// if (heighest weight - orig weight) < alpha*(x^orig weight)
 					if((bestNonOriginalEdgeWeight - originalEdgeWeight) < alpha * std::pow(x, originalEdgeWeight) ){
 						for(size_t j = 0; j < v.edges.size(); ++j){
@@ -327,7 +311,7 @@ namespace graphtools{
 		}
 
 		// extract corrected read from graph, which is the most reliable path
-		std::string ErrorGraph::getCorrectedRead(double alpha, double x)
+		std::string ErrorGraph::getCorrectedRead()
 		{
 
 			if(totalInsertedAlignments == 0){
@@ -339,7 +323,7 @@ namespace graphtools{
 			assertTopologicallySorted();
 		#endif
 
-			calculateEdgeProbabilities(alpha, x);
+			calculateEdgeProbabilities();
 
 			//find most reliable path, which should be equivalent to the corrected read
 
@@ -347,11 +331,6 @@ namespace graphtools{
 				const Vertex& cur = vertices[i];
 
 				for (const Edge& e : cur.edges) {
-
-					//if((readid == 7232071 || readid == 4495925) && e.to == 102) 
-					//	printf("a");
-
-		#ifdef LOGBASEDPATH
 					if (e.canBeUsed) {
 
 						double newBestLogPathProb = cur.bestPathProb + log(e.prob);
@@ -360,38 +339,11 @@ namespace graphtools{
 							vertices[e.to].bestprevnode = i;
 						}
 					}
-		#else
-					if (e.canBeUsed) {
-
-						double npw = cur.bestPathProb * e.prob;
-						if (npw > vertices[e.to].bestPathProb) {
-							vertices[e.to].bestPathProb = npw;
-							vertices[e.to].bestprevnode = i;
-						}
-					}
-		#endif
 				}
 			}
 
 			std::string correctedRead;
-		#ifdef LOGBASEDPATH
 			//double prob = std::exp(vertices[endNode].bestPathProb);
-		#else
-			//double prob = vertices[endNode].bestPathProb;
-		#endif
-
-			/*cr.edgemax = edgemax;
-			cr.edgemax = edgemin;
-			cr.edgemax = origpos;*/
-
-		/*std::cout << "b\n";
-		std::cout << cr.origpos.size() << '\n';
-				for(int i = 0; i < cr.origpos.size(); i++){
-					std::cout << cr.origpos[i] << '\n';
-					std::cout << cr.edgemin[i] << '\n';
-					std::cout << cr.edgemax[i] << '\n';
-				}*/
-
 
 			// backtrack to extract corrected read
 			std::string rcorrectedRead = "";
@@ -400,7 +352,6 @@ namespace graphtools{
 			try{
 				cur = vertices.at(vertices.at(endNode).bestprevnode);
 			}catch(std::out_of_range ex){
-				printf("endnode %d, vertices.at(endNode).bestprevnode %d, readid %d\n", endNode, vertices.at(endNode).bestprevnode, readid);
 				throw ex;
 			}
 			int currentVertexNumber = cur.bestprevnode;
@@ -459,17 +410,18 @@ namespace graphtools{
 
 		}
 
-		void ErrorGraph::normalizeAlignment(AlignResult& alignment) const{
-			if(alignment.arc.isNormalized)
+		void ErrorGraph::normalizeAlignment(AlignResultCompact& alignment,
+                                            std::vector<AlignOp>& alignOps) const{
+			if(alignment.isNormalized)
 				return;
-	
-			int na = readLength;
+
+			int na = int(read.length());
 			int last_val = na;
 
 			// delay operations as long as possible
 
-			for (int i = alignment.operations.size() - 1; i >= 0; i--) {
-				AlignOp& op = alignment.operations[i];
+			for (int i = alignOps.size() - 1; i >= 0; i--) {
+				AlignOp& op = alignOps[i];
 				int position = op.position;
 				const int base = op.base;
 
@@ -481,13 +433,13 @@ namespace graphtools{
 					op.position = position;
 					last_val = position;
 
-					for (size_t j = i; j < alignment.operations.size() - 1; j++) {
-						if (alignment.operations[j + 1].type == ALIGNTYPE_DELETE)
+					for (size_t j = i; j < alignOps.size() - 1; j++) {
+						if (alignOps[j + 1].type == ALIGNTYPE_DELETE)
 							break;
 
-						if (alignment.operations[j].position >= alignment.operations[j + 1].position) {
-							std::swap(alignment.operations[j], alignment.operations[j + 1]);
-							alignment.operations[j].position--;
+						if (alignOps[j].position >= alignOps[j + 1].position) {
+							std::swap(alignOps[j], alignOps[j + 1]);
+							alignOps[j].position--;
 						}else break;
 					}
 				}else if (op.type == ALIGNTYPE_INSERT) {
@@ -499,55 +451,54 @@ namespace graphtools{
 						op.position = position;
 					}
 
-					for (size_t j = i; j < alignment.operations.size() - 1; j++) {
-						if (alignment.operations[j + 1].type == ALIGNTYPE_DELETE) {
-							if (alignment.operations[j].position >= alignment.operations[j + 1].position) {
+					for (size_t j = i; j < alignOps.size() - 1; j++) {
+						if (alignOps[j + 1].type == ALIGNTYPE_DELETE) {
+							if (alignOps[j].position >= alignOps[j + 1].position) {
 
 								// insertion and deletion of same base cancel each other. don't need this op
-								if (alignment.operations[j].base == alignment.operations[j + 1].base) {
-									alignment.operations.erase(alignment.operations.begin() + j + 1);
-									alignment.operations.erase(alignment.operations.begin() + j);
+								if (alignOps[j].base == alignOps[j + 1].base) {
+									alignOps.erase(alignOps.begin() + j + 1);
+									alignOps.erase(alignOps.begin() + j);
 									break;
 								}
 
-								const AlignOp temp = alignment.operations[j];
-								alignment.operations[j] = alignment.operations[j + 1];
-								alignment.operations[j + 1] = temp;
+                                std::swap(alignOps[j], alignOps[j+1]);
 
-								if (alignment.operations[j + 1].position < na)
-									alignment.operations[j + 1].position++;
+								if (alignOps[j + 1].position < na)
+									alignOps[j + 1].position++;
 
-								int position2 = alignment.operations[j + 1].position;
-								const char base2 = alignment.operations[j + 1].base;
+								int position2 = alignOps[j + 1].position;
+								const char base2 = alignOps[j + 1].base;
 
 								if (position2 < na && read[position2] == base2) {
 									position2++;
 									while (position2 < na && read[position2] == base2)
 										position2++;
-									alignment.operations[j + 1].position = position2;
+									alignOps[j + 1].position = position2;
 								}
 							}else break;
 						}else {
-							if (alignment.operations[j].position > alignment.operations[j + 1].position) {
-								std::swap(alignment.operations[j], alignment.operations[j + 1]);
-								alignment.operations[j].position++;
+							if (alignOps[j].position > alignOps[j + 1].position) {
+								std::swap(alignOps[j], alignOps[j + 1]);
+								alignOps[j].position++;
 							}else break;
 						}
 					}
 				}
 			}
 
-			alignment.arc.isNormalized = true;
+			alignment.isNormalized = true;
 		}
 
-		std::vector<ErrorGraph::LinkOperation> ErrorGraph::makeLinkOperations(const AlignResult& alignment) const{
-			int cur_a = alignment.arc.subject_begin_incl;
-			int last_a = cur_a + alignment.arc.overlap; 
+		std::vector<ErrorGraph::LinkOperation> ErrorGraph::makeLinkOperations(const AlignResultCompact& alignment,
+                                                                              const std::vector<AlignOp>& alignOps) const{
+			int cur_a = alignment.subject_begin_incl;
+			int last_a = cur_a + alignment.overlap;
 
 			std::vector<LinkOperation> linkOps;
 
-			for (size_t i = 0; i < alignment.operations.size(); i++) {
-				const AlignOp& alignop = alignment.operations[i];
+			for (size_t i = 0; i < alignOps.size(); i++) {
+				const AlignOp& alignop = alignOps[i];
 				const int ca = alignop.position;
 				const char ch = alignop.base;
 
@@ -566,13 +517,13 @@ namespace graphtools{
 					}
 
 					i++;
-					for (; i < alignment.operations.size(); i++) {
-						if (alignment.operations[i].position > cur_a) break;
-						if (alignment.operations[i].type == ALIGNTYPE_DELETE) {
+					for (; i < alignOps.size(); i++) {
+						if (alignOps[i].position > cur_a) break;
+						if (alignOps[i].type == ALIGNTYPE_DELETE) {
 							linkop.to++;
 							cur_a++;
 						}else{
-							linkop.chs.push_back(alignment.operations[i].base);
+							linkop.chs.push_back(alignOps[i].base);
 						}
 					}
 					i--;
@@ -623,53 +574,47 @@ namespace graphtools{
 			}
 		}
 
-		std::tuple<std::chrono::duration<double>,std::chrono::duration<double>> correct_cpu(std::string& subject,
-				std::vector<AlignResult>& alignments,
-				const std::string& subjectqualityScores, 
-				const std::vector<const std::string*>& queryqualityScores,
-				const std::vector<int>& frequenciesPrefixSum,
-				bool useQScores,
-				double MAX_MISMATCH_RATIO,
-				double graphalpha,
-				double graphx){
+        TaskTimings ErrorGraph::correct_batch_elem(BatchElem& b){
+            init(b.fwdSequenceString, *b.fwdQuality);
 
-			std::chrono::duration<double> graphbuildtime(0);
-			std::chrono::duration<double> graphcorrectiontime(0);
-			std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+            TaskTimings tt;
+            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
 
 			tpa = std::chrono::system_clock::now();
 
-			ErrorGraph errorgraph(subject.c_str(), subject.length(),subjectqualityScores.c_str(), useQScores);
+            for(size_t i = 0; i < b.n_unique_candidates; i++){
+                auto& alignment = b.bestAlignments[i];
+                auto& alignOps = b.bestAlignOps[i];
+                const int freq = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
 
-			for(size_t i = 0; i < alignments.size(); i++){
-				auto& alignment = alignments[i];
-				const int count = frequenciesPrefixSum[i+1] - frequenciesPrefixSum[i];
+				graphtools::correction::split_subs(*alignOps, b.fwdSequenceString);
 
-				graphtools::correction::split_subs(alignment, subject.c_str());
-
-				for(int f = 0; f < count; f++){
-					const int qualindex = frequenciesPrefixSum[i] + f;
-					const char* qual = queryqualityScores[qualindex]->c_str();
-					errorgraph.insertAlignment(alignment, qual, MAX_MISMATCH_RATIO, 1);
+				for(int f = 0; f < freq; f++){
+					const int qualindex = b.candidateCountsPrefixSum[i] + f;
+					const std::string* qual = b.bestQualities[qualindex];
+					insertAlignment(alignment, *alignOps, qual, 1);
 				}
 			}
-
 			tpb = std::chrono::system_clock::now();
-	
-			graphbuildtime += tpb - tpa;
+
+			timings.buildtime += tpb - tpa;
+            taskTimings.preprocessingtime += tpb - tpa;
+            tt.preprocessingtime = tpb - tpa;
 
 			tpa = std::chrono::system_clock::now();
-
 			// let the graph to its work
-			subject = errorgraph.getCorrectedRead(graphalpha, graphx);
+			b.correctedSequence = getCorrectedRead();
 
 			tpb = std::chrono::system_clock::now();
-	
-			graphcorrectiontime += tpb - tpa;
 
-			return std::tie(graphbuildtime, graphcorrectiontime);
-		}
+            timings.correctiontime += tpb - tpa;
+            taskTimings.executiontime += tpb - tpa;
+            tt.executiontime = tpb - tpa;
 
+            b.corrected = true;
+
+            return tt;
+        }
 
 	}
 }

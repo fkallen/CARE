@@ -2,19 +2,19 @@ CXX=g++
 CUDACC=nvcc
 HOSTLINKER=g++
 
-CXXFLAGS = -std=c++14 
+CXXFLAGS = -std=c++14
 CFLAGS = -Wall -g -fopenmp -O3
 NVCCFLAGS = -x cu -lineinfo
 
-#TODO CUDA_PATH = 
+#TODO CUDA_PATH =
 
 CUDA_ARCH = -gencode=arch=compute_60,code=sm_60 \
 	  -gencode=arch=compute_61,code=sm_61 \
 	  -gencode=arch=compute_70,code=sm_70 \
 	  -gencode=arch=compute_70,code=compute_70
 
-LDFLAGSGPU = -lpthread -lgomp -lz -lstdc++fs
-LDFLAGSCPU = -lpthread -lgomp -lz -lstdc++fs 
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs
+LDFLAGSCPU = -lpthread -lgomp -lstdc++fs 
 
 SOURCES = $(wildcard src/*.cpp)
 OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES))
@@ -51,4 +51,3 @@ buildgpu/%.o : src/%.cpp
 
 clean:
 	rm $(GPU_VERSION) $(CPU_VERSION) $(OBJECTS_GPU) $(OBJECTS_CPU)
-
