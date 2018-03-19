@@ -196,7 +196,6 @@
                         bestSequences[i] = fwdSequences[i];
                         bestAlignments[i] = res;
                         bestAlignOps[i] = &fwdAlignOps[i];
-                        assert(bestAlignOps[i] != nullptr);
                         for(int j = 0; j < candidateCount; j++){
                             const std::uint64_t id = candidateIds[begin + j];
                             bestQualities[begin + j] = readStorage->fetchQuality_ptr(id);
@@ -206,7 +205,6 @@
                         bestSequences[i] = revcomplSequences[i];
                         bestAlignments[i] = revcomplres;
                         bestAlignOps[i] = &revcomplAlignOps[i];
-                        assert(bestAlignOps[i] != nullptr);
                         for(int j = 0; j < candidateCount; j++){
                             const std::uint64_t id = candidateIds[begin + j];
                             bestQualities[begin + j] = readStorage->fetchReverseComplementQuality_ptr(id);

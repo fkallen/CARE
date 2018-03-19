@@ -142,8 +142,8 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 		minhashparams(minhashparameters), nInserterThreads(nInserterThreads_), nCorrectorThreads(
 				nCorrectorThreads_), outputPath("") {
 	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
-	//correctionmode = CorrectionMode::Hamming;
-	correctionmode = CorrectionMode::Graph;
+	correctionmode = CorrectionMode::Hamming;
+	//correctionmode = CorrectionMode::Graph;
 
 	minhasher.minparams = minhashparameters;
 
@@ -163,6 +163,102 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 #endif
 
 }
+
+/*
+    Deletes every file in vector filenames
+*/
+void deleteFiles(std::vector<std::string> filenames){
+    for (const auto& filename : filenames) {
+        int ret = std::remove(filename.c_str());
+        if (ret != 0){
+            const std::string errormessage = "Could not remove file " + filename;
+            std::perror(errormessage);
+        }
+    }
+}
+
+/*
+    Merges temporary results with unordered reads into single file outputfile with ordered reads.
+    Temporary result files are expected to be in format:
+
+    readnumber
+    sequence
+    readnumber
+    sequence
+    ...
+*/
+void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                      Fileformat originalFormat,
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile){
+    std::vector<Read> reads(expectedNumReads);
+    std::uint32_t nreads = 0;
+
+    for(const auto& filename : filesToMerge){
+        std::ifstream is(filename);
+        if(!is)
+            throw std::runtime_error("could not open tmp file: " + outputPath + "/" + std::to_string(i));
+
+        std::string num;
+        std::string seq;
+
+        while(true){
+            std::getline(is, num);
+    		if (!is.good())
+    			break;
+            std::getline(is, seq);
+            if (!is.good())
+                break;
+
+            nreads++;
+
+            auto readnum = std::stoull(num);
+            reads[readnum].sequence = std::move(seq);
+        }
+    }
+
+    if (nreads != expectedNumReads){
+		Read tmp;
+		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
+			return a == tmp;
+		});
+
+		std::cout << "WARNING. Expected " << expectedNumReads
+                  << " reads in results, but found only "
+                  << nreads << " reads. Results may not be correct!" << std::endl;
+	}
+
+    std::unique_ptr<ReadReader> reader;
+	switch (originalFormat) {
+	case Fileformat::FASTQ:
+		reader.reset(new FastqReader(originalReadFile));
+		break;
+	case Fileformat::FASTA:
+		throw std::runtime_error("Merging FASTA is currently not supported.");
+	default:
+		throw std::runtime_error("Merging: Invalid file format.");
+	}
+
+    Read read;
+	std::uint32_t readnum = 0;
+	while (reader->getNextRead(&read, &readnum)) {
+        reads[readnum].header = std::move(read.header);
+        reads[readnum].quality = std::move(read.quality);
+		readnum++;
+	}
+
+	std::ofstream outputfile(outputfile);
+
+	for (const auto& read : reads) {
+		outputfile << read.header << '\n' << read.sequence << '\n';
+
+		if (inputfileformat == Fileformat::FASTQ)
+			outputfile << '+' << '\n' << read.quality << '\n';
+	}
+
+	outputfile.flush();
+	outputfile.close();
+}
+
 
 void ErrorCorrector::mergeUnorderedThreadResults(
 		const std::string& filename) const {
@@ -386,6 +482,8 @@ void ErrorCorrector::correct(const std::string& filename) {
 	std::cout << "begin merge" << std::endl;
 
 	mergeUnorderedThreadResults(filename);
+
+
 
 	std::cout << "end merge" << std::endl;
 }
