@@ -45,6 +45,8 @@ class Barrier
       int thread_count;
 };
 
+	enum class Fileformat {FASTA, FASTQ};
+
 
 /*
     Corrects a single fastq file
@@ -76,23 +78,15 @@ struct ErrorCorrector {
 	void setEstimatedErrorRate(double rate);
 	void setM(double m);
 
-	
+
 
 private:
-
-
-
-	enum class Fileformat {FASTA, FASTQ};
 
 	void insertFile(const std::string& filename, bool buildHashmap);
 
 	void errorcorrectFile(const std::string& filename);
 
 	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
-
-	void mergeUnorderedThreadResults(const std::string& filename) const;
-
-	std::uint64_t getReadPos(const std::string& readheader) const;
 
 	void updateGlobalProgress(std::uint64_t increment, std::uint64_t maxglobalprogress);
 

@@ -172,7 +172,7 @@ void deleteFiles(std::vector<std::string> filenames){
         int ret = std::remove(filename.c_str());
         if (ret != 0){
             const std::string errormessage = "Could not remove file " + filename;
-            std::perror(errormessage);
+            std::perror(errormessage.c_str());
         }
     }
 }
@@ -196,7 +196,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     for(const auto& filename : filesToMerge){
         std::ifstream is(filename);
         if(!is)
-            throw std::runtime_error("could not open tmp file: " + outputPath + "/" + std::to_string(i));
+            throw std::runtime_error("could not open tmp file: " + filename);
 
         std::string num;
         std::string seq;
@@ -217,11 +217,6 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     }
 
     if (nreads != expectedNumReads){
-		Read tmp;
-		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
-			return a == tmp;
-		});
-
 		std::cout << "WARNING. Expected " << expectedNumReads
                   << " reads in results, but found only "
                   << nreads << " reads. Results may not be correct!" << std::endl;
@@ -246,135 +241,17 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 		readnum++;
 	}
 
-	std::ofstream outputfile(outputfile);
+	std::ofstream outputstream(outputfile);
 
 	for (const auto& read : reads) {
-		outputfile << read.header << '\n' << read.sequence << '\n';
+		outputstream << read.header << '\n' << read.sequence << '\n';
 
-		if (inputfileformat == Fileformat::FASTQ)
-			outputfile << '+' << '\n' << read.quality << '\n';
+		if (originalFormat == Fileformat::FASTQ)
+			outputstream << '+' << '\n' << read.quality << '\n';
 	}
 
-	outputfile.flush();
-	outputfile.close();
-}
-
-
-void ErrorCorrector::mergeUnorderedThreadResults(
-		const std::string& filename) const {
-
-	std::string name = filename;
-	std::string fileEnding = ".fq";
-
-	size_t lastdotpos = filename.find_last_of(".");
-	if (lastdotpos != std::string::npos) {
-		name = name.substr(0, lastdotpos);
-		fileEnding = filename.substr(lastdotpos);
-	}
-
-	size_t lastslashpos = filename.find_last_of("/");
-	if (lastslashpos != std::string::npos)
-		name = name.substr(lastslashpos + 1);
-
-	std::string currentOutputFilename;
-
-	if (outputFilename != "")
-		currentOutputFilename = outputPath + "/" + outputFilename;
-	else
-		currentOutputFilename = outputPath + "/" + name + "_"
-				+ std::to_string(minhashparams.k) + "_"
-				+ std::to_string(minhashparams.maps) + "_1" + "_alpha_"
-				+ std::to_string(graphalpha) + "_x_" + std::to_string(graphx)
-				+ "_corrected" + fileEnding;
-
-	std::cout << "merging into " << currentOutputFilename << std::endl;
-
-	const std::uint32_t totalNumberOfReads = readsPerFile.at(filename);
-	std::uint32_t nreads = 0;
-
-	std::vector<Read> reads(totalNumberOfReads);
-    //read thread results and store in reads
-	for (int i = 0; i < nCorrectorThreads; i++) {
-
-        std::ifstream is(outputPath + "/" + std::to_string(i));
-        if(!is)
-            throw std::runtime_error("could not open tmp file: " + outputPath + "/" + std::to_string(i));
-
-        std::string num;
-        std::string seq;
-
-        while(true){
-            std::getline(is, num);
-    		if (!is.good())
-    			break;
-            std::getline(is, seq);
-            if (!is.good())
-                break;
-
-            nreads++;
-
-            auto readnum = std::stoull(num);
-            reads[readnum].sequence = std::move(seq);
-        }
-	}
-
-    //read original input file and set correct headers and quality scores for result reads
-    std::unique_ptr<ReadReader> reader;
-	switch (inputfileformat) {
-	case Fileformat::FASTQ:
-		reader.reset(new FastqReader(filename));
-		break;
-	case Fileformat::FASTA:
-		reader.reset(new FastaReader(filename));
-		break;
-	default:
-		assert(false && "inputfileformat");
-		break;
-	}
-
-	Read read;
-	std::uint32_t readnum = 0;
-	while (reader->getNextRead(&read, &readnum)) {
-        reads[readnum].header = std::move(read.header);
-        reads[readnum].quality = std::move(read.quality);
-		readnum++;
-	}
-
-	if (nreads != totalNumberOfReads) {
-		Read tmp;
-		int asd = std::count_if(reads.begin(), reads.end(), [&](const auto& a) {
-			return a == tmp;
-		});
-
-		std::cout << "totalNumberOfReads " << totalNumberOfReads << '\n'
-				<< "nreads " << nreads << '\n' << "asd " << asd << '\n';
-		assert(nreads == totalNumberOfReads);
-	}
-	assert(nreads == totalNumberOfReads);
-
-	Read tmp;
-	if (std::find(reads.begin(), reads.end(), tmp) != reads.end())
-		std::cout << "error" << std::endl;
-
-	std::cout << "done in a moment" << std::endl;
-	std::ofstream outputfile(currentOutputFilename);
-
-	for (const auto& read : reads) {
-		outputfile << read.header << '\n' << read.sequence << '\n';
-
-		if (inputfileformat == Fileformat::FASTQ)
-			outputfile << '+' << '\n' << read.quality << '\n';
-	}
-
-	outputfile.flush();
-	outputfile.close();
-
-	for (int i = 0; i < nCorrectorThreads; i++) {
-		std::string s = outputPath + "/" + std::to_string(i);
-		int ret = std::remove(s.c_str());
-		if (ret != 0)
-			std::cout << "could not remove file " << s << std::endl;
-	}
+	outputstream.flush();
+	outputstream.close();
 }
 
 void ErrorCorrector::correct(const std::string& filename) {
@@ -459,6 +336,12 @@ void ErrorCorrector::correct(const std::string& filename) {
 	readStorage.noMoreInserts();
 	TIMERSTOPCPU(readstorage_transform);
 
+    std::vector<std::string> tmpfiles;
+    for(int i = 0; i < nCorrectorThreads; i++){
+        //tmpfiles.emplace_back(outputPath + "/" + filename + "_tmp_" + std::to_string(i));
+        tmpfiles.emplace_back(outputPath + "/" + std::to_string(i));
+    }
+
 	std::cout << "begin correct" << std::endl;
 
 	TIMERSTARTCPU(CORRECT);
@@ -481,9 +364,8 @@ void ErrorCorrector::correct(const std::string& filename) {
 #endif
 	std::cout << "begin merge" << std::endl;
 
-	mergeUnorderedThreadResults(filename);
-
-
+    mergeResultFiles(nReads, filename, inputfileformat, tmpfiles, outputPath + "/" + outputFilename);
+    deleteFiles(tmpfiles);
 
 	std::cout << "end merge" << std::endl;
 }
@@ -1130,47 +1012,6 @@ void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
 	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
 	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
 	cuda_cleanup_MinhashResultsDedupBuffers(minhashresultsdedupbuffers);
-}
-
-std::uint64_t ErrorCorrector::getReadPos(const std::string& readheader) const {
-	char dir = 'f';
-	auto slash = readheader.find("/");
-	if (slash != std::string::npos) {
-		dir = readheader[slash + 1];
-	}
-
-	if (dir != '1' && dir != '2') {
-		std::cout << "dir = " << dir << std::endl;
-		std::cout << readheader << std::endl;
-		throw std::runtime_error("getReadPos : unexpected header format");
-	}
-
-	/* the following code extracts the position of the read from the header
-	 i.e. if the header is @gi|556503834|ref|NC_000913.3|_4064476_4064981_0:0:0_0:0:0_0/1 , we need to extract 4064476
-	 */
-	// don't know if / how many '_' are used in read header. need to find all '_' and then count backwards to get to wanted position
-	std::vector<int> locations;
-	for (size_t i = 0; i < readheader.size(); i++)
-		if (readheader[i] == '_')
-			locations.push_back(i);
-
-	int offset_left;
-	int offset_right;
-	if (dir == '1') {
-		offset_left = 5;
-		offset_right = 4;
-	} else {  //dir == '2'
-		offset_left = 4;
-		offset_right = 3;
-	}
-
-	int substringpos = locations[locations.size() - offset_left] + 1;
-	int substringlength = locations[locations.size() - offset_right]
-			- locations[locations.size() - offset_left];
-
-	const std::uint64_t pos = std::stoll(
-			readheader.substr(substringpos, substringlength));
-	return pos;
 }
 
 void ErrorCorrector::setOutputPath(const std::string& path) {
