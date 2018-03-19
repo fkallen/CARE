@@ -21,7 +21,7 @@ inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 coverage=255
 #coverage=31
 
-errorrate=0.03
+errorrate=0.01
 m=0.6
 
 #output path. this is used as temporary storage, too

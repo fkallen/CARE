@@ -528,7 +528,7 @@ namespace hammingtools{
                 properties.failedAvgSupport = properties.avg_support < 1.0-correctionSettings.errorrate;
                 properties.failedMinSupport = properties.min_support < 1.0-3.0*correctionSettings.errorrate;
                 properties.failedMinCoverage = properties.min_coverage < correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
-		#if 1
+		#if 0
 				//correct anchor
 		//TODO vary parameters
 
