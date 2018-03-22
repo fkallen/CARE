@@ -9,7 +9,7 @@
 #include "../inc/hammingtools.hpp"
 #include "../inc/graphtools.hpp"
 
-
+#include "../inc/errorcorrectionthread.hpp"
 #include "../inc/batchelem.hpp"
 #include "../inc/pileup.hpp"
 #include "../inc/graph.hpp"
@@ -49,7 +49,8 @@
 #include <experimental/filesystem> // create_directories
 
 #define ERRORCORRECTION_TIMING
-//#define USE_REVCOMPL_FLAG
+
+namespace care{
 
 //constexpr int MAX_THREADS_PER_GPU = 30;
 
@@ -141,9 +142,6 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 		int nInserterThreads_, int nCorrectorThreads_) :
 		minhashparams(minhashparameters), nInserterThreads(nInserterThreads_), nCorrectorThreads(
 				nCorrectorThreads_), outputPath("") {
-	//cudaDeviceSetLimit(cudaLimitPrintfFifoSize,1 << 20); CUERR;
-	correctionmode = CorrectionMode::Hamming;
-	//correctionmode = CorrectionMode::Graph;
 
 	minhasher.minparams = minhashparameters;
 
@@ -545,473 +543,70 @@ void ErrorCorrector::insertFile(const std::string& filename,
 }
 
 void ErrorCorrector::errorcorrectFile(const std::string& filename) {
-	std::vector < std::thread > consumerthreads;
 
-	// spawn work on other threads
-	for (int threadId = 0; threadId < nCorrectorThreads; ++threadId) {
-		consumerthreads.emplace_back(&ErrorCorrector::errorcorrectWork, this,
-				threadId, nCorrectorThreads, filename);
-	}
 
-	for (auto& thread : consumerthreads)
+
+    CorrectionOptions opts;
+    opts.correctCandidates = false;
+    opts.useQualityScores = useQualityScores;
+    opts.alignmentscore_match = alignmentscore_match;
+    opts.alignmentscore_sub = alignmentscore_sub;
+    opts.alignmentscore_ins = alignmentscore_ins;
+    opts.alignmentscore_del = alignmentscore_del;
+    opts.min_overlap = min_overlap;
+    opts.kmerlength = minhashparams.k;
+    opts.max_mismatch_ratio = max_mismatch_ratio;
+    opts.min_overlap_ratio = min_overlap_ratio;
+    opts.estimatedCoverage = estimatedCoverage;
+    opts.errorrate = errorrate;
+    opts.m_coverage = m_coverage;
+    opts.graphalpha = graphalpha;
+    opts.graphx = graphx;
+    opts.maximum_sequence_length = maximum_sequence_length;
+
+    std::vector<BatchGenerator> generators(nCorrectorThreads);
+    std::vector<ErrorCorrectionThread> ecthreads(nCorrectorThreads);
+    std::vector<std::thread> consumerthreads;
+
+    for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
+
+        generators[threadId] = BatchGenerator(readsPerFile.at(filename), batchsize, threadId, nCorrectorThreads);
+        CorrectionThreadOptions threadOpts;
+        threadOpts.threadId = threadId;
+        threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
+        threadOpts.outputfile = outputPath + "/" + std::to_string(threadId);
+        threadOpts.batchGen = &generators[threadId];
+        threadOpts.minhasher = &minhasher;
+        threadOpts.readStorage = &readStorage;
+        threadOpts.coutLock = &writelock;
+        threadOpts.readIsProcessedVector = &readIsProcessedVector;
+        threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
+        threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
+
+        ecthreads[threadId].opts = opts;
+        ecthreads[threadId].threadOpts = threadOpts;
+
+        ecthreads[threadId].run();
+    }
+
+    std::uint32_t maxprogress = readsPerFile.at(filename);
+    std::uint32_t progress = 0;
+    while(progress < maxprogress){
+        progress = 0;
+        for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
+            progress += ecthreads[threadId].nProcessedReads;
+        }
+        printf("Progress: %3.2f %%\r",
+    			((progress * 1.0 / maxprogress) * 100.0));
+    	std::cout << std::flush;
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+    }
+
+
+	for (auto& thread : ecthreads)
 		thread.join();
-}
 
-void ErrorCorrector::errorcorrectWork(int threadId, int nThreads,
-		const std::string& fileToCorrect) {
-
-	std::chrono::duration<double> getCandidatesTimeTotal(0);
-	std::chrono::duration<double> mapMinhashResultsToSequencesTimeTotal(0);
-	std::chrono::duration<double> getAlignmentsTimeTotal(0);
-	std::chrono::duration<double> determinegoodalignmentsTime(0);
-	std::chrono::duration<double> fetchgoodcandidatesTime(0);
-	std::chrono::duration<double> majorityvotetime(0);
-	std::chrono::duration<double> basecorrectiontime(0);
-	std::chrono::duration<double> readcorrectionTimeTotal(0);
-	std::chrono::duration<double> mapminhashresultsdedup(0);
-	std::chrono::duration<double> mapminhashresultsfetch(0);
-	std::chrono::duration<double> graphbuildtime(0);
-	std::chrono::duration<double> graphcorrectiontime(0);
-
-	std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
-
-	// the output file of this thread
-	std::ofstream outputfile(outputPath + "/" + std::to_string(threadId));
-
-	auto write_read = [&](const auto readId, const auto& sequence){
-		auto& stream = outputfile;
-		stream << readId << '\n';
-		stream << sequence << '\n';
-	};
-
-	// number of processed reads after previous progress update
-	// resets after each progress update
-	std::uint64_t progressprocessedReads = 0;
-
-	// perform block distribution of reads to the threads. thread will process reads [firstRead, firstRead + chunkSize[
-	std::uint32_t totalNumberOfReads = readsPerFile.at(fileToCorrect);
-	std::uint32_t totalNumberOfBatches = (totalNumberOfReads + batchsize - 1)
-			/ batchsize;
-	std::uint32_t minBatchesPerThread = totalNumberOfBatches / nThreads;
-
-	std::uint32_t firstBatch = threadId * minBatchesPerThread;
-	// the last thread is responsible for leftover batches. set chunk size accordingly.
-	std::uint32_t chunkSize =
-			(threadId == nThreads - 1 && threadId > 0) ?
-					minBatchesPerThread + totalNumberOfBatches % nThreads :
-					minBatchesPerThread;
-
-	int avgsupportfail = 0;
-	int minsupportfail = 0;
-	int mincoveragefail = 0;
-	int sobadcouldnotcorrect = 0;
-	int verygoodalignment = 0;
-
-	int correctionCases[4] { 0, 0, 0, 0 }; // <= 2e, <= 3e, <= 4e, no correction
-    int duplicates = 0;
-#if 0
-	{
-		std::lock_guard<std::mutex> lg(writelock);
-		std::cout << "thread " << threadId << ": batches [" << firstBatch << ", " << (firstBatch + chunkSize) << ")" << std::endl;
-	}
-#endif
-
-	// total number of candidates returned from minhasher
-	std::uint64_t processedCandidates = 0;
-
-	// candidates which were corrected, too, during query correction
-	int nCorrectedCandidates = 0;
-	int nProcessedQueries = 0;
-
-	//printf("max seq length = %d\n", maximum_sequence_length);
-	int deviceId =
-			deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-	hammingtools::SHDdata shddata(deviceId, 1,
-			maximum_sequence_length);
-
-	graphtools::AlignerDataArrays sgadata(deviceId, maximum_sequence_length, ALIGNMENTSCORE_MATCH,
-			ALIGNMENTSCORE_SUB, ALIGNMENTSCORE_INS, ALIGNMENTSCORE_DEL);
-
-	MinhasherBuffers minhasherbuffers(deviceId);
-	MinhashResultsDedupBuffers minhashresultsdedupbuffers(deviceId);
-
-    std::vector<BatchElem> batch(batchsize,
-            BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
-
-    hammingtools::correction::PileupImage pileupImage(useQualityScores, CORRECT_CANDIDATE_READS_TOO, estimatedCoverage, MAX_MISMATCH_RATIO, errorrate, m_coverage, minhashparams.k);
-    graphtools::correction::ErrorGraph errorgraph(useQualityScores, MAX_MISMATCH_RATIO, graphalpha, graphx);
-
-	const int maxReadsPerLock =
-			(!CORRECT_CANDIDATE_READS_TOO) ?
-					1 :
-					((totalNumberOfReads + nLocksForProcessedFlags - 1)
-							/ nLocksForProcessedFlags) + batchsize
-							- ((totalNumberOfReads + nLocksForProcessedFlags - 1)
-									/ nLocksForProcessedFlags) % batchsize;
-
-	// loop over the reads to process
-#ifdef __NVCC__
-	int itersUntilProfilingStops = 4;
-	//cudaProfilerStart();
-#endif
-
-	for (std::uint32_t currentBatchNum = firstBatch;
-			currentBatchNum < firstBatch + chunkSize; currentBatchNum += 1) {
-		const std::uint32_t readnum = currentBatchNum * batchsize; // id of first read in batch
-
-		assert(readnum < totalNumberOfReads);
-
-#ifdef __NVCC__
-		if(itersUntilProfilingStops == 0){
-			//cudaProfilerStop();
-		}
-		itersUntilProfilingStops--;
-#endif
-
-		// boundary condition. cannot process more reads than the remaining reads
-		//std::uint32_t actualBatchSize = std::min(batchsize, firstRead + chunkSize - readnum);
-		std::uint32_t actualBatchSize = std::min(batchsize,
-				totalNumberOfReads - readnum);
-
-		//fit vector size to actual batch size
-		if (actualBatchSize < batchsize) {
-            batch.resize(actualBatchSize, BatchElem(&readStorage, errorrate, estimatedCoverage, m_coverage, MAX_MISMATCH_RATIO, MIN_OVERLAP, MIN_OVERLAP_RATIO));
-        }
-
-        for(auto& b : batch){
-            b.set_read_id(readnum + (&b - &batch[0]));
-            nProcessedQueries++;
-        }
-
-		if (CORRECT_CANDIDATE_READS_TOO) {
-			int batchlockindex = readnum / maxReadsPerLock;
-			//assert lock ids are good
-			/*for(std::uint32_t i = 0; i < actualBatchSize; i++){
-			 if(std::uint32_t(batchlockindex) != (readnum + i) / maxReadsPerLock){
-			 std::lock_guard<std::mutex> lg(writelock);
-			 std::cout << "threads : " << nThreads << '\n'
-			 << "threadId : " << threadId << '\n'
-			 << "totalNumberOfReads : " << totalNumberOfReads << '\n'
-			 << "nLocksForProcessedFlags : " << nLocksForProcessedFlags << '\n'
-			 << "batchsize : " << batchsize << '\n'
-			 << "actualBatchSize : " << actualBatchSize << '\n'
-			 << "maxReadsPerLock : " << maxReadsPerLock << '\n'
-			 << "readnum : " << readnum << '\n'
-			 << "i : " << i << std::endl;
-			 assert(std::uint32_t(batchlockindex) == (readnum + i) / maxReadsPerLock);
-			 }
-
-			 }*/
-			std::unique_lock < std::mutex
-					> lock(locksForProcessedFlags[batchlockindex]);
-			for (std::uint32_t i = 0; i < actualBatchSize; i++) {
-				if (readIsProcessedVector[readnum + i] == 0) {
-					readIsProcessedVector[readnum + i] = 1;
-				} else {
-                    batch[i].active = false;
-                    nProcessedQueries--;
-				}
-			}
-		}
-
-        std::partition(batch.begin(), batch.end(), [](auto& b){return b.active;});
-
-        tpa = std::chrono::system_clock::now();
-
-        for(auto& b : batch){
-            if(b.active){
-                b.fetch_query_data_from_readstorage();
-
-                tpc = std::chrono::system_clock::now();
-                b.set_candidate_ids(minhasher.getCandidates(minhasherbuffers, b.fwdSequenceString));
-                tpd = std::chrono::system_clock::now();
-        		getCandidatesTimeTotal += tpd - tpc;
-
-				if(b.candidateIds.size() == 0){
-					//no need for further processing
-					b.active = false;
-					write_read(b.readId, b.fwdSequenceString);
-				}else{
-                    b.make_unique_sequences();
-                    duplicates += b.get_number_of_duplicate_sequences();
-
-                    //t2 = std::chrono::system_clock::now();
-					//mapminhashresultsdedup += (t2 - t1);
-                    //t1 = std::chrono::system_clock::now();
-
-                    b.fetch_revcompl_sequences_from_readstorage();
-
-                    //t2 = std::chrono::system_clock::now();
-                    //mapminhashresultsfetch += (t2 - t1);
-                }
-            }
-        }
-
-		tpb = std::chrono::system_clock::now();
-		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
-
-
-        tpa = std::chrono::system_clock::now();
-        if (correctionmode == CorrectionMode::Hamming) {
-            hammingtools::getMultipleAlignments(shddata, batch, true);
-        }else if (correctionmode == CorrectionMode::Graph){
-            graphtools::getMultipleAlignments(sgadata, batch, true);
-        }else{
-            throw std::runtime_error("Alignment: invalid correction mode.");
-        }
-
-        tpb = std::chrono::system_clock::now();
-        getAlignmentsTimeTotal += tpb - tpa;
-
-        //select candidates from alignments
-        for(auto& b : batch){
-            if(b.active){
-
-                tpc = std::chrono::system_clock::now();
-
-                DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
-
-                if(Astats.correctionCases[3] > 0){
-                    //no correction because not enough good alignments. write original sequence to output
-                    write_read(b.readId, b.fwdSequenceString);
-                }
-
-                tpd = std::chrono::system_clock::now();
-                determinegoodalignmentsTime += tpd - tpc;
-
-                correctionCases[0] += Astats.correctionCases[0];
-                correctionCases[1] += Astats.correctionCases[1];
-                correctionCases[2] += Astats.correctionCases[2];
-                correctionCases[3] += Astats.correctionCases[3];
-
-                tpc = std::chrono::system_clock::now();
-
-                if(b.active){
-                    //move candidates which are used for correction to the front
-                    b.prepare_good_candidates();
-                }
-
-                tpd = std::chrono::system_clock::now();
-                fetchgoodcandidatesTime += tpd - tpc;
-            }
-        }
-
-		if (correctionmode == CorrectionMode::Hamming) {
-
-
-            for(size_t i = 0; i < batch.size(); i++){
-                BatchElem& b = batch[i];
-                if(b.active){
-                    tpc = std::chrono::system_clock::now();
-
-                    pileupImage.correct_batch_elem(b);
-
-                    tpd = std::chrono::system_clock::now();
-                    readcorrectionTimeTotal += tpd - tpc;
-
-                    majorityvotetime += pileupImage.timings.findconsensustime;
-                    basecorrectiontime += pileupImage.timings.correctiontime;
-
-                    avgsupportfail += pileupImage.properties.failedAvgSupport;
-                    minsupportfail += pileupImage.properties.failedMinSupport;
-                    mincoveragefail += pileupImage.properties.failedMinCoverage;
-                    verygoodalignment += pileupImage.properties.isHQ;
-
-                    if(b.corrected){
-						write_read(b.readId, b.correctedSequence);
-                    }else{
-						write_read(b.readId, b.fwdSequenceString);
-                    }
-
-                    if (CORRECT_CANDIDATE_READS_TOO) {
-                        for(const auto& correctedCandidate : b.correctedCandidates){
-                            const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1] - b.candidateCountsPrefixSum[correctedCandidate.index];
-                            for(int f = 0; f < count; f++){
-                                const int candidateId = b.candidateIds[count + f];
-                                const int batchlockindex = candidateId
-                                        / maxReadsPerLock;
-                                bool savingIsOk = false;
-                                if (readIsProcessedVector[candidateId]
-                                        == 0) {
-                                    std::unique_lock < std::mutex
-                                            > lock(
-                                                    locksForProcessedFlags[batchlockindex]);
-                                    if (readIsProcessedVector[candidateId]
-                                            == 0) {
-                                        readIsProcessedVector[candidateId] =
-                                                1; // we will process this read
-                                        lock.unlock();
-                                        savingIsOk = true;
-                                        nCorrectedCandidates++;
-                                    }
-                                }
-                                if (savingIsOk) {
-                                    if (b.bestIsForward[correctedCandidate.index])
-										write_read(candidateId, correctedCandidate.sequence);
-                                    else {
-										//correctedCandidate.sequence is reverse complement, make reverse complement again
-                                        const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
-                                        write_read(candidateId, fwd);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }else if (correctionmode == CorrectionMode::Graph){
-
-                for(size_t i = 0; i < batch.size(); i++){
-                    BatchElem& b = batch[i];
-                    if(b.active){
-                        tpc = std::chrono::system_clock::now();
-
-                        errorgraph.correct_batch_elem(b);
-
-                        tpd = std::chrono::system_clock::now();
-                        readcorrectionTimeTotal += tpd - tpc;
-
-                        if(b.corrected){
-    						write_read(b.readId, b.correctedSequence);
-                        }else{
-    						write_read(b.readId, b.fwdSequenceString);
-                        }
-                    }
-                }
-        }else{
-            throw std::runtime_error("Correction: invalid correction mode.");
-        }
-
-		// update local progress
-		progressprocessedReads += actualBatchSize;
-
-		// update global progress
-		if (progressprocessedReads > progressThreshold) {
-			updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
-			progressprocessedReads = 0;
-		}
-	}
-
-	//final progress update
-	updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
-
-	{
-		std::lock_guard < std::mutex > lg(writelock);
-		std::cout << "thread " << threadId << " processed candidates "
-				<< processedCandidates << std::endl;
-		std::cout << "thread " << threadId << " processed " << nProcessedQueries
-				<< " queries" << std::endl;
-		std::cout << "thread " << threadId << " corrected "
-				<< nCorrectedCandidates << " candidates" << std::endl;
-		std::cout << "thread " << threadId << " avgsupportfail "
-				<< avgsupportfail << std::endl;
-		std::cout << "thread " << threadId << " minsupportfail "
-				<< minsupportfail << std::endl;
-		std::cout << "thread " << threadId << " mincoveragefail "
-				<< mincoveragefail << std::endl;
-		std::cout << "thread " << threadId << " sobadcouldnotcorrect "
-				<< sobadcouldnotcorrect << std::endl;
-		std::cout << "thread " << threadId << " verygoodalignment "
-				<< verygoodalignment << std::endl;
-		std::cout << "thread " << threadId << " correctionCases "
-				<< correctionCases[0] << " " << correctionCases[1] << " "
-				<< correctionCases[2] << " " << correctionCases[3] << " "
-				<< std::endl;
-
-	}
-
-#if 1
-	{
-		if (correctionmode == CorrectionMode::Hamming) {
-			std::lock_guard < std::mutex > lg(writelock);
-			std::cout << "thread " << threadId << " : getCandidatesTimeTotal "
-					<< getCandidatesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : mapminhashresultsdedup "
-					<< mapminhashresultsdedup.count() << '\n';
-			std::cout << "thread " << threadId << " : mapminhashresultsfetch "
-					<< mapminhashresultsfetch.count() << '\n';
-			std::cout << "thread " << threadId
-					<< " : mapMinhashResultsToSequencesTimeTotal "
-					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-            std::cout << "thread " << threadId
-                    << " : duplicates "
-                    << duplicates << '\n';
-			std::cout << "thread " << threadId << " : alignment resize buffer "
-					<< shddata.resizetime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment preprocessing "
-					<< shddata.preprocessingtime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment H2D "
-					<< shddata.h2dtime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment calculation "
-					<< shddata.alignmenttime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment D2H "
-					<< shddata.d2htime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment postprocessing "
-					<< shddata.postprocessingtime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId
-					<< " : correction find good alignments "
-					<< determinegoodalignmentsTime.count() << '\n';
-			std::cout << "thread " << threadId
-					<< " : correction fetch good data "
-					<< fetchgoodcandidatesTime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup vote "
-					<< pileupImage.timings.findconsensustime.count() << '\n';
-			std::cout << "thread " << threadId << " : pileup correct "
-					<< pileupImage.timings.correctiontime.count() << '\n';
-			std::cout << "thread " << threadId << " : correction calculation "
-					<< readcorrectionTimeTotal.count() << '\n';
-			// std::cout << "thread " << threadId << " : pileup resize buffer "
-			// 		<< hcorrectionbuffers.resizetime.count() << '\n';
-			// std::cout << "thread " << threadId << " : pileup preprocessing "
-			// 		<< hcorrectionbuffers.preprocessingtime.count() << '\n';
-			// std::cout << "thread " << threadId << " : pileup H2D "
-			// 		<< hcorrectionbuffers.h2dtime.count() << '\n';
-			// std::cout << "thread " << threadId << " : pileup calculation "
-			// 		<< hcorrectionbuffers.correctiontime.count() << '\n';
-			// std::cout << "thread " << threadId << " : pileup D2H "
-			// 		<< hcorrectionbuffers.d2htime.count() << '\n';
-			// std::cout << "thread " << threadId << " : pileup postprocessing "
-			// 		<< hcorrectionbuffers.postprocessingtime.count() << '\n';
-		} else if (correctionmode == CorrectionMode::Graph) {
-			std::cout << "thread " << threadId << " : getCandidatesTimeTotal "
-					<< getCandidatesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : mapminhashresultsdedup "
-					<< mapminhashresultsdedup.count() << '\n';
-			std::cout << "thread " << threadId << " : mapminhashresultsfetch "
-					<< mapminhashresultsfetch.count() << '\n';
-			std::cout << "thread " << threadId
-					<< " : mapMinhashResultsToSequencesTimeTotal "
-					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment resize buffer " << sgadata.resizetime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment preprocessing " << sgadata.preprocessingtime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment H2D " << sgadata.h2dtime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment calculation " << sgadata.alignmenttime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment D2H " << sgadata.d2htime.count() << '\n';
-			std::cout << "thread " << threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';
-            std::cout << "thread " << threadId
-					<< " : correction find good alignments "
-					<< determinegoodalignmentsTime.count() << '\n';
-			std::cout << "thread " << threadId
-					<< " : correction fetch good data "
-					<< fetchgoodcandidatesTime.count() << '\n';
-			std::cout << "thread " << threadId << " : graph build "
-					<< graphbuildtime.count() << '\n';
-			std::cout << "thread " << threadId << " : graph correct "
-					<< graphcorrectiontime.count() << '\n';
-			std::cout << "thread " << threadId << " : correction calculation "
-					<< readcorrectionTimeTotal.count() << '\n';
-		}
-	}
-#endif
-
-	hammingtools::cuda_cleanup_SHDdata(shddata);
-	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
-	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
-	cuda_cleanup_MinhashResultsDedupBuffers(minhashresultsdedupbuffers);
+    printf("Progress: %3.2f %%\n", 100.00);
 }
 
 void ErrorCorrector::setOutputPath(const std::string& path) {
@@ -1048,10 +643,10 @@ void ErrorCorrector::setBatchsize(int n) {
 
 void ErrorCorrector::setAlignmentScores(int matchscore, int subscore,
 		int insertscore, int delscore) {
-	ALIGNMENTSCORE_MATCH = matchscore;
-	ALIGNMENTSCORE_SUB = subscore;
-	ALIGNMENTSCORE_INS = insertscore;
-	ALIGNMENTSCORE_DEL = delscore;
+	alignmentscore_match= matchscore;
+	alignmentscore_sub = subscore;
+	alignmentscore_ins = insertscore;
+	alignmentscore_del = delscore;
 }
 
 void ErrorCorrector::setMaxMismatchRatio(double ratio) {
@@ -1059,14 +654,14 @@ void ErrorCorrector::setMaxMismatchRatio(double ratio) {
 		throw std::runtime_error(
 				"max mismatch ratio must be >= 0.0 and <= 1.0");
 
-	MAX_MISMATCH_RATIO = ratio;
+	max_mismatch_ratio = ratio;
 }
 
 void ErrorCorrector::setMinimumAlignmentOverlap(int overlap) {
 	if (overlap < 0)
 		throw std::runtime_error("batchsize must be >= 0");
 
-	MIN_OVERLAP = overlap;
+	min_overlap = overlap;
 }
 
 void ErrorCorrector::setMinimumAlignmentOverlapRatio(double ratio) {
@@ -1074,7 +669,7 @@ void ErrorCorrector::setMinimumAlignmentOverlapRatio(double ratio) {
 		throw std::runtime_error(
 				"min alignment overlap ratio must be >= 0.0 and <= 1.0");
 
-	MIN_OVERLAP_RATIO = ratio;
+	min_overlap_ratio = ratio;
 }
 
 void ErrorCorrector::setFileFormat(const std::string& format) {
@@ -1111,4 +706,6 @@ void ErrorCorrector::setM(double m) {
 		throw std::runtime_error("set invalid m");
 
 	m_coverage = m;
+}
+
 }

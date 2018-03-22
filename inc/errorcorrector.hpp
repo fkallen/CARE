@@ -1,10 +1,12 @@
 #ifndef ERRORCORRECTOR_HPP
 #define ERRORCORRECTOR_HPP
 
+#include "errorcorrectionthread.hpp"
 #include "minhasher.hpp"
 #include "read.hpp"
 #include "readstorage.hpp"
 #include "threadsafe_buffer.hpp"
+
 
 #include <cstdint>
 #include <vector>
@@ -14,10 +16,7 @@
 #include <condition_variable>
 #include <tuple>
 
-//#define USE_QUALITY_SCORES
-
-
-enum class CorrectionMode {Hamming, Graph};
+namespace care{
 
 class Barrier
 {
@@ -54,21 +53,14 @@ class Barrier
 struct ErrorCorrector {
 
 	ErrorCorrector();
-
 	ErrorCorrector(const MinhashParameters& minhashparameters, int nInserterThreads, int nCorrectorThreads);
 
 	void correct(const std::string& filename);
-
 	void setOutputPath(const std::string& path);
-
 	void setGraphSettings(double alpha, double x);
-
 	void setOutputFilename(const std::string& filename);
-
 	void setBatchsize(int n);
-
 	void setAlignmentScores(int matchscore, int subscore, int insertscore, int delscore);
-
 	void setMaxMismatchRatio(double ratio);
 	void setMinimumAlignmentOverlap(int overlap);
 	void setMinimumAlignmentOverlapRatio(double ratio);
@@ -83,17 +75,12 @@ struct ErrorCorrector {
 private:
 
 	void insertFile(const std::string& filename, bool buildHashmap);
-
 	void errorcorrectFile(const std::string& filename);
-
 	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
-
 	void updateGlobalProgress(std::uint64_t increment, std::uint64_t maxglobalprogress);
 
 	Minhasher minhasher;
-
 	MinhashParameters minhashparams;
-
 	mutable ReadStorage readStorage;
 
 	std::vector<ThreadsafeBuffer<
@@ -112,14 +99,14 @@ private:
 
 	std::uint32_t batchsize = 20;
 
-	int ALIGNMENTSCORE_MATCH = 1;
-	int ALIGNMENTSCORE_SUB = -1;
-	int ALIGNMENTSCORE_INS = -100;
-	int ALIGNMENTSCORE_DEL = -100;
+	int alignmentscore_match = 1;
+	int alignmentscore_sub = -1;
+	int alignmentscore_ins = -100;
+	int alignmentscore_del = -100;
 
-	double MAX_MISMATCH_RATIO = 0.2;
-	int MIN_OVERLAP = 35;
-	double MIN_OVERLAP_RATIO = 0.35;
+	double max_mismatch_ratio = 0.2;
+	int min_overlap = 35;
+	double min_overlap_ratio = 0.35;
 
 	bool useQualityScores = false;
 
@@ -144,9 +131,10 @@ private:
 	double errorrate;
 	double m_coverage;
 
-	CorrectionMode correctionmode = CorrectionMode::Hamming;
 	int maximum_sequence_length = 0;
 
 };
+
+}
 
 #endif

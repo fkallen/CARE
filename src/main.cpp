@@ -42,19 +42,19 @@ int main(int argc, char** argv){
 		("insertscore", "Score for insertion during alignment.", cxxopts::value<int>()->default_value("-100")->implicit_value("-100"))
 		("deletionscore", "Score for deletion during alignment.", cxxopts::value<int>()->default_value("-100")->implicit_value("-100"))
 
-		("maxmismatchratio", "Overlap between query and candidate must contain at most maxmismatchratio * overlapsize mismatches", 
+		("maxmismatchratio", "Overlap between query and candidate must contain at most maxmismatchratio * overlapsize mismatches",
 					cxxopts::value<double>()->default_value("0.2")->implicit_value("0.2"))
 		("minalignmentoverlap", "Overlap between query and candidate must be at least this long", cxxopts::value<int>()->default_value("35")->implicit_value("35"))
-		("minalignmentoverlapratio", "Overlap between query and candidate must be at least as long as minalignmentoverlapratio * querylength", 
+		("minalignmentoverlapratio", "Overlap between query and candidate must be at least as long as minalignmentoverlapratio * querylength",
 					cxxopts::value<double>()->default_value("0.35")->implicit_value("0.35"))
-		("f,fileformat", "Format of input file. Allowed values: {fasta, fastq}", 
+		("f,fileformat", "Format of input file. Allowed values: {fasta, fastq}",
 					cxxopts::value<std::string>()->default_value("fastq")->implicit_value("fastq"))
 
-		("c,coverage", "estimated coverage of input file", 
+		("c,coverage", "estimated coverage of input file",
 					cxxopts::value<int>()->default_value("20")->implicit_value("20"))
-		("r,errorrate", "estimated error rate of input file", 
+		("r,errorrate", "estimated error rate of input file",
 					cxxopts::value<double>()->default_value("0.03")->implicit_value("0.03"))
-		("m_coverage", "m", 
+		("m_coverage", "m",
 					cxxopts::value<double>()->default_value("0.6")->implicit_value("0.6"))
 
 	;
@@ -67,7 +67,7 @@ int main(int argc, char** argv){
 	}
 
 
-	if(options["hashmaps"].as<int>() < 1 
+	if(options["hashmaps"].as<int>() < 1
 		|| options["kmerlength"].as<int>() < 1
 		|| options["insertthreads"].as<int>() < 1
 		|| options["correctorthreads"].as<int>() < 1 ){
@@ -81,7 +81,7 @@ int main(int argc, char** argv){
 
 TIMERSTARTCPU(INIT)
 
-	ErrorCorrector corrector(minhashparams, options["insertthreads"].as<int>(), options["correctorthreads"].as<int>());
+	care::ErrorCorrector corrector(minhashparams, options["insertthreads"].as<int>(), options["correctorthreads"].as<int>());
 TIMERSTOPCPU(INIT)
 
 	corrector.setOutputPath(options["outdir"].as<std::string>());
@@ -108,5 +108,3 @@ TIMERSTOPCPU(INIT)
 
 	return 0;
 }
-
-

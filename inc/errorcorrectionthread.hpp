@@ -12,6 +12,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace care{
@@ -70,8 +71,8 @@ struct CorrectionThreadOptions{
 };
 
 struct ErrorCorrectionThread{
-    const CorrectionOptions* opts;
-    const CorrectionThreadOptions* threadOpts
+    CorrectionOptions opts;
+    CorrectionThreadOptions threadOpts;
 
     std::uint32_t nProcessedReads = 0;
 
@@ -99,7 +100,13 @@ struct ErrorCorrectionThread{
 	std::chrono::duration<double> graphbuildtime;
 	std::chrono::duration<double> graphcorrectiontime;
 
+    std::thread thread;
+    bool isRunning = false;
+
     void run();
+    void join();
+private:
+    void execute();
 };
 
 }
