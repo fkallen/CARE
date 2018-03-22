@@ -16,31 +16,32 @@ namespace care{
 
 /// BatchGenerator
 
-BatchGenerator::BatchGenerator(std::uint32_t firstBatch, std::uint32_t lastBatch, std::uint32_t batchsize)
-        : batchsize(batchsize), firstBatch(firstBatch), lastBatch(lastBatch), currentBatch(firstBatch){
+BatchGenerator::BatchGenerator(std::uint32_t firstId, std::uint32_t lastIdExcl, std::uint32_t batchsize)
+        : batchsize(batchsize), firstId(firstId), lastIdExcl(lastIdExcl), currentId(firstId){
             if(batchsize == 0) throw std::runtime_error("BatchGenerator: invalid batch size");
-            if(firstBatch > lastBatch) throw std::runtime_error("BatchGenerator: firstBatch > lastBatch");
+            if(firstId >= lastIdExcl) throw std::runtime_error("BatchGenerator: firstId >= lastIdExcl");
         }
 
 BatchGenerator::BatchGenerator(std::uint32_t totalNumberOfReads, std::uint32_t batchsize_, int threadId, int nThreads){
     if(threadId < 0) throw std::runtime_error("BatchGenerator: invalid threadId");
     if(nThreads < 0) throw std::runtime_error("BatchGenerator: invalid nThreads");
+	
+	std::uint32_t chunksize = totalNumberOfReads / nThreads;
+	int leftover = totalNumberOfReads % nThreads;
+	
+	if(threadId < leftover){
+		chunksize++;
+		firstId = threadId == 0 ? 0 : threadId * chunksize;
+		lastIdExcl = firstId + chunksize;
+	}else{
+		firstId = leftover * (chunksize+1) + (threadId - leftover) * chunksize;;
+		lastIdExcl = firstId + chunksize;		
+	}
+	
 
-	std::uint32_t totalNumberOfBatches = (totalNumberOfReads + batchsize_- 1)
-			/ batchsize_;
-	std::uint32_t minBatchesPerThread = totalNumberOfBatches / nThreads;
-
-	// the last thread is responsible for leftover batches. set chunk size accordingly.
-	std::uint32_t chunkSize =
-			(threadId == nThreads - 1 && threadId > 0) ?
-					minBatchesPerThread + totalNumberOfBatches % nThreads :
-					minBatchesPerThread;
-
-    firstBatch = threadId * minBatchesPerThread;
-    lastBatch = firstBatch + chunkSize - 1;
-    currentBatch = firstBatch;
+    currentId = firstId;
     batchsize = batchsize_;
-std::cout << "thread " << threadId << " first " << firstBatch << " last " << lastBatch << " batchsize " << batchsize << std::endl;
+std::cout << "thread " << threadId << " first " << firstId << " lastIdExcl " << lastIdExcl << " batchsize " << batchsize << std::endl;
 }
 
 BatchGenerator::BatchGenerator(const BatchGenerator& rhs){
@@ -52,17 +53,17 @@ BatchGenerator::BatchGenerator(BatchGenerator&& rhs){
 
 BatchGenerator& BatchGenerator::operator=(const BatchGenerator& rhs){
     batchsize = rhs.batchsize;
-    firstBatch = rhs.firstBatch;
-    lastBatch = rhs.lastBatch;
-    currentBatch = rhs.currentBatch;
+    firstId = rhs.firstId;
+    lastIdExcl = rhs.lastIdExcl;
+    currentId = rhs.currentId;
     return *this;
 }
 
 BatchGenerator& BatchGenerator::operator=(BatchGenerator&& rhs){
     batchsize = rhs.batchsize;
-    firstBatch = rhs.firstBatch;
-    lastBatch = rhs.lastBatch;
-    currentBatch = rhs.currentBatch;
+    firstId = rhs.firstId;
+    lastIdExcl = rhs.lastIdExcl;
+    currentId = rhs.currentId;
     return *this;
 }
 
@@ -71,12 +72,10 @@ BatchGenerator& BatchGenerator::operator=(BatchGenerator&& rhs){
 */
 std::vector<std::uint32_t> BatchGenerator::getNextReadIds(){
     std::vector<std::uint32_t> result;
-    if(currentBatch <= lastBatch){
-        for(std::uint32_t i = 0; i < batchsize; i++){
-            result.push_back(currentBatch * batchsize + i);
-        }
-        currentBatch++;
-    }
+	while(result.size() < batchsize && currentId < lastIdExcl){
+		result.push_back(currentId);
+		currentId++;
+	}
     return result;
 }
 

@@ -21,7 +21,7 @@ enum class CorrectionMode {Hamming, Graph};
 
 struct BatchGenerator{
     BatchGenerator(){}
-    BatchGenerator(std::uint32_t firstBatch, std::uint32_t lastBatch, std::uint32_t batchsize);
+    BatchGenerator(std::uint32_t firstId, std::uint32_t lastIdExcl, std::uint32_t batchsize);
     BatchGenerator(std::uint32_t totalNumberOfReads, std::uint32_t batchsize, int threadId, int nThreads);
     BatchGenerator(const BatchGenerator& rhs);
     BatchGenerator(BatchGenerator&& rhs);
@@ -31,9 +31,9 @@ struct BatchGenerator{
     std::vector<std::uint32_t> getNextReadIds();
 private:
     std::uint32_t batchsize;
-    std::uint32_t firstBatch;
-    std::uint32_t lastBatch;
-    std::uint32_t currentBatch;
+    std::uint32_t firstId;
+    std::uint32_t lastIdExcl;
+    std::uint32_t currentId;
 };
 
 struct CorrectionOptions{
