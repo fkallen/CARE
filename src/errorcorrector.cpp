@@ -248,6 +248,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 	outputstream.close();
 }
 
+void ErrorCorrector::correct(const std::string& filename, const std::string& outputfilename){
+    
+}
+
 void ErrorCorrector::correct(const std::string& filename) {
 	//if (inputfileformat == Fileformat::FASTA)
 	//	setUseQualityScores(false);

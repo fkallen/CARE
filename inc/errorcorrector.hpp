@@ -71,7 +71,7 @@ struct ErrorCorrector {
 
 
 private:
-
+    void correct(const std::string& filename, const std::string& outputfilename);
 	void errorcorrectFile(const std::string& filename);
 	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
 	void updateGlobalProgress(std::uint64_t increment, std::uint64_t maxglobalprogress);
