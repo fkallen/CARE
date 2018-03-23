@@ -38,9 +38,11 @@
 		clear();
 
 		//headers.resize(nReads);
-		qualityscores.resize(nReads);
-		reverseComplqualityscores.resize(nReads);
 		sequences.resize(nReads);
+        if(useQualityScores){
+            qualityscores.resize(nReads);
+    		reverseComplqualityscores.resize(nReads);            
+        }
 	}
 
 	void ReadStorage::clear(){
