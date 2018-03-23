@@ -58,10 +58,10 @@ namespace care{
 	}
 
 
-    std::uint64_t getNumberOfReads(const std::string& filename, Fileformat format){
+    std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
         std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
-        case Fileformat::FASTQ:
+        case FileFormat::FASTQ:
             reader.reset(new FastqReader(filename));
             break;
     	default:
@@ -72,5 +72,93 @@ namespace care{
         while(reader->getNextRead(&r));
 
         return reader->getReadnum();
+    }
+
+    /*
+        Deletes every file in vector filenames
+    */
+    void deleteFiles(std::vector<std::string> filenames){
+        for (const auto& filename : filenames) {
+            int ret = std::remove(filename.c_str());
+            if (ret != 0){
+                const std::string errormessage = "Could not remove file " + filename;
+                std::perror(errormessage.c_str());
+            }
+        }
+    }
+
+    /*
+        Merges temporary results with unordered reads into single file outputfile with ordered reads.
+        Temporary result files are expected to be in format:
+
+        readnumber
+        sequence
+        readnumber
+        sequence
+        ...
+    */
+    void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                          FileFormat originalFormat,
+                          const std::vector<std::string>& filesToMerge, const std::string& outputfile){
+        std::vector<Read> reads(expectedNumReads);
+        std::uint32_t nreads = 0;
+
+        for(const auto& filename : filesToMerge){
+            std::ifstream is(filename);
+            if(!is)
+                throw std::runtime_error("could not open tmp file: " + filename);
+
+            std::string num;
+            std::string seq;
+
+            while(true){
+                std::getline(is, num);
+        		if (!is.good())
+        			break;
+                std::getline(is, seq);
+                if (!is.good())
+                    break;
+
+                nreads++;
+
+                auto readnum = std::stoull(num);
+                reads[readnum].sequence = std::move(seq);
+            }
+        }
+
+        if (nreads != expectedNumReads){
+    		std::cout << "WARNING. Expected " << expectedNumReads
+                      << " reads in results, but found only "
+                      << nreads << " reads. Results may not be correct!" << std::endl;
+    	}
+
+        std::unique_ptr<SequenceFileReader> reader;
+    	switch (originalFormat) {
+    	case FileFormat::FASTQ:
+    		reader.reset(new FastqReader(originalReadFile));
+    		break;
+    	default:
+    		throw std::runtime_error("Merging: Invalid file format.");
+    	}
+
+        Read read;
+
+    	while (reader->getNextRead(&read)) {
+            std::uint64_t readIndex = reader->getReadnum() - 1;
+            reads[readIndex].header = std::move(read.header);
+            reads[readIndex].quality = std::move(read.quality);
+    	}
+
+    	std::ofstream outputstream(outputfile);
+
+    	for (const auto& read : reads) {
+    		outputstream << read.header << '\n' << read.sequence << '\n';
+
+    		if (originalFormat == FileFormat::FASTQ)
+    			outputstream << '+' << '\n' << read.quality << '\n';
+    	}
+
+    	outputstream.flush();
+    	outputstream.close();
     }
 }

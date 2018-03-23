@@ -1,10 +1,8 @@
-#ifndef MINHASHER_HPP
-#define MINHASHER_HPP
+#ifndef CARE_MINHASHER_HPP
+#define CARE_MINHASHER_HPP
 
 #include "read.hpp"
-
-#include "ganja/open_addressing_multi_hash_map.cuh"
-#include "ganja/hash_functions.cuh"
+#include "args.hpp"
 #include "kvmapfixed.hpp"
 
 #include <set>
@@ -15,22 +13,7 @@
 #include <chrono>
 #include <stdexcept>
 
-struct MinhashParameters {
-	int maps;
-	int k;
-
-	MinhashParameters() : MinhashParameters(1, 1)
-	{
-	}
-
-	MinhashParameters(const int number_maps, const int k_)
-		:  maps(number_maps), k(k_)
-	{
-		if(maps < 1 || k < 1){
-			throw std::runtime_error("constructor arguments of MinhashParameters must be greater than zero.");
-		}
-	}
-};
+namespace care{
 
 struct MinhasherBuffers{
 	std::uint64_t* allMinhashResults = nullptr;
@@ -58,7 +41,7 @@ struct Minhasher {
 
 	// the actual hash maps
 	std::vector<std::unique_ptr<KVMapFixed<key_t>>> minhashTables;
-	MinhashParameters minparams;
+	MinhashOptions minparams;
 	std::uint64_t nReads;
 
 	std::chrono::duration<double> minhashtime;
@@ -66,7 +49,7 @@ struct Minhasher {
 
 	Minhasher();
 
-	Minhasher(const MinhashParameters& parameters);
+	Minhasher(const MinhashOptions& parameters);
 
 	void init(std::uint64_t nReads);
 
@@ -91,5 +74,7 @@ private:
 	int minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, std::uint32_t* isForwardStrand) const; // calculates the hash values
 	void bandhashfunc(const std::uint64_t* minhashSignature, std::uint64_t* bandHashValues) const; // combines multiple hash values to keys
 };
+
+}
 
 #endif

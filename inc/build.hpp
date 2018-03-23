@@ -7,7 +7,7 @@
 
 namespace care{
 
-void build(const std::string& filename, Fileformat format, ReadStorage& readStorage,
+void build(const std::string& filename, FileFormat format, ReadStorage& readStorage,
             Minhasher& minhasher, int nThreads, int& minlen, int& maxlen);
 
 

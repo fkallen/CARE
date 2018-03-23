@@ -5,8 +5,8 @@
 #include "minhasher.hpp"
 #include "read.hpp"
 #include "readstorage.hpp"
-#include "threadsafe_buffer.hpp"
 #include "sequencefileio.hpp"
+#include "args.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -51,18 +51,15 @@ class Barrier
 struct ErrorCorrector {
 
 	ErrorCorrector();
-	ErrorCorrector(const MinhashParameters& minhashparameters, int nInserterThreads, int nCorrectorThreads);
+	ErrorCorrector(const Args& args, int nInserterThreads, int nCorrectorThreads);
 
-	void correct(const std::string& filename);
-	void setOutputPath(const std::string& path);
+	void correct(const std::string& filename, const std::string& format, const std::string& outputfilename);
 	void setGraphSettings(double alpha, double x);
-	void setOutputFilename(const std::string& filename);
 	void setBatchsize(int n);
 	void setAlignmentScores(int matchscore, int subscore, int insertscore, int delscore);
 	void setMaxMismatchRatio(double ratio);
 	void setMinimumAlignmentOverlap(int overlap);
 	void setMinimumAlignmentOverlapRatio(double ratio);
-	void setFileFormat(const std::string& format);
 	void setUseQualityScores(bool val);
 	void setEstimatedCoverage(int cov);
 	void setEstimatedErrorRate(double rate);
@@ -71,14 +68,10 @@ struct ErrorCorrector {
 
 
 private:
-    void correct(const std::string& filename, const std::string& outputfilename);
-	void errorcorrectFile(const std::string& filename);
-	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
-	void updateGlobalProgress(std::uint64_t increment, std::uint64_t maxglobalprogress);
+    void correct_impl(CorrectionOptions& opts, const std::string& filename, FileFormat format, const std::string& outputfilename);
 
-	Minhasher minhasher;
-	MinhashParameters minhashparams;
-	mutable ReadStorage readStorage;
+    Args args;
+	MinhashOptions minhashparams;
 
 	std::vector<int> deviceIds;
 
@@ -86,9 +79,6 @@ private:
 
 	int nInserterThreads;
 	int nCorrectorThreads;
-
-	std::string outputPath;
-	std::string outputFilename = "";
 
 	std::uint32_t batchsize = 20;
 
@@ -103,18 +93,9 @@ private:
 
 	bool useQualityScores = false;
 
-	Fileformat inputfileformat = Fileformat::FASTQ;
-
-	std::map<std::string, std::uint64_t> readsPerFile;
-
-	std::mutex writelock;
-
 	// settings for error graph
 	double graphx = 2.0;
 	double graphalpha = 1.0;
-
-	std::mutex progresslock;
-	std::uint64_t progress = 0;
 
 	std::vector<char> readIsProcessedVector;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags;
@@ -123,9 +104,6 @@ private:
 	int estimatedCoverage;
 	double errorrate;
 	double m_coverage;
-
-	int maximum_sequence_length = 0;
-
 };
 
 }

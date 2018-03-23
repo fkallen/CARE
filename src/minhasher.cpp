@@ -12,6 +12,8 @@
 #include <thrust/sort.h>
 #endif
 
+namespace care{
+
 MinhasherBuffers::MinhasherBuffers(int id){
 	deviceId = id;
 #ifdef __NVCC__
@@ -40,12 +42,12 @@ void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer){
 #endif
 }
 
-Minhasher::Minhasher() : Minhasher(MinhashParameters{1,1})
+Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16})
 {
 }
 
 
-Minhasher::Minhasher(const MinhashParameters& parameters)
+Minhasher::Minhasher(const MinhashOptions& parameters)
 		: minparams(parameters), nReads(0), minhashtime(0), maptime(0)
 {
 }
@@ -287,4 +289,6 @@ void Minhasher::transform(){
 	for (int i = 0; i < minparams.maps; ++i) {
 		minhashTables[i]->freeze();
 	}
+}
+
 }

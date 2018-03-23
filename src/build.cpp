@@ -79,7 +79,7 @@ namespace care{
         }
     };
 
-    void build(const std::string& filename, Fileformat format, ReadStorage& readStorage,
+    void build(const std::string& filename, FileFormat format, ReadStorage& readStorage,
                 Minhasher& minhasher, int nThreads, int& minlen, int& maxlen){
         auto num = getNumberOfReads(filename, format);
         std::cout << "build found " << num << " reads." << std::endl;
@@ -92,7 +92,7 @@ namespace care{
         	std::unique_ptr<SequenceFileReader> reader;
 
         	switch(format) {
-        		case Fileformat::FASTQ: reader.reset(new FastqReader(filename)); break;
+        		case FileFormat::FASTQ: reader.reset(new FastqReader(filename)); break;
         		default: assert(false && "inputfileformat"); break;
         	}
 
@@ -147,7 +147,7 @@ namespace care{
         	std::unique_ptr<SequenceFileReader> reader;
 
         	switch (format) {
-        	case Fileformat::FASTQ:
+        	case FileFormat::FASTQ:
         		reader.reset(new FastqReader(filename));
         		break;
         	default:

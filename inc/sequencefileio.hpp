@@ -9,7 +9,13 @@
 
 namespace care{
 
-enum class Fileformat {FASTQ};
+enum class FileFormat {FASTQ};
+
+struct SequenceFileProperties{
+        std::uint64_t nReads;
+        int minSequenceLength;
+        int maxSequenceLength;
+};
 
 struct SequenceFileReader {
 
@@ -54,7 +60,26 @@ private:
 	std::string stmp;
 };
 
-std::uint64_t getNumberOfReads(const std::string& filename, Fileformat format);
+std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
+
+/*
+    Deletes every file in vector filenames
+*/
+void deleteFiles(std::vector<std::string> filenames);
+
+/*
+    Merges temporary results with unordered reads into single file outputfile with ordered reads.
+    Temporary result files are expected to be in format:
+
+    readnumber
+    sequence
+    readnumber
+    sequence
+    ...
+*/
+void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                      FileFormat originalFormat,
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile);
 
 } //end namespace
 

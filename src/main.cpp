@@ -9,6 +9,15 @@
 #include <string>
 #include <chrono>
 #include <cstdlib>
+#include <experimental/filesystem>
+
+namespace filesys = std::experimental::filesystem;
+
+std::string getFileName(std::string filePath)
+{
+	filesys::path path(filePath);
+	return path.filename().string();
+}
 
 int main(int argc, char** argv){
 
@@ -24,7 +33,7 @@ int main(int argc, char** argv){
 	options.add_options("Group")
 		("h", "Show this help message", cxxopts::value<bool>(help))
 		("i,inputfile", "The fastq file to correct", cxxopts::value<std::string>())
-		("o,outdir", "The output directory", cxxopts::value<std::string>()->default_value("tmp")->implicit_value("tmp"))
+		("o,outdir", "The output directory", cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 		("outfile", "The output file", cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 		("m,hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>()->default_value("2")->implicit_value("2"))
 		("k,kmerlength", "The kmer length for minhashing. Must be greater than 0.", cxxopts::value<int>()->default_value("16")->implicit_value("16"))
@@ -76,16 +85,24 @@ int main(int argc, char** argv){
 		exit(0);
 	}
 
-	MinhashParameters minhashparams{options["hashmaps"].as<int>(),
-					options["kmerlength"].as<int>()};
 
 TIMERSTARTCPU(INIT)
+    care::Args args(options);
 
-	care::ErrorCorrector corrector(minhashparams, options["insertthreads"].as<int>(), options["correctorthreads"].as<int>());
+	care::ErrorCorrector corrector(args, options["insertthreads"].as<int>(), options["correctorthreads"].as<int>());
 TIMERSTOPCPU(INIT)
 
-	corrector.setOutputPath(options["outdir"].as<std::string>());
-	corrector.setOutputFilename(options["outfile"].as<std::string>());
+    std::string inputfile = options["inputfile"].as<std::string>();
+    std::string fileformat = options["fileformat"].as<std::string>();
+    std::string outputdirectory = options["outdir"].as<std::string>();
+    std::string outputfile;
+    if(options["outfile"].as<std::string>() == ""){
+        outputfile = outputdirectory + "/corrected_" + getFileName(inputfile);
+    }else{
+        outputfile = outputdirectory + "/" + options["outfile"].as<std::string>();
+    }
+    filesys::create_directories(outputdirectory);
+
 	corrector.setGraphSettings(options["alpha"].as<double>(), options["base"].as<double>());
 	corrector.setBatchsize(options["batchsize"].as<int>());
 	corrector.setAlignmentScores(options["matchscore"].as<int>(),
@@ -96,14 +113,13 @@ TIMERSTOPCPU(INIT)
 	corrector.setMaxMismatchRatio(options["maxmismatchratio"].as<double>());
 	corrector.setMinimumAlignmentOverlap(options["minalignmentoverlap"].as<int>());
 	corrector.setMinimumAlignmentOverlapRatio(options["minalignmentoverlapratio"].as<double>());
-	corrector.setFileFormat(options["fileformat"].as<std::string>());
 	corrector.setUseQualityScores(useQScores);
 
 	corrector.setEstimatedCoverage(options["coverage"].as<int>());
 	corrector.setEstimatedErrorRate(options["errorrate"].as<double>());
 	corrector.setM(options["m_coverage"].as<double>());
 
-	corrector.correct(options["inputfile"].as<std::string>());
+	corrector.correct(inputfile, fileformat, outputfile);
 
 
 	return 0;
