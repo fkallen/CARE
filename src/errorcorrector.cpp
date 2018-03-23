@@ -2,6 +2,7 @@
 #include "../inc/read.hpp"
 #include "../inc/sequencefileio.hpp"
 #include "../inc/binarysequencehelpers.hpp"
+#include "../inc/build.hpp"
 
 #include "../inc/ganja/hpc_helpers.cuh"
 
@@ -224,8 +225,6 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 	case Fileformat::FASTQ:
 		reader.reset(new FastqReader(originalReadFile));
 		break;
-	case Fileformat::FASTA:
-		throw std::runtime_error("Merging FASTA is currently not supported.");
 	default:
 		throw std::runtime_error("Merging: Invalid file format.");
 	}
@@ -252,44 +251,23 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 }
 
 void ErrorCorrector::correct(const std::string& filename) {
-	if (inputfileformat == Fileformat::FASTA)
-		setUseQualityScores(false);
+	//if (inputfileformat == Fileformat::FASTA)
+	//	setUseQualityScores(false);
 
 	if (outputPath == "")
 		throw std::runtime_error("no output path specified");
 
-	std::ifstream f(filename);
-	if (!f)
-		throw std::runtime_error("cannot read input file");
-
-	std::uint64_t nLines = 0;
-	std::string line;
-	for (; std::getline(f, line); nLines++)
-		;
-
-	std::uint64_t linesPerRead = inputfileformat == Fileformat::FASTQ ? 4 : 2;
-	std::uint64_t nReads = nLines / linesPerRead;
-
-	if (inputfileformat == Fileformat::FASTA) {
-		if (nLines % linesPerRead != 0)
-			throw std::runtime_error(
-					"input file has invalid fasta format. number of lines mod 2 != 0");
-		std::cout << "Reads: " << nReads << std::endl;
-	}
-
-	if (inputfileformat == Fileformat::FASTQ) {
-		if (nLines % linesPerRead != 0)
-			throw std::runtime_error(
-					"input file has invalid fastq format. number of lines mod 4 != 0");
-		std::cout << "Reads: " << nReads << std::endl;
-	}
-
+	std::uint64_t nReads = getNumberOfReads(filename, inputfileformat);
+    std::cout << "found " << nReads << " reads.";
 	readsPerFile.insert( { filename, nReads });
 #if 1
 	minhasher.init(nReads);
 
 	readStorage.init(nReads);
 	readStorage.setUseQualityScores(useQualityScores);
+
+    //build(filename, inputfileformat,readStorage, minhasher);
+
 
 	if (CORRECT_CANDIDATE_READS_TOO) {
 		readIsProcessedVector.resize(nReads, 0);
@@ -376,8 +354,6 @@ void ErrorCorrector::insertFile(const std::string& filename,
 
 	switch(inputfileformat) {
 		case Fileformat::FASTQ: reader.reset(new FastqReader(filename)); break;
-		case Fileformat::FASTA: reader.reset(new FastaReader(filename)); break;
-
 		default: assert(false && "inputfileformat"); break;
 	}
 
@@ -491,7 +467,6 @@ void ErrorCorrector::insertFile(const std::string& filename,
 	case Fileformat::FASTQ:
 		reader.reset(new FastqReader(filename));
 		break;
-	case Fileformat::FASTA:
 	default:
 		assert(false && "inputfileformat");
 		break;
@@ -669,9 +644,7 @@ void ErrorCorrector::setMinimumAlignmentOverlapRatio(double ratio) {
 }
 
 void ErrorCorrector::setFileFormat(const std::string& format) {
-	if (format == "fasta")
-		inputfileformat = Fileformat::FASTA;
-	else if (format == "fastq")
+	if (format == "fastq")
 		inputfileformat = Fileformat::FASTQ;
 	else
 		throw std::runtime_error("Set invalid file format : " + format);

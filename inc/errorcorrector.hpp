@@ -6,7 +6,7 @@
 #include "read.hpp"
 #include "readstorage.hpp"
 #include "threadsafe_buffer.hpp"
-
+#include "sequencefileio.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -43,8 +43,6 @@ class Barrier
       int counter;
       int thread_count;
 };
-
-	enum class Fileformat {FASTA, FASTQ};
 
 
 /*
