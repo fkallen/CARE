@@ -566,7 +566,6 @@ void ErrorCorrector::errorcorrectFile(const std::string& filename) {
 
     std::vector<BatchGenerator> generators(nCorrectorThreads);
     std::vector<ErrorCorrectionThread> ecthreads(nCorrectorThreads);
-    std::vector<std::thread> consumerthreads;
 
     for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
 
@@ -599,7 +598,8 @@ void ErrorCorrector::errorcorrectFile(const std::string& filename) {
         printf("Progress: %3.2f %%\r",
     			((progress * 1.0 / maxprogress) * 100.0));
     	std::cout << std::flush;
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        if(progress < maxprogress)
+		std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 
 

@@ -41,7 +41,7 @@ BatchGenerator::BatchGenerator(std::uint32_t totalNumberOfReads, std::uint32_t b
 
     currentId = firstId;
     batchsize = batchsize_;
-std::cout << "thread " << threadId << " first " << firstId << " lastIdExcl " << lastIdExcl << " batchsize " << batchsize << std::endl;
+    //std::cout << "thread " << threadId << " firstId " << firstId << " lastIdExcl " << lastIdExcl << " batchsize " << batchsize << std::endl;
 }
 
 BatchGenerator::BatchGenerator(const BatchGenerator& rhs){
@@ -84,6 +84,7 @@ std::vector<std::uint32_t> BatchGenerator::getNextReadIds(){
 
 void ErrorCorrectionThread::run(){
     if(isRunning) throw std::runtime_error("ErrorCorrectionThread::run: Is already running.");
+    isRunning = true;
     thread = std::move(std::thread(&ErrorCorrectionThread::execute, this));
 }
 
