@@ -332,43 +332,4 @@ struct Read {
 };
 
 
-struct ReadReader {
-protected:
-	std::string filename;
-public:
-	ReadReader(const std::string& filename_) : filename(filename_)
-	{
-	};
-	virtual ~ReadReader()
-	{
-	}
-
-	//return false if EOF or if error occured while reading file. true otherwise
-	// both sequence and sequencenumber are only valid if return value is true
-	virtual bool getNextRead(Read* sequence, std::uint32_t* sequencenumber)
-	{
-		return false;
-	};
-	virtual void seekToRead(const int sequencenumber)
-	{
-	}
-	virtual void reset()
-	{
-	}
-
-};
-
-struct ReadWriter {
-public:
-	ReadWriter(){}
-
-	virtual ~ReadWriter(){}
-
-	virtual void writeRead(std::ostream& stream, const Read& read) const
-	{
-		throw std::runtime_error("ReadWriter::writeRead not implemented");
-	}
-};
-
-
 #endif

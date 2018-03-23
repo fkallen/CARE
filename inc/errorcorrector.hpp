@@ -84,7 +84,7 @@ private:
 	mutable ReadStorage readStorage;
 
 	std::vector<ThreadsafeBuffer<
-			    std::pair<Read, std::uint32_t>,
+			    std::pair<Read, std::uint64_t>,
 			    30000> > buffers;
 
 	std::vector<int> deviceIds;

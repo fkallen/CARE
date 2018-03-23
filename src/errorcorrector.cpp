@@ -1,7 +1,6 @@
 #include "../inc/errorcorrector.hpp"
 #include "../inc/read.hpp"
-#include "../inc/fastareader.hpp"
-#include "../inc/fastqreader.hpp"
+#include "../inc/sequencefileio.hpp"
 #include "../inc/binarysequencehelpers.hpp"
 
 #include "../inc/ganja/hpc_helpers.cuh"
@@ -220,7 +219,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                   << nreads << " reads. Results may not be correct!" << std::endl;
 	}
 
-    std::unique_ptr<ReadReader> reader;
+    std::unique_ptr<SequenceFileReader> reader;
 	switch (originalFormat) {
 	case Fileformat::FASTQ:
 		reader.reset(new FastqReader(originalReadFile));
@@ -232,11 +231,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 	}
 
     Read read;
-	std::uint32_t readnum = 0;
-	while (reader->getNextRead(&read, &readnum)) {
-        reads[readnum].header = std::move(read.header);
-        reads[readnum].quality = std::move(read.quality);
-		readnum++;
+
+	while (reader->getNextRead(&read)) {
+        std::uint64_t readIndex = reader->getReadnum() - 1;
+        reads[readIndex].header = std::move(read.header);
+        reads[readIndex].quality = std::move(read.quality);
 	}
 
 	std::ofstream outputstream(outputfile);
@@ -373,7 +372,7 @@ void ErrorCorrector::insertFile(const std::string& filename,
 
 //single-threaded insertion
 #if 0
-	std::unique_ptr<ReadReader> reader;
+	std::unique_ptr<SequenceFileReader> reader;
 
 	switch(inputfileformat) {
 		case Fileformat::FASTQ: reader.reset(new FastqReader(filename)); break;
@@ -383,7 +382,6 @@ void ErrorCorrector::insertFile(const std::string& filename,
 	}
 
 	Read read;
-	std::uint32_t readnum = 0;
 	std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
 	std::uint64_t progressprocessedReads = 0;
     int Ncount = 0;
@@ -391,7 +389,9 @@ void ErrorCorrector::insertFile(const std::string& filename,
     int maxlength = 0;
     int minlength = std::numeric_limits<int>::max();
 
-	while (reader->getNextRead(&read, &readnum)) {
+	while (reader->getNextRead(&read)) {
+
+        std::uint64_t readIndex = reader->getReadnum() - 1;
 
 		//replace 'N' with 'A'
         for(auto& c : read.sequence){
@@ -407,9 +407,9 @@ void ErrorCorrector::insertFile(const std::string& filename,
         if(len < minlength)
             minlength = len;
 
-		if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
+		if(buildHashmap) minhasher.insertSequence(read.sequence, readIndex);
 
-		readStorage.insertRead(readnum, read);
+		readStorage.insertRead(readIndex, read);
 
 		progressprocessedReads++;
 
@@ -443,12 +443,12 @@ void ErrorCorrector::insertFile(const std::string& filename,
 							int maxlength = 0;
 							int minlength = std::numeric_limits<int>::max();
 
-							std::pair<Read, std::uint32_t> pair = buffers[threadId].get();
+							std::pair<Read, std::uint64_t> pair = buffers[threadId].get();
 							int Ncount = 0;
 							char bases[4]{'A', 'C', 'G', 'T'};
 							while (pair != buffers[threadId].defaultValue) {
 								Read& read = pair.first;
-								const std::uint32_t& readnum = pair.second;
+								const std::uint64_t readnum = pair.second;
 
 								//replace 'N' with "random" base
 								for(auto& c : read.sequence){
@@ -485,29 +485,25 @@ void ErrorCorrector::insertFile(const std::string& filename,
 
 	}
 
-	std::unique_ptr<ReadReader> reader;
+	std::unique_ptr<SequenceFileReader> reader;
 
 	switch (inputfileformat) {
 	case Fileformat::FASTQ:
 		reader.reset(new FastqReader(filename));
 		break;
 	case Fileformat::FASTA:
-		reader.reset(new FastaReader(filename));
-		break;
-
 	default:
 		assert(false && "inputfileformat");
 		break;
 	}
 
 	Read read;
-	std::uint32_t readnum = 0;
 	int target = 0;
 
-	while (reader->getNextRead(&read, &readnum)) {
+	while (reader->getNextRead(&read)) {
+        std::uint64_t readnum = reader->getReadnum()-1;
 		target = readnum % nInserterThreads;
 		buffers[target].add( { read, readnum });
-		readnum++;
 	}
 	//std::cout << "read distribution done" << std::endl;
 	for (int i = 0; i < nInserterThreads; i++) {
