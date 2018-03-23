@@ -60,7 +60,7 @@ private:
 	std::string stmp;
 };
 
-std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
+SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
 
 /*
     Deletes every file in vector filenames

@@ -82,22 +82,21 @@ ErrorCorrector::ErrorCorrector(const Args& args,
 }
 
 void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& filename, FileFormat format, const std::string& outputfilename){
-    auto nReads = getNumberOfReads(filename, format);
+    SequenceFileProperties props = getSequenceFileProperties(filename, format);
 
     Minhasher minhasher(minhashparams);
     ReadStorage readStorage;
     readStorage.setUseQualityScores(useQualityScores);
 
-    int minlen, maxlen;
     std::cout << "begin build" << std::endl;
 
 	TIMERSTARTCPU(BUILD);
-    build(filename, format, readStorage, minhasher, nInserterThreads, minlen, maxlen);
+    build(filename, format, readStorage, minhasher, nInserterThreads);
 	TIMERSTOPCPU(BUILD);
 
-    std::cout << "min sequence length " << minlen << ", max sequence length " << maxlen << '\n';
+    std::cout << "min sequence length " << props.minSequenceLength << ", max sequence length " << props.maxSequenceLength << '\n';
 
-    opts.maximum_sequence_length = maxlen;
+    opts.maximum_sequence_length = props.maxSequenceLength;
 
     TIMERSTARTCPU(MAP_TRANSFORM);
 	minhasher.transform();
@@ -110,7 +109,6 @@ void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& fi
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < nCorrectorThreads; i++){
         tmpfiles.emplace_back(outputfilename + "_tmp_" + std::to_string(i));
-        std::cout << tmpfiles.back();
     }
 
     std::cout << "begin correct" << std::endl;
@@ -124,7 +122,7 @@ void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& fi
 
     for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
 
-        generators[threadId] = BatchGenerator(nReads, batchsize, threadId, nCorrectorThreads);
+        generators[threadId] = BatchGenerator(props.nReads, batchsize, threadId, nCorrectorThreads);
         CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
@@ -143,18 +141,17 @@ void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& fi
         ecthreads[threadId].run();
     }
 
-    std::uint64_t maxprogress = nReads;
     std::uint64_t progress = 0;
-    while(progress < maxprogress){
+    while(progress < props.nReads){
         progress = 0;
         for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
             progress += ecthreads[threadId].nProcessedReads;
         }
         printf("Progress: %3.2f %%\r",
-    			((progress * 1.0 / maxprogress) * 100.0));
+    			((progress * 1.0 / props.nReads) * 100.0));
     	std::cout << std::flush;
-        if(progress < maxprogress)
-		std::this_thread::sleep_for(std::chrono::seconds(5));
+        if(progress < props.nReads)
+		      std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 
 
@@ -179,7 +176,7 @@ void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& fi
 
 
 	std::cout << "begin merge" << std::endl;
-    mergeResultFiles(nReads, filename, format, tmpfiles, outputfilename);
+    mergeResultFiles(props.nReads, filename, format, tmpfiles, outputfilename);
     deleteFiles(tmpfiles);
 
 	std::cout << "end merge" << std::endl;
@@ -199,9 +196,9 @@ void ErrorCorrector::correct(const std::string& filename, const std::string& for
 	//	setUseQualityScores(false);
 
     if (CORRECT_CANDIDATE_READS_TOO) {
-        auto nReads = getNumberOfReads(filename, inputfileformat);
+        SequenceFileProperties props = getSequenceFileProperties(filename, inputfileformat);
 
-		readIsProcessedVector.resize(nReads, 0);
+		readIsProcessedVector.resize(props.nReads, 0);
 		nLocksForProcessedFlags = batchsize * nCorrectorThreads * 1000;
 		locksForProcessedFlags.reset(new std::mutex[nLocksForProcessedFlags]);
 	}

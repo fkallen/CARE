@@ -8,7 +8,7 @@
 namespace care{
 
 void build(const std::string& filename, FileFormat format, ReadStorage& readStorage,
-            Minhasher& minhasher, int nThreads, int& minlen, int& maxlen);
+            Minhasher& minhasher, int nThreads);
 
 
 }

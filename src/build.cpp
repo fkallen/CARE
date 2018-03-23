@@ -24,9 +24,6 @@ namespace care{
         Minhasher* minhasher;
         std::uint64_t totalNumberOfReads;
 
-        int maxlength;
-        int minlength;
-
         std::uint64_t progress;
         bool isRunning;
         std::thread thread;
@@ -45,8 +42,6 @@ namespace care{
         void execute() {
             isRunning = true;
             progress = 0;
-            maxlength = 0;
-            minlength = std::numeric_limits<int>::max();
 
             std::pair<Read, std::uint64_t> pair = buffer->get();
             int Ncount = 0;
@@ -63,12 +58,6 @@ namespace care{
                     }
                 }
 
-                int len = int(read.sequence.length());
-                if(len > maxlength)
-                    maxlength = len;
-                if(len < minlength)
-                    minlength = len;
-
                 minhasher->insertSequence(read.sequence, readnum);
                 readStorage->insertRead(readnum, read);
 
@@ -80,12 +69,14 @@ namespace care{
     };
 
     void build(const std::string& filename, FileFormat format, ReadStorage& readStorage,
-                Minhasher& minhasher, int nThreads, int& minlen, int& maxlen){
-        auto num = getNumberOfReads(filename, format);
-        std::cout << "build found " << num << " reads." << std::endl;
+                Minhasher& minhasher, int nThreads){
+        SequenceFileProperties props = getSequenceFileProperties(filename, format);
+        std::cout << "build found " << props.nReads << " reads." << std::endl;
 
-        minhasher.init(num);
-        readStorage.init(num);
+        minhasher.init(props.nReads);
+        readStorage.init(props.nReads);
+
+        nThreads = std::max(1, std::min(nThreads, 4));
 
         //single-threaded insertion
         if(nThreads == 1){
@@ -100,8 +91,6 @@ namespace care{
         	std::uint64_t progress = 0;
             int Ncount = 0;
             char bases[4]{'A', 'C', 'G', 'T'};
-            int maxlength = 0;
-            int minlength = std::numeric_limits<int>::max();
 
         	while (reader->getNextRead(&read)) {
                 std::uint64_t readIndex = reader->getReadnum() - 1;
@@ -114,19 +103,10 @@ namespace care{
                     }
                 }
 
-                int len = int(read.sequence.length());
-                if(len > maxlength)
-                    maxlength = len;
-                if(len < minlength)
-                    minlength = len;
-
         		minhasher.insertSequence(read.sequence, readIndex);
         		readStorage.insertRead(readIndex, read);
         		progress++;
         	}
-
-            minlen = minlength;
-            maxlen = maxlength;
         }else{
             //multi-threaded insertion
 
@@ -139,7 +119,7 @@ namespace care{
                 buildthreads[i].buffer = &buffers[i];
                 buildthreads[i].readStorage = &readStorage;
                 buildthreads[i].minhasher = &minhasher;
-                buildthreads[i].totalNumberOfReads = num;
+                buildthreads[i].totalNumberOfReads = props.nReads;
 
                 buildthreads[i].run();
             }
@@ -167,15 +147,8 @@ namespace care{
         		b.done();
         	}
 
-            maxlen = 0;
-        	minlen = std::numeric_limits<int>::max();
-
             for(auto& t : buildthreads){
                 t.join();
-                if (t.maxlength > maxlen)
-        			maxlen = t.maxlength;
-        		if (t.minlength < minlen)
-        			minlen = t.minlength;
             }
         }
     }

@@ -1,5 +1,6 @@
 #include "../inc/sequencefileio.hpp"
 
+#include <limits>
 #include <string>
 #include <sstream>
 #include <stdexcept>
@@ -58,7 +59,7 @@ namespace care{
 	}
 
 
-    std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
+    SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
         std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
         case FileFormat::FASTQ:
@@ -68,10 +69,25 @@ namespace care{
     		throw std::runtime_error("care::getNumberOfReads: invalid format.");
     	}
 
-        Read r;
-        while(reader->getNextRead(&r));
+        SequenceFileProperties prop;
 
-        return reader->getReadnum();
+        prop.maxSequenceLength = 0;
+        prop.minSequenceLength = std::numeric_limits<int>::max();
+
+
+
+        Read r;
+        while(reader->getNextRead(&r)){
+            int len = int(r.sequence.length());
+            if(len > prop.maxSequenceLength)
+                prop.maxSequenceLength = len;
+            if(len < prop.minSequenceLength)
+                prop.minSequenceLength = len;
+        }
+
+        prop.nReads = reader->getReadnum();
+
+        return prop;
     }
 
     /*
