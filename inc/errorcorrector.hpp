@@ -72,7 +72,6 @@ struct ErrorCorrector {
 
 private:
 
-	void insertFile(const std::string& filename, bool buildHashmap);
 	void errorcorrectFile(const std::string& filename);
 	void errorcorrectWork(int threadId, int nThreads, const std::string& fileToCorrect);
 	void updateGlobalProgress(std::uint64_t increment, std::uint64_t maxglobalprogress);
@@ -80,10 +79,6 @@ private:
 	Minhasher minhasher;
 	MinhashParameters minhashparams;
 	mutable ReadStorage readStorage;
-
-	std::vector<ThreadsafeBuffer<
-			    std::pair<Read, std::uint64_t>,
-			    30000> > buffers;
 
 	std::vector<int> deviceIds;
 

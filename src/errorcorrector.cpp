@@ -145,8 +145,6 @@ ErrorCorrector::ErrorCorrector(const MinhashParameters& minhashparameters,
 
 	minhasher.minparams = minhashparameters;
 
-	buffers.resize(nInserterThreads);
-
 	hammingtools::init_once();
 	graphtools::init_once();
 
@@ -258,50 +256,29 @@ void ErrorCorrector::correct(const std::string& filename) {
 		throw std::runtime_error("no output path specified");
 
 	std::uint64_t nReads = getNumberOfReads(filename, inputfileformat);
-    std::cout << "found " << nReads << " reads.";
+    //std::cout << "found " << nReads << " reads.";
 	readsPerFile.insert( { filename, nReads });
-#if 1
-	minhasher.init(nReads);
 
-	readStorage.init(nReads);
 	readStorage.setUseQualityScores(useQualityScores);
 
-    //build(filename, inputfileformat,readStorage, minhasher);
-
-
-	if (CORRECT_CANDIDATE_READS_TOO) {
+    if (CORRECT_CANDIDATE_READS_TOO) {
 		readIsProcessedVector.resize(nReads, 0);
 		nLocksForProcessedFlags = batchsize * nCorrectorThreads * 1000;
 		locksForProcessedFlags.reset(new std::mutex[nLocksForProcessedFlags]);
 	}
+    std::cout << "begin build" << std::endl;
 
-	std::cout << "begin insert" << std::endl;
+    int minlen, maxlen;
+	TIMERSTARTCPU(BUILD);
 
-	TIMERSTARTCPU(INSERT);
-#if 0
-	std::string mapfilename = filename;
-	size_t lastslashpos = mapfilename.find_last_of("/");
-	if(lastslashpos != std::string::npos)
-	mapfilename = mapfilename.substr(lastslashpos + 1);
-	if(!minhasher.loadTablesFromFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_"+std::to_string(minhashparams.maps)+"_map")) {
-		insertFile(filename, true);
-#if 1
-		TIMERSTARTCPU(MAP_TRANSFORM);
-		minhasher.transform();
-		TIMERSTOPCPU(MAP_TRANSFORM);
-#endif
-		minhasher.saveTablesToFile(outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map");
-		std::cout << "saved map to file " << (outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map") << std::endl;
-	} else {
-		insertFile(filename, false);
-		std::cout << "loaded map from file " << (outputPath + "/" + mapfilename+"_"+std::to_string(minhashparams.k)+"_map") << std::endl;
-	}
-#else
-	insertFile(filename, true);
-#endif
-	TIMERSTOPCPU(INSERT);
+    build(filename, inputfileformat, readStorage, minhasher, nInserterThreads, minlen, maxlen);
 
-	std::cout << "end insert" << std::endl;
+	TIMERSTOPCPU(BUILD);
+
+    std::cout << "min sequence length " << minlen << ", max sequence length " << maxlen << '\n';
+
+    maximum_sequence_length = maxlen;
+
 
 	TIMERSTARTCPU(MAP_TRANSFORM);
 	minhasher.transform();
@@ -336,7 +313,6 @@ void ErrorCorrector::correct(const std::string& filename) {
 	readStorage.destroy();
 	readIsProcessedVector.clear();
 
-#endif
 	std::cout << "begin merge" << std::endl;
 
     mergeResultFiles(nReads, filename, inputfileformat, tmpfiles, outputPath + "/" + outputFilename);
@@ -345,173 +321,6 @@ void ErrorCorrector::correct(const std::string& filename) {
 	std::cout << "end merge" << std::endl;
 }
 
-void ErrorCorrector::insertFile(const std::string& filename,
-		bool buildHashmap) {
-
-//single-threaded insertion
-#if 0
-	std::unique_ptr<SequenceFileReader> reader;
-
-	switch(inputfileformat) {
-		case Fileformat::FASTQ: reader.reset(new FastqReader(filename)); break;
-		default: assert(false && "inputfileformat"); break;
-	}
-
-	Read read;
-	std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
-	std::uint64_t progressprocessedReads = 0;
-    int Ncount = 0;
-    char bases[4]{'A', 'C', 'G', 'T'};
-    int maxlength = 0;
-    int minlength = std::numeric_limits<int>::max();
-
-	while (reader->getNextRead(&read)) {
-
-        std::uint64_t readIndex = reader->getReadnum() - 1;
-
-		//replace 'N' with 'A'
-        for(auto& c : read.sequence){
-            if(c == 'N'){
-                c = bases[Ncount];
-                Ncount = (Ncount + 1) % 4;
-            }
-        }
-
-        int len = int(read.sequence.length());
-        if(len > maxlength)
-            maxlength = len;
-        if(len < minlength)
-            minlength = len;
-
-		if(buildHashmap) minhasher.insertSequence(read.sequence, readIndex);
-
-		readStorage.insertRead(readIndex, read);
-
-		progressprocessedReads++;
-
-		// update global progress
-		if(readnum > 3*progressThreshold) {
-			updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
-			progressprocessedReads = 0;
-		}
-	}
-    std::cout << "min sequence length " << minlength << ", max sequence length " << maxlength << '\n';
-
-    maximum_sequence_length = maxlength;
-
-	progress = 0;
-
-//multi-threaded insertion
-#else
-
-	std::vector<std::future<std::pair<int,int>>> inserterThreads;
-	progress = 0;
-
-	for (int threadId = 0; threadId < nInserterThreads; ++threadId) {
-
-		inserterThreads.emplace_back(
-				std::async(std::launch::async,
-						[&, threadId]()->std::pair<int,int> {
-
-							std::uint64_t progressprocessedReads = 0;
-							std::uint64_t totalNumberOfReads = readsPerFile.at(filename);
-
-							int maxlength = 0;
-							int minlength = std::numeric_limits<int>::max();
-
-							std::pair<Read, std::uint64_t> pair = buffers[threadId].get();
-							int Ncount = 0;
-							char bases[4]{'A', 'C', 'G', 'T'};
-							while (pair != buffers[threadId].defaultValue) {
-								Read& read = pair.first;
-								const std::uint64_t readnum = pair.second;
-
-								//replace 'N' with "random" base
-								for(auto& c : read.sequence){
-									if(c == 'N'){
-										c = bases[Ncount];
-										Ncount = (Ncount + 1) % 4;
-									}
-								}
-
-								int len = int(read.sequence.length());
-								if(len > maxlength)
-									maxlength = len;
-								if(len < minlength)
-									minlength = len;
-
-								if(buildHashmap) minhasher.insertSequence(read.sequence, readnum);
-
-								readStorage.insertRead(readnum, read);
-
-								pair = buffers[threadId].get();
-
-								progressprocessedReads += 1;
-
-								// update global progress
-								if(progressprocessedReads > 3*progressThreshold) {
-									updateGlobalProgress(progressprocessedReads, totalNumberOfReads);
-									progressprocessedReads = 0;
-								}
-
-							}
-
-							return {minlength,maxlength};
-						}));
-
-	}
-
-	std::unique_ptr<SequenceFileReader> reader;
-
-	switch (inputfileformat) {
-	case Fileformat::FASTQ:
-		reader.reset(new FastqReader(filename));
-		break;
-	default:
-		assert(false && "inputfileformat");
-		break;
-	}
-
-	Read read;
-	int target = 0;
-
-	while (reader->getNextRead(&read)) {
-        std::uint64_t readnum = reader->getReadnum()-1;
-		target = readnum % nInserterThreads;
-		buffers[target].add( { read, readnum });
-	}
-	//std::cout << "read distribution done" << std::endl;
-	for (int i = 0; i < nInserterThreads; i++) {
-		buffers[i].done();
-	}
-// producer done
-
-	/*for (size_t i = 0; i < inserterThreads.size(); ++i ) {
-	 inserterThreads[i].join();
-	 //printf("buffer %d: addWait: %lu, addNoWait: %lu, getWait: %lu, getNoWait: %lu\n",
-	 //	i, buffers[i].addWait, buffers[i].addNoWait, buffers[i].getWait, buffers[i].getNoWait);
-	 buffers[i].reset();
-	 }*/
-
-	int maxlen = 0;
-	int minlen = std::numeric_limits<int>::max();
-	for (size_t i = 0; i < inserterThreads.size(); ++i) {
-		auto res = inserterThreads[i].get();
-		if (res.second > maxlen)
-			maxlen = res.second;
-		if (res.first < minlen)
-			minlen = res.first;
-		buffers[i].reset();
-	}
-
-	std::cout << "min sequence length " << minlen << ", max sequence length " << maxlen << '\n';
-
-	maximum_sequence_length = maxlen;
-
-	progress = 0;
-
-#endif
-}
 
 void ErrorCorrector::errorcorrectFile(const std::string& filename) {
 
