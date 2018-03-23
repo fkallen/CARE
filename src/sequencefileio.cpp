@@ -56,4 +56,21 @@ namespace care{
 
 		return !(is.fail() || is.bad());
 	}
+
+
+    std::uint64_t getNumberOfReads(const std::string& filename, Fileformat format){
+        std::unique_ptr<SequenceFileReader> reader;
+        switch (format) {
+        case Fileformat::FASTQ:
+            reader.reset(new FastqReader(filename));
+            break;
+    	default:
+    		throw std::runtime_error("care::getNumberOfReads: invalid format.");
+    	}
+
+        Read r;
+        while(reader->getNextRead(&r));
+
+        return reader->getReadnum();
+    }
 }

@@ -9,6 +9,8 @@
 
 namespace care{
 
+enum class Fileformat {FASTQ};
+
 struct SequenceFileReader {
 
 public:
@@ -52,6 +54,8 @@ private:
 	std::string stmp;
 };
 
-}
+std::uint64_t getNumberOfReads(const std::string& filename, Fileformat format);
+
+} //end namespace
 
 #endif
