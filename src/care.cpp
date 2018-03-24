@@ -220,6 +220,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	
 #define DO_ALTERNATE	
 	
+	// correct file in multiple passes
 	do{
 		FileOptions iterFileOptions = fileOptions;
 		
@@ -254,8 +255,8 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	
 	}while(iter < iters);
 	
-	//rename final result to requested output file name and delete intermediate files
 	
+	//rename final result to requested output file name and delete intermediate files	
 	bool keepIntermediateResults = false;
 	
 #ifdef DO_ALTERNATE	
@@ -263,13 +264,13 @@ void performCorrection(const cxxopts::ParseResult& args) {
 		std::string toRename = fileOptions.outputfile + "_iter_odd";
 		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 		
-		if(!keepIntermediateResults)
+		if(!keepIntermediateResults && iters > 1)
 			deleteFiles({fileOptions.outputfile + "_iter_even"});
 	}else{
 		std::string toRename = fileOptions.outputfile + "_iter_even";
 		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 		
-		if(!keepIntermediateResults)
+		if(!keepIntermediateResults && iters > 1)
 			deleteFiles({fileOptions.outputfile + "_iter_odd"});
 	}
 #else
