@@ -14,6 +14,8 @@
 #include "../inc/pileup.hpp"
 #include "../inc/graph.hpp"
 
+#include "../inc/args.hpp"
+
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -55,16 +57,15 @@ namespace care{
 
 constexpr bool CORRECT_CANDIDATE_READS_TOO = false;
 
-ErrorCorrector::ErrorCorrector(const Args& args,
-		int nInserterThreads_, int nCorrectorThreads_) :
-		args(args), nInserterThreads(nInserterThreads_), nCorrectorThreads(
-				nCorrectorThreads_){
+ErrorCorrector::ErrorCorrector(const cxxopts::ParseResult& args) :
+		args(args), nInserterThreads(args["insertthreads"].as<int>()), nCorrectorThreads(
+				args["correctorthreads"].as<int>()){
 
-    if(!args.isValid()){
+    if(!args::areValid(args)){
         throw std::runtime_error("Invalid arguments!");
     }
 
-    minhashparams = args.getMinhashOptions();
+    minhashparams = args::to<MinhashOptions>(args);
 
 	hammingtools::init_once();
 	graphtools::init_once();
@@ -83,9 +84,10 @@ ErrorCorrector::ErrorCorrector(const Args& args,
 
 void ErrorCorrector::correct_impl(const std::string& filename, FileFormat format, const std::string& outputfilename){
     SequenceFileProperties props = getSequenceFileProperties(filename, format);
-    AlignmentOptions alignmentOptions = args.getAlignmentOptions();
-    GoodAlignmentProperties goodAlignmentProperties = args.getGoodAlignmentProperties();
-    CorrectionOptions correctionOptions = args.getCorrectionOptions();
+	
+    AlignmentOptions alignmentOptions = args::to<AlignmentOptions>(args);
+    GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(args);
+    CorrectionOptions correctionOptions = args::to<CorrectionOptions>(args);
 
     Minhasher minhasher(minhashparams);
     ReadStorage readStorage;
@@ -123,7 +125,7 @@ void ErrorCorrector::correct_impl(const std::string& filename, FileFormat format
 
     for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
 
-        generators[threadId] = BatchGenerator(props.nReads, batchsize, threadId, nCorrectorThreads);
+        generators[threadId] = BatchGenerator(props.nReads, args["batchsize"].as<int>(), threadId, nCorrectorThreads);
         CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
@@ -201,7 +203,7 @@ void ErrorCorrector::correct(const std::string& filename, const std::string& for
         SequenceFileProperties props = getSequenceFileProperties(filename, inputfileformat);
 
 		readIsProcessedVector.resize(props.nReads, 0);
-		nLocksForProcessedFlags = batchsize * nCorrectorThreads * 1000;
+		nLocksForProcessedFlags = args["batchsize"].as<int>() * nCorrectorThreads * 1000;
 		locksForProcessedFlags.reset(new std::mutex[nLocksForProcessedFlags]);
 	}
 
@@ -209,13 +211,6 @@ void ErrorCorrector::correct(const std::string& filename, const std::string& for
 
 	readIsProcessedVector.clear();
     locksForProcessedFlags.reset();
-}
-
-void ErrorCorrector::setBatchsize(int n) {
-	if (n < 1)
-		throw std::runtime_error("batchsize must be > 0");
-
-	batchsize = n;
 }
 
 

@@ -33,7 +33,7 @@ outputfile="readscorrectednew.fq"
 
 #absolute output file path = outdir/outputfile
 #if --outfile is not used, absolute path will be outdir/inputfilenameWithoutEnding+_#k_#maps_1_alpha_#alpha_x_#x_corrected
-outfile="--outfile $outputfile"
+outfile="--outfile=$outputfile"
 #outfile=
 
 # fasta or fastq
@@ -73,6 +73,6 @@ xx=$(echo 'scale=2; 12/10' | bc)
 aa=$(echo 'scale=2; 10/10' | bc)
 
 
-echo $executable --fileformat=$fileformat --inputfile $inputfile --outdir $outdir $outfile --hashmaps $maps --kmerlength $k --insertthreads $ithreads --correctorthreads $cthreads --batchsize $batchsize -x $xx -a $aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
+echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --hashmaps=$maps --kmerlength=$k --insertthreads=$ithreads --correctorthreads=$cthreads --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
 
-time $executable --fileformat=$fileformat --inputfile $inputfile --outdir $outdir $outfile --hashmaps $maps --kmerlength $k --insertthreads $ithreads --correctorthreads $cthreads --batchsize $batchsize -x $xx -a $aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
+time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --hashmaps=$maps --kmerlength=$k --insertthreads=$ithreads --correctorthreads=$cthreads --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m

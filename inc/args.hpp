@@ -7,25 +7,15 @@
 
 
 namespace care{
+	
+namespace args{
 
-struct Args{
-    cxxopts::Options options;
-    bool useQScores = false;
-	bool help = false;
-
-    Args(int argc, char** argv);
-
-    Args(const cxxopts::Options& options);
-
-    MinhashOptions getMinhashOptions() const;
-    AlignmentOptions getAlignmentOptions() const;
-    GoodAlignmentProperties getGoodAlignmentProperties() const;
-    CorrectionOptions getCorrectionOptions() const;
-
-    bool isValid() const;
-};
-
-
+	bool areValid(const cxxopts::ParseResult& pr);
+	
+	template<class T>
+	T to(const cxxopts::ParseResult& pr);
+	
+}
 
 }
 

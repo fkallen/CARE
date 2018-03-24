@@ -6,7 +6,7 @@
 #include "read.hpp"
 #include "readstorage.hpp"
 #include "sequencefileio.hpp"
-#include "args.hpp"
+#include "cxxopts/cxxopts.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -51,26 +51,15 @@ class Barrier
 struct ErrorCorrector {
 
 	ErrorCorrector();
-	ErrorCorrector(const Args& args, int nInserterThreads, int nCorrectorThreads);
+	ErrorCorrector(const cxxopts::ParseResult& args);
 
 	void correct(const std::string& filename, const std::string& format, const std::string& outputfilename);
-	void setGraphSettings(double alpha, double x);
-	void setBatchsize(int n);
-	void setAlignmentScores(int matchscore, int subscore, int insertscore, int delscore);
-	void setMaxMismatchRatio(double ratio);
-	void setMinimumAlignmentOverlap(int overlap);
-	void setMinimumAlignmentOverlapRatio(double ratio);
-	void setUseQualityScores(bool val);
-	void setEstimatedCoverage(int cov);
-	void setEstimatedErrorRate(double rate);
-	void setM(double m);
-
 
 
 private:
     void correct_impl(const std::string& filename, FileFormat format, const std::string& outputfilename);
 
-    Args args;
+    cxxopts::ParseResult args;
 	MinhashOptions minhashparams;
 
 	std::vector<int> deviceIds;
