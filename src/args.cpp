@@ -37,7 +37,7 @@ namespace care{
     					cxxopts::value<std::string>()->default_value("fastq")->implicit_value("fastq"))
 
     		("c,coverage", "estimated coverage of input file",
-    					cxxopts::value<int>()->default_value("20")->implicit_value("20"))
+    					cxxopts::value<double>()->default_value("20.0")->implicit_value("20.0"))
     		("r,errorrate", "estimated error rate of input file",
     					cxxopts::value<double>()->default_value("0.03")->implicit_value("0.03"))
     		("m_coverage", "m",
@@ -56,6 +56,43 @@ namespace care{
         return result;
     }
 
+    AlignmentOptions Args::getAlignmentOptions() const{
+        AlignmentOptions result{
+            options["matchscore"].as<int>(),
+            options["subscore"].as<int>(),
+            options["insertscore"].as<int>(),
+            options["deletionscore"].as<int>()
+        };
+
+        return result;
+    }
+
+    GoodAlignmentProperties Args::getGoodAlignmentProperties() const{
+        GoodAlignmentProperties result{
+            options["minalignmentoverlap"].as<int>(),
+            options["maxmismatchratio"].as<double>(),
+            options["minalignmentoverlapratio"].as<double>(),
+        };
+
+        return result;
+    }
+
+    CorrectionOptions Args::getCorrectionOptions() const{
+        CorrectionOptions result{
+            CorrectionMode::Hamming,
+            false, //correct candidates
+            useQScores,
+            options["coverage"].as<double>(),
+            options["errorrate"].as<double>(),
+            options["m_coverage"].as<double>(),
+            options["alpha"].as<double>(),
+            options["base"].as<double>(),
+            options["kmerlength"].as<int>()
+        };
+
+        return result;
+    }
+
     bool Args::isValid() const{
         bool valid = true;
 
@@ -68,6 +105,24 @@ namespace care{
         if(minhashOptions.k < 1 || minhashOptions.k > 16){
             valid = false;
             std::cout << "Error: kmer length must be in range [1, 16], is " + std::to_string(minhashOptions.k) << std::endl;
+        }
+
+        auto goodAlignmentProperties = getGoodAlignmentProperties();
+
+        if(goodAlignmentProperties.max_mismatch_ratio < 0.0 || goodAlignmentProperties.max_mismatch_ratio > 1.0){
+            valid = false;
+            std::cout << "Error: maxmismatchratio must be in range [0.0, 1.0], is " + std::to_string(goodAlignmentProperties.max_mismatch_ratio) << std::endl;
+        }
+
+        if(goodAlignmentProperties.min_overlap < 1){
+            valid = false;
+            std::cout << "Error: min_overlap must be > 0, is " + std::to_string(goodAlignmentProperties.min_overlap) << std::endl;
+        }
+
+        if(goodAlignmentProperties.min_overlap_ratio < 0.0 || goodAlignmentProperties.min_overlap_ratio > 1.0){
+            valid = false;
+            std::cout << "Error: min_overlap_ratio must be in range [0.0, 1.0], is "
+                        + std::to_string(goodAlignmentProperties.min_overlap_ratio) << std::endl;
         }
 
         return valid;

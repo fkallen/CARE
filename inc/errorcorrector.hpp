@@ -68,7 +68,7 @@ struct ErrorCorrector {
 
 
 private:
-    void correct_impl(CorrectionOptions& opts, const std::string& filename, FileFormat format, const std::string& outputfilename);
+    void correct_impl(const std::string& filename, FileFormat format, const std::string& outputfilename);
 
     Args args;
 	MinhashOptions minhashparams;
@@ -82,28 +82,9 @@ private:
 
 	std::uint32_t batchsize = 20;
 
-	int alignmentscore_match = 1;
-	int alignmentscore_sub = -1;
-	int alignmentscore_ins = -100;
-	int alignmentscore_del = -100;
-
-	double max_mismatch_ratio = 0.2;
-	int min_overlap = 35;
-	double min_overlap_ratio = 0.35;
-
-	bool useQualityScores = false;
-
-	// settings for error graph
-	double graphx = 2.0;
-	double graphalpha = 1.0;
-
 	std::vector<char> readIsProcessedVector;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags;
 	size_t nLocksForProcessedFlags = 0;
-
-	int estimatedCoverage;
-	double errorrate;
-	double m_coverage;
 };
 
 }

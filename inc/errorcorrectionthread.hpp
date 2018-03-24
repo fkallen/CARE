@@ -4,6 +4,7 @@
 #include "batchelem.hpp"
 #include "minhasher.hpp"
 #include "readstorage.hpp"
+#include "sequencefileio.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -16,8 +17,6 @@
 #include <vector>
 
 namespace care{
-
-enum class CorrectionMode {Hamming, Graph};
 
 struct BatchGenerator{
     BatchGenerator(){}
@@ -36,25 +35,7 @@ private:
     std::uint32_t currentId;
 };
 
-struct CorrectionOptions{
-    CorrectionMode correctionMode = CorrectionMode::Hamming;
-    bool correctCandidates = false;
-    bool useQualityScores = true;
-    int alignmentscore_match = 1;
-    int alignmentscore_sub = -1;
-    int alignmentscore_ins = -100;
-    int alignmentscore_del = -100;
-    int min_overlap = 35;
-    int kmerlength = 16;
-    double max_mismatch_ratio = 0.2;
-    double min_overlap_ratio = 0.35;
-    double estimatedCoverage = 1.0;
-    double errorrate = 0.01;
-    double m_coverage = 0.6;
-    double graphalpha = 1.0;
-    double graphx = 1.5;
-    int maximum_sequence_length = 0;
-};
+
 
 struct CorrectionThreadOptions{
     int threadId;
@@ -71,8 +52,11 @@ struct CorrectionThreadOptions{
 };
 
 struct ErrorCorrectionThread{
-    CorrectionOptions opts;
+    AlignmentOptions alignmentOptions;
+    GoodAlignmentProperties goodAlignmentProperties;
+    CorrectionOptions correctionOptions;
     CorrectionThreadOptions threadOpts;
+    SequenceFileProperties fileProperties;
 
     std::uint32_t nProcessedReads = 0;
 

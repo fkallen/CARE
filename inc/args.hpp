@@ -2,15 +2,11 @@
 #define CARE_ARGS_HPP
 
 #include "cxxopts/cxxopts.hpp"
+#include "options.hpp"
 
 
 
 namespace care{
-
-    struct MinhashOptions {
-    	int maps;
-    	int k;
-    };
 
 struct Args{
     cxxopts::Options options;
@@ -22,6 +18,9 @@ struct Args{
     Args(const cxxopts::Options& options);
 
     MinhashOptions getMinhashOptions() const;
+    AlignmentOptions getAlignmentOptions() const;
+    GoodAlignmentProperties getGoodAlignmentProperties() const;
+    CorrectionOptions getCorrectionOptions() const;
 
     bool isValid() const;
 };

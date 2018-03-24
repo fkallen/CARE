@@ -25,19 +25,19 @@ BatchGenerator::BatchGenerator(std::uint32_t firstId, std::uint32_t lastIdExcl, 
 BatchGenerator::BatchGenerator(std::uint32_t totalNumberOfReads, std::uint32_t batchsize_, int threadId, int nThreads){
     if(threadId < 0) throw std::runtime_error("BatchGenerator: invalid threadId");
     if(nThreads < 0) throw std::runtime_error("BatchGenerator: invalid nThreads");
-	
+
 	std::uint32_t chunksize = totalNumberOfReads / nThreads;
 	int leftover = totalNumberOfReads % nThreads;
-	
+
 	if(threadId < leftover){
 		chunksize++;
 		firstId = threadId == 0 ? 0 : threadId * chunksize;
 		lastIdExcl = firstId + chunksize;
 	}else{
 		firstId = leftover * (chunksize+1) + (threadId - leftover) * chunksize;;
-		lastIdExcl = firstId + chunksize;		
+		lastIdExcl = firstId + chunksize;
 	}
-	
+
 
     currentId = firstId;
     batchsize = batchsize_;
@@ -108,15 +108,17 @@ void ErrorCorrectionThread::execute() {
 
     MinhasherBuffers minhasherbuffers(threadOpts.deviceId);
 
-	hammingtools::SHDdata shddata(threadOpts.deviceId, 1, opts.maximum_sequence_length);
+	hammingtools::SHDdata shddata(threadOpts.deviceId, 1, fileProperties.maxSequenceLength);
 
-	graphtools::AlignerDataArrays sgadata(threadOpts.deviceId, opts.maximum_sequence_length, opts.alignmentscore_match,
-			opts.alignmentscore_sub, opts.alignmentscore_ins, opts.alignmentscore_del);
+	graphtools::AlignerDataArrays sgadata(threadOpts.deviceId, fileProperties.maxSequenceLength, alignmentOptions.alignmentscore_match,
+			alignmentOptions.alignmentscore_sub, alignmentOptions.alignmentscore_ins, alignmentOptions.alignmentscore_del);
 
 
-    hammingtools::correction::PileupImage pileupImage(opts.useQualityScores, opts.correctCandidates, opts.estimatedCoverage,
-                                                        opts.max_mismatch_ratio, opts.errorrate, opts.m_coverage, opts.kmerlength);
-    graphtools::correction::ErrorGraph errorgraph(opts.useQualityScores, opts.max_mismatch_ratio, opts.graphalpha, opts.graphx);
+    hammingtools::correction::PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
+                                                        correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
+                                                        correctionOptions.errorrate, correctionOptions.m_coverage, correctionOptions.kmerlength);
+    graphtools::correction::ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.max_mismatch_ratio,
+                                                  correctionOptions.graphalpha, correctionOptions.graphx);
 
     std::vector<BatchElem> batchElems;
     std::vector<std::uint32_t> readIds = threadOpts.batchGen->getNextReadIds();
@@ -126,8 +128,10 @@ void ErrorCorrectionThread::execute() {
 		//fit vector size to actual batch size
 		if (batchElems.size() != readIds.size()) {
             batchElems.resize(readIds.size(),
-                              BatchElem(threadOpts.readStorage, opts.errorrate, opts.estimatedCoverage, opts.m_coverage,
-                                        opts.max_mismatch_ratio, opts.min_overlap, opts.min_overlap_ratio));
+                              BatchElem(threadOpts.readStorage, correctionOptions.errorrate,
+                                        correctionOptions.estimatedCoverage, correctionOptions.m_coverage,
+                                        goodAlignmentProperties.max_mismatch_ratio, goodAlignmentProperties.min_overlap,
+                                        goodAlignmentProperties.min_overlap_ratio));
         }
 
         for(size_t i = 0; i < readIds.size(); i++){
@@ -135,7 +139,7 @@ void ErrorCorrectionThread::execute() {
             nProcessedQueries++;
         }
 
-		if (opts.correctCandidates){
+		if (correctionOptions.correctCandidates){
             for(auto& b : batchElems){
 			    int batchlockindex = (b.readId + threadOpts.nLocksForProcessedFlags - 1 / threadOpts.nLocksForProcessedFlags);
 			    std::unique_lock<std::mutex> lock(threadOpts.locksForProcessedFlags[batchlockindex]);
@@ -177,9 +181,9 @@ void ErrorCorrectionThread::execute() {
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
         tpa = std::chrono::system_clock::now();
-        if (opts.correctionMode == CorrectionMode::Hamming) {
+        if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
             hammingtools::getMultipleAlignments(shddata, batchElems, true);
-        }else if (opts.correctionMode == CorrectionMode::Graph){
+        }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
             graphtools::getMultipleAlignments(sgadata, batchElems, true);
         }else{
             throw std::runtime_error("Alignment: invalid correction mode.");
@@ -220,7 +224,7 @@ void ErrorCorrectionThread::execute() {
             }
         }
 
-		if (opts.correctionMode == CorrectionMode::Hamming) {
+		if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
             for(auto& b : batchElems){
                 if(b.active){
                     tpc = std::chrono::system_clock::now();
@@ -244,7 +248,7 @@ void ErrorCorrectionThread::execute() {
 						write_read(b.readId, b.fwdSequenceString);
                     }
 
-                    if (opts.correctCandidates) {
+                    if (correctionOptions.correctCandidates) {
                         for(const auto& correctedCandidate : b.correctedCandidates){
                             const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
                             - b.candidateCountsPrefixSum[correctedCandidate.index];
@@ -276,7 +280,7 @@ void ErrorCorrectionThread::execute() {
                     }
                 }
             }
-        }else if (opts.correctionMode == CorrectionMode::Graph){
+        }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
 
             for(auto& b : batchElems){
                 if(b.active){
@@ -331,7 +335,7 @@ void ErrorCorrectionThread::execute() {
 #if 1
 	{
         std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
-		if (opts.correctionMode == CorrectionMode::Hamming) {
+		if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
 			std::cout << "thread " << threadOpts.threadId << " : getCandidatesTimeTotal "
 					<< getCandidatesTimeTotal.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : mapminhashresultsdedup "
@@ -382,7 +386,7 @@ void ErrorCorrectionThread::execute() {
 			// 		<< hcorrectionbuffers.d2htime.count() << '\n';
 			// std::cout << "thread " << threadOpts.threadId << " : pileup postprocessing "
 			// 		<< hcorrectionbuffers.postprocessingtime.count() << '\n';
-		} else if (opts.correctionMode == CorrectionMode::Graph) {
+		} else if (correctionOptions.correctionMode == CorrectionMode::Graph) {
 			std::cout << "thread " << threadOpts.threadId << " : getCandidatesTimeTotal "
 					<< getCandidatesTimeTotal.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : mapminhashresultsdedup "

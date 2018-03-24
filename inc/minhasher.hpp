@@ -1,8 +1,8 @@
 #ifndef CARE_MINHASHER_HPP
 #define CARE_MINHASHER_HPP
 
+#include "options.hpp"
 #include "read.hpp"
-#include "args.hpp"
 #include "kvmapfixed.hpp"
 
 #include <set>

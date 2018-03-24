@@ -60,7 +60,7 @@ int main(int argc, char** argv){
 					cxxopts::value<std::string>()->default_value("fastq")->implicit_value("fastq"))
 
 		("c,coverage", "estimated coverage of input file",
-					cxxopts::value<int>()->default_value("20")->implicit_value("20"))
+					cxxopts::value<double>()->default_value("20.0")->implicit_value("20.0"))
 		("r,errorrate", "estimated error rate of input file",
 					cxxopts::value<double>()->default_value("0.03")->implicit_value("0.03"))
 		("m_coverage", "m",
@@ -103,21 +103,7 @@ TIMERSTOPCPU(INIT)
     }
     filesys::create_directories(outputdirectory);
 
-	corrector.setGraphSettings(options["alpha"].as<double>(), options["base"].as<double>());
 	corrector.setBatchsize(options["batchsize"].as<int>());
-	corrector.setAlignmentScores(options["matchscore"].as<int>(),
-					options["subscore"].as<int>(),
-					options["insertscore"].as<int>(),
-					options["deletionscore"].as<int>());
-
-	corrector.setMaxMismatchRatio(options["maxmismatchratio"].as<double>());
-	corrector.setMinimumAlignmentOverlap(options["minalignmentoverlap"].as<int>());
-	corrector.setMinimumAlignmentOverlapRatio(options["minalignmentoverlapratio"].as<double>());
-	corrector.setUseQualityScores(useQScores);
-
-	corrector.setEstimatedCoverage(options["coverage"].as<int>());
-	corrector.setEstimatedErrorRate(options["errorrate"].as<double>());
-	corrector.setM(options["m_coverage"].as<double>());
 
 	corrector.correct(inputfile, fileformat, outputfile);
 

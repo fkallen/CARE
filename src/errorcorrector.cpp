@@ -81,12 +81,15 @@ ErrorCorrector::ErrorCorrector(const Args& args,
 
 }
 
-void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& filename, FileFormat format, const std::string& outputfilename){
+void ErrorCorrector::correct_impl(const std::string& filename, FileFormat format, const std::string& outputfilename){
     SequenceFileProperties props = getSequenceFileProperties(filename, format);
+    AlignmentOptions alignmentOptions = args.getAlignmentOptions();
+    GoodAlignmentProperties goodAlignmentProperties = args.getGoodAlignmentProperties();
+    CorrectionOptions correctionOptions = args.getCorrectionOptions();
 
     Minhasher minhasher(minhashparams);
     ReadStorage readStorage;
-    readStorage.setUseQualityScores(useQualityScores);
+    readStorage.setUseQualityScores(correctionOptions.useQualityScores);
 
     std::cout << "begin build" << std::endl;
 
@@ -95,8 +98,6 @@ void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& fi
 	TIMERSTOPCPU(BUILD);
 
     std::cout << "min sequence length " << props.minSequenceLength << ", max sequence length " << props.maxSequenceLength << '\n';
-
-    opts.maximum_sequence_length = props.maxSequenceLength;
 
     TIMERSTARTCPU(MAP_TRANSFORM);
 	minhasher.transform();
@@ -135,8 +136,11 @@ void ErrorCorrector::correct_impl(CorrectionOptions& opts, const std::string& fi
         threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
         threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
 
-        ecthreads[threadId].opts = opts;
+        ecthreads[threadId].alignmentOptions = alignmentOptions;
+        ecthreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
+        ecthreads[threadId].correctionOptions = correctionOptions;
         ecthreads[threadId].threadOpts = threadOpts;
+        ecthreads[threadId].fileProperties = props;
 
         ecthreads[threadId].run();
     }
@@ -192,8 +196,6 @@ void ErrorCorrector::correct(const std::string& filename, const std::string& for
 		throw std::runtime_error("Set invalid file format : " + format);
 
 	std::cout << "Set file format to " << format << std::endl;
-	//if (format == FileFormat::FASTA)
-	//	setUseQualityScores(false);
 
     if (CORRECT_CANDIDATE_READS_TOO) {
         SequenceFileProperties props = getSequenceFileProperties(filename, inputfileformat);
@@ -203,32 +205,10 @@ void ErrorCorrector::correct(const std::string& filename, const std::string& for
 		locksForProcessedFlags.reset(new std::mutex[nLocksForProcessedFlags]);
 	}
 
-    CorrectionOptions opts;
-    opts.correctCandidates = false;
-    opts.useQualityScores = useQualityScores;
-    opts.alignmentscore_match = alignmentscore_match;
-    opts.alignmentscore_sub = alignmentscore_sub;
-    opts.alignmentscore_ins = alignmentscore_ins;
-    opts.alignmentscore_del = alignmentscore_del;
-    opts.min_overlap = min_overlap;
-    opts.kmerlength = minhashparams.k;
-    opts.max_mismatch_ratio = max_mismatch_ratio;
-    opts.min_overlap_ratio = min_overlap_ratio;
-    opts.estimatedCoverage = estimatedCoverage;
-    opts.errorrate = errorrate;
-    opts.m_coverage = m_coverage;
-    opts.graphalpha = graphalpha;
-    opts.graphx = graphx;
-
-    correct_impl(opts, filename, inputfileformat, outputfilename);
+    correct_impl(filename, inputfileformat, outputfilename);
 
 	readIsProcessedVector.clear();
     locksForProcessedFlags.reset();
-}
-
-void ErrorCorrector::setGraphSettings(double alpha, double x) {
-	graphalpha = alpha;
-	graphx = x;
 }
 
 void ErrorCorrector::setBatchsize(int n) {
@@ -238,60 +218,5 @@ void ErrorCorrector::setBatchsize(int n) {
 	batchsize = n;
 }
 
-void ErrorCorrector::setAlignmentScores(int matchscore, int subscore,
-		int insertscore, int delscore) {
-	alignmentscore_match= matchscore;
-	alignmentscore_sub = subscore;
-	alignmentscore_ins = insertscore;
-	alignmentscore_del = delscore;
-}
-
-void ErrorCorrector::setMaxMismatchRatio(double ratio) {
-	if (ratio < 0.0 || ratio > 1)
-		throw std::runtime_error(
-				"max mismatch ratio must be >= 0.0 and <= 1.0");
-
-	max_mismatch_ratio = ratio;
-}
-
-void ErrorCorrector::setMinimumAlignmentOverlap(int overlap) {
-	if (overlap < 0)
-		throw std::runtime_error("batchsize must be >= 0");
-
-	min_overlap = overlap;
-}
-
-void ErrorCorrector::setMinimumAlignmentOverlapRatio(double ratio) {
-	if (ratio < 0.0 || ratio > 1)
-		throw std::runtime_error(
-				"min alignment overlap ratio must be >= 0.0 and <= 1.0");
-
-	min_overlap_ratio = ratio;
-}
-
-void ErrorCorrector::setUseQualityScores(bool val) {
-	useQualityScores = val;
-}
-
-void ErrorCorrector::setEstimatedCoverage(int cov) {
-	if (cov < 1)
-		throw std::runtime_error("set invalid estimated coverage");
-
-	estimatedCoverage = cov;
-}
-
-void ErrorCorrector::setEstimatedErrorRate(double rate) {
-	if (rate < 0 || rate >= 1.0)
-		throw std::runtime_error("set invalid estimated error rate");
-
-	errorrate = rate;
-}
-
-void ErrorCorrector::setM(double m) {
-	if (m < 0)
-		throw std::runtime_error("set invalid m");
-
-	m_coverage = m;
-}
 
 }
