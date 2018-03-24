@@ -302,7 +302,7 @@ namespace hammingtools{
         #if WEIGHTMODE == 2
 
             for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-                const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i].nOps / (batchElem.bestAlignments[i].overlap * maxErrorRate));
+                const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i].nOps / (batchElem.bestAlignments[i].overlap * correctionSettings.maxErrorRate));
                 const int len = batchElem.bestSequenceStrings[i].length();
                 const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
 
