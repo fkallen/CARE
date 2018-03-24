@@ -116,7 +116,7 @@ void ErrorCorrectionThread::execute() {
 
     hammingtools::correction::PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
                                                         correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
-                                                        correctionOptions.errorrate, correctionOptions.m_coverage, correctionOptions.kmerlength);
+                                                        correctionOptions.estimatedErrorrate, correctionOptions.m_coverage, correctionOptions.kmerlength);
     graphtools::correction::ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.max_mismatch_ratio,
                                                   correctionOptions.graphalpha, correctionOptions.graphx);
 
@@ -128,7 +128,7 @@ void ErrorCorrectionThread::execute() {
 		//fit vector size to actual batch size
 		if (batchElems.size() != readIds.size()) {
             batchElems.resize(readIds.size(),
-                              BatchElem(threadOpts.readStorage, correctionOptions.errorrate,
+                              BatchElem(threadOpts.readStorage, correctionOptions.estimatedErrorrate,
                                         correctionOptions.estimatedCoverage, correctionOptions.m_coverage,
                                         goodAlignmentProperties.max_mismatch_ratio, goodAlignmentProperties.min_overlap,
                                         goodAlignmentProperties.min_overlap_ratio));

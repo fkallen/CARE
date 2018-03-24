@@ -1,8 +1,14 @@
 #ifndef CARE_OPTIONS_HPP
 #define CARE_OPTIONS_HPP
 
+#include "sequencefileio.hpp"
+
+#include <string>
+
 namespace care{
     enum class CorrectionMode {Hamming, Graph};
+	
+	//Options which can be parsed from command-line arguments
 
     struct MinhashOptions {
         int maps = 2;
@@ -27,12 +33,27 @@ namespace care{
         bool correctCandidates = false;
         bool useQualityScores = true;
         double estimatedCoverage = 1.0;
-        double errorrate = 0.01;
+        double estimatedErrorrate = 0.01;
         double m_coverage = 0.6;
         double graphalpha = 1.0;
         double graphx = 1.5;
         int kmerlength = 16;
+		int batchsize = 5;
     };
+	
+	struct RuntimeOptions{
+		int threads = 1;
+		int nInserterThreads = 1;
+		int nCorrectorThreads = 1;
+	};
+	
+	struct FileOptions{
+		FileFormat format;
+		std::string fileformatstring;		
+		std::string inputfile;
+		std::string outputdirectory;
+		std::string outputfile;		
+	};
 }
 
 

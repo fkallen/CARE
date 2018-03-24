@@ -1,28 +1,14 @@
-#include "../inc/errorcorrector.hpp"
-
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/care.hpp"
 
 #include "../inc/cxxopts/cxxopts.hpp"
 
 
 #include <iostream>
 #include <string>
-#include <chrono>
-#include <cstdlib>
-#include <experimental/filesystem>
-
-namespace filesys = std::experimental::filesystem;
-
-std::string getFileName(std::string filePath)
-{
-	filesys::path path(filePath);
-	return path.filename().string();
-}
 
 int main(int argc, const char** argv){
 
 	bool help = false;
-
 
 	cxxopts::Options options(argv[0], "Perform error correction on a fastq file");
 
@@ -33,8 +19,7 @@ int main(int argc, const char** argv){
 		("outfile", "The output file", cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>()->default_value("2")->implicit_value("2"))
 		("kmerlength", "The kmer length for minhashing. Must be greater than 0.", cxxopts::value<int>()->default_value("16")->implicit_value("16"))
-		("insertthreads", "Number of threads to build database. Must be greater than 0.", cxxopts::value<int>()->default_value("1")->implicit_value("1"))
-		("correctorthreads", "Number of threads to correct reads. Must be greater than 0.", cxxopts::value<int>()->default_value("1")->implicit_value("1"))
+		("threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>()->default_value("1"))
 		("base", "Graph parameter for cutoff (alpha*pow(base,edge))", cxxopts::value<double>()->default_value("1.1")->implicit_value("1.1"))
 		("alpha", "Graph parameter for cutoff (alpha*pow(base,edge))", cxxopts::value<double>()->default_value("1.0")->implicit_value("1.0"))
 		("batchsize", "This mainly affects the GPU alignment since the alignments of batchsize reads to their candidates is done in parallel.Must be greater than 0.",
@@ -69,22 +54,9 @@ int main(int argc, const char** argv){
 	if(help){
 	      	std::cout << options.help({"", "Group"}) << std::endl;
 		exit(0);
-	}
+	}   
 
-	care::ErrorCorrector corrector(parseresults);
-
-    std::string inputfile = parseresults["inputfile"].as<std::string>();
-    std::string fileformat = parseresults["fileformat"].as<std::string>();
-    std::string outputdirectory = parseresults["outdir"].as<std::string>();
-    std::string outputfile;
-    if(parseresults["outfile"].as<std::string>() == ""){
-        outputfile = outputdirectory + "/corrected_" + getFileName(inputfile);
-    }else{
-        outputfile = outputdirectory + "/" + parseresults["outfile"].as<std::string>();
-    }
-    filesys::create_directories(outputdirectory);
-
-	corrector.correct(inputfile, fileformat, outputfile);
+	care::performCorrection(parseresults);
 
 
 	return 0;

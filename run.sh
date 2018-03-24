@@ -5,11 +5,8 @@
 executable=./errorcorrector_gpu
 #executable=./errorcorrector_cpu
 
-#number of threads to hash the reads
-ithreads=4
-
-#number of threads to correct reads. in gpu version, when using N gpus each gpu will be used by cthreads / N threads
-cthreads=8
+#max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
+threads=8
 
 #input file
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
@@ -73,6 +70,6 @@ xx=$(echo 'scale=2; 12/10' | bc)
 aa=$(echo 'scale=2; 10/10' | bc)
 
 
-echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --hashmaps=$maps --kmerlength=$k --insertthreads=$ithreads --correctorthreads=$cthreads --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
+echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --hashmaps=$maps --kmerlength=$k --threads=$threads --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
 
-time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --hashmaps=$maps --kmerlength=$k --insertthreads=$ithreads --correctorthreads=$cthreads --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
+time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --hashmaps=$maps --kmerlength=$k --threads=$threads --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m
