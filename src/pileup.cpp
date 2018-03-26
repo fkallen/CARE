@@ -25,6 +25,7 @@
 using namespace cooperative_groups;
 #endif
 
+namespace care{
 namespace hammingtools{
 
 	namespace correction{
@@ -578,4 +579,5 @@ namespace hammingtools{
 			}
         }
 	}
+}
 }

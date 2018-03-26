@@ -8,6 +8,8 @@
 #include <vector>
 #include <string>
 
+namespace care{
+
 namespace hammingtools{
 
 	namespace correction{
@@ -103,5 +105,5 @@ namespace hammingtools{
 	}
 
 }
-
+}
 #endif
