@@ -9,6 +9,46 @@
 
 #define WARP_SIZE 32
 
+#if __CUDACC_VER_MAJOR__ >= 9
+#include <cooperative_groups.h>
+using namespace cooperative_groups;
+#endif
+
+__host__ __device__
+constexpr bool power_of_two(unsigned int x) {
+   return x && !(x & (x - 1));
+}
+
+
+#if __CUDACC_VER_MAJOR__ < 9
+
+    template<unsigned int TileSize, class T, class Func>
+    __device__ T reduceTile(T val, Func func){
+        static_assert(power_of_two(TileSize) && TileSize <= 32,
+            "reduceTile is only available if TileSize < 32 and TileSize is power of 2");
+
+        for (unsigned int offset = TileSize/2; offset > 0; offset /= 2){
+            myValue = func(myValue, __shfl_down_sync(__activemask(), myValue, offset));
+        }
+        return val;
+    }
+
+#else
+
+template<unsigned int TileSize, class T, class Func>
+__device__ T reduceTile(thread_block_tile<TileSize>& g, T val, Func func){
+    static_assert(power_of_two(TileSize) && TileSize <= 32,
+        "reduceTile is only available if TileSize < 32 and TileSize is power of 2");
+
+    for (unsigned int offset = TileSize/2; offset > 0; offset /= 2){
+        val = func(val, g.shfl_down(val, offset));
+    }
+    return val;
+}
+
+#endif
+
+
 
 template <unsigned int MAX_BLOCK_DIM_X_, class S, class Func>
 __device__ void blockreduce(S *result, S localvalue, Func func){
@@ -26,7 +66,7 @@ __device__ void blockreduce(S *result, S localvalue, Func func){
             printf("%d %d\n", i, (*((int2*)&sdata[i])).x);
     }
     __syncthreads();*/
-    
+
 
     // do reduction in shared mem
     if ((blockDim.x >= 1024) && (tid < 512)){
@@ -70,7 +110,7 @@ __device__ void blockreduce(S *result, S localvalue, Func func){
         // Reduce final warp using shuffle
         #pragma unroll
         for (int offset = WARP_SIZE/2; offset > 0; offset /= 2){
-#if __CUDACC_VER_MAJOR__ < 9         
+#if __CUDACC_VER_MAJOR__ < 9
             myValue = func(myValue, __shfl_down(myValue, offset));
 #else
             unsigned mask = __activemask();
@@ -127,7 +167,7 @@ __device__ void blockreduce(S* tmpstorage, S *result, S localvalue, Func func){
 
     // each thread puts its local sum into shared memory
     tmpstorage[tid] = localvalue;
-    __syncthreads();   
+    __syncthreads();
 
     // do reduction in shared mem
     if ((blockDim.x >= 1024) && (tid < 512)){
@@ -158,7 +198,7 @@ __device__ void blockreduce(S* tmpstorage, S *result, S localvalue, Func func){
         // Reduce final warp using shuffle
         #pragma unroll
         for (int offset = WARP_SIZE/2; offset > 0; offset /= 2){
-#if __CUDACC_VER_MAJOR__ < 9         
+#if __CUDACC_VER_MAJOR__ < 9
             myValue = func(myValue, __shfl_down(myValue, offset));
 #else
             unsigned mask = __activemask();
