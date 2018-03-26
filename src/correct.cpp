@@ -161,6 +161,8 @@ void ErrorCorrectionThread::execute() {
     std::vector<BatchElem> batchElems;
     std::vector<std::uint32_t> readIds = threadOpts.batchGen->getNextReadIds();
 
+    std::uint64_t numberOfBadAlignments = 0;
+
 	while(!readIds.empty()){
 
 		//fit vector size to actual batch size
@@ -342,6 +344,12 @@ void ErrorCorrectionThread::execute() {
             throw std::runtime_error("Correction: invalid correction mode.");
         }
 
+        for(auto& b : batchElems){
+            if(b.active){
+                numberOfBadAlignments += std::count_if(b.activeCandidates.begin(), b.activeCandidates.end(), [](bool b){return !b;});
+            }
+        }
+
 		// update local progress
 		nProcessedReads += readIds.size();
 
@@ -369,7 +377,8 @@ void ErrorCorrectionThread::execute() {
 				<< goodAlignmentStats.correctionCases[0] << " " << goodAlignmentStats.correctionCases[1] << " "
 				<< goodAlignmentStats.correctionCases[2] << " " << goodAlignmentStats.correctionCases[3] << " "
 				<< std::endl;
-
+        std::cout << "thread " << threadOpts.threadId << " numberOfBadAlignments "
+                << numberOfBadAlignments << std::endl;
 	}
 
 #if 1
