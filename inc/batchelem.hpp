@@ -11,6 +11,14 @@
 struct CorrectedCandidate{
     std::uint64_t index;
     std::string sequence;
+    CorrectedCandidate(){}
+    CorrectedCandidate(std::uint64_t index, const std::string& sequence)
+        : index(index), sequence(sequence){}
+
+    CorrectedCandidate(const CorrectedCandidate& other) = default;
+    CorrectedCandidate(CorrectedCandidate&& other) = default;
+    CorrectedCandidate& operator=(const CorrectedCandidate& other) = default;
+    CorrectedCandidate& operator=(CorrectedCandidate&& other) = default;
 };
 
 struct DetermineGoodAlignmentStats{

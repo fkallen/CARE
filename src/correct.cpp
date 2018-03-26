@@ -178,7 +178,7 @@ void ErrorCorrectionThread::execute() {
 
 		if (correctionOptions.correctCandidates){
             for(auto& b : batchElems){
-			    int batchlockindex = (b.readId + threadOpts.nLocksForProcessedFlags - 1 / threadOpts.nLocksForProcessedFlags);
+			    int batchlockindex = b.readId % threadOpts.nLocksForProcessedFlags;
 			    std::unique_lock<std::mutex> lock(threadOpts.locksForProcessedFlags[batchlockindex]);
                 if ((*threadOpts.readIsProcessedVector)[b.readId] == 0) {
 					(*threadOpts.readIsProcessedVector)[b.readId] = 1;
@@ -291,7 +291,7 @@ void ErrorCorrectionThread::execute() {
                             - b.candidateCountsPrefixSum[correctedCandidate.index];
                             for(int f = 0; f < count; f++){
                                 const int candidateId = b.candidateIds[count + f];
-                                int batchlockindex = (candidateId + threadOpts.nLocksForProcessedFlags - 1 / threadOpts.nLocksForProcessedFlags);
+                                int batchlockindex = candidateId % threadOpts.nLocksForProcessedFlags;
                                 bool savingIsOk = false;
                                 if((*threadOpts.readIsProcessedVector)[candidateId] == 0){
                                     std::unique_lock <std::mutex> lock(

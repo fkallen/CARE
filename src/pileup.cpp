@@ -473,53 +473,58 @@ namespace hammingtools{
 				}
 				batchElem.corrected = true;
 		#endif
-		#if 0
+		#if 1
 				//correct candidates
-				if(correctQueries){
+				if(correctionSettings.correctQueries){
+                    /*
+                        Correct candidates which begin in column range
+                        [subjectColumnsBegin_incl - candidate_correction_new_cols, subjectColumnsBegin_incl + candidate_correction_new_cols],
+                        and are not longer than subjectlength + candidate_correction_new_cols
+                    */
 
-					for(int i = 0; i < batchElem.n_unique_candidates; i++){
-						int queryColumnsBegin_incl = alignments[i].shift - startindex;
-						bool queryWasCorrected = false;
-						//correct candidates which are shifted by at most candidate_correction_new_cols columns relative to subject
-						if(queryColumnsBegin_incl >= subjectColumnsBegin_incl - candidate_correction_new_cols
-							&& subjectColumnsEnd_excl + candidate_correction_new_cols >= queryColumnsBegin_incl + int(queries[i].length())){
+					for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
+						const int queryColumnsBegin_incl = batchElem.bestAlignments[i].shift - columnProperties.startindex;
+                        const int queryLength = batchElem.bestSequences[i]->length();
+                        const int queryColumnsEnd_excl = queryColumnsBegin_incl + queryLength;
+
+						//check range condition and length condition
+						if(columnProperties.subjectColumnsBegin_incl - candidate_correction_new_cols <= queryColumnsBegin_incl
+                            && queryColumnsBegin_incl <= columnProperties.subjectColumnsBegin_incl + candidate_correction_new_cols
+							&& queryLength <= subjectlength + candidate_correction_new_cols){
 
 							double newColMinSupport = 1.0;
 							int newColMinCov = std::numeric_limits<int>::max();
 							//check new columns left of subject
-							for(int columnindex = subjectColumnsBegin_incl - candidate_correction_new_cols;
-								columnindex < subjectColumnsBegin_incl;
+							for(int columnindex = columnProperties.subjectColumnsBegin_incl - candidate_correction_new_cols;
+								columnindex < columnProperties.subjectColumnsBegin_incl;
 								columnindex++){
 
-								assert(columnindex < columnsToCheck);
+								assert(columnindex < columnProperties.columnsToCheck);
 								if(queryColumnsBegin_incl <= columnindex){
 									newColMinSupport = h_support[columnindex] < newColMinSupport ? h_support[columnindex] : newColMinSupport;
 									newColMinCov = h_coverage[columnindex] < newColMinCov ? h_coverage[columnindex] : newColMinCov;
 								}
 							}
 							//check new columns right of subject
-							for(int columnindex = subjectColumnsEnd_excl;
-								columnindex < subjectColumnsEnd_excl + candidate_correction_new_cols
-								&& columnindex < columnsToCheck;
+							for(int columnindex = columnProperties.subjectColumnsEnd_excl;
+								columnindex < columnProperties.subjectColumnsEnd_excl + candidate_correction_new_cols
+								&& columnindex < columnProperties.columnsToCheck;
 								columnindex++){
 
 								newColMinSupport = h_support[columnindex] < newColMinSupport ? h_support[columnindex] : newColMinSupport;
 								newColMinCov = h_coverage[columnindex] < newColMinCov ? h_coverage[columnindex] : newColMinCov;
 							}
 
-							if(newColMinSupport >= 1-3*errorrate
-								&& newColMinCov >= m / 2.0 * estimatedCoverage){
+							if(newColMinSupport >= 1-3*correctionSettings.errorrate
+								&& newColMinCov >= correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage){
 								//assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
 
-								for(int j = 0; j < int(queries[i].length()); j++){
-									int columnindex = queryColumnsBegin_incl + j;
-									queries[i][j] = h_consensus[columnindex];
-									queryWasCorrected = true;
-								}
+                                batchElem.correctedCandidates
+                                    .emplace_back(
+                                        i,
+                                        std::string(&h_consensus[queryColumnsBegin_incl], &h_consensus[queryColumnsEnd_excl])
+                                    );
 							}
-						}
-						if(queryWasCorrected){
-							correctedQueries[i] = true;
 						}
 					}
 				}
