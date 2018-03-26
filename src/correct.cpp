@@ -90,7 +90,8 @@ struct ErrorCorrectionThread{
     std::uint32_t nProcessedReads = 0;
 
     DetermineGoodAlignmentStats goodAlignmentStats;
-    int duplicates = 0;
+    std::uint64_t minhashcandidates = 0;
+    std::uint64_t duplicates = 0;
 	int nProcessedQueries = 0;
 	int nCorrectedCandidates = 0; // candidates which were corrected in addition to query correction.
 
@@ -202,6 +203,8 @@ void ErrorCorrectionThread::execute() {
                 tpd = std::chrono::system_clock::now();
         		getCandidatesTimeTotal += tpd - tpc;
 
+                minhashcandidates += b.candidateIds.size();
+
 				if(b.candidateIds.size() == 0){
 					//no need for further processing
 					b.active = false;
@@ -219,7 +222,7 @@ void ErrorCorrectionThread::execute() {
 
         tpa = std::chrono::system_clock::now();
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-            hammingtools::getMultipleAlignments(shddata, batchElems, true);
+            hammingtools::getMultipleAlignments(shddata, batchElems, goodAlignmentProperties, true);
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
             graphtools::getMultipleAlignments(sgadata, batchElems, true);
         }else{
@@ -384,7 +387,7 @@ void ErrorCorrectionThread::execute() {
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
             std::cout << "thread " << threadOpts.threadId
                     << " : duplicates "
-                    << duplicates << '\n';
+                    << duplicates << " ( " << (100.0 * (double(duplicates) / double(minhashcandidates))) << " %)\n";
 			std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer "
 					<< shddata.resizetime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment preprocessing "

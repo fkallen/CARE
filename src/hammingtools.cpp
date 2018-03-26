@@ -14,6 +14,7 @@
 #include <cublas_v2.h>
 #endif
 
+namespace care{
 namespace hammingtools{
 
 	int reserved_SMs = 1;
@@ -159,10 +160,10 @@ namespace hammingtools{
 	}
 
 	void init_once(){
-        hammingtools::correction::init_once();
+        correction::init_once();
     }
 
-    void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
+    void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, const GoodAlignmentProperties& props, bool useGpu){
 
         std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
         std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
@@ -207,6 +208,7 @@ namespace hammingtools{
                     tpa = std::chrono::system_clock::now();
                     batchid = subjectindex;
 
+                    params[batchid].props = props;
                     params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
                     params[batchid].sequencepitch = mybuffers.sequencepitch;
                     params[batchid].subjectlength = b.fwdSequence->length();
@@ -253,6 +255,11 @@ namespace hammingtools{
                     tpb = std::chrono::system_clock::now();
                     mybuffers.preprocessingtime += tpb - tpa;
 
+                    int maxQueryLength = 0;
+                    for(int k = 0; k < params[batchid].n_queries; k++)
+                        if(maxQueryLength < querylengths[k])
+                            maxQueryLength = querylengths[k];
+
                     // copy data to gpu
                     cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata),
                             subjectdata,
@@ -271,7 +278,7 @@ namespace hammingtools{
                             mybuffers.streams[batchid]); CUERR;
 
                     // start kernel
-                    alignment::call_shd_kernel_async(params[batchid], mybuffers.streams[batchid]);
+                    alignment::call_shd_kernel_async(params[batchid], maxQueryLength, mybuffers.streams[batchid]);
 
                     querysum += count;
                     subjectindex++;
@@ -340,13 +347,13 @@ namespace hammingtools{
                     for(size_t i = 0; i < b.fwdSequences.size(); i++){
                         const char* query =  (const char*)b.fwdSequences[i]->begin();
                         const int queryLength = b.fwdSequences[i]->length();
-                        b.fwdAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
+                        b.fwdAlignments[i] = alignment::cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
                     }
 
                     for(size_t i = 0; i < b.revcomplSequences.size(); i++){
                         const char* query =  (const char*)b.revcomplSequences[i]->begin();
                         const int queryLength = b.revcomplSequences[i]->length();
-                        b.revcomplAlignments[i] = alignment::cpu_shifted_hamming_distance(subject, query, subjectLength, queryLength);
+                        b.revcomplAlignments[i] = alignment::cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
                     }
                 }
             }
@@ -362,3 +369,4 @@ namespace hammingtools{
 
 
 }// end namespace hammingtools
+}

@@ -1,9 +1,10 @@
 #ifndef HAMMINGTOOLS_HPP
 #define HAMMINGTOOLS_HPP
 
-#include "../inc/alignment.hpp"
-#include "../inc/read.hpp"
-#include "../inc/batchelem.hpp"
+#include "alignment.hpp"
+#include "read.hpp"
+#include "batchelem.hpp"
+#include "options.hpp"
 
 #include <vector>
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <cublas_v2.h>
 #endif
 
+namespace care{
 namespace hammingtools{
 
 struct SHDdata{
@@ -71,11 +73,11 @@ void cuda_cleanup_SHDdata(SHDdata& data);
 
 void init_once();
 
-void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
+void getMultipleAlignments(SHDdata& mybuffers, std::vector<BatchElem>& batch, const GoodAlignmentProperties& props, bool useGpu);
 
 
 } //end namespace hammingtools
-
+}
 
 
 #endif
