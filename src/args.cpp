@@ -21,7 +21,8 @@ namespace args{
 	template<>
 	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
         MinhashOptions result{pr["hashmaps"].as<int>(),
-    					      pr["kmerlength"].as<int>()};
+    					      pr["kmerlength"].as<int>(),
+                              0.0};
 
         return result;
 	}
