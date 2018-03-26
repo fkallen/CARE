@@ -174,11 +174,18 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
 		allMinhashResults.insert(allMinhashResults.end(), entries2.begin(), entries2.end());
 	}
 
-	int n_initial_candidates = allMinhashResults.size();
+    if(allMinhashResults.size() == 0)
+        return allMinhashResults;
 
-	int unique_elements = -1;
+	std::uint64_t n_initial_candidates = allMinhashResults.size();
+
+
+	std::uint64_t n_unique_elements = 0;
 
 #if 0
+/*
+    THIS DOES NOT COUNT HOW MANY MAPS WHERE HIT PER READ
+*/
 	cudaSetDevice(buffers.deviceId);
 
 	buffers.grow(allMinhashResults.size());
@@ -190,24 +197,61 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
 
 	cudaStreamSynchronize(buffers.stream); CUERR;
 
-	unique_elements = thrust::distance(dev_ptr, d_unique_end);
-	allMinhashResults.resize(unique_elements);
+	n_unique_elements = thrust::distance(dev_ptr, d_unique_end);
+	allMinhashResults.resize(n_unique_elements);
 	//thrust::copy(thrust::cuda::par.on(buffers.stream), dev_ptr, d_unique_end, allMinhashResults.begin());
-	cudaMemcpyAsync(allMinhashResults.data(), dev_ptr.get(), sizeof(std::uint64_t) * unique_elements, cudaMemcpyDeviceToHost, buffers.stream); CUERR;
+	cudaMemcpyAsync(allMinhashResults.data(), dev_ptr.get(), sizeof(std::uint64_t) * n_unique_elements, cudaMemcpyDeviceToHost, buffers.stream); CUERR;
 	cudaStreamSynchronize(buffers.stream); CUERR;
 #else
 
 	std::sort(allMinhashResults.begin(), allMinhashResults.end());
-	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
-	unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
-	allMinhashResults.resize(unique_elements);
+	/*auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
+	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
+	allMinhashResults.resize(n_unique_elements);*/
+
+    /*
+        make allMinhashResults unique and identical elements
+    */
+    n_unique_elements = 1;
+    std::vector<std::uint8_t> counts(allMinhashResults.size(), std::uint8_t(0));
+    counts[0]++;
+
+    std::uint64_t prev = allMinhashResults[0];
+
+    for (size_t k = 1; k < allMinhashResults.size(); k++) {
+        std::uint64_t cur = allMinhashResults[k];
+        if (prev == cur) {
+            counts[n_unique_elements-1]++;
+        }else {
+            allMinhashResults[n_unique_elements] = cur;
+            counts[n_unique_elements]++;
+            n_unique_elements++;
+        }
+        prev = cur;
+    }
+
+
+
+    /*
+        only keep results with count geq threshold
+    */
+    double threshold = double(minparams.maps) * minparams.min_hits_per_candidate;
+    std::uint64_t valid_elements = 0;
+    for(std::uint64_t k = 0; k < n_unique_elements; k++){
+        if(counts[k] >= threshold){
+            allMinhashResults[valid_elements] = allMinhashResults[k];
+            valid_elements++;
+        }
+    }
+
+    allMinhashResults.resize(valid_elements);
 
 #endif
 
-	assert(n_initial_candidates - unique_elements >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
+	//assert(n_initial_candidates - n_unique_elements >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
 
-	/*if(d != unique_elements){
-		std::cout << "#unique elements wrong. normal " << d << ", thrust " << unique_elements << std::endl;
+	/*if(d != n_unique_elements){
+		std::cout << "#unique elements wrong. normal " << d << ", thrust " << n_unique_elements << std::endl;
 	}
 	for(int i = 0; i < d; i++){
 		if(tmp[i] != allMinhashResults[i]){
