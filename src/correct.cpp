@@ -470,14 +470,20 @@ void correct(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
-                  const Minhasher& minhasher,
-                  const ReadStorage& readStorage,
+                  Minhasher& minhasher,
+                  ReadStorage& readStorage,
 				  std::vector<char>& readIsProcessedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 				  size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds){
 
+      // initialize global correction data structures
+  	hammingtools::init_once();
+  	graphtools::init_once();
+
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+
+    std::cout << "min sequence length " << props.minSequenceLength << ", max sequence length " << props.maxSequenceLength << '\n';
 
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < runtimeOptions.nCorrectorThreads; i++){
@@ -533,6 +539,15 @@ void correct(const MinhashOptions& minhashOptions,
 
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);
+
+    minhasher.init(0);
+	readStorage.destroy();
+
+    std::cout << "begin merge" << std::endl;
+    mergeResultFiles(props.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+    deleteFiles(tmpfiles);
+
+    std::cout << "end merge" << std::endl;
 
 }
 

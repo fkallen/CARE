@@ -7,7 +7,7 @@
 
 namespace care{
     enum class CorrectionMode {Hamming, Graph};
-	
+
 	//Options which can be parsed from command-line arguments
 
     struct MinhashOptions {
@@ -40,19 +40,20 @@ namespace care{
         int kmerlength = 16;
 		int batchsize = 5;
     };
-	
+
 	struct RuntimeOptions{
 		int threads = 1;
 		int nInserterThreads = 1;
 		int nCorrectorThreads = 1;
+        bool showProgress = true;
 	};
-	
+
 	struct FileOptions{
 		FileFormat format;
-		std::string fileformatstring;		
+		std::string fileformatstring;
 		std::string inputfile;
 		std::string outputdirectory;
-		std::string outputfile;		
+		std::string outputfile;
 	};
 }
 

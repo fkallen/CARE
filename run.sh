@@ -29,7 +29,6 @@ outputfile="readscorrectednew.fq"
 #outputfile="ecolisrr11_m06_e001_h8_k16_hq_qscores.fq"
 
 #absolute output file path = outdir/outputfile
-#if --outfile is not used, absolute path will be outdir/inputfilenameWithoutEnding+_#k_#maps_1_alpha_#alpha_x_#x_corrected
 outfile="--outfile=$outputfile"
 #outfile=
 

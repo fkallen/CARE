@@ -68,9 +68,9 @@ namespace care{
         }
     };
 
-    void build(const std::string& filename, FileFormat format, ReadStorage& readStorage,
+    void build(const FileOptions& fileOptions, ReadStorage& readStorage,
                 Minhasher& minhasher, int nThreads){
-        SequenceFileProperties props = getSequenceFileProperties(filename, format);
+        SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
         std::cout << "build found " << props.nReads << " reads." << std::endl;
 
         minhasher.init(props.nReads);
@@ -82,8 +82,8 @@ namespace care{
         if(nThreads == 1){
         	std::unique_ptr<SequenceFileReader> reader;
 
-        	switch(format) {
-        		case FileFormat::FASTQ: reader.reset(new FastqReader(filename)); break;
+        	switch(fileOptions.format) {
+        		case FileFormat::FASTQ: reader.reset(new FastqReader(fileOptions.inputfile)); break;
         		default: assert(false && "inputfileformat"); break;
         	}
 
@@ -126,9 +126,9 @@ namespace care{
 
         	std::unique_ptr<SequenceFileReader> reader;
 
-        	switch (format) {
+        	switch (fileOptions.format) {
         	case FileFormat::FASTQ:
-        		reader.reset(new FastqReader(filename));
+        		reader.reset(new FastqReader(fileOptions.inputfile));
         		break;
         	default:
         		assert(false && "inputfileformat");
