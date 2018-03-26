@@ -177,9 +177,6 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
     if(allMinhashResults.size() == 0)
         return allMinhashResults;
 
-	std::uint64_t n_initial_candidates = allMinhashResults.size();
-
-
 	std::uint64_t n_unique_elements = 0;
 
 #if 0
