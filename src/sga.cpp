@@ -14,6 +14,7 @@ using namespace cooperative_groups;
 
 #define WARPSIZE 32
 
+namespace care{
 namespace graphtools{
 
 	namespace alignment{
@@ -1265,4 +1266,5 @@ namespace graphtools{
 #endif
 
 	}
+}
 }

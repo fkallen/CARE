@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 
+namespace care{
     BatchElem::BatchElem(const ReadStorage* rs, double errorrate_,
                 int estimatedCoverage_, double m_coverage_,
                 double MAX_MISMATCH_RATIO_, int MIN_OVERLAP_, double MIN_OVERLAP_RATIO_)
@@ -81,8 +82,12 @@
         fwdSequenceString = fwdSequence->toString();
     }
 
-    void BatchElem::set_candidate_ids(const std::vector<std::uint64_t>& ids){
-        candidateIds = ids;
+    void BatchElem::set_candidate_ids(const std::vector<Minhasher::Value>& values){
+        candidateIds.clear();
+        candidateIds.resize(values.size());
+        for(const auto& value : values){
+            candidateIds.push_back(value.getReadId());
+        }
         //remove self from candidates
         candidateIds.erase(std::find(candidateIds.begin(), candidateIds.end(), readId));
 
@@ -270,3 +275,5 @@
         n_unique_candidates = activeposition_unique;
         n_candidates = activeposition;
     }
+
+}

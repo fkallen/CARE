@@ -12,6 +12,7 @@
 
 #define ASSERT_TOPOLOGIC_SORT
 
+namespace care{
 namespace graphtools{
 
 	namespace correction{
@@ -617,4 +618,5 @@ namespace graphtools{
         }
 
 	}
+}
 }

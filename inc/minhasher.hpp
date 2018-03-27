@@ -4,6 +4,7 @@
 #include "options.hpp"
 #include "read.hpp"
 #include "kvmapfixed.hpp"
+#include "ganja/hpc_helpers.cuh"
 
 #include <set>
 #include <cstdint>
@@ -12,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <stdexcept>
+#include <limits>
 
 namespace care{
 
@@ -33,14 +35,42 @@ void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer);
 
 struct Minhasher {
 
-	// configure hash map
-	using key_t = std::uint64_t;
-	static constexpr int bits_key = sizeof(key_t) * 8;
+    using Key_t = std::uint64_t; //hash value type
+    using Index_t = std::uint64_t; //read id type
+
+    struct Value{
+        HOSTDEVICEQUALIFIER
+        Value() : Value(0){}
+        HOSTDEVICEQUALIFIER
+        Value(Index_t payload) : payload(payload){}
+        Value(const Value& other) = default;
+        Value(Value&& other) = default;
+        Value& operator=(const Value& other) = default;
+        Value& operator=(Value&& other) = default;
+        HOSTDEVICEQUALIFIER
+        bool operator==(const Value& other){ return payload == other.payload;}
+        HOSTDEVICEQUALIFIER
+        bool operator!=(const Value& other){ return !(*this == other);}
+        HOSTDEVICEQUALIFIER
+        bool operator<(const Value& other){ return payload < other.payload;}
+
+        HOSTDEVICEQUALIFIER
+        Index_t getReadId() const{
+            return payload;
+        }
+
+        Index_t payload;
+    };
+
+    using Value_t = Value; //return value type
+
+	static constexpr int bits_key = sizeof(Key_t) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
+    static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
 
 
 	// the actual hash maps
-	std::vector<std::unique_ptr<KVMapFixed<key_t>>> minhashTables;
+	std::vector<std::unique_ptr<KVMapFixed<Key_t, Value_t, Index_t>>> minhashTables;
 	MinhashOptions minparams;
 	std::uint64_t nReads;
 
@@ -51,14 +81,14 @@ struct Minhasher {
 
 	Minhasher(const MinhashOptions& parameters);
 
-	void init(std::uint64_t nReads);
+	void init(Index_t nReads);
 
 	void clear();
 
 	int insertSequence(const std::string& sequence, const std::uint64_t readnum);
 
-	std::vector<std::pair<std::uint64_t, int>> getCandidatesWithFlag(const std::string& sequence) const;
-	std::vector<std::uint64_t> getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const;
+	//std::vector<std::pair<std::uint64_t, int>> getCandidatesWithFlag(const std::string& sequence) const;
+	std::vector<Value_t> getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const;
 
 	void saveTablesToFile(std::string filename) const;
 

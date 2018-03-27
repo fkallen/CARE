@@ -9,6 +9,7 @@
 #include <cstring>
 #include <vector>
 
+namespace care{
 namespace graphtools{
 
 	AlignerDataArrays::AlignerDataArrays(int deviceId_, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel)
@@ -395,3 +396,4 @@ namespace graphtools{
 
 
 } //namespace end
+}

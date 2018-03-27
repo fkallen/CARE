@@ -8,8 +8,14 @@
 #include "../inc/read.hpp"
 #include "../inc/sequencefileio.hpp"
 
+#include <cstdint>
 #include <thread>
 
+//#define DO_PROFILE
+
+#ifdef __NVCC__
+#include <cuda_profiler_api.h>
+#endif
 
 namespace care{
 
@@ -116,6 +122,7 @@ struct ErrorCorrectionThread{
 
     std::thread thread;
     bool isRunning = false;
+    volatile bool stopAndAbort = false;
 
     void run(){
         if(isRunning) throw std::runtime_error("ErrorCorrectionThread::run: Is already running.");
@@ -163,7 +170,7 @@ void ErrorCorrectionThread::execute() {
 
     std::uint64_t numberOfBadAlignments = 0;
 
-	while(!readIds.empty()){
+	while(!stopAndAbort &&!readIds.empty()){
 
 		//fit vector size to actual batch size
 		if (batchElems.size() != readIds.size()) {
@@ -507,6 +514,12 @@ void correct(const MinhashOptions& minhashOptions,
 
     std::mutex writelock;
 
+#ifdef DO_PROFILE
+#ifdef __NVCC__
+    cudaProfilerStart(); CUERR;
+#endif
+#endif
+
     for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
 
         generators[threadId] = BatchGenerator(props.nReads, correctionOptions.batchsize, threadId, runtimeOptions.nCorrectorThreads);
@@ -531,6 +544,9 @@ void correct(const MinhashOptions& minhashOptions,
         ecthreads[threadId].run();
     }
 
+#ifdef DO_PROFILE
+    int sleepiter = 0;
+#endif
     if(runtimeOptions.showProgress){
         std::uint64_t progress = 0;
         while(progress < props.nReads){
@@ -542,7 +558,21 @@ void correct(const MinhashOptions& minhashOptions,
                     ((progress * 1.0 / props.nReads) * 100.0));
             std::cout << std::flush;
             if(progress < props.nReads)
-                  std::this_thread::sleep_for(std::chrono::seconds(5));
+                  std::this_thread::sleep_for(std::chrono::seconds(3));
+#ifdef DO_PROFILE
+            sleepiter++;
+
+            #ifdef __NVCC__
+            if(sleepiter > 0){
+                cudaProfilerStop(); CUERR;
+                for(auto& t : ecthreads){
+                    t.stopAndAbort = true;
+                    t.join();
+                }
+                std::exit(0);
+            }
+            #endif
+#endif
         }
     }
 

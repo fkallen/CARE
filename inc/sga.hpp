@@ -5,6 +5,7 @@
 #include "alignment.hpp"
 #include "ganja/hpc_helpers.cuh"
 
+namespace care{
 namespace graphtools{
 
 	//forward decl
@@ -87,5 +88,5 @@ namespace graphtools{
 	}
 
 }
-
+}
 #endif

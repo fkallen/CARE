@@ -11,6 +11,8 @@
 #include <chrono>
 #include <tuple>
 
+namespace care{
+
 namespace graphtools{
 
     //forward decl
@@ -89,5 +91,6 @@ namespace graphtools{
 	void getMultipleAlignments(AlignerDataArrays& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 
 } //namespace end
+}
 
 #endif

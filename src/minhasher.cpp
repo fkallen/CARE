@@ -60,7 +60,7 @@ void Minhasher::init(std::uint64_t nReads_){
 
 	for (int i = 0; i < minparams.maps; ++i) {
 		minhashTables[i].reset();
-		minhashTables[i].reset(new KVMapFixed<key_t>(nReads));
+		minhashTables[i].reset(new KVMapFixed<Key_t, Value_t, Index_t>(nReads));
 	}
 }
 
@@ -74,8 +74,11 @@ void Minhasher::clear(){
 
 int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t readnum)
 {
-	if(readnum >= nReads)
-		throw std::runtime_error("Minhasher, too many reads, read number too large");
+	if(readnum > max_read_num)
+		throw std::runtime_error("Minhasher::insertSequence: Index_t cannot represent readnum. "
+                                + std::to_string(readnum) + " > " + std::to_string(max_read_num));
+    if(readnum >= nReads)
+		throw std::runtime_error("Minhasher::insertSequence: read number too large. " + std::to_string(readnum) + " > " + std::to_string(nReads));
 
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
@@ -95,13 +98,13 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 
 	// insert
 	for (int map = 0; map < minparams.maps; ++map) {
-		std::uint64_t key = bandHashValues[map] & key_mask;
+		Key_t key = bandHashValues[map] & key_mask;
 		// last bit of value is 1 if the hash value comes from the forward strand
 
 		//std::uint64_t value = ((readnum << 1) | isForwardStrand[map]);
 
-		const std::uint64_t value = readnum;
-		if (!minhashTables[map]->add(key, value)) {
+		Value_t value(readnum);
+		if (!minhashTables[map]->add(key, value, readnum)) {
 			std::cout << "error adding key to map " << map
 				<< ". key = " << key
 				<< " , readnum = " << readnum << std::endl;
@@ -149,7 +152,7 @@ std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidatesWithFlag(cons
 }
 #endif
 
-std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
+std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
 
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
@@ -164,20 +167,20 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
 
 	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
 
-	std::vector<std::uint64_t> allMinhashResults;
+	std::vector<Value_t> allMinhashResults;
 
 	for(int map = 0; map < minparams.maps; ++map) {
-		std::uint64_t key = bandHashValues[map] & key_mask;
+		Key_t key = bandHashValues[map] & key_mask;
 
-		std::vector<uint64_t> entries2 = minhashTables[map]->get(key);
+		std::vector<Value_t> entries = minhashTables[map]->get(key);
 
-		allMinhashResults.insert(allMinhashResults.end(), entries2.begin(), entries2.end());
+		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
 	}
 
     if(allMinhashResults.size() == 0)
         return allMinhashResults;
 
-	std::uint64_t n_unique_elements = 0;
+	Index_t n_unique_elements = 0;
 
 #if 0
 /*
@@ -213,10 +216,10 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
     std::vector<std::uint8_t> counts(allMinhashResults.size(), std::uint8_t(0));
     counts[0]++;
 
-    std::uint64_t prev = allMinhashResults[0];
+    Value_t prev = allMinhashResults[0];
 
     for (size_t k = 1; k < allMinhashResults.size(); k++) {
-        std::uint64_t cur = allMinhashResults[k];
+        Value_t cur = allMinhashResults[k];
         if (prev == cur) {
             counts[n_unique_elements-1]++;
         }else {
@@ -233,8 +236,8 @@ std::vector<std::uint64_t> Minhasher::getCandidates(MinhasherBuffers& buffers, c
         only keep results with count geq threshold
     */
     double threshold = double(minparams.maps) * minparams.min_hits_per_candidate;
-    std::uint64_t valid_elements = 0;
-    for(std::uint64_t k = 0; k < n_unique_elements; k++){
+    Index_t valid_elements = 0;
+    for(Index_t k = 0; k < n_unique_elements; k++){
         if(counts[k] >= threshold){
             allMinhashResults[valid_elements] = allMinhashResults[k];
             valid_elements++;

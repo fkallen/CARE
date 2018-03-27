@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 
+namespace care{
 namespace graphtools{
 
 	namespace correction{
@@ -88,7 +89,7 @@ namespace graphtools{
 			// return the index of the new node in the vertices vector
 			int addNewNode(const char base);
 
-            void clearVectors();              
+            void clearVectors();
 
 			// insert alignment into graph
 			void insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
@@ -134,5 +135,5 @@ namespace graphtools{
 	}
 
 }
-
+}
 #endif
