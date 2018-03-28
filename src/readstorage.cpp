@@ -9,6 +9,8 @@
 #include <cassert>
 #include <map>
 
+namespace care{
+
 	ReadStorage::ReadStorage() : isReadOnly(false){}
 
 	ReadStorage& ReadStorage::operator=(const ReadStorage&& other){
@@ -41,7 +43,7 @@
 		sequences.resize(nReads);
         if(useQualityScores){
             qualityscores.resize(nReads);
-    		reverseComplqualityscores.resize(nReads);            
+    		reverseComplqualityscores.resize(nReads);
         }
 	}
 
@@ -265,3 +267,5 @@ TIMERSTOPCPU(READ_STORAGE_CHECK);
 
 		return bytes / 1024. / 1024.;
 	}
+
+}

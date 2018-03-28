@@ -4,6 +4,8 @@
 #include <tuple>
 #include <math.h>
 
+namespace care{
+
 // split substitutions in alignment into deletion + insertion
 int split_subs(AlignResult& alignment, const char* subject){
 	auto& ops = alignment.operations;
@@ -27,7 +29,7 @@ int split_subs(AlignResult& alignment, const char* subject){
 };
 
 // Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments.
-BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment, 
+BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment,
 				int querylength, int candidatelength,
 				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO){
 
@@ -40,7 +42,7 @@ BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const
 
 	MIN_OVERLAP = int(querylength * MIN_OVERLAP_RATIO) > MIN_OVERLAP ? int(querylength * MIN_OVERLAP_RATIO) : MIN_OVERLAP;
 
-	//find alignment with lowest mismatch ratio. if both have same ratio choose alignment with longer overlap	
+	//find alignment with lowest mismatch ratio. if both have same ratio choose alignment with longer overlap
 
 	if(fwdAlignment.isValid && overlap >= MIN_OVERLAP){
 		if(revcmplAlignment.isValid && revcomploverlap >= MIN_OVERLAP){
@@ -50,7 +52,7 @@ BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const
 			if(ratio < revcomplratio){
 				if(ratio < MAX_MISMATCH_RATIO){
 					retval = BestAlignment_t::Forward;
-				}			
+				}
 			}else if(revcomplratio < ratio){
 				if(revcomplratio < MAX_MISMATCH_RATIO){
 					retval = BestAlignment_t::ReverseComplement;
@@ -78,5 +80,7 @@ BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const
 		}
 	}
 
-	return retval;	
+	return retval;
+}
+
 }

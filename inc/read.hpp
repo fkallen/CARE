@@ -14,6 +14,8 @@
 #include <cstring>
 #include <cassert>
 
+namespace care{
+
 #if 1
 template<int MAX_LEN_>
 struct FixedSizeSequence{
@@ -331,5 +333,5 @@ struct Read {
 	}
 };
 
-
+}
 #endif

@@ -6,6 +6,8 @@
 #include <map>
 #include <vector>
 
+namespace care{
+
 /*
     Data structure to store reads, either compressed or uncompressed
 */
@@ -48,6 +50,6 @@ struct ReadStorage{
     double getMemUsageMB() const;
 };
 
+}
 
 #endif
-

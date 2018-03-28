@@ -7,6 +7,8 @@
 #include <memory>
 #include <string>
 
+namespace care{
+
 
 const uint8_t BITS_PER_BASE = 2;
 const uint8_t BASE_A = 0x00;
@@ -185,4 +187,6 @@ std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::siz
 	}
 
 	return sequence;
+}
+
 }

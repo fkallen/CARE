@@ -11,6 +11,8 @@
 #include <tuple>
 #include <ostream>
 
+namespace care{
+
 enum class BestAlignment_t {Forward, ReverseComplement, None};
 
 enum AlignType : char{
@@ -184,6 +186,6 @@ BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const
 				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO);
 
 
-
+}
 
 #endif

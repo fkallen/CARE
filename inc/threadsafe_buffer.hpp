@@ -5,6 +5,8 @@
 #include <mutex>
 #include <array>
 
+namespace care{
+
 /*
 A thread-safe circular buffer with fixed capacity
 */
@@ -106,5 +108,8 @@ struct ThreadsafeBuffer {
 
 
 };
+
+
+}
 
 #endif

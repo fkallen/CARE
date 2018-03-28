@@ -17,6 +17,8 @@
 #include <thrust/sort.h>
 #endif
 
+namespace care{
+
 //store size keys
 template<class key_t, class value_t, class index_t>
 struct KVMapFixed{
@@ -193,3 +195,5 @@ struct KVMapFixed{
 #endif
 	}
 };
+
+}

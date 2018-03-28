@@ -1,6 +1,6 @@
 #include "../inc/read.hpp"
 
-
+namespace care{
 	Sequence::Sequence() : nBases(0)
 	{
 		data.second = 0;
@@ -354,3 +354,5 @@
 		stream << seq.toString();
 		return stream;
 	}
+
+}
