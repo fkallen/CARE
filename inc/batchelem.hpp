@@ -89,7 +89,7 @@ struct BatchElem{
     void set_number_of_unique_sequences(std::uint64_t num);
     void set_read_id(std::uint64_t id);
     void fetch_query_data_from_readstorage();
-    void set_candidate_ids(const std::vector<Minhasher::Value>& ids);
+    void set_candidate_ids(const std::vector<Minhasher::Result_t>& ids);
     void make_unique_sequences();
     void fetch_revcompl_sequences_from_readstorage();
     DetermineGoodAlignmentStats determine_good_alignments();

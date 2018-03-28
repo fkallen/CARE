@@ -75,7 +75,7 @@ void Minhasher::clear(){
 }
 
 
-int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t readnum)
+void Minhasher::insertSequence(const std::string& sequence, const std::uint64_t readnum)
 {
 	if(readnum > max_read_num)
 		throw std::runtime_error("Minhasher::insertSequence: Index_t cannot represent readnum. "
@@ -85,18 +85,18 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
-		return false;
+		return;
 
-	std::uint64_t bandHashValues[maximum_number_of_maps]{0};
+	std::uint64_t hashValues[maximum_number_of_maps]{0};
 
-	std::uint32_t isForwardStrand[maximum_number_of_maps]{0};
+	bool isForwardStrand[maximum_number_of_maps]{0};
 
 	//get hash values
-	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
+	minhashfunc(sequence, hashValues, isForwardStrand);
 
 	// insert
 	for (int map = 0; map < minparams.maps; ++map) {
-		Key_t key = bandHashValues[map] & key_mask;
+		Key_t key = hashValues[map] & key_mask;
 		Value_t value(readnum);
 
 		if (!minhashTables[map]->add(key, value, readnum)) {
@@ -106,34 +106,29 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 			throw std::runtime_error(("error adding key to map. key " + key));
 		}
 	}
-
-	return 1;
 }
 
-std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
-
+std::vector<Minhasher::Result_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
+    static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
 		return {};
 
-	std::uint64_t bandHashValues[maximum_number_of_maps]{0};
+	std::uint64_t hashValues[maximum_number_of_maps]{0};
 
-	std::uint32_t isForwardStrand[maximum_number_of_maps]{0};
+	bool isForwardStrand[maximum_number_of_maps]{0};
 
-	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
+	minhashfunc(sequence, hashValues, isForwardStrand);
 
 	std::vector<Value_t> allMinhashResults;
 
 	for(int map = 0; map < minparams.maps; ++map) {
-		Key_t key = bandHashValues[map] & key_mask;
+		Key_t key = hashValues[map] & key_mask;
 
 		std::vector<Value_t> entries = minhashTables[map]->get(key);
 
 		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
 	}
-
-    if(allMinhashResults.size() == 0)
-        return allMinhashResults;
 
 	Index_t n_unique_elements = 0;
 
@@ -160,13 +155,14 @@ std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffe
 #else
 
 	std::sort(allMinhashResults.begin(), allMinhashResults.end());
-	/*auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
+	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
 	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
-	allMinhashResults.resize(n_unique_elements);*/
+	allMinhashResults.resize(n_unique_elements);
 
     /*
         make allMinhashResults unique and identical elements
     */
+#if 0
     n_unique_elements = 1;
     std::vector<std::uint8_t> counts(allMinhashResults.size(), std::uint8_t(0));
     counts[0]++;
@@ -185,8 +181,6 @@ std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffe
         prev = cur;
     }
 
-
-
     /*
         only keep results with count geq threshold
     */
@@ -198,23 +192,16 @@ std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffe
             valid_elements++;
         }
     }
-
     allMinhashResults.resize(valid_elements);
+#endif
+
 
 #endif
 
 	return allMinhashResults;
 }
 
-
-int Minhasher::make_minhash_band_hashes(const std::string& sequence, std::uint64_t* bandHashValues, std::uint32_t* isForwardStrand) const
-{
-	int val = minhashfunc(sequence, bandHashValues, isForwardStrand);
-
-	return val;
-}
-
-int Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, std::uint32_t* isForwardStrand) const{
+void Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const{
 	std::uint64_t fhVal = 0; std::uint64_t rhVal = 0;
 
 	// bitmask for kmer, k_max = 32
@@ -222,40 +209,28 @@ int Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashSi
 
 	const std::uint64_t kmerbitmask = (kmerbits < 64 ? (1ULL << kmerbits) - 1 : 1ULL - 2);
 
-	const int numberOfHashvalues = minparams.maps;
-	std::uint64_t kmerHashValues[numberOfHashvalues];
+	std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
 
-	std::fill(kmerHashValues, kmerHashValues + numberOfHashvalues, 0);
-
-	std::uint32_t isForward = 0;
+	bool isForward = false;
 	// calc hash values of first canonical kmer
-	NTMC64(sequence.c_str(), minparams.k, numberOfHashvalues, minhashSignature, fhVal, rhVal, isForward);
+	NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature, fhVal, rhVal, isForward);
 
-	for (int j = 0; j < numberOfHashvalues; ++j) {
+	for (int j = 0; j < minparams.maps; ++j) {
 		minhashSignature[j] &= kmerbitmask;
 		isForwardStrand[j] = isForward;
 	}
 
 	//calc hash values of remaining canonical kmers
 	for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
-		NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, numberOfHashvalues, kmerHashValues, isForward);
+		NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, kmerHashValues, isForward);
 
-		for (int j = 0; j < numberOfHashvalues; ++j) {
+		for (int j = 0; j < minparams.maps; ++j) {
 			std::uint64_t tmp = kmerHashValues[j] & kmerbitmask;
 			if (minhashSignature[j] > tmp){
 				minhashSignature[j] = tmp;
 				isForwardStrand[j] = isForward;
 			}
 		}
-	}
-
-	return 0;
-}
-
-void Minhasher::bandhashfunc(const std::uint64_t* minhashSignature, std::uint64_t* bandHashValues) const{
-	// xor the minhash hash values that belong to the same band
-	for (int map = 0; map < minparams.maps; map++) {
-		bandHashValues[map] ^= minhashSignature[map];
 	}
 }
 

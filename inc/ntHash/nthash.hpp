@@ -252,7 +252,7 @@ inline uint64_t NTP64(const char * kmerSeq, const unsigned k, const unsigned see
 }
 
 // canonical ntHash using pre-computed seed matrix (msTab)
-inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, uint32_t& isForwardStrand) {
+inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, bool& isForwardStrand) {
     uint64_t fhVal=0, rhVal=0;
     for(unsigned i=0; i<k; i++) {
         fhVal ^= msTab[(unsigned char)kmerSeq[i]][(k-1-i)%64];
@@ -263,7 +263,7 @@ inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, uint32_t& isForwa
 }
 
 // canonical ntHash using pre-computed seed matrix (msTab)
-inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, uint64_t& fhVal, uint64_t& rhVal, uint32_t& isForwardStrand) {
+inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, uint64_t& fhVal, uint64_t& rhVal, bool& isForwardStrand) {
     fhVal=0, rhVal=0;
     for(unsigned i=0; i<k; i++) {
         fhVal ^= msTab[(unsigned char)kmerSeq[i]][(k-1-i)%64];
@@ -274,7 +274,7 @@ inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, uint64_t& fhVal, 
 }
 
 // canonical ntHash for sliding k-mers using pre-computed seed matrix (msTab)
-inline uint64_t NTPC64(uint64_t& fhVal, uint64_t& rhVal, const unsigned char charOut, const unsigned char charIn, const unsigned k, uint32_t& isForwardStrand) {
+inline uint64_t NTPC64(uint64_t& fhVal, uint64_t& rhVal, const unsigned char charOut, const unsigned char charIn, const unsigned k, bool& isForwardStrand) {
     fhVal = rol(fhVal, 1) ^ rol(seedTab[charOut], k) ^ seedTab[charIn];
     rhVal = ror(rhVal, 1) ^ ror(seedTab[charOut+cpOff], 1) ^ rol(seedTab[charIn+cpOff], k-1);
     isForwardStrand = (fhVal<=rhVal);
@@ -282,7 +282,7 @@ inline uint64_t NTPC64(uint64_t& fhVal, uint64_t& rhVal, const unsigned char cha
 }
 
 // canonical ntHash with seeding option using pre-computed seed matrix (msTab)
-inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, const unsigned seed, uint32_t& isForwardStrand) {
+inline uint64_t NTPC64(const char * kmerSeq, const unsigned k, const unsigned seed, bool& isForwardStrand) {
     uint64_t hVal = NTPC64(kmerSeq,k,isForwardStrand);
     hVal *= seed ^ k * multiSeed;
     hVal ^= hVal >> multiShift;
@@ -312,7 +312,7 @@ void NTM64(const unsigned char charOut, const unsigned char charIn, const unsign
 }
 
 // canonical multi-hash version of ntHash
-void NTMC64(const char * kmerSeq, const unsigned k, const unsigned m, uint64_t *hVal, uint64_t& fhVal, uint64_t& rhVal, uint32_t& isForwardStrand) {
+void NTMC64(const char * kmerSeq, const unsigned k, const unsigned m, uint64_t *hVal, uint64_t& fhVal, uint64_t& rhVal, bool& isForwardStrand) {
     uint64_t bVal=0, tVal=0;
     hVal[0] = bVal = NTPC64(kmerSeq, k, fhVal, rhVal, isForwardStrand);
     for(unsigned i=1; i<m; i++) {
@@ -323,7 +323,7 @@ void NTMC64(const char * kmerSeq, const unsigned k, const unsigned m, uint64_t *
 }
 
 // canonical multi-hash version of ntHash for sliding k-mers
-void NTMC64(uint64_t& fhVal, uint64_t& rhVal, const unsigned char charOut, const unsigned char charIn, const unsigned k, const unsigned m, uint64_t *hVal, uint32_t& isForwardStrand) {
+void NTMC64(uint64_t& fhVal, uint64_t& rhVal, const unsigned char charOut, const unsigned char charIn, const unsigned k, const unsigned m, uint64_t *hVal, bool& isForwardStrand) {
     uint64_t bVal=0, tVal=0;
     hVal[0] = bVal = NTPC64(fhVal, rhVal, charOut, charIn, k, isForwardStrand);
     for(unsigned i=1; i<m; i++) {

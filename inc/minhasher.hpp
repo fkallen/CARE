@@ -62,7 +62,8 @@ struct Minhasher {
         Index_t payload;
     };
 
-    using Value_t = Value; //return value type
+    using Value_t = Value; //Value type for hashmap
+    using Result_t = Value; // Return value for minhash query
 
 	static constexpr int bits_key = sizeof(Key_t) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
@@ -86,10 +87,9 @@ struct Minhasher {
 
 	void clear();
 
-	int insertSequence(const std::string& sequence, const std::uint64_t readnum);
+	void insertSequence(const std::string& sequence, const std::uint64_t readnum);
 
-	//std::vector<std::pair<std::uint64_t, int>> getCandidatesWithFlag(const std::string& sequence) const;
-	std::vector<Value_t> getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const;
+	std::vector<Result_t> getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const;
 
 	void saveTablesToFile(std::string filename) const;
 
@@ -100,10 +100,7 @@ struct Minhasher {
 
 
 private:
-	// calculate band hash values of a read
-	int make_minhash_band_hashes(const std::string& sequence, std::uint64_t* bandHashValues, std::uint32_t* isForwardStrand) const;
-	int minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, std::uint32_t* isForwardStrand) const; // calculates the hash values
-	void bandhashfunc(const std::uint64_t* minhashSignature, std::uint64_t* bandHashValues) const; // combines multiple hash values to keys
+	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const;
 };
 
 }

@@ -82,7 +82,7 @@ namespace care{
         fwdSequenceString = fwdSequence->toString();
     }
 
-    void BatchElem::set_candidate_ids(const std::vector<Minhasher::Value>& values){
+    void BatchElem::set_candidate_ids(const std::vector<Minhasher::Result_t>& values){
         candidateIds.clear();
         candidateIds.resize(values.size());
         for(const auto& value : values){
