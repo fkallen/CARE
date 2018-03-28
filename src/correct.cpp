@@ -153,7 +153,10 @@ void ErrorCorrectionThread::execute() {
 
     MinhasherBuffers minhasherbuffers(threadOpts.deviceId);
 
-	hammingtools::SHDdata shddata(threadOpts.deviceId, 1, fileProperties.maxSequenceLength);
+	hammingtools::SHDdata shddata(threadOpts.deviceId,
+                                fileProperties.maxSequenceLength,
+                                SDIV(fileProperties.maxSequenceLength, 4),
+                                correctionOptions.batchsize);
 
 	graphtools::AlignerDataArrays sgadata(threadOpts.deviceId, fileProperties.maxSequenceLength, alignmentOptions.alignmentscore_match,
 			alignmentOptions.alignmentscore_sub, alignmentOptions.alignmentscore_ins, alignmentOptions.alignmentscore_del);
@@ -260,6 +263,7 @@ void ErrorCorrectionThread::execute() {
                 goodAlignmentStats.correctionCases[1] += Astats.correctionCases[1];
                 goodAlignmentStats.correctionCases[2] += Astats.correctionCases[2];
                 goodAlignmentStats.correctionCases[3] += Astats.correctionCases[3];
+                goodAlignmentStats.uniqueCandidatesWithoutGoodAlignment += Astats.uniqueCandidatesWithoutGoodAlignment;
 
                 tpc = std::chrono::system_clock::now();
 
@@ -365,6 +369,7 @@ void ErrorCorrectionThread::execute() {
 	} // end batch processing
 
 	{
+
 		std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 		std::cout << "thread " << threadOpts.threadId << " processed " << nProcessedQueries
 				<< " queries" << std::endl;
@@ -386,6 +391,9 @@ void ErrorCorrectionThread::execute() {
 				<< std::endl;
         std::cout << "thread " << threadOpts.threadId << " numberOfBadAlignments "
                 << numberOfBadAlignments << std::endl;
+        std::cout << "thread " << threadOpts.threadId
+                << " : duplicates "
+                << duplicates << " ( " << (100.0 * (double(duplicates) / double(minhashcandidates))) << " %)\n";
 	}
 
 #if 1
@@ -401,9 +409,6 @@ void ErrorCorrectionThread::execute() {
 			std::cout << "thread " << threadOpts.threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-            std::cout << "thread " << threadOpts.threadId
-                    << " : duplicates "
-                    << duplicates << " ( " << (100.0 * (double(duplicates) / double(minhashcandidates))) << " %)\n";
 			std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer "
 					<< shddata.resizetime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment preprocessing "

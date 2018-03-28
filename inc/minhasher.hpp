@@ -62,8 +62,8 @@ struct Minhasher {
         Index_t payload;
     };
 
-    using Value_t = Value; //Value type for hashmap
-    using Result_t = Value; // Return value for minhash query
+    using Value_t = Index_t; //Value type for hashmap
+    using Result_t = Index_t; // Return value for minhash query
 
 	static constexpr int bits_key = sizeof(Key_t) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);

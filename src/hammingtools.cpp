@@ -21,24 +21,15 @@ namespace hammingtools{
 
 
 
-	SHDdata::SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength)
-		: deviceId(deviceId_), max_sequence_length(maxseqlength), max_sequence_bytes(SDIV(maxseqlength,4)){
+	SHDdata::SHDdata(int deviceId_, int maxseqlength, int maxseqbytes, int batchsize)
+		  : deviceId(deviceId_), max_sequence_length(maxseqlength),
+            max_sequence_bytes(maxseqbytes), batchsize(batchsize){
 	#ifdef __NVCC__
 		cudaSetDevice(deviceId); CUERR;
-		for(int i = 0; i < 8; i++)
-			cudaStreamCreate(&streams[i]); CUERR;
-		cudaMalloc(&d_this, sizeof(SHDdata));
 
-		cudaDeviceProp prop;
-		cudaGetDeviceProperties(&prop, deviceId); CUERR;
-
-		int numBlocksPerSM = 8;
-		//cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocksPerSM, alignment::cuda_shifted_hamming_distance<256>, 256,0); CUERR;
-
-		int mySMs = std::max(1, (prop.multiProcessorCount-1) / cpuThreadsOnDevice);
-		shd_max_blocks = mySMs * numBlocksPerSM;
-		//printf("shd_max_blocks = %d\n", shd_max_blocks);
-
+        streams = std::make_unique<cudaStream_t[]>(batchsize);
+		for(int i = 0; i < batchsize; i++)
+			cudaStreamCreate(&(streams.get()[i])); CUERR;
 	#endif
 
 	};
@@ -55,14 +46,8 @@ namespace hammingtools{
 			cudaMallocPitch(&d_subjectsdata, &sequencepitch, max_sequence_bytes, n_sub); CUERR;
 			assert(!oldpitch || oldpitch == sequencepitch);
 
-			cudaFree(d_queriesPerSubject); CUERR;
-			cudaMalloc(&d_queriesPerSubject, sizeof(int) * n_sub); CUERR;
-
 			cudaFreeHost(h_subjectsdata); CUERR;
 			cudaMallocHost(&h_subjectsdata, sequencepitch * n_sub); CUERR;
-
-			cudaFreeHost(h_queriesPerSubject); CUERR;
-			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * n_sub); CUERR;
 
 			cudaFree(d_subjectlengths); CUERR;
 			cudaMalloc(&d_subjectlengths, sizeof(int) * n_sub); CUERR;
@@ -102,11 +87,6 @@ namespace hammingtools{
 
 			cudaFreeHost(h_results); CUERR;
 			cudaMallocHost(&h_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
-
-			cudaFree(d_lengths); CUERR;
-			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
-			cudaFreeHost(h_lengths); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
 		}
 	#endif
 		n_subjects = n_sub;
@@ -120,19 +100,16 @@ namespace hammingtools{
 		cudaFree(data.d_results); CUERR;
 		cudaFree(data.d_subjectsdata); CUERR;
 		cudaFree(data.d_queriesdata); CUERR;
-		cudaFree(data.d_queriesPerSubject); CUERR;
 		cudaFree(data.d_subjectlengths); CUERR;
 		cudaFree(data.d_querylengths); CUERR;
-		cudaFree(data.d_this); CUERR;
 
 		cudaFreeHost(data.h_results); CUERR;
 		cudaFreeHost(data.h_subjectsdata); CUERR;
 		cudaFreeHost(data.h_queriesdata); CUERR;
-		cudaFreeHost(data.h_queriesPerSubject); CUERR;
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
 
-		for(int i = 0; i < 8; i++)
+		for(int i = 0; i < data.batchsize; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;
 	#endif
 	}
@@ -141,11 +118,9 @@ namespace hammingtools{
 		printf("d_results %p\n", mybuffers.d_results);
 		printf("d_subjectsdata %p\n", mybuffers.d_subjectsdata);
 		printf("d_queriesdata %p\n", mybuffers.d_queriesdata);
-		printf("d_queriesPerSubject %p\n", mybuffers.d_queriesPerSubject);
 		printf("h_results %p\n", mybuffers.h_results);
 		printf("h_subjectsdata %p\n", mybuffers.h_subjectsdata);
 		printf("h_queriesdata %p\n", mybuffers.h_queriesdata);
-		printf("h_queriesPerSubject %p\n", mybuffers.h_queriesPerSubject);
 	#ifdef __NVCC__
 		printf("stream %p\n", mybuffers.streams[0]);
 	#endif

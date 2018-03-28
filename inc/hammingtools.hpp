@@ -8,12 +8,7 @@
 
 #include <vector>
 #include <chrono>
-#include <tuple>
-#include <climits>
-
-#ifdef __NVCC__
-#include <cublas_v2.h>
-#endif
+#include <memory>
 
 namespace care{
 namespace hammingtools{
@@ -23,25 +18,18 @@ struct SHDdata{
 	AlignResultCompact* d_results = nullptr;
 	char* d_subjectsdata = nullptr;
 	char* d_queriesdata = nullptr;
-	int* d_queriesPerSubject = nullptr;
 	int* d_subjectlengths = nullptr;
 	int* d_querylengths = nullptr;
 
 	AlignResultCompact* h_results = nullptr;
 	char* h_subjectsdata = nullptr;
 	char* h_queriesdata = nullptr;
-	int* h_queriesPerSubject = nullptr;
 	int* h_subjectlengths = nullptr;
 	int* h_querylengths = nullptr;
 
-		int* h_lengths = nullptr;
-		int* d_lengths = nullptr;
-
 #ifdef __NVCC__
-	cudaStream_t streams[8];
+	std::unique_ptr<cudaStream_t[]> streams;
 #endif
-
-	SHDdata* d_this;
 
 	int deviceId = -1;
 	size_t sequencepitch = 0;
@@ -52,8 +40,7 @@ struct SHDdata{
 	int max_n_subjects = 0;
 	int max_n_queries = 0;
 
-	int shd_max_blocks = 1;
-	int max_batch_size = 1;
+	int batchsize = 1;
 
 	std::chrono::duration<double> resizetime{0};
 	std::chrono::duration<double> preprocessingtime{0};
@@ -62,7 +49,7 @@ struct SHDdata{
 	std::chrono::duration<double> d2htime{0};
 	std::chrono::duration<double> postprocessingtime{0};
 
-	SHDdata(int deviceId_, int cpuThreadsOnDevice, int maxseqlength);
+	SHDdata(int deviceId_, int batchsize, int maxseqlength, int maxseqbytes);
 
 	void resize(int n_sub, int n_quer);
 };
