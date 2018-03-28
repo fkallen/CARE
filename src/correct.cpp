@@ -502,8 +502,8 @@ void correct(const MinhashOptions& minhashOptions,
 				  const std::vector<int>& deviceIds){
 
       // initialize global correction data structures
-  	hammingtools::init_once();
-  	graphtools::init_once();
+  	hammingtools::correction::init_once();
+  	graphtools::correction::init_once();
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
