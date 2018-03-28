@@ -50,6 +50,9 @@ Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16})
 Minhasher::Minhasher(const MinhashOptions& parameters)
 		: minparams(parameters), nReads(0), minhashtime(0), maptime(0)
 {
+    if(maximum_number_of_maps < minparams.maps)
+        throw std::runtime_error("Minhasher: Maximum number of maps is "
+                                + std::to_string(maximum_number_of_maps) + "!");
 }
 
 void Minhasher::init(std::uint64_t nReads_){
@@ -84,14 +87,9 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 	if(sequence.size() < unsigned(minparams.k))
 		return false;
 
-	std::uint64_t bandHashValues[minparams.maps];
-	std::fill(bandHashValues, bandHashValues + minparams.maps, 0);
+	std::uint64_t bandHashValues[maximum_number_of_maps]{0};
 
-	const unsigned int hvPerMap = 1;
-	const unsigned int numberOfHashvalues = minparams.maps * hvPerMap;
-
-	std::uint32_t isForwardStrand[numberOfHashvalues];
-	std::fill(isForwardStrand, isForwardStrand + numberOfHashvalues, 0);
+	std::uint32_t isForwardStrand[maximum_number_of_maps]{0};
 
 	//get hash values
 	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
@@ -99,11 +97,8 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 	// insert
 	for (int map = 0; map < minparams.maps; ++map) {
 		Key_t key = bandHashValues[map] & key_mask;
-		// last bit of value is 1 if the hash value comes from the forward strand
-
-		//std::uint64_t value = ((readnum << 1) | isForwardStrand[map]);
-
 		Value_t value(readnum);
+
 		if (!minhashTables[map]->add(key, value, readnum)) {
 			std::cout << "error adding key to map " << map
 				<< ". key = " << key
@@ -115,55 +110,15 @@ int Minhasher::insertSequence(const std::string& sequence, const std::uint64_t r
 	return 1;
 }
 
-#if 0
-std::vector<std::pair<std::uint64_t, int>> Minhasher::getCandidatesWithFlag(const std::string& sequence) const{
-
-	// we do not consider reads which are shorter than k
-	if(sequence.size() < unsigned(minparams.k))
-		return {};
-
-	std::uint64_t bandHashValues[minparams.maps];
-	std::fill(bandHashValues, bandHashValues + minparams.maps, 0);
-
-	const unsigned int numberOfHashvalues = minparams.maps;
-	std::uint32_t isForwardStrand[numberOfHashvalues];
-	std::fill(isForwardStrand, isForwardStrand + numberOfHashvalues, 0);
-
-	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
-
-	std::vector<std::pair<std::uint64_t, int>> result;
-
-	std::map<std::uint64_t, int> fwdrevmapping;
-
-	for(int map = 0; map < minparams.maps; ++map) {
-		std::uint64_t key = bandHashValues[map] & hv_bitmask;
-
-		std::vector<uint64_t> entries = minhashTables[map]->get(key);
-		for(const auto x : entries){
-			int increment = (x & 1) ? 1 : -1;
-			std::uint64_t readnum = (x >> 1);
-			fwdrevmapping[readnum] += increment;
-		}
-	}
-
-	result.insert(result.cend(), fwdrevmapping.cbegin(), fwdrevmapping.cend());
-
-	return result;
-}
-#endif
-
 std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
 
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
 		return {};
 
-	std::uint64_t bandHashValues[minparams.maps];
-	std::fill(bandHashValues, bandHashValues + minparams.maps, 0);
+	std::uint64_t bandHashValues[maximum_number_of_maps]{0};
 
-	const unsigned int numberOfHashvalues = minparams.maps;
-	std::uint32_t isForwardStrand[numberOfHashvalues];
-	std::fill(isForwardStrand, isForwardStrand + numberOfHashvalues, 0);
+	std::uint32_t isForwardStrand[maximum_number_of_maps]{0};
 
 	make_minhash_band_hashes(sequence, bandHashValues, isForwardStrand);
 
@@ -247,17 +202,6 @@ std::vector<Minhasher::Value_t> Minhasher::getCandidates(MinhasherBuffers& buffe
     allMinhashResults.resize(valid_elements);
 
 #endif
-
-	//assert(n_initial_candidates - n_unique_elements >= minparams.maps - 1); //make sure we deduplicated at least the id of the query
-
-	/*if(d != n_unique_elements){
-		std::cout << "#unique elements wrong. normal " << d << ", thrust " << n_unique_elements << std::endl;
-	}
-	for(int i = 0; i < d; i++){
-		if(tmp[i] != allMinhashResults[i]){
-			std::cout << "unique element wrong. normal " << allMinhashResults[i] << ", thrust " << tmp[i] << std::endl;
-		}
-	}*/
 
 	return allMinhashResults;
 }

@@ -67,6 +67,7 @@ struct Minhasher {
 	static constexpr int bits_key = sizeof(Key_t) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
+    static constexpr int maximum_number_of_maps = 16;
 
 
 	// the actual hash maps
