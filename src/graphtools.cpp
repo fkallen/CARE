@@ -23,7 +23,6 @@ namespace graphtools{
 		for(int i = 0; i < 8; i++)
 			cudaStreamCreate(&streams[i]); CUERR;
 		cudaStreamCreate(&stream); CUERR;
-		cudaMalloc(&d_this, sizeof(AlignerDataArrays)); CUERR;
 		#endif
 	};
 
@@ -40,14 +39,8 @@ namespace graphtools{
 			cudaMallocPitch(&d_subjectsdata, &sequencepitch, max_sequence_bytes, newmax); CUERR;
 			assert(!oldpitch || oldpitch == sequencepitch);
 
-			cudaFree(d_queriesPerSubject); CUERR;
-			cudaMalloc(&d_queriesPerSubject, sizeof(int) * newmax); CUERR;
-
 			cudaFreeHost(h_subjectsdata); CUERR;
 			cudaMallocHost(&h_subjectsdata, sequencepitch * newmax); CUERR;
-
-			cudaFreeHost(h_queriesPerSubject); CUERR;
-			cudaMallocHost(&h_queriesPerSubject, sizeof(int) * newmax); CUERR;
 
 			cudaFree(d_subjectlengths); CUERR;
 			cudaMalloc(&d_subjectlengths, sizeof(int) * newmax); CUERR;
@@ -94,23 +87,6 @@ namespace graphtools{
 
 			cudaMalloc(&d_ops, sizeof(AlignOp) * max_n_queries * max_ops_per_alignment); CUERR;
 			cudaMallocHost(&h_ops, sizeof(AlignOp) * max_n_queries * max_ops_per_alignment); CUERR;
-
-			cudaFree(d_lengths); CUERR;
-			cudaMalloc(&d_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
-			cudaFreeHost(h_lengths); CUERR;
-			cudaMallocHost(&h_lengths, sizeof(int) * (max_n_subjects + max_n_queries)); CUERR;
-
-			cudaFree(d_newresults); CUERR;
-			cudaMalloc(&d_newresults, sizeof(alignment::sgaresult) * max_n_subjects * max_n_queries); CUERR;
-
-			cudaFreeHost(h_newresults); CUERR;
-			cudaMallocHost(&h_newresults, sizeof(alignment::sgaresult) * max_n_subjects * max_n_queries); CUERR;
-
-			cudaFree(d_newops); CUERR;
-			cudaMalloc(&d_newops, sizeof(alignment::sgaop) * max_n_queries * max_ops_per_alignment); CUERR;
-
-			cudaFreeHost(h_newops); CUERR;
-			cudaMallocHost(&h_newops, sizeof(alignment::sgaop) * max_n_queries * max_ops_per_alignment); CUERR;
 		}
 	#endif
 		n_subjects = n_sub;
@@ -126,7 +102,6 @@ namespace graphtools{
 			cudaFree(data.d_ops); CUERR;
 			cudaFree(data.d_subjectsdata); CUERR;
 			cudaFree(data.d_queriesdata); CUERR;
-			cudaFree(data.d_queriesPerSubject); CUERR;
 			cudaFree(data.d_subjectlengths); CUERR;
 			cudaFree(data.d_querylengths); CUERR;
 
@@ -134,17 +109,8 @@ namespace graphtools{
 			cudaFreeHost(data.h_ops); CUERR;
 			cudaFreeHost(data.h_subjectsdata); CUERR;
 			cudaFreeHost(data.h_queriesdata); CUERR;
-			cudaFreeHost(data.h_queriesPerSubject); CUERR;
 			cudaFreeHost(data.h_subjectlengths); CUERR;
 			cudaFreeHost(data.h_querylengths); CUERR;
-
-			cudaFree(data.d_newops); CUERR;
-			cudaFree(data.d_newresults); CUERR;
-
-			cudaFreeHost(data.h_newops); CUERR;
-			cudaFreeHost(data.h_newresults); CUERR;
-
-			cudaFree(data.d_this);
 
 			for(int i = 0; i < 8; i++)
 				cudaStreamDestroy(data.streams[i]); CUERR;

@@ -15,40 +15,24 @@ namespace care{
 
 namespace graphtools{
 
-    //forward decl
-	namespace alignment{
-		struct sgaop;
-		struct sgaresult;
-	}
+
 
 	struct AlignerDataArrays{
-
-		alignment::sgaop* d_newops = nullptr;
-		alignment::sgaop* h_newops = nullptr;
-		alignment::sgaresult* d_newresults = nullptr;
-		alignment::sgaresult* h_newresults = nullptr;
-
 		AlignOp* d_ops = nullptr;
 		AlignOp* h_ops = nullptr;
 
 		AlignResultCompact* d_results = nullptr;
 		char* d_subjectsdata = nullptr;
 		char* d_queriesdata = nullptr;
-		int* d_queriesPerSubject = nullptr;
 		int* d_subjectlengths = nullptr;
 		int* d_querylengths = nullptr;
 
 		AlignResultCompact* h_results = nullptr;
 		char* h_subjectsdata = nullptr;
 		char* h_queriesdata = nullptr;
-		int* h_queriesPerSubject = nullptr;
 		int* h_subjectlengths = nullptr;
 		int* h_querylengths = nullptr;
 
-		int* h_lengths = nullptr;
-		int* d_lengths = nullptr;
-
-		AlignerDataArrays* d_this;
 	#ifdef __NVCC__
 		cudaStream_t streams[8];
 		cudaStream_t stream;

@@ -167,7 +167,7 @@ void ErrorCorrectionThread::execute() {
     PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
                                                         correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
                                                         correctionOptions.estimatedErrorrate, correctionOptions.m_coverage, correctionOptions.kmerlength);
-    graphtools::correction::ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.max_mismatch_ratio,
+    ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.max_mismatch_ratio,
                                                   correctionOptions.graphalpha, correctionOptions.graphx);
 
     std::vector<BatchElem> batchElems;
