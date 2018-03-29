@@ -7,6 +7,8 @@
 
 #include <limits>
 #include <vector>
+#include <iostream>
+#include <iomanip>
 
 namespace care{
 
@@ -26,8 +28,6 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
 
     assert(subjectbases < std::numeric_limits<short>::max());
     assert(querybases < std::numeric_limits<short>::max());
-
-//#define CPU_SEMI_GLOBAL_ALIGN_SCOREDEBUGGING
 
     int scores[subjectbases + 1][querybases + 1];
     char prevs[subjectbases + 1][querybases + 1];
@@ -123,7 +123,7 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
     //std::cout << "currow " << currow << ", curcol " << curcol << std::endl;
 
     AlignResult alignresult;
-    std::vector<AlignOp> operations;
+    alignresult.operations.reserve(currow + curcol);
 
     const int subject_end_excl = currow;
 
@@ -138,21 +138,21 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
             break;
         case ALIGNTYPE_SUBSTITUTE: //printf("s\n");
 
-            operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_SUBSTITUTE, getChar(query, querybases, curcol - 1)});
+            alignresult.operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_SUBSTITUTE, getChar(query, querybases, curcol - 1)});
 
             curcol -= 1;
             currow -= 1;
             break;
         case ALIGNTYPE_DELETE:  //printf("d\n");
 
-            operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_DELETE, getChar(subject, subjectbases, currow - 1)});
+            alignresult.operations.push_back(AlignOp{(short)(currow-1), ALIGNTYPE_DELETE, getChar(subject, subjectbases, currow - 1)});
 
             curcol -= 0;
             currow -= 1;
             break;
         case ALIGNTYPE_INSERT:  //printf("i\n");
 
-            operations.push_back(AlignOp{(short)currow, ALIGNTYPE_INSERT, getChar(query, querybases, curcol - 1)});
+            alignresult.operations.push_back(AlignOp{(short)currow, ALIGNTYPE_INSERT, getChar(query, querybases, curcol - 1)});
 
             curcol -= 1;
             currow -= 0;
@@ -162,15 +162,14 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
         }
     }
 
-    alignresult.operations.resize(operations.size());
-    std::reverse_copy(operations.begin(), operations.end(), alignresult.operations.begin());
+    std::reverse(alignresult.operations.begin(), alignresult.operations.end());
 
     alignresult.arc.subject_begin_incl = currow;
     alignresult.arc.query_begin_incl = curcol;
     alignresult.arc.isValid = true;
     alignresult.arc.overlap = subject_end_excl - alignresult.arc.subject_begin_incl;
     alignresult.arc.shift = alignresult.arc.subject_begin_incl == 0 ? -alignresult.arc.query_begin_incl : alignresult.arc.subject_begin_incl;
-    alignresult.arc.nOps = operations.size();
+    alignresult.arc.nOps = alignresult.operations.size();
     alignresult.arc.isNormalized = false;
 
     return alignresult;
@@ -247,7 +246,6 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
                 prevs[i * MAX_SEQUENCE_LENGTH / prevsPerInt + j] = 0;
             }
         }
-
 
         if (threadIdx.x == 0) {
             bestrow = 0;
@@ -341,7 +339,6 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
 
         // get alignment and alignment score
         if (threadIdx.x == 0) {
-
             short currow;
             short curcol;
 
