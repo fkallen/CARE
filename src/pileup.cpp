@@ -1,6 +1,5 @@
 #include "../inc/pileup.hpp"
 #include "../inc/alignment.hpp"
-#include "../inc/hammingtools.hpp"
 #include "../inc/ganja/hpc_helpers.cuh"
 #include "../inc/cudareduce.cuh"
 #include "../inc/batchelem.hpp"
@@ -14,7 +13,6 @@
 
 #ifdef __NVCC__
 #include <cooperative_groups.h>
-#include <cublas_v2.h>
 
 #include <thrust/functional.h>
 #include <thrust/gather.h>
@@ -26,11 +24,8 @@ using namespace cooperative_groups;
 #endif
 
 namespace care{
-namespace hammingtools{
 
-	namespace correction{
 
-		constexpr int candidate_correction_new_cols = 0;
 
 		double	qscore_to_error_prob[256];
 		double	qscore_to_weight[256];
@@ -39,7 +34,7 @@ namespace hammingtools{
 		__device__ double d_qscore_to_weight[256];
 		#endif
 
-		void init_once(){
+		void PileupImage::init_once(){
 
 			constexpr int ASCII_BASE = 33;
 			constexpr double MIN_WEIGHT = 0.001;
@@ -578,6 +573,5 @@ namespace hammingtools{
 		#endif
 			}
         }
-	}
-}
+
 }

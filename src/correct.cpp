@@ -3,7 +3,7 @@
 #include "../inc/batchelem.hpp"
 #include "../inc/graph.hpp"
 #include "../inc/graphtools.hpp"
-#include "../inc/hammingtools.hpp"
+#include "../inc/shifted_hamming_distance.hpp"
 #include "../inc/pileup.hpp"
 #include "../inc/read.hpp"
 #include "../inc/sequencefileio.hpp"
@@ -153,7 +153,7 @@ void ErrorCorrectionThread::execute() {
 
     MinhasherBuffers minhasherbuffers(threadOpts.deviceId);
 
-	hammingtools::SHDdata shddata(threadOpts.deviceId,
+	SHDdata shddata(threadOpts.deviceId,
                                 fileProperties.maxSequenceLength,
                                 SDIV(fileProperties.maxSequenceLength, 4),
                                 correctionOptions.batchsize);
@@ -162,7 +162,7 @@ void ErrorCorrectionThread::execute() {
 			alignmentOptions.alignmentscore_sub, alignmentOptions.alignmentscore_ins, alignmentOptions.alignmentscore_del);
 
 
-    hammingtools::correction::PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
+    PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
                                                         correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
                                                         correctionOptions.estimatedErrorrate, correctionOptions.m_coverage, correctionOptions.kmerlength);
     graphtools::correction::ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.max_mismatch_ratio,
@@ -234,7 +234,7 @@ void ErrorCorrectionThread::execute() {
 
         tpa = std::chrono::system_clock::now();
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-            hammingtools::getMultipleAlignments(shddata, batchElems, goodAlignmentProperties, true);
+            shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
             graphtools::getMultipleAlignments(sgadata, batchElems, true);
         }else{
@@ -481,7 +481,7 @@ void ErrorCorrectionThread::execute() {
 	}
 #endif
 
-	hammingtools::cuda_cleanup_SHDdata(shddata);
+	cuda_cleanup_SHDdata(shddata);
 	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
 	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
 }
@@ -502,7 +502,7 @@ void correct(const MinhashOptions& minhashOptions,
 				  const std::vector<int>& deviceIds){
 
       // initialize global correction data structures
-  	hammingtools::correction::init_once();
+  	PileupImage::init_once();
   	graphtools::correction::init_once();
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);

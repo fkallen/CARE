@@ -1,20 +1,13 @@
 #ifndef PILEUP_HPP
 #define PILEUP_HPP
 
-#include "../inc/hammingtools.hpp"
 #include "../inc/alignment.hpp"
 #include "../inc/batchelem.hpp"
 
-#include <vector>
-#include <string>
+#include <chrono>
+#include <memory>
 
 namespace care{
-
-namespace hammingtools{
-
-	namespace correction{
-
-		void init_once();
 
         struct PileupProperties{
             double avg_support;
@@ -59,6 +52,9 @@ namespace hammingtools{
         };
 
         struct PileupImage{
+
+            static constexpr int candidate_correction_new_cols = 0;
+
             //buffers
             std::unique_ptr<int[]> h_As;
             std::unique_ptr<int[]> h_Cs;
@@ -99,11 +95,9 @@ namespace hammingtools{
             void cpu_add_weights(const BatchElem& batchElem);
             void cpu_find_consensus(const BatchElem& batchElem);
             void cpu_correct(BatchElem& batchElem);
+
+            static void init_once();
         };
 
-
-	}
-
-}
 }
 #endif
