@@ -156,13 +156,14 @@ void ErrorCorrectionThread::execute() {
     MinhasherBuffers minhasherbuffers(threadOpts.deviceId);
 
 	SHDdata shddata(threadOpts.deviceId,
-                                fileProperties.maxSequenceLength,
-                                SDIV(fileProperties.maxSequenceLength, 4),
-                                correctionOptions.batchsize);
+                    fileProperties.maxSequenceLength,
+                    SDIV(fileProperties.maxSequenceLength, 4),
+                    correctionOptions.batchsize);
 
-	SGAdata sgadata(threadOpts.deviceId, correctionOptions.batchsize, fileProperties.maxSequenceLength, alignmentOptions.alignmentscore_match,
-			alignmentOptions.alignmentscore_sub, alignmentOptions.alignmentscore_ins, alignmentOptions.alignmentscore_del);
-
+	SGAdata sgadata(threadOpts.deviceId,
+                    fileProperties.maxSequenceLength,
+                    SDIV(fileProperties.maxSequenceLength, 4),
+                    correctionOptions.batchsize);
 
     PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
                                                         correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
@@ -238,7 +239,7 @@ void ErrorCorrectionThread::execute() {
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
             shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
-            semi_global_alignment(sgadata, batchElems, true);
+            semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
         }else{
             throw std::runtime_error("Alignment: invalid correction mode.");
         }

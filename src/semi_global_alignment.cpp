@@ -6,11 +6,10 @@ namespace care{
     SGAdata implementation
 */
 
-SGAdata::SGAdata(int deviceId_, int batchsize, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel)
-		: deviceId(deviceId_), batchsize(batchsize), ALIGNMENTSCORE_MATCH(scorematch), ALIGNMENTSCORE_SUB(scoresub),
-					ALIGNMENTSCORE_INS(scoreins), ALIGNMENTSCORE_DEL(scoredel),
+SGAdata::SGAdata(int deviceId_, int maxseqlength, int maxseqbytes, int batchsize)
+		: deviceId(deviceId_), batchsize(batchsize),
 					max_sequence_length(32 * SDIV(maxseqlength, 32)), //round up to multiple of 32
-					max_sequence_bytes(SDIV(max_sequence_length,4)),
+					max_sequence_bytes(maxseqbytes),
 					max_ops_per_alignment(2 * (max_sequence_length + 1)){
 	#ifdef __NVCC__
 
@@ -118,10 +117,8 @@ void cuda_cleanup_SGAdata(SGAdata& data){
     Alignment functions definitions
 */
 
-AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const char* subject, const char* query, int ns, int nq);
-AlignResult cpu_semi_global_align_internal(const char* r1, const char* r2, int r1length, int r2bases,
-                    const int SCORE_EQUAL, const int SCORE_SUBSTITUTE,
-                    const int SCORE_INSERT, const int SCORE_DELETE);
+AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const AlignmentOptions& alignmentOptions,
+                                      const char* r1, const char* r2, int r1length, int r2bases);
 
 #ifdef __NVCC__
 
@@ -131,10 +128,10 @@ struct sgaparams{
     int sequencepitch;
     int n_queries;
     int subjectlength;
-    int ALIGNMENTSCORE_MATCH = 1;
-    int ALIGNMENTSCORE_SUB = -1;
-    int ALIGNMENTSCORE_INS = -1;
-    int ALIGNMENTSCORE_DEL = -1;
+    int alignmentscore_match = 1;
+    int alignmentscore_sub = -1;
+    int alignmentscore_ins = -1;
+    int alignmentscore_del = -1;
     const int* __restrict__ querylengths;
     const char* __restrict__ subjectdata;
     const char* __restrict__ queriesdata;
@@ -151,7 +148,8 @@ void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream
     Batch alignment implementation
 */
 
-void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
+void semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
+                            std::vector<BatchElem>& batch, bool useGpu){
 
     std::chrono::time_point<std::chrono::system_clock> tpa;
     std::chrono::time_point<std::chrono::system_clock> tpb;
@@ -211,10 +209,10 @@ void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bo
                 params[batchid].queriesdata = mybuffers.d_queriesdata + mybuffers.sequencepitch * querysum;
                 params[batchid].results = mybuffers.d_results + querysum;
                 params[batchid].ops = mybuffers.d_ops + querysum * mybuffers.max_ops_per_alignment;
-                params[batchid].ALIGNMENTSCORE_MATCH = mybuffers.ALIGNMENTSCORE_MATCH;
-                params[batchid].ALIGNMENTSCORE_SUB = mybuffers.ALIGNMENTSCORE_SUB;
-                params[batchid].ALIGNMENTSCORE_INS = mybuffers.ALIGNMENTSCORE_INS;
-                params[batchid].ALIGNMENTSCORE_DEL = mybuffers.ALIGNMENTSCORE_DEL;
+                params[batchid].alignmentscore_match = alignmentOptions.alignmentscore_match;
+                params[batchid].alignmentscore_sub = alignmentOptions.alignmentscore_sub;
+                params[batchid].alignmentscore_ins = alignmentOptions.alignmentscore_ins;
+                params[batchid].alignmentscore_del = alignmentOptions.alignmentscore_del;
 
                 int* querylengths = mybuffers.h_querylengths + querysum;
                 char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
@@ -366,7 +364,7 @@ void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bo
                 for(size_t i = 0; i < b.fwdSequences.size(); i++){
                     const char* query =  (const char*)b.fwdSequences[i]->begin();
                     const int queryLength = b.fwdSequences[i]->length();
-                    auto al = cpu_semi_global_alignment(&mybuffers, subject, query, subjectLength, queryLength);
+                    auto al = cpu_semi_global_alignment(&mybuffers, alignmentOptions, subject, query, subjectLength, queryLength);
                     b.fwdAlignments[i] = al.arc;
                     b.fwdAlignOps[i] = std::move(al.operations);
                 }
@@ -374,7 +372,7 @@ void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bo
                 for(size_t i = 0; i < b.revcomplSequences.size(); i++){
                     const char* query =  (const char*)b.revcomplSequences[i]->begin();
                     const int queryLength = b.revcomplSequences[i]->length();
-                    auto al = cpu_semi_global_alignment(&mybuffers, subject, query, subjectLength, queryLength);
+                    auto al = cpu_semi_global_alignment(&mybuffers, alignmentOptions, subject, query, subjectLength, queryLength);
                     b.revcomplAlignments[i] = al.arc;
                     b.revcomplAlignOps[i] = std::move(al.operations);
                 }
@@ -412,9 +410,8 @@ namespace sgadetail{
     }
 }
 
-AlignResult cpu_semi_global_align_internal(const char* r1, const char* r2, int r1length, int r2bases,
-                    const int SCORE_EQUAL, const int SCORE_SUBSTITUTE,
-                    const int SCORE_INSERT, const int SCORE_DELETE){
+AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const AlignmentOptions& alignmentOptions,
+                                      const char* r1, const char* r2, int r1length, int r2bases){
 
     assert(r1length < std::numeric_limits<short>::max());
     assert(r2bases < std::numeric_limits<short>::max());
@@ -441,9 +438,10 @@ AlignResult cpu_semi_global_align_internal(const char* r1, const char* r2, int r
             // calc entry [row][col]
 
             const bool ismatch = sgadetail::encoded_accessor(r1, r1length, row - 1) == sgadetail::encoded_accessor(r2, r2bases, col - 1);
-            const int matchscore = scores[row - 1][col - 1] + (ismatch ? SCORE_EQUAL : SCORE_SUBSTITUTE);
-            const int insscore = scores[row][col - 1] + SCORE_INSERT;
-            const int delscore = scores[row - 1][col] + SCORE_DELETE;
+            const int matchscore = scores[row - 1][col - 1]
+                        + (ismatch ? alignmentOptions.alignmentscore_match : alignmentOptions.alignmentscore_sub);
+            const int insscore = scores[row][col - 1] + alignmentOptions.alignmentscore_ins;
+            const int delscore = scores[row - 1][col] + alignmentOptions.alignmentscore_del;
 
             int maximum = 0;
             if (matchscore < delscore) {
@@ -569,14 +567,6 @@ AlignResult cpu_semi_global_align_internal(const char* r1, const char* r2, int r
 
 
 
-AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const char* subject, const char* query, int ns, int nq){
-
-    return cpu_semi_global_align_internal(subject, query, ns, nq,
-                buffers->ALIGNMENTSCORE_MATCH, buffers->ALIGNMENTSCORE_SUB,
-                buffers->ALIGNMENTSCORE_INS, buffers->ALIGNMENTSCORE_DEL);
-}
-
-
 
 
 #ifdef __NVCC__
@@ -661,9 +651,9 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers){
 
                 const bool ismatch = subjectbase == querybase;
                 const short matchscore = scoreDiag
-                            + (ismatch ? buffers.ALIGNMENTSCORE_MATCH : buffers.ALIGNMENTSCORE_SUB);
-                const short insscore = scoreUp + buffers.ALIGNMENTSCORE_INS;
-                const short delscore = scoreLeft + buffers.ALIGNMENTSCORE_DEL;
+                            + (ismatch ? buffers.alignmentscore_match : buffers.alignmentscore_sub);
+                const short insscore = scoreUp + buffers.alignmentscore_ins;
+                const short delscore = scoreLeft + buffers.alignmentscore_del;
 
                 short maximum = 0;
                 const unsigned int colindex = globalquerypos / prevsPerInt;
@@ -1079,9 +1069,9 @@ void cuda_semi_global_alignment_warps_kernel(const sgaparams buffers){
                         const bool ismatch = subjectbase == myquerybase;
 
                         const short matchscore = scoreDiag
-                                    + (ismatch ? buffers.ALIGNMENTSCORE_MATCH : buffers.ALIGNMENTSCORE_SUB);
-                        const short insscore = scoreLeft + buffers.ALIGNMENTSCORE_INS;
-                        const short delscore = scoreUp + buffers.ALIGNMENTSCORE_DEL;
+                                    + (ismatch ? buffers.alignmentscore_match : buffers.alignmentscore_sub);
+                        const short insscore = scoreLeft + buffers.alignmentscore_ins;
+                        const short delscore = scoreUp + buffers.alignmentscore_del;
                         //AlignType type;
                         if (matchscore < delscore) {
                             scoreCur = delscore;

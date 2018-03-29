@@ -3,6 +3,7 @@
 
 #include "alignment.hpp"
 #include "batchelem.hpp"
+#include "options.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -33,11 +34,6 @@ namespace care{
         int deviceId;
         int batchsize;
 
-        int ALIGNMENTSCORE_MATCH = 1;
-        int ALIGNMENTSCORE_SUB = -1;
-        int ALIGNMENTSCORE_INS = -1;
-        int ALIGNMENTSCORE_DEL = -1;
-
         int max_sequence_length = 0;
         int max_sequence_bytes = 0;
         int max_ops_per_alignment = 0;
@@ -57,12 +53,13 @@ namespace care{
 
         void resize(int n_sub, int n_quer);
 
-        SGAdata(int deviceId, int batchsize, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel);
+        SGAdata(int deviceId, int maxseqlength, int maxseqbytes, int batchsize);
     };
 
     void cuda_cleanup_SGAdata(SGAdata& data);
 
-	void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
+	void semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
+                                std::vector<BatchElem>& batch, bool useGpu);
 }
 
 #endif
