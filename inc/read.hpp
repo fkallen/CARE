@@ -205,10 +205,8 @@ struct Sequence {
 	std::uint8_t* end() const;
 	friend std::ostream& operator<<(std::ostream& stream, const Sequence& seq);
 
-	static constexpr std::uint8_t BASE_A = 0x00;
-	static constexpr std::uint8_t BASE_C = 0x01;
-	static constexpr std::uint8_t BASE_G = 0x02;
-	static constexpr std::uint8_t BASE_T = 0x03;
+    HOSTDEVICEQUALIFIER
+    static char get(const char* data, int i); // static access to i-th base in data
 
 	std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> data;
 	int nBases;

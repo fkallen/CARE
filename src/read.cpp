@@ -80,15 +80,7 @@ namespace care{
 
 	char Sequence::operator[](int i) const
 	{
-        const int byte = i / 4;
-        const int basepos = i % 4;
-        switch ((data.first[byte] >> (3 - basepos) * 2) & 0x03) {
-		case BASE_A: return 'A';
-		case BASE_C: return 'C';
-		case BASE_G: return 'G';
-		case BASE_T: return 'T';
-		default: return '_';         // cannot happen
-        }
+        return get((const char*)data.first.get(), i);
 	}
 
 	std::string Sequence::toString() const
@@ -141,6 +133,19 @@ namespace care{
 		stream << seq.toString();
 		return stream;
 	}
+
+    HOSTDEVICEQUALIFIER
+    char Sequence::get(const char* data, int i){
+        const int byte = i / 4;
+        const int basepos = i % 4;
+        switch ((data[byte] >> (3 - basepos) * 2) & 0x03) {
+    		case 0x00: return 'A';
+    		case 0x01: return 'C';
+    		case 0x02: return 'G';
+    		case 0x03: return 'T';
+    		default: return '_';         // cannot happen
+        }
+    }
 
 
 
