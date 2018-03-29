@@ -20,20 +20,20 @@ constexpr bool power_of_two(unsigned int x) {
 }
 
 
-#if __CUDACC_VER_MAJOR__ < 9
 
-    template<unsigned int TileSize, class T, class Func>
-    __device__ T reduceTile(T val, Func func){
-        static_assert(power_of_two(TileSize) && TileSize <= 32,
-            "reduceTile is only available if TileSize < 32 and TileSize is power of 2");
 
-        for (unsigned int offset = TileSize/2; offset > 0; offset /= 2){
-            myValue = func(myValue, __shfl_down_sync(__activemask(), myValue, offset));
-        }
-        return val;
+template<unsigned int TileSize=32, class T, class Func>
+__device__ T reduceTile(T val, Func func){
+    static_assert(power_of_two(TileSize) && TileSize <= 32,
+        "reduceTile is only available if TileSize < 32 and TileSize is power of 2");
+
+    for (unsigned int offset = TileSize/2; offset > 0; offset /= 2){
+        val = func(val, __shfl_down_sync(__activemask(), val, offset));
     }
+    return val;
+}
 
-#else
+#if __CUDACC_VER_MAJOR__ >= 9
 
 template<unsigned int TileSize, class T, class Func>
 __device__ T reduceTile(thread_block_tile<TileSize>& g, T val, Func func){
