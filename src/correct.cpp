@@ -309,7 +309,7 @@ void ErrorCorrectionThread::execute() {
                             const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
                             - b.candidateCountsPrefixSum[correctedCandidate.index];
                             for(int f = 0; f < count; f++){
-                                const int candidateId = b.candidateIds[count + f];
+                                const int candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
                                 int batchlockindex = candidateId % threadOpts.nLocksForProcessedFlags;
                                 bool savingIsOk = false;
                                 if((*threadOpts.readIsProcessedVector)[candidateId] == 0){
