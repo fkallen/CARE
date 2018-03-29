@@ -1,6 +1,8 @@
 #include "../inc/sequencefileio.hpp"
 
+#include <iostream>
 #include <limits>
+#include <memory>
 #include <string>
 #include <sstream>
 #include <stdexcept>

@@ -181,6 +181,10 @@ struct FixedSizeSequence{
 };
 #endif
 
+/*
+    Sequence class which stores sequence in consecutive 2bit encoding
+*/
+
 struct Sequence {
 
 	Sequence();
@@ -276,58 +280,6 @@ struct SequenceGeneralPtrLess{
 			}
 			return false;
 		}
-	}
-};
-
-
-struct Read {
-	std::string header = "";
-	std::string sequence = "";
-	std::string quality = "";
-
-	Read()
-	{
-	}
-
-	Read(const Read& other)
-	{
-		*this = other;
-	}
-
-	Read(Read&& other)
-	{
-		*this = std::move(other);
-	}
-
-	Read& operator=(Read&& other){
-		header = std::move(other.header);
-		sequence = std::move(other.sequence);
-		quality = std::move(other.quality);
-		return *this;
-	}
-
-	Read& operator=(const Read& other)
-	{
-		header = other.header;
-		sequence = other.sequence;
-		quality = other.quality;
-		return *this;
-	}
-
-	bool operator==(const Read& other) const
-	{
-		return (header == other.header && sequence == other.sequence && quality == other.quality);
-	}
-	bool operator!=(const Read& other) const
-	{
-		return !(*this == other);
-	}
-
-	void reset()
-	{
-		header.clear();
-		sequence.clear();
-		quality.clear();
 	}
 };
 

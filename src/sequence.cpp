@@ -1,4 +1,4 @@
-#include "../inc/read.hpp"
+#include "../inc/sequence.hpp"
 
 namespace care{
 	Sequence::Sequence() : nBases(0)

@@ -1,6 +1,6 @@
 #include "../inc/build.hpp"
 #include "../inc/sequencefileio.hpp"
-#include "../inc/read.hpp"
+#include "../inc/sequence.hpp"
 #include "../inc/threadsafe_buffer.hpp"
 
 #include <stdexcept>

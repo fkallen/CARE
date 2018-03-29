@@ -5,7 +5,7 @@
 #include "../inc/shifted_hamming_distance.hpp"
 #include "../inc/semi_global_alignment.hpp"
 #include "../inc/pileup.hpp"
-#include "../inc/read.hpp"
+#include "../inc/sequence.hpp"
 #include "../inc/sequencefileio.hpp"
 #include "../inc/qualityscoreweights.hpp"
 #include "../inc/tasktiming.hpp"

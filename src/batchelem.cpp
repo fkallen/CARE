@@ -1,8 +1,8 @@
 #include "../inc/batchelem.hpp"
 
-#include "../inc/read.hpp"
 #include "../inc/alignment.hpp"
 #include "../inc/readstorage.hpp"
+#include "../inc/sequence.hpp"
 
 #include <vector>
 #include <string>

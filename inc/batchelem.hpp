@@ -1,7 +1,6 @@
 #ifndef CARE_BATCH_ELEM_HPP
 #define CARE_BATCH_ELEM_HPP
 
-#include "read.hpp"
 #include "alignment.hpp"
 #include "readstorage.hpp"
 #include "minhasher.hpp"

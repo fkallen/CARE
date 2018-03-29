@@ -1,11 +1,11 @@
 #ifndef CARE_SEQUENCEFILEIO_HPP
 #define CARE_SEQUENCEFILEIO_HPP
 
-#include "read.hpp"
-
 #include <cstdint>
-#include <string>
 #include <fstream>
+#include <string>
+#include <vector>
+
 
 namespace care{
 
@@ -15,6 +15,28 @@ struct SequenceFileProperties{
         std::uint64_t nReads;
         int minSequenceLength;
         int maxSequenceLength;
+};
+
+struct Read {
+	std::string header = "";
+	std::string sequence = "";
+	std::string quality = "";
+
+	bool operator==(const Read& other) const
+	{
+		return (header == other.header && sequence == other.sequence && quality == other.quality);
+	}
+	bool operator!=(const Read& other) const
+	{
+		return !(*this == other);
+	}
+
+	void reset()
+	{
+		header.clear();
+		sequence.clear();
+		quality.clear();
+	}
 };
 
 struct SequenceFileReader {

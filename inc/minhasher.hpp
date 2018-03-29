@@ -2,7 +2,6 @@
 #define CARE_MINHASHER_HPP
 
 #include "options.hpp"
-#include "read.hpp"
 #include "kvmapfixed.hpp"
 #include "ganja/hpc_helpers.cuh"
 

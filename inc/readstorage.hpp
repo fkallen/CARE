@@ -1,7 +1,8 @@
 #ifndef READ_STORAGE_HPP
 #define READ_STORAGE_HPP
 
-#include "read.hpp"
+#include "sequencefileio.hpp"
+#include "sequence.hpp"
 
 #include <map>
 #include <vector>

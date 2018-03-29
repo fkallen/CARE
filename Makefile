@@ -4,7 +4,7 @@ HOSTLINKER=g++
 
 CXXFLAGS = -std=c++14
 CFLAGS = -Wall -g -fopenmp -O3
-NVCCFLAGS = -x cu -lineinfo -rdc=true
+NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda
 
 #TODO CUDA_PATH =
 
