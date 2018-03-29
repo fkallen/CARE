@@ -108,6 +108,20 @@ struct AlignResultCompact{
 	int nOps; //edit distance / number of operations
 	bool isNormalized;
 	bool isValid;
+
+    bool operator==(const AlignResultCompact& rhs){
+        return score == rhs.score
+            && subject_begin_incl == rhs.subject_begin_incl
+            && query_begin_incl == rhs.query_begin_incl
+            && overlap == rhs.overlap
+            && shift == rhs.shift
+            && nOps == rhs.nOps
+            && isNormalized == rhs.isNormalized
+            && isValid == rhs.isValid;
+    }
+    bool operator!=(const AlignResultCompact& rhs){
+        return !(*this == rhs);
+    }
 };
 
 
