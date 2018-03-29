@@ -3,10 +3,10 @@
 namespace care{
 
 /*
-    AlignerDataArrays implementation
+    SGAdata implementation
 */
 
-AlignerDataArrays::AlignerDataArrays(int deviceId_, int batchsize, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel)
+SGAdata::SGAdata(int deviceId_, int batchsize, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel)
 		: deviceId(deviceId_), batchsize(batchsize), ALIGNMENTSCORE_MATCH(scorematch), ALIGNMENTSCORE_SUB(scoresub),
 					ALIGNMENTSCORE_INS(scoreins), ALIGNMENTSCORE_DEL(scoredel),
 					max_sequence_length(32 * SDIV(maxseqlength, 32)), //round up to multiple of 32
@@ -23,7 +23,7 @@ AlignerDataArrays::AlignerDataArrays(int deviceId_, int batchsize, int maxseqlen
 	#endif
 };
 
-void AlignerDataArrays::resize(int n_sub, int n_quer){
+void SGAdata::resize(int n_sub, int n_quer){
 #ifdef __NVCC__
 	cudaSetDevice(deviceId); CUERR;
 
@@ -90,7 +90,7 @@ void AlignerDataArrays::resize(int n_sub, int n_quer){
 }
 
 
-void cuda_cleanup_AlignerDataArrays(AlignerDataArrays& data){
+void cuda_cleanup_SGAdata(SGAdata& data){
 	#ifdef __NVCC__
 		cudaSetDevice(data.deviceId); CUERR;
 
@@ -108,7 +108,7 @@ void cuda_cleanup_AlignerDataArrays(AlignerDataArrays& data){
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
 
-		for(int i = 0; i < 8; i++)
+		for(int i = 0; i < data.batchsize; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;
 	#endif
 }
@@ -118,7 +118,7 @@ void cuda_cleanup_AlignerDataArrays(AlignerDataArrays& data){
     Alignment functions definitions
 */
 
-AlignResult cpu_semi_global_alignment(const AlignerDataArrays* buffers, const char* subject, const char* query, int ns, int nq);
+AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const char* subject, const char* query, int ns, int nq);
 AlignResult cpu_semi_global_align_internal(const char* r1, const char* r2, int r1length, int r2bases,
                     const int SCORE_EQUAL, const int SCORE_SUBSTITUTE,
                     const int SCORE_INSERT, const int SCORE_DELETE);
@@ -151,7 +151,7 @@ void call_cuda_semi_global_alignment_kernel(const sgaparams& buffers, cudaStream
     Batch alignment implementation
 */
 
-void semi_global_alignment(AlignerDataArrays& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
+void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
 
     std::chrono::time_point<std::chrono::system_clock> tpa;
     std::chrono::time_point<std::chrono::system_clock> tpb;
@@ -569,7 +569,7 @@ AlignResult cpu_semi_global_align_internal(const char* r1, const char* r2, int r
 
 
 
-AlignResult cpu_semi_global_alignment(const AlignerDataArrays* buffers, const char* subject, const char* query, int ns, int nq){
+AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const char* subject, const char* query, int ns, int nq){
 
     return cpu_semi_global_align_internal(subject, query, ns, nq,
                 buffers->ALIGNMENTSCORE_MATCH, buffers->ALIGNMENTSCORE_SUB,

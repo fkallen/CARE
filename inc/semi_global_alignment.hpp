@@ -10,7 +10,7 @@
 namespace care{
 
     //Buffers for both GPU alignment and CPU alignment
-    struct AlignerDataArrays{
+    struct SGAdata{
         AlignOp* d_ops = nullptr;
         AlignOp* h_ops = nullptr;
 
@@ -57,12 +57,12 @@ namespace care{
 
         void resize(int n_sub, int n_quer);
 
-        AlignerDataArrays(int deviceId, int batchsize, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel);
+        SGAdata(int deviceId, int batchsize, int maxseqlength, int scorematch, int scoresub, int scoreins, int scoredel);
     };
 
-    void cuda_cleanup_AlignerDataArrays(AlignerDataArrays& data);
+    void cuda_cleanup_SGAdata(SGAdata& data);
 
-	void semi_global_alignment(AlignerDataArrays& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
+	void semi_global_alignment(SGAdata& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 }
 
 #endif

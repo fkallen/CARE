@@ -2,8 +2,8 @@
 
 #include "../inc/batchelem.hpp"
 #include "../inc/graph.hpp"
-#include "../inc/graphtools.hpp"
 #include "../inc/shifted_hamming_distance.hpp"
+#include "../inc/semi_global_alignment.hpp"
 #include "../inc/pileup.hpp"
 #include "../inc/read.hpp"
 #include "../inc/sequencefileio.hpp"
@@ -160,7 +160,7 @@ void ErrorCorrectionThread::execute() {
                                 SDIV(fileProperties.maxSequenceLength, 4),
                                 correctionOptions.batchsize);
 
-	graphtools::AlignerDataArrays sgadata(threadOpts.deviceId, fileProperties.maxSequenceLength, alignmentOptions.alignmentscore_match,
+	SGAdata sgadata(threadOpts.deviceId, correctionOptions.batchsize, fileProperties.maxSequenceLength, alignmentOptions.alignmentscore_match,
 			alignmentOptions.alignmentscore_sub, alignmentOptions.alignmentscore_ins, alignmentOptions.alignmentscore_del);
 
 
@@ -238,7 +238,7 @@ void ErrorCorrectionThread::execute() {
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
             shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
-            graphtools::getMultipleAlignments(sgadata, batchElems, true);
+            semi_global_alignment(sgadata, batchElems, true);
         }else{
             throw std::runtime_error("Alignment: invalid correction mode.");
         }
@@ -484,7 +484,7 @@ void ErrorCorrectionThread::execute() {
 #endif
 
 	cuda_cleanup_SHDdata(shddata);
-	graphtools::cuda_cleanup_AlignerDataArrays(sgadata);
+	cuda_cleanup_SGAdata(sgadata);
 	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
 }
 
