@@ -67,6 +67,9 @@ namespace care{
 		bestSequenceStrings.resize(num);
         bestIsForward.resize(num);
         bestAlignOps.resize(num);
+
+        fwdAlignOps.resize(num);
+        revcomplAlignOps.resize(num);
     }
 
     void BatchElem::set_read_id(std::uint64_t id){
