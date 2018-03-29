@@ -8,6 +8,7 @@
 #include "../inc/read.hpp"
 #include "../inc/sequencefileio.hpp"
 #include "../inc/qualityscoreweights.hpp"
+#include "../inc/tasktiming.hpp"
 
 #include <cstdint>
 #include <thread>

@@ -3,6 +3,7 @@
 
 #include "alignment.hpp"
 #include "batchelem.hpp"
+#include "tasktiming.hpp"
 
 #include <vector>
 #include <string>
@@ -11,14 +12,6 @@ namespace care{
 namespace graphtools{
 
 	namespace correction{
-
-        struct TaskTimings{
-        	std::chrono::duration<double> preprocessingtime{0};
-        	std::chrono::duration<double> h2dtime{0};
-        	std::chrono::duration<double> executiontime{0};
-        	std::chrono::duration<double> d2htime{0};
-        	std::chrono::duration<double> postprocessingtime{0};
-        };
 
         struct GraphTimings{
             std::chrono::duration<double> buildtime{0};

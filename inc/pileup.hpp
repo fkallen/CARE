@@ -1,8 +1,9 @@
 #ifndef PILEUP_HPP
 #define PILEUP_HPP
 
-#include "../inc/alignment.hpp"
-#include "../inc/batchelem.hpp"
+#include "alignment.hpp"
+#include "batchelem.hpp"
+#include "tasktiming.hpp"
 
 #include <chrono>
 #include <memory>
@@ -36,14 +37,6 @@ namespace care{
             double errorrate;
             double m;
             double k;
-        };
-
-        struct TaskTimings{
-        	std::chrono::duration<double> preprocessingtime{0};
-        	std::chrono::duration<double> h2dtime{0};
-        	std::chrono::duration<double> executiontime{0};
-        	std::chrono::duration<double> d2htime{0};
-        	std::chrono::duration<double> postprocessingtime{0};
         };
 
         struct PileupTimings{
