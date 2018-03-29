@@ -318,7 +318,7 @@ void semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignment
 
                     alignment = results[count];
                     b.revcomplAlignOps[localcount].resize(alignment.nOps);
-                    std::copy(ops + count * mybuffers.max_ops_per_alignment,
+                    std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
                               ops + count * mybuffers.max_ops_per_alignment + alignment.nOps,
                               b.revcomplAlignOps[localcount].begin());
                     count++;
