@@ -26,48 +26,49 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
                                int querybases,
                                Accessor getChar){
 
-    assert(subjectbases < std::numeric_limits<short>::max());
-    assert(querybases < std::numeric_limits<short>::max());
+    using Score_t = std::int64_t;
 
-    int scores[subjectbases + 1][querybases + 1];
-    char prevs[subjectbases + 1][querybases + 1];
+    const int numrows = subjectbases + 1;
+    const int numcols = querybases + 1;
 
+    std::vector<Score_t> scores(numrows * numcols);
+    std::vector<char> prevs(numrows * numcols);
 
     // init
-    for (int col = 0; col < querybases + 1; ++col) {
-        scores[0][col] = 0;
+    for (int col = 0; col < numcols; ++col) {
+        scores[(0) * numcols + (col)] = Score_t(0);
     }
 
     // row 0 was filled by column loop
-    for (int row = 1; row < subjectbases + 1; ++row) {
-        scores[row][0] = 0;
+    for (int row = 1; row < numrows; ++row) {
+        scores[(row) * numcols + (0)] = Score_t(0);
     }
 
     // fill matrix
-    for (int row = 1; row < subjectbases + 1; ++row) {
-        for (int col = 1; col < querybases + 1; ++col) {
+    for (int row = 1; row < numrows; ++row) {
+        for (int col = 1; col < numcols; ++col) {
             // calc entry [row][col]
 
             const bool ismatch = getChar(subject, subjectbases, row - 1) == getChar(query, querybases, col - 1);
-            const int matchscore = scores[row - 1][col - 1]
-                        + (ismatch ? alignmentOptions.alignmentscore_match : alignmentOptions.alignmentscore_sub);
-            const int insscore = scores[row][col - 1] + alignmentOptions.alignmentscore_ins;
-            const int delscore = scores[row - 1][col] + alignmentOptions.alignmentscore_del;
+            const Score_t matchscore = scores[(row - 1) * numcols + (col - 1)]
+                        + (ismatch ? Score_t(alignmentOptions.alignmentscore_match) : Score_t(alignmentOptions.alignmentscore_sub));
+            const Score_t insscore = scores[(row) * numcols + (col - 1)] + Score_t(alignmentOptions.alignmentscore_ins);
+            const Score_t delscore = scores[(row - 1) * numcols + (col)] + Score_t(alignmentOptions.alignmentscore_del);
 
             int maximum = 0;
             if (matchscore < delscore) {
                 maximum = delscore;
-                prevs[row][col] = ALIGNTYPE_DELETE;
+                prevs[(row) * numcols + (col)] = ALIGNTYPE_DELETE;
             }else{
                 maximum = matchscore;
-                prevs[row][col] = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+                prevs[(row) * numcols + (col)] = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
             }
             if (maximum < insscore) {
                 maximum = insscore;
-                prevs[row][col] = ALIGNTYPE_INSERT;
+                prevs[(row) * numcols + (col)] = ALIGNTYPE_INSERT;
             }
 
-            scores[row][col] = maximum;
+            scores[(row) * numcols + (col)] = maximum;
         }
     }
 #if 0
@@ -93,12 +94,12 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
 
     int currow = subjectbases;
     int curcol = querybases;
-    int maximum = std::numeric_limits<int>::min();
+    Score_t maximum = std::numeric_limits<Score_t>::min();
 
-    for (int row = 1; row < subjectbases + 1; ++row) {
-        if(scores[row][querybases] > maximum){
+    for (int row = 1; row < numrows; ++row) {
+        if(scores[(row) * numcols + (querybases)] > maximum){
             //short oldmax = maximum;
-            maximum = scores[row][querybases];
+            maximum = scores[(row) * numcols + (querybases)];
             currow = row;
             curcol = querybases;
 
@@ -108,10 +109,10 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
         }
     }
 
-    for (int col = 1; col < querybases + 1; ++col) {
-        if(scores[subjectbases][col] > maximum){
+    for (int col = 1; col < numcols; ++col) {
+        if(scores[(subjectbases) * numcols + (col)] > maximum){
             //short oldmax = maximum;
-            maximum = scores[subjectbases][col];
+            maximum = scores[(subjectbases) * numcols + (col)];
             currow = subjectbases;
             curcol = col;
 
@@ -131,7 +132,7 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
     alignresult.arc.isNormalized = false;
 
     while(currow != 0 && curcol != 0){
-        switch (prevs[currow][curcol]) {
+        switch (prevs[(currow) * numcols + (curcol)]) {
         case ALIGNTYPE_MATCH: //printf("m\n");
             curcol -= 1;
             currow -= 1;
@@ -206,20 +207,24 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
 
     static_assert(MAX_SEQUENCE_LENGTH % 32 == 0, "MAX_SEQUENCE_LENGTH must be divisible by 32");
 
+    using Score_t = short;
+
+    constexpr int MAX_SEQUENCE_BYTES = MAX_SEQUENCE_LENGTH/4;
+
     constexpr int prevsPerInt = (sizeof(int)*8/2);
 
-    __shared__ char subject_shared[MAX_SEQUENCE_LENGTH/4];
-    __shared__ char query_shared[MAX_SEQUENCE_LENGTH/4];
+    __shared__ char subject_shared[MAX_SEQUENCE_BYTES];
+    __shared__ char query_shared[MAX_SEQUENCE_BYTES];
     __shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / prevsPerInt)];
-    __shared__ short scores[3 * MAX_SEQUENCE_LENGTH];
-    __shared__ short bestrow;
-    __shared__ short bestcol;
-    __shared__ short bestrowscore;
-    __shared__ short bestcolscore;
+    __shared__ Score_t scores[3 * MAX_SEQUENCE_LENGTH];
+    __shared__ Score_t bestrow;
+    __shared__ Score_t bestcol;
+    __shared__ Score_t bestrowscore;
+    __shared__ Score_t bestcolscore;
 
     const int subjectbases = buffers.subjectlength;
     const char* subject = buffers.subjectdata;
-    for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_LENGTH/4; threadid += blockDim.x){
+    for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_BYTES; threadid += blockDim.x){
         subject_shared[threadid] = subject[threadid];
     }
 
@@ -227,18 +232,14 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
 
         const char* query = buffers.queriesdata + queryId * buffers.sequencepitch;
         const int querybases = buffers.querylengths[queryId];
-        for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_LENGTH/4; threadid += blockDim.x){
+        for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_BYTES; threadid += blockDim.x){
             query_shared[threadid] = query[threadid];
         }
 
-        AlignResultCompact * const my_result_out = buffers.results + queryId;
-        AlignOp * const my_ops_out = buffers.ops + buffers.max_ops_per_alignment * queryId;
-
-
         for (int l = threadIdx.x; l < MAX_SEQUENCE_LENGTH; l += blockDim.x) {
-            scores[0*MAX_SEQUENCE_LENGTH+l] = 0;
-            scores[1*MAX_SEQUENCE_LENGTH+l] = 0;
-            scores[2*MAX_SEQUENCE_LENGTH+l] = 0;
+            scores[0*MAX_SEQUENCE_LENGTH+l] = Score_t(0);
+            scores[1*MAX_SEQUENCE_LENGTH+l] = Score_t(0);
+            scores[2*MAX_SEQUENCE_LENGTH+l] = Score_t(0);
         }
 
         for(int i = 0; i < MAX_SEQUENCE_LENGTH + 1; i++){
@@ -248,10 +249,10 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
         }
 
         if (threadIdx.x == 0) {
-            bestrow = 0;
-            bestcol = 0;
-            bestrowscore = SHRT_MIN;
-            bestcolscore = SHRT_MIN;
+            bestrow = Score_t(0);
+            bestcol = Score_t(0);
+            bestrowscore = std::numeric_limits<Score_t>::min();
+            bestcolscore = std::numeric_limits<Score_t>::min();
         }
 
         __syncthreads();
@@ -270,20 +271,20 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
             const int globalquerypos = threaddiagonal - threadIdx.x;
             const char querybase = globalquerypos < querybases ? getChar(query_shared, querybases, globalquerypos) : 'F';
 
-            const short scoreDiag = globalsubjectpos == 0 ? 0 : scores[matchrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
-            const short scoreLeft = scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x];
-            const short scoreUp = globalsubjectpos == 0 ? 0 :  scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
+            const Score_t scoreDiag = globalsubjectpos == 0 ? 0 : scores[matchrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
+            const Score_t scoreLeft = scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x];
+            const Score_t scoreUp = globalsubjectpos == 0 ? 0 :  scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
 
             if(globalsubjectpos >= 0 && globalsubjectpos < MAX_SEQUENCE_LENGTH
                 && globalquerypos >= 0 && globalquerypos < MAX_SEQUENCE_LENGTH){
 
                 const bool ismatch = subjectbase == querybase;
-                const short matchscore = scoreDiag
-                            + (ismatch ? buffers.alignmentscore_match : buffers.alignmentscore_sub);
-                const short insscore = scoreUp + buffers.alignmentscore_ins;
-                const short delscore = scoreLeft + buffers.alignmentscore_del;
+                const Score_t matchscore = scoreDiag
+                            + (ismatch ? Score_t(buffers.alignmentscore_match) : Score_t(buffers.alignmentscore_sub));
+                const Score_t insscore = scoreUp + Score_t(buffers.alignmentscore_ins);
+                const Score_t delscore = scoreLeft + Score_t(buffers.alignmentscore_del);
 
-                short maximum = 0;
+                Score_t maximum = 0;
                 const unsigned int colindex = globalquerypos / prevsPerInt;
 
                 if (matchscore < delscore) {
@@ -356,7 +357,8 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
 
             const int subject_end_excl = currow + 1;
 
-            //printf("currow %d, curcol %d\n", currow, curcol);
+            AlignResultCompact * const my_result_out = buffers.results + queryId;
+            AlignOp * const my_ops_out = buffers.ops + buffers.max_ops_per_alignment * queryId;
 
             int nOps = 0;
             bool isValid = true;
