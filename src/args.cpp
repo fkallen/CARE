@@ -53,8 +53,12 @@ namespace args{
 
 	template<>
 	CorrectionOptions to<CorrectionOptions>(const cxxopts::ParseResult& pr){
+        CorrectionMode correctionMode = CorrectionMode::Hamming;
+        if(pr["indels"].as<bool>()){
+            correctionMode = CorrectionMode::Graph;
+        }
         CorrectionOptions result{
-            CorrectionMode::Hamming,
+            correctionMode,
             false, //correct candidates
 			pr["useQualityScores"].as<bool>(),
             pr["coverage"].as<double>(),

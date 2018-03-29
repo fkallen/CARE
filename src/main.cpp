@@ -37,7 +37,7 @@ int main(int argc, const char** argv){
 		("minalignmentoverlap", "Overlap between query and candidate must be at least this long", cxxopts::value<int>()->default_value("35")->implicit_value("35"))
 		("minalignmentoverlapratio", "Overlap between query and candidate must be at least as long as minalignmentoverlapratio * querylength",
 					cxxopts::value<double>()->default_value("0.35")->implicit_value("0.35"))
-		("fileformat", "Format of input file. Allowed values: {fasta, fastq}",
+		("fileformat", "Format of input file. Allowed values: {fastq}",
 					cxxopts::value<std::string>()->default_value("fastq")->implicit_value("fastq"))
 
 		("coverage", "estimated coverage of input file",
@@ -46,7 +46,8 @@ int main(int argc, const char** argv){
 					cxxopts::value<double>()->default_value("0.03")->implicit_value("0.03"))
 		("m_coverage", "m",
 					cxxopts::value<double>()->default_value("0.6")->implicit_value("0.6"))
-
+        ("indels", "If set, a semi-global alignment is performed which allows for the correction of both substitutions and indels. If not set, the shifted hamming distance is calculated which allows for the correction of substitutions.",
+                 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 	;
 
 	auto parseresults = options.parse(argc, argv);
@@ -54,7 +55,7 @@ int main(int argc, const char** argv){
 	if(help){
 	      	std::cout << options.help({"", "Group"}) << std::endl;
 		exit(0);
-	}   
+	}
 
 	care::performCorrection(parseresults);
 
