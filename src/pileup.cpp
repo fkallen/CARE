@@ -480,12 +480,13 @@ namespace care{
 
 							if(newColMinSupport >= 1-3*correctionSettings.errorrate
 								&& newColMinCov >= correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage){
-								//assert(subjectColumnsBegin_incl == queryColumnsBegin_incl && subject.length() == queries[i].length());
+
+                                std::string correctedString(&h_consensus[queryColumnsBegin_incl], &h_consensus[queryColumnsEnd_excl]);
 
                                 batchElem.correctedCandidates
                                     .emplace_back(
                                         i,
-                                        std::string(&h_consensus[queryColumnsBegin_incl], &h_consensus[queryColumnsEnd_excl])
+                                        std::move(correctedString)
                                     );
 							}
 						}
