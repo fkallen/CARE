@@ -1,6 +1,8 @@
 #include "../inc/graph.hpp"
 #include "../inc/alignment.hpp"
 
+#include "../inc/qualityscoreweights.hpp"
+
 #include <cassert>
 #include <chrono>
 #include <fstream>
@@ -16,26 +18,6 @@ namespace care{
 namespace graphtools{
 
 	namespace correction{
-
-		double qscore_to_error_prob[256];
-		double qscore_to_weight[256];
-
-		void init_once(){
-
-			constexpr int ASCII_BASE = 33;
-			constexpr double MIN_WEIGHT = 0.001;
-
-			for(int i = 0; i < 256; i++){
-				if(i < ASCII_BASE)
-					qscore_to_error_prob[i] = 1.0;
-				else
-					qscore_to_error_prob[i] = std::pow(10.0, -(i-ASCII_BASE)/10.0);
-			}
-
-			for(int i = 0; i < 256; i++){
-				qscore_to_weight[i] = std::max(MIN_WEIGHT, 1.0 - qscore_to_error_prob[i]);
-			}
-		}
 
 		// split substitutions in alignment into deletion + insertion
 		int split_subs(std::vector<AlignOp>& ops, const std::string& subject){

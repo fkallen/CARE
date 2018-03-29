@@ -7,6 +7,7 @@
 #include "../inc/pileup.hpp"
 #include "../inc/read.hpp"
 #include "../inc/sequencefileio.hpp"
+#include "../inc/qualityscoreweights.hpp"
 
 #include <cstdint>
 #include <thread>
@@ -501,9 +502,8 @@ void correct(const MinhashOptions& minhashOptions,
 				  size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds){
 
-      // initialize global correction data structures
-  	PileupImage::init_once();
-  	graphtools::correction::init_once();
+      // initialize qscore-to-weight lookup table
+  	init_weights();
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 

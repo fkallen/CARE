@@ -86,8 +86,6 @@ namespace graphtools{
 
 	void cuda_cleanup_AlignerDataArrays(AlignerDataArrays& data);
 
-	void init_once();
-
 	void getMultipleAlignments(AlignerDataArrays& mybuffers, std::vector<BatchElem>& batch, bool useGpu);
 
 } //namespace end

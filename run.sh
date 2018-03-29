@@ -40,7 +40,7 @@ useQualityScores=--useQualityScores
 #useQualityScores=
 
 #if indels should be corrected, too
-indels=--indels=true
+indels=--indels=false
 
 #minhashing parameters
 #kmer length
@@ -48,7 +48,7 @@ k=16
 #hashmaps (one kmer hash value per map)
 maps=8
 
-#alignment scores for semiglobal alignment
+#alignment scores for semiglobal alignment. only used if indels=true.
 #we use a high indel penalty to focus on substitutions only. you may want to change this to include indel correction
 matchscore=1
 subscore=-1

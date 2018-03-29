@@ -95,8 +95,6 @@ namespace care{
             void cpu_add_weights(const BatchElem& batchElem);
             void cpu_find_consensus(const BatchElem& batchElem);
             void cpu_correct(BatchElem& batchElem);
-
-            static void init_once();
         };
 
 }

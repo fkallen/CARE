@@ -151,10 +151,6 @@ namespace graphtools{
 		#endif
 	}
 
-	void init_once(){
-		correction::init_once();
-	}
-
     void getMultipleAlignments(AlignerDataArrays& mybuffers, std::vector<BatchElem>& batch, bool useGpu){
 
 		std::chrono::time_point<std::chrono::system_clock> tpa;
