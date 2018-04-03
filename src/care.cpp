@@ -26,7 +26,7 @@ void correctFile(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
-				  std::vector<char>& readIsProcessedVector,
+				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 				  size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds){
@@ -58,15 +58,15 @@ void correctFile(const MinhashOptions& minhashOptions,
         goodAlignmentProperties, correctionOptions,
         runtimeOptions, fileOptions,
         minhasher, readStorage,
-        readIsProcessedVector, locksForProcessedFlags,
+        readIsCorrectedVector, locksForProcessedFlags,
         nLocksForProcessedFlags, deviceIds);
 
 
 	TIMERSTOPCPU(CORRECT);
 
     if (correctionOptions.correctCandidates) {
-		int asd = std::count_if(readIsProcessedVector.begin(),
-				readIsProcessedVector.end(), [](auto b) {return b;});
+		int asd = std::count_if(readIsCorrectedVector.begin(),
+				readIsCorrectedVector.end(), [](auto b) {return b;});
 		std::cout << "total corrected reads: " << asd << std::endl;
 	}
 }
@@ -88,18 +88,13 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
 
-	//data which is used for multiple correction passes
-	std::vector<char> readIsProcessedVector;
-	std::unique_ptr<std::mutex[]> locksForProcessedFlags;
-	size_t nLocksForProcessedFlags = 0;
 
-    if (correctionOptions.correctCandidates) {
-        SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
-		readIsProcessedVector.resize(props.nReads, 0);
-		nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
-		locksForProcessedFlags.reset(new std::mutex[nLocksForProcessedFlags]);
-	}
+    SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+
+	std::vector<char> readIsCorrectedVector(props.nReads, 0);
+	size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
+	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
 	std::vector<int> deviceIds;
 
@@ -107,9 +102,11 @@ void performCorrection(const cxxopts::ParseResult& args) {
 
 	int nGpus;
 	cudaGetDeviceCount(&nGpus); CUERR;
-	if(nGpus == 0) throw std::runtime_error("No CUDA capable device found!");
+    //TODO instead of failing, fall back to CPU mode by introducing variable canUseGpu and setting it to false
+	if(nGpus == 0)
+        throw std::runtime_error("No CUDA capable device found!");
 	for(int i = 0; i < nGpus; i++)
-	deviceIds.push_back(i);
+	   deviceIds.push_back(i);
 
 #endif
 
@@ -150,7 +147,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
 		correctFile(minhashOptions, alignmentOptions,
             goodAlignmentProperties, correctionOptions,
             runtimeOptions, iterFileOptions,
-            readIsProcessedVector, locksForProcessedFlags,
+            readIsCorrectedVector, locksForProcessedFlags,
             nLocksForProcessedFlags, deviceIds);
 
 		iter++;

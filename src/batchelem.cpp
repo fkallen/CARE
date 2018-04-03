@@ -246,6 +246,7 @@ namespace care{
     void BatchElem::prepare_good_candidates(){
         size_t activeposition_unique = 0;
         size_t activeposition = 0;
+
         //stable_partition with condition (activeCandidates[i] && notremoved) ?
         for(size_t i = 0; i < activeCandidates.size(); i++){
             if(activeCandidates[i]){
@@ -272,6 +273,7 @@ namespace care{
                 }
             }
         }
+
         n_unique_candidates = activeposition_unique;
         n_candidates = activeposition;
     }

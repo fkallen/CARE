@@ -9,15 +9,16 @@ executable=./errorcorrector_gpu
 threads=8
 
 #input file
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 #inputfile=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/readscorrected.fq
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
 
-coverage=21
-#coverage=255
+#coverage=21
+coverage=255
 #coverage=31
 
+#estimated error rate
 errorrate=0.01
 m=0.6
 
@@ -32,7 +33,7 @@ outputfile="readscorrectednew.fq"
 outfile="--outfile=$outputfile"
 #outfile=
 
-# fasta or fastq
+#fastq
 fileformat=fastq
 
 #only valid for fastq fileformat
@@ -56,7 +57,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=5
+batchsize=3
 
 #properties of good alignment
 maxmismatchratio=0.20

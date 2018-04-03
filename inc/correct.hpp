@@ -20,7 +20,7 @@ void correct(const MinhashOptions& minhashOptions,
 				  const FileOptions& fileOptions,
                   Minhasher& minhasher,
                   ReadStorage& readStorage,
-				  std::vector<char>& readIsProcessedVector,
+				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 				  size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds);

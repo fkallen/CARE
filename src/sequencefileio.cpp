@@ -107,6 +107,7 @@ namespace care{
 
     /*
         Merges temporary results with unordered reads into single file outputfile with ordered reads.
+        Quality scores and missing sequences are taken from original file.
         Temporary result files are expected to be in format:
 
         readnumber
@@ -143,13 +144,13 @@ namespace care{
                 reads[readnum].sequence = std::move(seq);
             }
         }
-
+#if 0
         if (nreads != expectedNumReads){
     		std::cout << "WARNING. Expected " << expectedNumReads
                       << " reads in results, but found only "
                       << nreads << " reads. Results may not be correct!" << std::endl;
     	}
-
+#endif
         std::unique_ptr<SequenceFileReader> reader;
     	switch (originalFormat) {
     	case FileFormat::FASTQ:
@@ -165,6 +166,9 @@ namespace care{
             std::uint64_t readIndex = reader->getReadnum() - 1;
             reads[readIndex].header = std::move(read.header);
             reads[readIndex].quality = std::move(read.quality);
+            if(reads[readIndex].sequence == ""){
+                reads[readIndex].sequence = std::move(read.sequence);
+            }
     	}
 
     	std::ofstream outputstream(outputfile);

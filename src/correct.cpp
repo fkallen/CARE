@@ -84,6 +84,7 @@ struct CorrectionThreadOptions{
     const ReadStorage* readStorage;
     std::mutex* coutLock;
     std::vector<char>* readIsProcessedVector;
+    std::vector<char>* readIsCorrectedVector;
     std::mutex* locksForProcessedFlags;
     std::size_t nLocksForProcessedFlags;
 };
@@ -153,6 +154,16 @@ void ErrorCorrectionThread::execute() {
 		stream << sequence << '\n';
 	};
 
+    auto lock = [&](std::uint64_t readId){
+        std::uint64_t index = readId % threadOpts.nLocksForProcessedFlags;
+        threadOpts.locksForProcessedFlags[index].lock();
+    };
+
+    auto unlock = [&](std::uint64_t readId){
+        std::uint64_t index = readId % threadOpts.nLocksForProcessedFlags;
+        threadOpts.locksForProcessedFlags[index].unlock();
+    };
+
     MinhasherBuffers minhasherbuffers(threadOpts.deviceId);
 
 	SHDdata shddata(threadOpts.deviceId,
@@ -192,18 +203,16 @@ void ErrorCorrectionThread::execute() {
             nProcessedQueries++;
         }
 
-		if (correctionOptions.correctCandidates){
-            for(auto& b : batchElems){
-			    int batchlockindex = b.readId % threadOpts.nLocksForProcessedFlags;
-			    std::unique_lock<std::mutex> lock(threadOpts.locksForProcessedFlags[batchlockindex]);
-                if ((*threadOpts.readIsProcessedVector)[b.readId] == 0) {
-					(*threadOpts.readIsProcessedVector)[b.readId] = 1;
-				}else{
-                    b.active = false;
-                    nProcessedQueries--;
-                }
+        for(auto& b : batchElems){
+		    lock(b.readId);
+            if ((*threadOpts.readIsCorrectedVector)[b.readId] == 0) {
+				(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
+			}else{
+                b.active = false;
+                nProcessedQueries--;
             }
-		}
+            unlock(b.readId);
+        }
 
         std::partition(batchElems.begin(), batchElems.end(), [](const auto& b){return b.active;});
 
@@ -223,7 +232,6 @@ void ErrorCorrectionThread::execute() {
 				if(b.candidateIds.size() == 0){
 					//no need for further processing
 					b.active = false;
-					write_read(b.readId, b.fwdSequenceString);
 				}else{
                     b.make_unique_sequences();
                     duplicates += b.get_number_of_duplicate_sequences();
@@ -253,11 +261,6 @@ void ErrorCorrectionThread::execute() {
                 tpc = std::chrono::system_clock::now();
 
                 DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
-
-                if(Astats.correctionCases[3] > 0){
-                    //no correction because not enough good alignments. write original sequence to output
-                    write_read(b.readId, b.fwdSequenceString);
-                }
 
                 tpd = std::chrono::system_clock::now();
                 determinegoodalignmentsTime += tpd - tpc;
@@ -300,8 +303,9 @@ void ErrorCorrectionThread::execute() {
 
                     if(b.corrected){
 						write_read(b.readId, b.correctedSequence);
-                    }else{
-						write_read(b.readId, b.fwdSequenceString);
+                        lock(b.readId);
+                        (*threadOpts.readIsCorrectedVector)[b.readId] = 1;
+                        unlock(b.readId);
                     }
 
                     if (correctionOptions.correctCandidates) {
@@ -309,18 +313,16 @@ void ErrorCorrectionThread::execute() {
                             const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
                             - b.candidateCountsPrefixSum[correctedCandidate.index];
                             for(int f = 0; f < count; f++){
-                                const int candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
-                                int batchlockindex = candidateId % threadOpts.nLocksForProcessedFlags;
+                                std::uint64_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
                                 bool savingIsOk = false;
-                                if((*threadOpts.readIsProcessedVector)[candidateId] == 0){
-                                    std::unique_lock <std::mutex> lock(
-                                                    threadOpts.locksForProcessedFlags[batchlockindex]);
-                                    if((*threadOpts.readIsProcessedVector)[candidateId]== 0) {
-                                        (*threadOpts.readIsProcessedVector)[candidateId] = 1; // we will process this read
-                                        lock.unlock();
+                                if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
+                                    lock(candidateId);
+                                    if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
+                                        (*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
                                         savingIsOk = true;
                                         nCorrectedCandidates++;
                                     }
+                                    unlock(candidateId);
                                 }
                                 if (savingIsOk) {
                                     if (b.bestIsForward[correctedCandidate.index])
@@ -349,8 +351,9 @@ void ErrorCorrectionThread::execute() {
 
                     if(b.corrected){
 						write_read(b.readId, b.correctedSequence);
-                    }else{
-						write_read(b.readId, b.fwdSequenceString);
+                        lock(b.readId);
+                        (*threadOpts.readIsCorrectedVector)[b.readId] = 1;
+                        unlock(b.readId);
                     }
                 }
             }
@@ -499,7 +502,7 @@ void correct(const MinhashOptions& minhashOptions,
 				  const FileOptions& fileOptions,
                   Minhasher& minhasher,
                   ReadStorage& readStorage,
-				  std::vector<char>& readIsProcessedVector,
+				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 				  size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds){
@@ -518,7 +521,7 @@ void correct(const MinhashOptions& minhashOptions,
 
     std::vector<BatchGenerator> generators(runtimeOptions.nCorrectorThreads);
     std::vector<ErrorCorrectionThread> ecthreads(runtimeOptions.nCorrectorThreads);
-
+    std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
 #ifdef DO_PROFILE
@@ -539,6 +542,7 @@ void correct(const MinhashOptions& minhashOptions,
         threadOpts.readStorage = &readStorage;
         threadOpts.coutLock = &writelock;
         threadOpts.readIsProcessedVector = &readIsProcessedVector;
+        threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
         threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
         threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
 
