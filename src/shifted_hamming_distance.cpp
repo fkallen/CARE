@@ -1,6 +1,8 @@
 #include "../inc/shifted_hamming_distance.hpp"
 #include "../inc/shifted_hamming_distance_impl.hpp"
 
+#include <stdexcept>
+
 namespace care{
 /*
     SHDdata implementation
@@ -9,11 +11,13 @@ SHDdata::SHDdata(int deviceId_, int maxseqlength, int maxseqbytes, int batchsize
       : deviceId(deviceId_), max_sequence_length(maxseqlength),
         max_sequence_bytes(maxseqbytes), batchsize(batchsize){
 #ifdef __NVCC__
+    if(batchsize >= max_batch_size)
+        throw std::runtime_error("Shifted Hamming Distance: batch size too large");
+
     cudaSetDevice(deviceId); CUERR;
 
-    streams = std::make_unique<cudaStream_t[]>(batchsize);
     for(int i = 0; i < batchsize; i++)
-        cudaStreamCreate(&(streams.get()[i])); CUERR;
+        cudaStreamCreate(&streams[i]); CUERR;
 #endif
 };
 
@@ -359,7 +363,7 @@ void call_shd_kernel(const shdparams& buffer, int maxQueryLength, cudaStream_t s
 
 void call_shd_kernel_async(const shdparams& buffer, int maxQueryLength, cudaStream_t stream){
     const int minoverlap = max(buffer.props.min_overlap, int(double(buffer.subjectlength) * buffer.props.min_overlap_ratio));
-    const int maxShiftsToCheck = buffer.subjectlength+1 + maxQueryLength - 2*minoverlap; //FIXME
+    const int maxShiftsToCheck = buffer.subjectlength+1 + maxQueryLength - 2*minoverlap;
     dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
     dim3 grid(buffer.n_queries, 1, 1);
 
