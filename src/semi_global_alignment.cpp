@@ -12,15 +12,15 @@ SGAdata::SGAdata(int deviceId_, int maxseqlength, int maxseqbytes, int batchsize
 					max_sequence_length(32 * SDIV(maxseqlength, 32)), //round up to multiple of 32
 					max_sequence_bytes(maxseqbytes),
 					max_ops_per_alignment(2 * (max_sequence_length + 1)){
-	#ifdef __NVCC__
+#ifdef __NVCC__
+    if(batchsize >= max_batch_size)
+        throw std::runtime_error("Semi Global Alignment: batch size too large");
 
-	cudaSetDevice(deviceId); CUERR;
+    cudaSetDevice(deviceId); CUERR;
 
-    streams = std::make_unique<cudaStream_t[]>(batchsize);
     for(int i = 0; i < batchsize; i++)
-        cudaStreamCreate(&(streams.get()[i])); CUERR;
-
-	#endif
+        cudaStreamCreate(&streams[i]); CUERR;
+#endif
 };
 
 void SGAdata::resize(int n_sub, int n_quer){

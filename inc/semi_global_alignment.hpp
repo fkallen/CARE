@@ -28,7 +28,8 @@ namespace care{
         int* h_querylengths = nullptr;
 
     #ifdef __NVCC__
-        std::unique_ptr<cudaStream_t[]> streams;
+        static constexpr int max_batch_size = 16;
+        cudaStream_t streams[max_batch_size];
     #endif
 
         int deviceId;
