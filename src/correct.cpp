@@ -192,7 +192,9 @@ void ErrorCorrectionThread::execute() {
 		//fit vector size to actual batch size
 		if (batchElems.size() != readIds.size()) {
             batchElems.resize(readIds.size(),
-                              BatchElem(threadOpts.readStorage, correctionOptions.estimatedErrorrate,
+                              BatchElem(threadOpts.readStorage,
+                                        threadOpts.minhasher,
+                                        correctionOptions.estimatedErrorrate,
                                         correctionOptions.estimatedCoverage, correctionOptions.m_coverage,
                                         goodAlignmentProperties.max_mismatch_ratio, goodAlignmentProperties.min_overlap,
                                         goodAlignmentProperties.min_overlap_ratio));
@@ -218,25 +220,10 @@ void ErrorCorrectionThread::execute() {
 
         tpa = std::chrono::system_clock::now();
 
+        // get query data, determine candidates via minhashing, get candidate data
         for(auto& b : batchElems){
             if(b.active){
-                b.fetch_query_data_from_readstorage();
-
-                tpc = std::chrono::system_clock::now();
-                b.set_candidate_ids(threadOpts.minhasher->getCandidates(minhasherbuffers, b.fwdSequenceString));
-                tpd = std::chrono::system_clock::now();
-        		getCandidatesTimeTotal += tpd - tpc;
-
-                minhashcandidates += b.candidateIds.size();
-
-				if(b.candidateIds.size() == 0){
-					//no need for further processing
-					b.active = false;
-				}else{
-                    b.make_unique_sequences();
-                    duplicates += b.get_number_of_duplicate_sequences();
-                    b.fetch_revcompl_sequences_from_readstorage();
-                }
+                b.findCandidates();
             }
         }
 
@@ -260,17 +247,18 @@ void ErrorCorrectionThread::execute() {
             if(b.active){
                 tpc = std::chrono::system_clock::now();
 
-                DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
+                //DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
+                b.determine_good_alignments(0, b.fwdSequences.size());
 
                 tpd = std::chrono::system_clock::now();
                 determinegoodalignmentsTime += tpd - tpc;
 
-                goodAlignmentStats.correctionCases[0] += Astats.correctionCases[0];
+                /*goodAlignmentStats.correctionCases[0] += Astats.correctionCases[0];
                 goodAlignmentStats.correctionCases[1] += Astats.correctionCases[1];
                 goodAlignmentStats.correctionCases[2] += Astats.correctionCases[2];
                 goodAlignmentStats.correctionCases[3] += Astats.correctionCases[3];
                 goodAlignmentStats.uniqueCandidatesWithoutGoodAlignment += Astats.uniqueCandidatesWithoutGoodAlignment;
-
+                */
                 tpc = std::chrono::system_clock::now();
 
                 if(b.active){

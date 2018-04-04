@@ -68,6 +68,8 @@ struct BatchElem{
 
     //constant batch independent data
     const ReadStorage* readStorage;
+    const Minhasher* minhasher;
+
     double errorrate;
     int estimatedCoverage;
     double m_coverage;
@@ -76,9 +78,12 @@ struct BatchElem{
     int MIN_OVERLAP;
     double MIN_OVERLAP_RATIO;
 
+    int counts[3] { 0, 0, 0 }; //count number of cases of mismatchratio < 2*errorrate, 3*errorrate, 4*errorrate
+
     //BatchElem() : BatchElem(nullptr, 0.0, 0.0){}
 
-    BatchElem(const ReadStorage* rs, double errorrate_,
+    BatchElem(const ReadStorage* rs, const Minhasher* minhasher,
+                double errorrate_,
                 int estimatedCoverage_, double m_coverage_,
                 double MAX_MISMATCH_RATIO_, int MIN_OVERLAP_, double MIN_OVERLAP_RATIO_);
 
@@ -87,11 +92,14 @@ struct BatchElem{
     void set_number_of_sequences(std::uint64_t num);
     void set_number_of_unique_sequences(std::uint64_t num);
     void set_read_id(std::uint64_t id);
+    void findCandidates();
     void fetch_query_data_from_readstorage();
     void set_candidate_ids(std::vector<Minhasher::Result_t>&& ids);
     void make_unique_sequences();
     void fetch_revcompl_sequences_from_readstorage();
-    DetermineGoodAlignmentStats determine_good_alignments();
+    void determine_good_alignments(int firstIndex, int N);
+    void determine_good_alignments();
+    bool hasEnoughGoodCandidates() const;
     void prepare_good_candidates();
 };
 

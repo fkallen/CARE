@@ -8,10 +8,13 @@
 #include <string>
 
 namespace care{
-    BatchElem::BatchElem(const ReadStorage* rs, double errorrate_,
+    BatchElem::BatchElem(const ReadStorage* rs,
+                        const Minhasher* minhasher,
+                        double errorrate_,
                 int estimatedCoverage_, double m_coverage_,
                 double MAX_MISMATCH_RATIO_, int MIN_OVERLAP_, double MIN_OVERLAP_RATIO_)
             :   readStorage(rs),
+                minhasher(minhasher),
                 errorrate(errorrate_),
                 estimatedCoverage(estimatedCoverage_),
                 m_coverage(m_coverage_),
@@ -49,6 +52,10 @@ namespace care{
         fwdAlignOps.clear();
         revcomplAlignOps.clear();
         bestAlignOps.clear();
+
+        counts[0] = 0;
+        counts[1] = 0;
+        counts[2] = 0;
     }
 
     void BatchElem::set_number_of_sequences(std::uint64_t num){
@@ -77,6 +84,23 @@ namespace care{
         readId = id;
         corrected = false;
         active = true;
+    }
+
+    void BatchElem::findCandidates(){
+        //get data of sequence which should be corrected
+        fetch_query_data_from_readstorage();
+
+        //get candidate ids from minhasher
+        set_candidate_ids(minhasher->getCandidates(fwdSequenceString));
+        if(candidateIds.size() == 0){
+            //no need for further processing without candidates
+            active = false;
+        }else{
+            //find unique candidate sequences
+            make_unique_sequences();
+            //get reverse complements of unique candidate sequences
+            fetch_revcompl_sequences_from_readstorage();
+        }
     }
 
     void BatchElem::fetch_query_data_from_readstorage(){
@@ -152,16 +176,21 @@ namespace care{
         }
     }
 
+    void BatchElem::determine_good_alignments(){
+        determine_good_alignments(0, fwdSequences.size());
+    }
 
-    // sets active to false if not enough good alignments
-    DetermineGoodAlignmentStats BatchElem::determine_good_alignments(){
-        DetermineGoodAlignmentStats stats;
-
-        int counts[3] { 0, 0, 0 };
-
+    /*
+        Processes at most N alignments from
+        alignments[firstIndex]
+        to
+        alignments[min(firstIndex + N-1, number of alignments - 1)]
+    */
+    void BatchElem::determine_good_alignments(int firstIndex, int N){
         const int querylength = fwdSequence->length();
+        const int lastIndex_excl = std::min(size_t(N), fwdSequences.size());
 
-        for(size_t i = 0; i < fwdSequences.size(); i++){
+        for(int i = firstIndex; i < lastIndex_excl; i++){
             const auto& res = fwdAlignments[i];
             const auto& revcomplres = revcomplAlignments[i];
             const int candidatelength = fwdSequences[i]->length();
@@ -172,8 +201,8 @@ namespace care{
                     MIN_OVERLAP_RATIO);
 
             if(bestAlignment == BestAlignment_t::None){
+                //both alignments are bad, cannot use this candidate for correction
                 activeCandidates[i] = false;
-                stats.uniqueCandidatesWithoutGoodAlignment++;
             }else{
                 const double mismatchratio = [&](){
                     if(bestAlignment == BestAlignment_t::Forward)
@@ -218,12 +247,20 @@ namespace care{
                 }
             }
         }
+    }
 
-        // check errorrate of good alignments. we want at least m_coverage * estimatedCoverage alignments.
-        // if possible, we want to use only alignments with a max mismatch ratio of 2*errorrate
-        // if there are not enough alignments, use max mismatch ratio of 3*errorrate
-        // if there are not enough alignments, use max mismatch ratio of 4*errorrate
-        // if there are not enough alignments, do not correct
+    bool BatchElem::hasEnoughGoodCandidates() const{
+        if (counts[0] >= goodAlignmentsCountThreshold
+            || counts[1] >= goodAlignmentsCountThreshold
+            || counts[2] >= goodAlignmentsCountThreshold)
+
+            return true;
+
+        return false;
+    }
+
+    void BatchElem::prepare_good_candidates(){
+        DetermineGoodAlignmentStats stats;
 
         mismatchratioThreshold = 0;
         if (counts[0] >= goodAlignmentsCountThreshold) {
@@ -235,15 +272,12 @@ namespace care{
         } else if (counts[2] >= goodAlignmentsCountThreshold) {
             mismatchratioThreshold = 4 * errorrate;
             stats.correctionCases[2]++;
-        } else { //no correction. write original sequence to output
+        } else { //no correction possible
             stats.correctionCases[3]++;
             active = false;
+            return;
         }
 
-        return stats;
-    }
-
-    void BatchElem::prepare_good_candidates(){
         size_t activeposition_unique = 0;
         size_t activeposition = 0;
 
