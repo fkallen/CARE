@@ -63,7 +63,13 @@ namespace care{
     int find_semi_global_alignment_gpu_threshold(int deviceId, int minsequencelength, int minsequencebytes);
 
 	AlignmentDevice semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
-                                std::vector<BatchElem>& batch, bool useGpu);
+                                std::vector<BatchElem>& batch, bool canUseGpu);
+
+    //In BatchElem b, calculate alignments[firstIndex] to alignments[firstIndex + N - 1]
+    AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
+                                    int firstIndex, int N,
+                                    const AlignmentOptions& alignmentOptions,
+                                    bool canUseGpu);
 }
 
 #endif

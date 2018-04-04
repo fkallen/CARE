@@ -237,21 +237,20 @@ void ErrorCorrectionThread::execute() {
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
         tpa = std::chrono::system_clock::now();
+
+        AlignmentDevice device = AlignmentDevice::None;
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-            AlignmentDevice device = shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
-            if(device == AlignmentDevice::CPU)
-                cpuAlignments++;
-            else if (device == AlignmentDevice::GPU)
-                gpuAlignments++;
+            device = shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
-            AlignmentDevice device = semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
-            if(device == AlignmentDevice::CPU)
-                cpuAlignments++;
-            else if (device == AlignmentDevice::GPU)
-                gpuAlignments++;
+            device = semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
         }else{
             throw std::runtime_error("Alignment: invalid correction mode.");
         }
+
+        if(device == AlignmentDevice::CPU)
+            cpuAlignments++;
+        else if (device == AlignmentDevice::GPU)
+            gpuAlignments++;
 
         tpb = std::chrono::system_clock::now();
         getAlignmentsTimeTotal += tpb - tpa;
