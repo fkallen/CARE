@@ -38,17 +38,14 @@ void correctFile(const MinhashOptions& minhashOptions,
 
     std::cout << "begin build" << std::endl;
 
-	TIMERSTARTCPU(BUILD);
+	TIMERSTARTCPU(LOAD_FILE);
     build(fileOptions, readStorage, minhasher, runtimeOptions.nInserterThreads);
-	TIMERSTOPCPU(BUILD);
+	TIMERSTOPCPU(LOAD_FILE);
 
-    TIMERSTARTCPU(MAP_TRANSFORM);
+    TIMERSTARTCPU(PREPROCESSING);
 	minhasher.transform();
-	TIMERSTOPCPU(MAP_TRANSFORM);
-
-	TIMERSTARTCPU(readstorage_transform);
 	readStorage.noMoreInserts();
-	TIMERSTOPCPU(readstorage_transform);
+	TIMERSTOPCPU(PREPROCESSING);
 
     std::cout << "begin correct" << std::endl;
 

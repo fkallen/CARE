@@ -104,29 +104,29 @@ namespace care{
 
 		std::vector<Sequence> tmp(sequencesflat);
 
-TIMERSTARTCPU(READ_STORAGE_SORT);
+//TIMERSTARTCPU(READ_STORAGE_SORT);
 		std::sort(sequencesflat.begin(), sequencesflat.end());
 		sequencesflat.erase(std::unique(sequencesflat.begin(), sequencesflat.end()), sequencesflat.end());
-TIMERSTOPCPU(READ_STORAGE_SORT);
+//TIMERSTOPCPU(READ_STORAGE_SORT);
 		std::map<const Sequence, int> seqToSortedIndex;
 
-TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
+//TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
 		for(const auto& s : sequencesflat){
 			seqToSortedIndex[s] = &s - sequencesflat.data();
 		}
-TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
+//TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
 		assert(sequencesflat.size() == seqToSortedIndex.size());
 
 		size_t n_unique_forward_sequences = sequencesflat.size();
 		std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
 
-TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
+//TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 		sequencepointers.resize(nSequences);
 		for(size_t i = 0; i < nSequences; i++)
 			sequencepointers[i] = &sequencesflat[seqToSortedIndex[tmp[i]]];
-TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
+//TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 
-TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
+//TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 		reverseComplSequencepointers.resize(nSequences);
 		for(size_t i = 0; i < nSequences; i++){
 			Sequence revcompl = sequencepointers[i]->reverseComplement();
@@ -144,14 +144,14 @@ TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 				reverseComplSequencepointers[i] = &(sequencesflat[it->second]);
 			}
 		}
-TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
+//TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 
 		std::cout << "ReadStorage: holding a total of " << seqToSortedIndex.size() << " unique sequences\n";
 
 		seqToSortedIndex.clear();
 
 #if 1
-TIMERSTARTCPU(READ_STORAGE_CHECK);
+//TIMERSTARTCPU(READ_STORAGE_CHECK);
 		//check
 		for(size_t i = 0; i < nSequences; i++){
 			assert(*sequencepointers[i] == tmp[i] && "readstorage wrong sequence after dedup");
@@ -159,7 +159,7 @@ TIMERSTARTCPU(READ_STORAGE_CHECK);
 		for(size_t i = 0; i < nSequences; i++){
 			assert(*reverseComplSequencepointers[i] == sequencepointers[i]->reverseComplement() && "readstorage wrong reverse complement after dedup");
 		}
-TIMERSTOPCPU(READ_STORAGE_CHECK);
+//TIMERSTOPCPU(READ_STORAGE_CHECK);
 #endif
 
 		all_unique_sequences = std::move(sequencesflat);
