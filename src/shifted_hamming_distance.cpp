@@ -15,7 +15,7 @@ SHDdata::SHDdata(int deviceId, int maxseqlength, int maxseqbytes,
         batchsize(batchsize),
         gpuThreshold(gpuThreshold){
 #ifdef __NVCC__
-    if(batchsize >= max_batch_size)
+    if(batchsize > max_batch_size)
         throw std::runtime_error("Shifted Hamming Distance: batch size too large");
 
     cudaSetDevice(deviceId); CUERR;

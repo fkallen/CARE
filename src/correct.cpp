@@ -77,7 +77,8 @@ private:
 struct CorrectionThreadOptions{
     int threadId;
     int deviceId;
-    int gpuThreshold;
+    int gpuThresholdSHD;
+    int gpuThresholdSGA;
 
     std::string outputfile;
     BatchGenerator* batchGen;
@@ -171,12 +172,13 @@ void ErrorCorrectionThread::execute() {
                     fileProperties.maxSequenceLength,
                     SDIV(fileProperties.maxSequenceLength, 4),
                     correctionOptions.batchsize,
-                    threadOpts.gpuThreshold);
+                    threadOpts.gpuThresholdSHD);
 
 	SGAdata sgadata(threadOpts.deviceId,
                     fileProperties.maxSequenceLength,
                     SDIV(fileProperties.maxSequenceLength, 4),
-                    correctionOptions.batchsize);
+                    correctionOptions.batchsize,
+                    threadOpts.gpuThresholdSGA);
 
     PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
                                                         correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
@@ -236,13 +238,17 @@ void ErrorCorrectionThread::execute() {
 
         tpa = std::chrono::system_clock::now();
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-            auto device = shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
+            AlignmentDevice device = shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
             if(device == AlignmentDevice::CPU)
                 cpuAlignments++;
             else if (device == AlignmentDevice::GPU)
                 gpuAlignments++;
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
-            semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
+            AlignmentDevice device = semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
+            if(device == AlignmentDevice::CPU)
+                cpuAlignments++;
+            else if (device == AlignmentDevice::GPU)
+                gpuAlignments++;
         }else{
             throw std::runtime_error("Alignment: invalid correction mode.");
         }
@@ -519,13 +525,26 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
-    std::vector<int> gpuThresholds(deviceIds.size());
-    for(size_t i = 0; i < deviceIds.size(); i++)
-        gpuThresholds[i] = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
+    std::vector<int> gpuThresholdsSHD(deviceIds.size());
+    for(size_t i = 0; i < deviceIds.size(); i++){
+        int threshold = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
                                                                        SDIV(props.minSequenceLength, 4));
-    for(size_t i = 0; i < gpuThresholds.size(); i++)
-        std::cout << "GPU " << i << ". gpu alignment threshold " << gpuThresholds[i] << std::endl;
+        gpuThresholdsSHD[i] = threshold;
+    }
+
+    std::vector<int> gpuThresholdsSGA(deviceIds.size());
+    for(size_t i = 0; i < deviceIds.size(); i++){
+        int threshold = find_semi_global_alignment_gpu_threshold(deviceIds[i],
+                                                                       props.minSequenceLength,
+                                                                       SDIV(props.minSequenceLength, 4));
+        gpuThresholdsSGA[i] = threshold;
+    }
+
+    for(size_t i = 0; i < gpuThresholdsSHD.size(); i++)
+        std::cout << "GPU " << i
+                  << ": gpuThresholdSHD " << gpuThresholdsSHD[i]
+                  << " gpuThresholdSGA " << gpuThresholdsSGA[i] << std::endl;
 
 #ifdef DO_PROFILE
 #ifdef __NVCC__
@@ -539,7 +558,8 @@ void correct(const MinhashOptions& minhashOptions,
         CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-        threadOpts.gpuThreshold = gpuThresholds[threadId % deviceIds.size()];
+        threadOpts.gpuThresholdSHD = gpuThresholdsSHD[threadId % deviceIds.size()];
+        threadOpts.gpuThresholdSGA = gpuThresholdsSGA[threadId % deviceIds.size()];
         threadOpts.outputfile = tmpfiles[threadId];
         threadOpts.batchGen = &generators[threadId];
         threadOpts.minhasher = &minhasher;
@@ -563,17 +583,24 @@ void correct(const MinhashOptions& minhashOptions,
     int sleepiter = 0;
 #endif
     if(runtimeOptions.showProgress){
+        std::chrono::duration<int> runtime = std::chrono::seconds(0);
+        std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
         std::uint64_t progress = 0;
         while(progress < props.nReads){
             progress = 0;
             for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
                 progress += ecthreads[threadId].nProcessedReads;
             }
-            printf("Progress: %3.2f %%\r",
-                    ((progress * 1.0 / props.nReads) * 100.0));
+            printf("Progress: %3.2f %% (Runtime: %03d:%02d:%02d)\r",
+                    ((progress * 1.0 / props.nReads) * 100.0),
+                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count() % 60),
+                    int(runtime.count() % 60));
             std::cout << std::flush;
-            if(progress < props.nReads)
-                  std::this_thread::sleep_for(std::chrono::seconds(3));
+            if(progress < props.nReads){
+                  std::this_thread::sleep_for(sleepinterval);
+                  runtime += sleepinterval;
+            }
 #ifdef DO_PROFILE
             sleepiter++;
 

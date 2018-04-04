@@ -44,6 +44,7 @@ namespace care{
         int max_n_queries = 0;
 
         std::size_t sequencepitch = 0;
+        int gpuThreshold = 0; // if number of alignments to calculate is >= gpuThreshold, use GPU.
 
         std::chrono::duration<double> resizetime{0};
         std::chrono::duration<double> preprocessingtime{0};
@@ -54,12 +55,14 @@ namespace care{
 
         void resize(int n_sub, int n_quer);
 
-        SGAdata(int deviceId, int maxseqlength, int maxseqbytes, int batchsize);
+        SGAdata(int deviceId, int maxseqlength, int maxseqbytes, int batchsize, int gpuThreshold = 0);
     };
 
     void cuda_cleanup_SGAdata(SGAdata& data);
 
-	void semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
+    int find_semi_global_alignment_gpu_threshold(int deviceId, int minsequencelength, int minsequencebytes);
+
+	AlignmentDevice semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
                                 std::vector<BatchElem>& batch, bool useGpu);
 }
 
