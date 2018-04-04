@@ -397,21 +397,12 @@ void ErrorCorrectionThread::execute() {
                   << " GPU alignments " << gpuAlignments << std::endl;
         std::cout << "thread " << threadOpts.threadId << " numberOfBadAlignments "
                 << numberOfBadAlignments << std::endl;
-        std::cout << "thread " << threadOpts.threadId
-                << " : duplicates "
-                << duplicates << " ( " << (100.0 * (double(duplicates) / double(minhashcandidates))) << " %)\n";
 	}
 
 #if 1
 	{
         std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 		if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-			std::cout << "thread " << threadOpts.threadId << " : getCandidatesTimeTotal "
-					<< getCandidatesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : mapminhashresultsdedup "
-					<< mapminhashresultsdedup.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : mapminhashresultsfetch "
-					<< mapminhashresultsfetch.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
@@ -454,12 +445,6 @@ void ErrorCorrectionThread::execute() {
 			// std::cout << "thread " << threadOpts.threadId << " : pileup postprocessing "
 			// 		<< hcorrectionbuffers.postprocessingtime.count() << '\n';
 		} else if (correctionOptions.correctionMode == CorrectionMode::Graph) {
-			std::cout << "thread " << threadOpts.threadId << " : getCandidatesTimeTotal "
-					<< getCandidatesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : mapminhashresultsdedup "
-					<< mapminhashresultsdedup.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : mapminhashresultsfetch "
-					<< mapminhashresultsfetch.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
