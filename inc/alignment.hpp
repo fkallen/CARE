@@ -14,6 +14,7 @@
 namespace care{
 
 enum class BestAlignment_t {Forward, ReverseComplement, None};
+enum class AlignmentDevice {CPU, GPU, None};
 
 enum AlignType : char{
 	ALIGNTYPE_MATCH,

@@ -35,11 +35,15 @@ namespace care{
     	size_t sequencepitch = 0;
     	int max_sequence_length = 0;
     	int max_sequence_bytes = 0;
+        int min_sequence_length = 0;
+        int min_sequence_bytes = 0;
     	int n_subjects = 0;
     	int n_queries = 0;
     	int max_n_subjects = 0;
     	int max_n_queries = 0;
     	int batchsize = 1;
+
+        int gpuThreshold = 0; // if number of alignments to calculate is >= gpuThreshold, use GPU.
 
     	std::chrono::duration<double> resizetime{0};
     	std::chrono::duration<double> preprocessingtime{0};
@@ -48,15 +52,25 @@ namespace care{
     	std::chrono::duration<double> d2htime{0};
     	std::chrono::duration<double> postprocessingtime{0};
 
-    	SHDdata(int deviceId_, int batchsize, int maxseqlength, int maxseqbytes);
+    	SHDdata(int deviceId, int maxseqlength, int maxseqbytes, int batchsize, int gpuThreshold = 0);
     	void resize(int n_sub, int n_quer);
     };
 
     //free buffers
     void cuda_cleanup_SHDdata(SHDdata& data);
+
+    int find_shifted_hamming_distance_gpu_threshold(int deviceId,
+                                                    int minsequencelength,
+                                                    int minsequencebytes);
+
     //For each BatchElem, align all candidate reads to the respective read
-    void shifted_hamming_distance(SHDdata& mybuffers, std::vector<BatchElem>& batch,
-                                const GoodAlignmentProperties& props, bool useGpu);
+    AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, std::vector<BatchElem>& batch,
+                                const GoodAlignmentProperties& props, bool canUseGpu);
+
+    //In BatchElem b, calculate alignments[firstIndex] to alignments[firstIndex + N - 1]
+    AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
+                                    int firstIndex, int N,
+                                const GoodAlignmentProperties& props, bool canUseGpu);
 
 
 

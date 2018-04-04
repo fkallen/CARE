@@ -77,6 +77,7 @@ private:
 struct CorrectionThreadOptions{
     int threadId;
     int deviceId;
+    int gpuThreshold;
 
     std::string outputfile;
     BatchGenerator* batchGen;
@@ -169,7 +170,8 @@ void ErrorCorrectionThread::execute() {
 	SHDdata shddata(threadOpts.deviceId,
                     fileProperties.maxSequenceLength,
                     SDIV(fileProperties.maxSequenceLength, 4),
-                    correctionOptions.batchsize);
+                    correctionOptions.batchsize,
+                    threadOpts.gpuThreshold);
 
 	SGAdata sgadata(threadOpts.deviceId,
                     fileProperties.maxSequenceLength,
@@ -186,6 +188,8 @@ void ErrorCorrectionThread::execute() {
     std::vector<std::uint32_t> readIds = threadOpts.batchGen->getNextReadIds();
 
     std::uint64_t numberOfBadAlignments = 0;
+    std::uint64_t cpuAlignments = 0;
+    std::uint64_t gpuAlignments = 0;
 
 	while(!stopAndAbort &&!readIds.empty()){
 
@@ -232,7 +236,11 @@ void ErrorCorrectionThread::execute() {
 
         tpa = std::chrono::system_clock::now();
         if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-            shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
+            auto device = shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
+            if(device == AlignmentDevice::CPU)
+                cpuAlignments++;
+            else if (device == AlignmentDevice::GPU)
+                gpuAlignments++;
         }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
             semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
         }else{
@@ -379,10 +387,9 @@ void ErrorCorrectionThread::execute() {
 				<< sobadcouldnotcorrect << std::endl;
 		std::cout << "thread " << threadOpts.threadId << " verygoodalignment "
 				<< verygoodalignment << std::endl;
-		std::cout << "thread " << threadOpts.threadId << " correctionCases "
-				<< goodAlignmentStats.correctionCases[0] << " " << goodAlignmentStats.correctionCases[1] << " "
-				<< goodAlignmentStats.correctionCases[2] << " " << goodAlignmentStats.correctionCases[3] << " "
-				<< std::endl;
+		std::cout << "thread " << threadOpts.threadId
+                  << " CPU alignments " << cpuAlignments
+                  << " GPU alignments " << gpuAlignments << std::endl;
         std::cout << "thread " << threadOpts.threadId << " numberOfBadAlignments "
                 << numberOfBadAlignments << std::endl;
         std::cout << "thread " << threadOpts.threadId
@@ -512,6 +519,14 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
+    std::vector<int> gpuThresholds(deviceIds.size());
+    for(size_t i = 0; i < deviceIds.size(); i++)
+        gpuThresholds[i] = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
+                                                                       props.minSequenceLength,
+                                                                       SDIV(props.minSequenceLength, 4));
+    for(size_t i = 0; i < gpuThresholds.size(); i++)
+        std::cout << "GPU " << i << ". gpu alignment threshold " << gpuThresholds[i] << std::endl;
+
 #ifdef DO_PROFILE
 #ifdef __NVCC__
     cudaProfilerStart(); CUERR;
@@ -524,6 +539,7 @@ void correct(const MinhashOptions& minhashOptions,
         CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
+        threadOpts.gpuThreshold = gpuThresholds[threadId % deviceIds.size()];
         threadOpts.outputfile = tmpfiles[threadId];
         threadOpts.batchGen = &generators[threadId];
         threadOpts.minhasher = &minhasher;
