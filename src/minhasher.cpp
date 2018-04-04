@@ -108,6 +108,39 @@ void Minhasher::insertSequence(const std::string& sequence, const std::uint64_t 
 	}
 }
 
+std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& sequence) const{
+    static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+	// we do not consider reads which are shorter than k
+	if(sequence.size() < unsigned(minparams.k))
+		return {};
+
+	std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+	bool isForwardStrand[maximum_number_of_maps]{0};
+
+	minhashfunc(sequence, hashValues, isForwardStrand);
+
+	std::vector<Value_t> allMinhashResults;
+
+	for(int map = 0; map < minparams.maps; ++map) {
+		Key_t key = hashValues[map] & key_mask;
+
+		std::vector<Value_t> entries = minhashTables[map]->get(key);
+
+		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
+	}
+
+	Index_t n_unique_elements = 0;
+
+	std::sort(allMinhashResults.begin(), allMinhashResults.end());
+	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
+	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
+	allMinhashResults.resize(n_unique_elements);
+
+	return allMinhashResults;
+}
+
+#if 0
 std::vector<Minhasher::Result_t> Minhasher::getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const{
     static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
 	// we do not consider reads which are shorter than k
@@ -200,6 +233,7 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(MinhasherBuffers& buff
 
 	return allMinhashResults;
 }
+#endif
 
 void Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const{
 	std::uint64_t fhVal = 0; std::uint64_t rhVal = 0;
