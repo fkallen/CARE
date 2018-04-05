@@ -257,7 +257,7 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
     std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
     std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
 
-    const int lastIndex_excl = std::min(size_t(N), b.fwdSequences.size());
+    const int lastIndex_excl = std::min(size_t(firstIndex + N), b.fwdSequences.size());
     const int numberOfCandidates = firstIndex >= lastIndex_excl ? 0 : lastIndex_excl - firstIndex;
     const int numberOfAlignments = 2 * numberOfCandidates;
     const int numberOfSubjects = 1;
@@ -302,8 +302,9 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
         std::memcpy(subjectdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
 
         //copy candidate forward sequences to transfer buffer
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            const auto& seq = b.fwdSequences[count];
+        int count = 0;
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const auto& seq = b.fwdSequences[index];
 
             assert(seq->length() <= mybuffers.max_sequence_length);
             assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
@@ -313,19 +314,21 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
                     seq->getNumBytes());
 
             querylengths[count] = seq->length();
+            count++;
         }
         //copy candidate reverse complement sequences to transfer buffer
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            const auto& seq = b.revcomplSequences[count];
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const auto& seq = b.revcomplSequences[index];
 
             assert(seq->length() <= mybuffers.max_sequence_length);
             assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
 
-            std::memcpy(queriesdata + (numberOfCandidates + count) * mybuffers.sequencepitch,
+            std::memcpy(queriesdata + count * mybuffers.sequencepitch,
                     seq->begin(),
                     seq->getNumBytes());
 
-            querylengths[(numberOfCandidates + count)] = seq->length();
+            querylengths[count] = seq->length();
+            count++;
         }
 
         tpb = std::chrono::system_clock::now();
@@ -368,11 +371,14 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
 
         tpa = std::chrono::system_clock::now();
 
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            b.fwdAlignments[count] = results[count];
+        count = 0;
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            b.fwdAlignments[index] = results[count];
+            count++;
         }
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            b.revcomplAlignments[count] = results[(numberOfCandidates + count)];
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            b.revcomplAlignments[index] = results[count];
+            count++;
         }
 
         tpb = std::chrono::system_clock::now();
@@ -387,15 +393,15 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
         const char* const subject = (const char*)b.fwdSequence->begin();
         const int subjectLength = b.fwdSequence->length();
 
-        for(int i = firstIndex; i < lastIndex_excl; i++){
-            const char* query =  (const char*)b.fwdSequences[i]->begin();
-            const int queryLength = b.fwdSequences[i]->length();
-            b.fwdAlignments[i] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const char* query =  (const char*)b.fwdSequences[index]->begin();
+            const int queryLength = b.fwdSequences[index]->length();
+            b.fwdAlignments[index] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
         }
-        for(int i = firstIndex; i < lastIndex_excl; i++){
-            const char* query =  (const char*)b.revcomplSequences[i]->begin();
-            const int queryLength = b.revcomplSequences[i]->length();
-            b.revcomplAlignments[i] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const char* query =  (const char*)b.revcomplSequences[index]->begin();
+            const int queryLength = b.revcomplSequences[index]->length();
+            b.revcomplAlignments[index] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
         }
 
         tpb = std::chrono::system_clock::now();

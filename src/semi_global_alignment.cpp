@@ -282,7 +282,7 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
     std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
     std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
 
-    const int lastIndex_excl = std::min(size_t(N), b.fwdSequences.size());
+    const int lastIndex_excl = std::min(size_t(firstIndex + N), b.fwdSequences.size());
     const int numberOfCandidates = firstIndex >= lastIndex_excl ? 0 : lastIndex_excl - firstIndex;
     const int numberOfAlignments = 2 * numberOfCandidates; //fwd and rev compl
     const int numberOfSubjects = 1;
@@ -290,7 +290,7 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
     //nothing to do here
     if(!b.active || numberOfAlignments == 0)
         return device;
-        #ifdef __NVCC__
+#ifdef __NVCC__
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         device = AlignmentDevice::GPU;
@@ -336,8 +336,9 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
 
         std::memcpy(subjectdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
 
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            const auto& seq = b.fwdSequences[count];
+        int count = 0;
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const auto& seq = b.fwdSequences[index];
 
             assert(seq->length() <= mybuffers.max_sequence_length);
             assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
@@ -347,18 +348,20 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
                     seq->getNumBytes());
 
             querylengths[count] = seq->length();
+            count++;
         }
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            const auto& seq = b.revcomplSequences[count];
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const auto& seq = b.revcomplSequences[index];
 
             assert(seq->length() <= mybuffers.max_sequence_length);
             assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
 
-            std::memcpy(queriesdata + (numberOfCandidates + count) * mybuffers.sequencepitch,
+            std::memcpy(queriesdata + count * mybuffers.sequencepitch,
                     seq->begin(),
                     seq->getNumBytes());
 
-            querylengths[(numberOfCandidates + count)] = seq->length();
+            querylengths[count] = seq->length();
+            count++;
         }
 
         tpb = std::chrono::system_clock::now();
@@ -404,21 +407,21 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
 
         tpa = std::chrono::system_clock::now();
 
-
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            b.fwdAlignments[count] = results[count];
-            b.fwdAlignOps[count].resize(b.fwdAlignments[count].nOps);
+        count = 0;
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            b.fwdAlignments[index] = results[count];
+            b.fwdAlignOps[index].resize(b.fwdAlignments[index].nOps);
             std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
-                      ops + count * mybuffers.max_ops_per_alignment + b.fwdAlignments[count].nOps,
-                      b.fwdAlignOps[count].begin());
+                      ops + count * mybuffers.max_ops_per_alignment + b.fwdAlignments[index].nOps,
+                      b.fwdAlignOps[index].begin());
         }
 
-        for(int count = firstIndex; count < lastIndex_excl; count++){
-            b.revcomplAlignments[count] = results[(numberOfCandidates + count)];
-            b.revcomplAlignOps[count].resize(b.revcomplAlignments[count].nOps);
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            b.revcomplAlignments[index] = results[(numberOfCandidates + count)];
+            b.revcomplAlignOps[index].resize(b.revcomplAlignments[index].nOps);
             std::reverse_copy(ops + (numberOfCandidates + count) * mybuffers.max_ops_per_alignment,
-                      ops + (numberOfCandidates + count) * mybuffers.max_ops_per_alignment + b.revcomplAlignments[count].nOps,
-                      b.revcomplAlignOps[count].begin());
+                      ops + (numberOfCandidates + count) * mybuffers.max_ops_per_alignment + b.revcomplAlignments[index].nOps,
+                      b.revcomplAlignOps[index].begin());
         }
 
         tpb = std::chrono::system_clock::now();
@@ -433,20 +436,20 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
         const char* const subject = (const char*)b.fwdSequence->begin();
         const int subjectLength = b.fwdSequence->length();
 
-        for(int i = firstIndex; i < lastIndex_excl; i++){
-            const char* query =  (const char*)b.fwdSequences[i]->begin();
-            const int queryLength = b.fwdSequences[i]->length();
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const char* query =  (const char*)b.fwdSequences[index]->begin();
+            const int queryLength = b.fwdSequences[index]->length();
             auto al = cpu_semi_global_alignment(&mybuffers, alignmentOptions, subject, query, subjectLength, queryLength);
-            b.fwdAlignments[i] = al.arc;
-            b.fwdAlignOps[i] = std::move(al.operations);
+            b.fwdAlignments[index] = al.arc;
+            b.fwdAlignOps[index] = std::move(al.operations);
         }
 
-        for(int i = firstIndex; i < lastIndex_excl; i++){
-            const char* query =  (const char*)b.revcomplSequences[i]->begin();
-            const int queryLength = b.revcomplSequences[i]->length();
+        for(int index = firstIndex; index < lastIndex_excl; index++){
+            const char* query =  (const char*)b.revcomplSequences[index]->begin();
+            const int queryLength = b.revcomplSequences[index]->length();
             auto al = cpu_semi_global_alignment(&mybuffers, alignmentOptions, subject, query, subjectLength, queryLength);
-            b.revcomplAlignments[i] = al.arc;
-            b.revcomplAlignOps[i] = std::move(al.operations);
+            b.revcomplAlignments[index] = al.arc;
+            b.revcomplAlignOps[index] = std::move(al.operations);
         }
 
         tpb = std::chrono::system_clock::now();
