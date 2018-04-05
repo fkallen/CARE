@@ -71,7 +71,6 @@ namespace care{
     void build(const FileOptions& fileOptions, ReadStorage& readStorage,
                 Minhasher& minhasher, int nThreads){
         SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-        std::cout << "build found " << props.nReads << " reads." << std::endl;
 
         minhasher.init(props.nReads);
         readStorage.init(props.nReads);

@@ -85,9 +85,14 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
 
-
-
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+
+    std::cout << "----------------------------------------" << std::endl;
+    std::cout << "File: " << fileOptions.inputfile << std::endl;
+    std::cout << "Reads: " << props.nReads << std::endl;
+    std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
+    std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
 
 	std::vector<char> readIsCorrectedVector(props.nReads, 0);
 	size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;

@@ -7,23 +7,6 @@ namespace care{
     SGAdata implementation
 */
 
-SGAdata::SGAdata(int deviceId_, int maxseqlength, int maxseqbytes, int batchsize, int gpuThreshold)
-		: deviceId(deviceId_), batchsize(batchsize),
-					max_sequence_length(32 * SDIV(maxseqlength, 32)), //round up to multiple of 32
-					max_sequence_bytes(maxseqbytes),
-					max_ops_per_alignment(2 * (max_sequence_length + 1)),
-                    gpuThreshold(gpuThreshold){
-#ifdef __NVCC__
-    if(batchsize > max_batch_size)
-        throw std::runtime_error("Semi Global Alignment: batch size too large");
-
-    cudaSetDevice(deviceId); CUERR;
-
-    for(int i = 0; i < batchsize; i++)
-        cudaStreamCreate(&streams[i]); CUERR;
-#endif
-};
-
 void SGAdata::resize(int n_sub, int n_quer){
 #ifdef __NVCC__
 	cudaSetDevice(deviceId); CUERR;
@@ -91,6 +74,26 @@ void SGAdata::resize(int n_sub, int n_quer){
 }
 
 
+void cuda_init_SGAdata(SGAdata& data,
+                       int deviceId,
+                       int max_sequence_length,
+                       int max_sequence_bytes,
+                       int gpuThreshold){
+
+    data.deviceId = deviceId;
+    data.max_sequence_length = 32 * SDIV(max_sequence_length, 32); //round up to multiple of 32;
+    data.max_sequence_bytes = max_sequence_bytes;
+    data.max_ops_per_alignment = 2 * (data.max_sequence_length + 1);
+    data.gpuThreshold = gpuThreshold;
+
+#ifdef __NVCC__
+    cudaSetDevice(deviceId); CUERR;
+
+    for(int i = 0; i < SGAdata::n_streams; i++)
+        cudaStreamCreate(&(data.streams[i])); CUERR;
+#endif
+}
+
 void cuda_cleanup_SGAdata(SGAdata& data){
 	#ifdef __NVCC__
 		cudaSetDevice(data.deviceId); CUERR;
@@ -109,7 +112,7 @@ void cuda_cleanup_SGAdata(SGAdata& data){
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
 
-		for(int i = 0; i < data.batchsize; i++)
+		for(int i = 0; i < SGAdata::n_streams; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;
 	#endif
 }
@@ -134,7 +137,8 @@ int find_semi_global_alignment_gpu_threshold(int deviceId, int minsequencelength
     int threshold = std::numeric_limits<int>::max();
 
 #ifdef __NVCC__
-    SGAdata sgadata(deviceId, minsequencelength, minsequencebytes, 1, 0);
+    SGAdata sgadata;
+    cuda_init_SGAdata(sgadata, deviceId, minsequencelength, minsequencebytes, 0);
 
     const int increment = 20;
     int nalignments = 0;
@@ -272,7 +276,7 @@ int find_semi_global_alignment_gpu_threshold(int deviceId, int minsequencelength
 
 
 //In BatchElem b, calculate alignments[firstIndex] to alignments[firstIndex + N - 1]
-AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
+AlignmentDevice semi_global_alignment_async(SGAdata& mybuffers, BatchElem& b,
                                 int firstIndex, int N,
                                 const AlignmentOptions& alignmentOptions,
                                 bool canUseGpu){
@@ -385,21 +389,54 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
                 mybuffers.streams[0]); CUERR;
         call_cuda_semi_global_alignment_kernel_async(params, mybuffers.streams[0]);
 
+    }else{ // use cpu for alignment
+
+#endif
+        device = AlignmentDevice::CPU;
+#ifdef __NVCC__
+    }
+#endif
+
+    return device;
+}
+
+
+void get_semi_global_alignment_results(SGAdata& mybuffers, BatchElem& b,
+                                int firstIndex, int N,
+                                const AlignmentOptions& alignmentOptions,
+                                bool canUseGpu){
+
+    std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+    std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
+
+    const int lastIndex_excl = std::min(size_t(firstIndex + N), b.fwdSequences.size());
+    const int numberOfCandidates = firstIndex >= lastIndex_excl ? 0 : lastIndex_excl - firstIndex;
+    const int numberOfAlignments = 2 * numberOfCandidates; //fwd and rev compl
+
+    //nothing to do here
+    if(!b.active || numberOfAlignments == 0)
+        return;
+#ifdef __NVCC__
+
+    if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
+
         b.fwdAlignOps.resize(b.fwdSequences.size());
         b.revcomplAlignOps.resize(b.revcomplSequences.size());
 
         AlignResultCompact* results = mybuffers.h_results;
+        AlignResultCompact* d_results = mybuffers.d_results;
         AlignOp* ops = mybuffers.h_ops;
+        AlignOp* d_ops = mybuffers.d_ops;
 
         cudaMemcpyAsync(results,
-            params.results,
-            sizeof(AlignResultCompact) * params.n_queries,
+            d_results,
+            sizeof(AlignResultCompact) * numberOfAlignments,
             D2H,
             mybuffers.streams[0]); CUERR;
 
         cudaMemcpyAsync(ops,
-            params.ops,
-            sizeof(AlignOp) * params.n_queries * mybuffers.max_ops_per_alignment,
+            d_ops,
+            sizeof(AlignOp) * numberOfAlignments * mybuffers.max_ops_per_alignment,
             D2H,
             mybuffers.streams[0]); CUERR;
 
@@ -407,7 +444,7 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
 
         tpa = std::chrono::system_clock::now();
 
-        count = 0;
+        int count = 0;
         for(int index = firstIndex; index < lastIndex_excl; index++){
             b.fwdAlignments[index] = results[count];
             b.fwdAlignOps[index].resize(b.fwdAlignments[index].nOps);
@@ -430,7 +467,6 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
     }else{ // use cpu for alignment
 
 #endif
-        device = AlignmentDevice::CPU;
         tpa = std::chrono::system_clock::now();
 
         const char* const subject = (const char*)b.fwdSequence->begin();
@@ -460,257 +496,8 @@ AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
     }
 #endif
 
-    return device;
 }
 
-
-/*
-    Batch alignment implementation
-*/
-
-AlignmentDevice semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
-                            std::vector<BatchElem>& batch, bool canUseGpu){
-
-    AlignmentDevice device = AlignmentDevice::None;
-
-    std::chrono::time_point<std::chrono::system_clock> tpa;
-    std::chrono::time_point<std::chrono::system_clock> tpb;
-
-    int numberOfRealSubjects = 0;
-    int totalNumberOfAlignments = 0;
-
-    for(auto& b : batch){
-        if(b.active){
-            numberOfRealSubjects++;
-            totalNumberOfAlignments += b.fwdSequences.size();
-            totalNumberOfAlignments += b.revcomplSequences.size();
-        }
-    }
-
-    // check for empty input
-    if(totalNumberOfAlignments == 0){
-        return device;
-    }
-
-#ifdef __NVCC__
-
-    if(canUseGpu && totalNumberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
-        device = AlignmentDevice::GPU;
-        tpa = std::chrono::system_clock::now();
-
-        cudaSetDevice(mybuffers.deviceId); CUERR;
-
-        mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
-
-        mybuffers.n_subjects = numberOfRealSubjects;
-        mybuffers.n_queries = totalNumberOfAlignments;
-
-        tpb = std::chrono::system_clock::now();
-
-        mybuffers.resizetime += tpb - tpa;
-
-        tpa = std::chrono::system_clock::now();
-
-        int subjectindex = 0;
-        int querysum = 0;
-        int batchid = 0;
-        std::vector<sgaparams> params(batch.size());
-
-        for(auto& b : batch){
-            if(b.active){
-                tpa = std::chrono::system_clock::now();
-                batchid = subjectindex;
-
-                params[batchid].max_sequence_length = mybuffers.max_sequence_length;
-                params[batchid].max_ops_per_alignment = mybuffers.max_ops_per_alignment;
-                params[batchid].sequencepitch = mybuffers.sequencepitch;
-                params[batchid].subjectlength = b.fwdSequence->length();
-                params[batchid].n_queries = b.fwdSequences.size() + b.revcomplSequences.size();
-                params[batchid].querylengths = mybuffers.d_querylengths + querysum;
-                params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
-                params[batchid].queriesdata = mybuffers.d_queriesdata + mybuffers.sequencepitch * querysum;
-                params[batchid].results = mybuffers.d_results + querysum;
-                params[batchid].ops = mybuffers.d_ops + querysum * mybuffers.max_ops_per_alignment;
-                params[batchid].alignmentscore_match = alignmentOptions.alignmentscore_match;
-                params[batchid].alignmentscore_sub = alignmentOptions.alignmentscore_sub;
-                params[batchid].alignmentscore_ins = alignmentOptions.alignmentscore_ins;
-                params[batchid].alignmentscore_del = alignmentOptions.alignmentscore_del;
-
-                int* querylengths = mybuffers.h_querylengths + querysum;
-                char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
-                char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
-
-                assert(b.fwdSequence->length() <= mybuffers.max_sequence_length);
-
-                std::memcpy(subjectdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
-
-                int count = 0;
-                for(const auto seq : b.fwdSequences){
-                    assert(seq->length() <= mybuffers.max_sequence_length);
-                    assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-                    std::memcpy(queriesdata + count * mybuffers.sequencepitch,
-                            seq->begin(),
-                            seq->getNumBytes());
-
-                    querylengths[count] = seq->length();
-                    count++;
-                }
-                for(const auto seq : b.revcomplSequences){
-                    assert(seq->length() <= mybuffers.max_sequence_length);
-                    assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-                    std::memcpy(queriesdata + count * mybuffers.sequencepitch,
-                            seq->begin(),
-                            seq->getNumBytes());
-
-                    querylengths[count] = seq->length();
-                    count++;
-                }
-                assert(params[batchid].n_queries == count);
-
-                tpb = std::chrono::system_clock::now();
-
-                mybuffers.preprocessingtime += tpb - tpa;
-                // copy data to gpu
-                cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata),
-                        subjectdata,
-                        mybuffers.sequencepitch,
-                        H2D,
-                        mybuffers.streams[batchid]); CUERR;
-                cudaMemcpyAsync(const_cast<char*>(params[batchid].queriesdata),
-                        queriesdata,
-                        mybuffers.sequencepitch * params[batchid].n_queries,
-                        H2D,
-                        mybuffers.streams[batchid]); CUERR;
-                cudaMemcpyAsync(const_cast<int*>(params[batchid].querylengths),
-                        querylengths,
-                        sizeof(int) * params[batchid].n_queries,
-                        H2D,
-                        mybuffers.streams[batchid]); CUERR;
-                call_cuda_semi_global_alignment_kernel_async(params[batchid], mybuffers.streams[batchid]);
-
-                querysum += count;
-                subjectindex++;
-
-                b.fwdAlignOps.resize(b.fwdSequences.size());
-                b.revcomplAlignOps.resize(b.revcomplSequences.size());
-            }
-        }
-
-
-        subjectindex = 0;
-        querysum = 0;
-        //initialize transfer d2h
-        for(auto& b : batch){
-            if(b.active){
-                batchid = subjectindex;
-                AlignResultCompact* results = mybuffers.h_results + querysum;
-                AlignOp* ops = mybuffers.h_ops + querysum * mybuffers.max_ops_per_alignment;
-
-                cudaMemcpyAsync(results,
-                    params[batchid].results,
-                    sizeof(AlignResultCompact) * params[batchid].n_queries,
-                    D2H,
-                    mybuffers.streams[batchid]); CUERR;
-
-                cudaMemcpyAsync(ops,
-                    params[batchid].ops,
-                    sizeof(AlignOp) * params[batchid].n_queries * mybuffers.max_ops_per_alignment,
-                    D2H,
-                    mybuffers.streams[batchid]); CUERR;
-
-                subjectindex++;
-                querysum += params[batchid].n_queries;
-            }
-        }
-
-        subjectindex = 0;
-        querysum = 0;
-
-        //wait for d2h transfer to complete and fetch results
-        for(auto& b : batch){
-            if(b.active){
-                batchid = subjectindex;
-                AlignResultCompact* results = mybuffers.h_results + querysum;
-                AlignOp* ops = mybuffers.h_ops + querysum * mybuffers.max_ops_per_alignment;
-
-                cudaStreamSynchronize(mybuffers.streams[batchid]); CUERR;
-
-                tpa = std::chrono::system_clock::now();
-
-                int count = 0;
-                int localcount = 0;
-                for(auto& alignment : b.fwdAlignments){
-
-                    alignment = results[count];
-                    b.fwdAlignOps[localcount].resize(alignment.nOps);
-                    std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
-                              ops + count * mybuffers.max_ops_per_alignment + alignment.nOps,
-                              b.fwdAlignOps[localcount].begin());
-                    count++;
-                    localcount++;
-                }
-                localcount = 0;
-                for(auto& alignment : b.revcomplAlignments){
-
-                    alignment = results[count];
-                    b.revcomplAlignOps[localcount].resize(alignment.nOps);
-                    std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
-                              ops + count * mybuffers.max_ops_per_alignment + alignment.nOps,
-                              b.revcomplAlignOps[localcount].begin());
-                    count++;
-                    localcount++;
-                }
-
-
-                tpb = std::chrono::system_clock::now();
-                mybuffers.postprocessingtime += tpb - tpa;
-
-                subjectindex++;
-                querysum += params[batchid].n_queries;
-            }
-        }
-
-    }else{ // use cpu for alignment
-
-#endif
-        device = AlignmentDevice::CPU;
-        tpa = std::chrono::system_clock::now();
-
-        for(auto& b : batch){
-            if(b.active){
-                const char* const subject = (const char*)b.fwdSequence->begin();
-                const int subjectLength = b.fwdSequence->length();
-
-                for(size_t i = 0; i < b.fwdSequences.size(); i++){
-                    const char* query =  (const char*)b.fwdSequences[i]->begin();
-                    const int queryLength = b.fwdSequences[i]->length();
-                    auto al = cpu_semi_global_alignment(&mybuffers, alignmentOptions, subject, query, subjectLength, queryLength);
-                    b.fwdAlignments[i] = al.arc;
-                    b.fwdAlignOps[i] = std::move(al.operations);
-                }
-
-                for(size_t i = 0; i < b.revcomplSequences.size(); i++){
-                    const char* query =  (const char*)b.revcomplSequences[i]->begin();
-                    const int queryLength = b.revcomplSequences[i]->length();
-                    auto al = cpu_semi_global_alignment(&mybuffers, alignmentOptions, subject, query, subjectLength, queryLength);
-                    b.revcomplAlignments[i] = al.arc;
-                    b.revcomplAlignOps[i] = std::move(al.operations);
-                }
-            }
-        }
-
-        tpb = std::chrono::system_clock::now();
-
-        mybuffers.alignmenttime += tpb - tpa;
-
-#ifdef __NVCC__
-    }
-#endif
-
-    return device;
-}
 
 /*
     Alignment functions implementations
@@ -724,8 +511,6 @@ namespace sgadetail{
     CPU alignment
 */
 
-
-
 AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const AlignmentOptions& alignmentOptions,
                                       const char* r1, const char* r2, int r1length, int r2bases){
 
@@ -735,8 +520,6 @@ AlignResult cpu_semi_global_alignment(const SGAdata* buffers, const AlignmentOpt
 
     return cpu_semi_global_alignment_impl(buffers, alignmentOptions, r1, r2, r1length, r2bases, accessor);
 }
-
-
 
 /*
     GPU alignment

@@ -7,23 +7,6 @@ namespace care{
 /*
     SHDdata implementation
 */
-SHDdata::SHDdata(int deviceId, int maxseqlength, int maxseqbytes,
-                 int batchsize, int gpuThreshold)
-      : deviceId(deviceId),
-        max_sequence_length(maxseqlength),
-        max_sequence_bytes(maxseqbytes),
-        batchsize(batchsize),
-        gpuThreshold(gpuThreshold){
-#ifdef __NVCC__
-    if(batchsize > max_batch_size)
-        throw std::runtime_error("Shifted Hamming Distance: batch size too large");
-
-    cudaSetDevice(deviceId); CUERR;
-
-    for(int i = 0; i < batchsize; i++)
-        cudaStreamCreate(&streams[i]); CUERR;
-#endif
-};
 
 void SHDdata::resize(int n_sub, int n_quer){
 #ifdef __NVCC__
@@ -84,6 +67,23 @@ void SHDdata::resize(int n_sub, int n_quer){
     n_queries = n_quer;
 }
 
+void cuda_init_SHDdata(SHDdata& data, int deviceId,
+                        int max_sequence_length,
+                        int max_sequence_bytes,
+                        int gpuThreshold){
+    data.deviceId = deviceId;
+    data.max_sequence_length = max_sequence_length;
+    data.max_sequence_bytes = max_sequence_bytes;
+    data.gpuThreshold = gpuThreshold;
+#ifdef __NVCC__
+
+    cudaSetDevice(deviceId); CUERR;
+
+    for(int i = 0; i < SHDdata::n_streams; i++)
+        cudaStreamCreate(&(data.streams[i])); CUERR;
+#endif
+}
+
 void cuda_cleanup_SHDdata(SHDdata& data){
 #ifdef __NVCC__
     cudaSetDevice(data.deviceId); CUERR;
@@ -100,7 +100,7 @@ void cuda_cleanup_SHDdata(SHDdata& data){
     cudaFreeHost(data.h_subjectlengths); CUERR;
     cudaFreeHost(data.h_querylengths); CUERR;
 
-    for(int i = 0; i < data.batchsize; i++)
+    for(int i = 0; i < SHDdata::n_streams; i++)
         cudaStreamDestroy(data.streams[i]); CUERR;
 #endif
 }
@@ -124,7 +124,8 @@ void call_shd_kernel_async(const shdparams& buffer, int maxQueryLength, cudaStre
 int find_shifted_hamming_distance_gpu_threshold(int deviceId, int minsequencelength, int minsequencebytes){
     int threshold = std::numeric_limits<int>::max();
 #ifdef __NVCC__
-    SHDdata shddata(deviceId, minsequencelength, minsequencebytes, 1, 0);
+    SHDdata shddata;
+    cuda_init_SHDdata(shddata, deviceId, minsequencelength, minsequencebytes, 0);
 
     const int increment = 20;
     int nalignments = 0;
@@ -246,9 +247,12 @@ int find_shifted_hamming_distance_gpu_threshold(int deviceId, int minsequencelen
     alignments[firstIndex]
     to
     alignments[min(firstIndex + N-1, number of alignments - 1)]
-    Both forward alignments and reverse complement alignments are calculated
+    Both forward alignments and reverse complement alignments are calculated.
+
+    If GPU is used, transfers data to gpu and launches kernel, but does not wait for kernel completion
+    If CPU is used, no alignment is performed.
 */
-AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
+AlignmentDevice shifted_hamming_distance_async(SHDdata& mybuffers, BatchElem& b,
                                 int firstIndex, int N,
                             const GoodAlignmentProperties& props, bool canUseGpu){
 
@@ -358,12 +362,47 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
 
         // start kernel
         call_shd_kernel_async(params, maxQueryLength, mybuffers.streams[0]);
+    }else{ // use cpu for alignment
+
+#endif // __NVCC__
+        device = AlignmentDevice::CPU;
+#ifdef __NVCC__
+    }
+#endif // __NVCC__
+
+    return device;
+}
+
+
+/*
+    If GPU is used, copies results from gpu to cpu and stores alignments in BatchElem.
+    If CPU is used, perform alignment on cpu and store alignments in BatchElem
+*/
+void get_shifted_hamming_distance_results(SHDdata& mybuffers, BatchElem& b,
+                                int firstIndex, int N, const GoodAlignmentProperties& props,
+                                bool canUseGpu){
+    std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+    std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
+
+    const int lastIndex_excl = std::min(size_t(firstIndex + N), b.fwdSequences.size());
+    const int numberOfCandidates = firstIndex >= lastIndex_excl ? 0 : lastIndex_excl - firstIndex;
+    const int numberOfAlignments = 2 * numberOfCandidates;
+
+    //nothing to do here
+    if(!b.active || numberOfAlignments == 0)
+        return;
+
+#ifdef __NVCC__
+
+    if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
+        cudaSetDevice(mybuffers.deviceId); CUERR;
 
         AlignResultCompact* results = mybuffers.h_results;
+        AlignResultCompact* d_results = mybuffers.d_results;
 
         cudaMemcpyAsync(results,
-            params.results,
-            sizeof(AlignResultCompact) * params.n_queries,
+            d_results,
+            sizeof(AlignResultCompact) * numberOfAlignments,
             D2H,
             mybuffers.streams[0]); CUERR;
 
@@ -371,7 +410,7 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
 
         tpa = std::chrono::system_clock::now();
 
-        count = 0;
+        int count = 0;
         for(int index = firstIndex; index < lastIndex_excl; index++){
             b.fwdAlignments[index] = results[count];
             count++;
@@ -387,7 +426,6 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
     }else{ // use cpu for alignment
 
 #endif // __NVCC__
-        device = AlignmentDevice::CPU;
         tpa = std::chrono::system_clock::now();
 
         const char* const subject = (const char*)b.fwdSequence->begin();
@@ -409,222 +447,9 @@ AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
         mybuffers.alignmenttime += tpb - tpa;
 #ifdef __NVCC__
     }
-#endif // __NVCC__
-
-    return device;
+#endif
 }
 
-
-
-/*
-    Batch alignment implementation
-*/
-AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, std::vector<BatchElem>& batch,
-                            const GoodAlignmentProperties& props, bool canUseGpu){
-
-    AlignmentDevice device = AlignmentDevice::None;
-
-    std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
-    std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
-
-    int numberOfRealSubjects = 0;
-    int totalNumberOfAlignments = 0;
-
-    for(auto& b : batch){
-        if(b.active){
-            numberOfRealSubjects++;
-            totalNumberOfAlignments += b.fwdSequences.size();
-            totalNumberOfAlignments += b.revcomplSequences.size();
-        }
-    }
-
-    // check for empty input
-    if(totalNumberOfAlignments == 0){
-        return device;
-    }
-
-#ifdef __NVCC__
-
-    if(canUseGpu && totalNumberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
-        device = AlignmentDevice::GPU;
-        tpa = std::chrono::system_clock::now();
-
-        cudaSetDevice(mybuffers.deviceId); CUERR;
-
-        mybuffers.resize(numberOfRealSubjects, totalNumberOfAlignments);
-
-        tpb = std::chrono::system_clock::now();
-
-        mybuffers.resizetime += tpb - tpa;
-
-        int querysum = 0;
-        int subjectindex = 0;
-        int batchid = 0;
-        std::vector<shdparams> params(batch.size());
-
-        for(auto& b : batch){
-            if(b.active){
-                tpa = std::chrono::system_clock::now();
-                batchid = subjectindex;
-
-                params[batchid].props = props;
-                params[batchid].max_sequence_bytes = mybuffers.max_sequence_bytes;
-                params[batchid].sequencepitch = mybuffers.sequencepitch;
-                params[batchid].subjectlength = b.fwdSequence->length();
-                params[batchid].n_queries = b.fwdSequences.size() + b.revcomplSequences.size();
-                params[batchid].querylengths = mybuffers.d_querylengths + querysum;
-                params[batchid].subjectdata = mybuffers.d_subjectsdata + mybuffers.sequencepitch * subjectindex;
-                params[batchid].queriesdata = mybuffers.d_queriesdata + mybuffers.sequencepitch * querysum;
-                params[batchid].results = mybuffers.d_results + querysum;
-
-                int* querylengths = mybuffers.h_querylengths + querysum;
-                char* subjectdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
-                char* queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
-
-                assert(b.fwdSequence->length() <= mybuffers.max_sequence_length);
-                assert(b.fwdSequence->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-                std::memcpy(subjectdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
-
-                int count = 0;
-                for(const auto& seq : b.fwdSequences){
-                    assert(seq->length() <= mybuffers.max_sequence_length);
-                    assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-                    std::memcpy(queriesdata + count * mybuffers.sequencepitch,
-                            seq->begin(),
-                            seq->getNumBytes());
-
-                    querylengths[count] = seq->length();
-                    count++;
-                }
-                for(const auto& seq : b.revcomplSequences){
-                    assert(seq->length() <= mybuffers.max_sequence_length);
-                    assert(seq->getNumBytes() <= mybuffers.max_sequence_bytes);
-
-                    std::memcpy(queriesdata + count * mybuffers.sequencepitch,
-                            seq->begin(),
-                            seq->getNumBytes());
-
-                    querylengths[count] = seq->length();
-                    count++;
-                }
-                assert(params[batchid].n_queries == count);
-
-                tpb = std::chrono::system_clock::now();
-                mybuffers.preprocessingtime += tpb - tpa;
-
-                int maxQueryLength = 0;
-                for(int k = 0; k < params[batchid].n_queries; k++)
-                    if(maxQueryLength < querylengths[k])
-                        maxQueryLength = querylengths[k];
-
-                // copy data to gpu
-                cudaMemcpyAsync(const_cast<char*>(params[batchid].subjectdata),
-                        subjectdata,
-                        mybuffers.sequencepitch,
-                        H2D,
-                        mybuffers.streams[batchid]); CUERR;
-                cudaMemcpyAsync(const_cast<char*>(params[batchid].queriesdata),
-                        queriesdata,
-                        mybuffers.sequencepitch * params[batchid].n_queries,
-                        H2D,
-                        mybuffers.streams[batchid]); CUERR;
-                cudaMemcpyAsync(const_cast<int*>(params[batchid].querylengths),
-                        querylengths,
-                        sizeof(int) * params[batchid].n_queries,
-                        H2D,
-                        mybuffers.streams[batchid]); CUERR;
-
-                // start kernel
-                call_shd_kernel_async(params[batchid], maxQueryLength, mybuffers.streams[batchid]);
-
-                querysum += count;
-                subjectindex++;
-            }
-        }
-
-        subjectindex = 0;
-        querysum = 0;
-        //initialize transfer d2h
-        for(auto& b : batch){
-            if(b.active){
-                batchid = subjectindex;
-                AlignResultCompact* results = mybuffers.h_results + querysum;
-
-                cudaMemcpyAsync(results,
-                    params[batchid].results,
-                    sizeof(AlignResultCompact) * params[batchid].n_queries,
-                    D2H,
-                    mybuffers.streams[batchid]); CUERR;
-
-                subjectindex++;
-                querysum += params[batchid].n_queries;
-            }
-        }
-
-        subjectindex = 0;
-        querysum = 0;
-
-        //wait for d2h transfer to complete and fetch results
-        for(auto& b : batch){
-            if(b.active){
-                batchid = subjectindex;
-                AlignResultCompact* results = mybuffers.h_results + querysum;
-
-                cudaStreamSynchronize(mybuffers.streams[batchid]); CUERR;
-
-                tpa = std::chrono::system_clock::now();
-
-                int count = 0;
-                for(auto& alignment : b.fwdAlignments){
-                    alignment = results[count++];
-                }
-                for(auto& alignment : b.revcomplAlignments){
-                    alignment = results[count++];
-                }
-
-                tpb = std::chrono::system_clock::now();
-                mybuffers.postprocessingtime += tpb - tpa;
-
-                subjectindex++;
-                querysum += params[batchid].n_queries;
-            }
-        }
-
-    }else{ // use cpu for alignment
-
-#endif // __NVCC__
-        device = AlignmentDevice::CPU;
-        tpa = std::chrono::system_clock::now();
-
-        for(auto& b : batch){
-            if(b.active){
-                const char* const subject = (const char*)b.fwdSequence->begin();
-                const int subjectLength = b.fwdSequence->length();
-
-                for(size_t i = 0; i < b.fwdSequences.size(); i++){
-                    const char* query =  (const char*)b.fwdSequences[i]->begin();
-                    const int queryLength = b.fwdSequences[i]->length();
-                    b.fwdAlignments[i] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
-                }
-
-                for(size_t i = 0; i < b.revcomplSequences.size(); i++){
-                    const char* query =  (const char*)b.revcomplSequences[i]->begin();
-                    const int queryLength = b.revcomplSequences[i]->length();
-                    b.revcomplAlignments[i] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
-                }
-            }
-        }
-
-        tpb = std::chrono::system_clock::now();
-
-        mybuffers.alignmenttime += tpb - tpa;
-#ifdef __NVCC__
-    }
-#endif // __NVCC__
-    return device;
-}
 
 /*
     Alignment functions implementations

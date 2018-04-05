@@ -155,9 +155,9 @@ namespace args{
             std::cout << "Error: estimatedErrorrate must be > 0.0, is " + std::to_string(corOpts.estimatedErrorrate) << std::endl;
         }
 
-        if(corOpts.batchsize < 1 || corOpts.batchsize > 5){
+        if(corOpts.batchsize < 1 || corOpts.batchsize > 16){
             valid = false;
-            std::cout << "Error: batchsize must be in range [1, 5], is " + std::to_string(corOpts.batchsize) << std::endl;
+            std::cout << "Error: batchsize must be in range [1, 16], is " + std::to_string(corOpts.batchsize) << std::endl;
         }
 
         //check runtime options

@@ -27,8 +27,8 @@ namespace care{
     	int* h_querylengths = nullptr;
 
     #ifdef __NVCC__
-        static constexpr int max_batch_size = 16;
-        cudaStream_t streams[max_batch_size];
+        static constexpr int n_streams = 1;
+        cudaStream_t streams[n_streams];
     #endif
 
     	int deviceId = -1;
@@ -41,7 +41,6 @@ namespace care{
     	int n_queries = 0;
     	int max_n_subjects = 0;
     	int max_n_queries = 0;
-    	int batchsize = 1;
 
         int gpuThreshold = 0; // if number of alignments to calculate is >= gpuThreshold, use GPU.
 
@@ -52,9 +51,20 @@ namespace care{
     	std::chrono::duration<double> d2htime{0};
     	std::chrono::duration<double> postprocessingtime{0};
 
-    	SHDdata(int deviceId, int maxseqlength, int maxseqbytes, int batchsize, int gpuThreshold = 0);
+        SHDdata(){}
+        SHDdata(const SHDdata& other) = default;
+        SHDdata(SHDdata&& other) = default;
+        SHDdata& operator=(const SHDdata& other) = default;
+        SHDdata& operator=(SHDdata&& other) = default;
+
     	void resize(int n_sub, int n_quer);
     };
+
+    //init buffers
+    void cuda_init_SHDdata(SHDdata& data, int deviceId,
+                            int max_sequence_length,
+                            int max_sequence_bytes,
+                            int gpuThreshold);
 
     //free buffers
     void cuda_cleanup_SHDdata(SHDdata& data);
@@ -63,16 +73,14 @@ namespace care{
                                                     int minsequencelength,
                                                     int minsequencebytes);
 
-    //For each BatchElem, align all candidate reads to the respective read
-    AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, std::vector<BatchElem>& batch,
-                                const GoodAlignmentProperties& props, bool canUseGpu);
-
     //In BatchElem b, calculate alignments[firstIndex] to alignments[firstIndex + N - 1]
-    AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers, BatchElem& b,
+    AlignmentDevice shifted_hamming_distance_async(SHDdata& mybuffers, BatchElem& b,
                                     int firstIndex, int N,
                                 const GoodAlignmentProperties& props, bool canUseGpu);
 
-
+    void get_shifted_hamming_distance_results(SHDdata& mybuffers, BatchElem& b,
+                                    int firstIndex, int N, const GoodAlignmentProperties& props,
+                                    bool canUseGpu);
 
 }
 

@@ -28,12 +28,11 @@ namespace care{
         int* h_querylengths = nullptr;
 
     #ifdef __NVCC__
-        static constexpr int max_batch_size = 16;
-        cudaStream_t streams[max_batch_size];
+        static constexpr int n_streams = 1;
+        cudaStream_t streams[n_streams];
     #endif
 
         int deviceId;
-        int batchsize;
 
         int max_sequence_length = 0;
         int max_sequence_bytes = 0;
@@ -53,20 +52,32 @@ namespace care{
         std::chrono::duration<double> d2htime{0};
         std::chrono::duration<double> postprocessingtime{0};
 
-        void resize(int n_sub, int n_quer);
+        SGAdata(){}
+        SGAdata(const SGAdata& other) = default;
+        SGAdata(SGAdata&& other) = default;
+        SGAdata& operator=(const SGAdata& other) = default;
+        SGAdata& operator=(SGAdata&& other) = default;
 
-        SGAdata(int deviceId, int maxseqlength, int maxseqbytes, int batchsize, int gpuThreshold = 0);
+        void resize(int n_sub, int n_quer);
     };
+
+    void cuda_init_SGAdata(SGAdata& data,
+                           int deviceId,
+                           int max_sequence_length,
+                           int max_sequence_bytes,
+                           int gpuThreshold);
 
     void cuda_cleanup_SGAdata(SGAdata& data);
 
     int find_semi_global_alignment_gpu_threshold(int deviceId, int minsequencelength, int minsequencebytes);
 
-	AlignmentDevice semi_global_alignment(SGAdata& mybuffers, const AlignmentOptions& alignmentOptions,
-                                std::vector<BatchElem>& batch, bool canUseGpu);
-
     //In BatchElem b, calculate alignments[firstIndex] to alignments[firstIndex + N - 1]
-    AlignmentDevice semi_global_alignment(SGAdata& mybuffers, BatchElem& b,
+    AlignmentDevice semi_global_alignment_async(SGAdata& mybuffers, BatchElem& b,
+                                    int firstIndex, int N,
+                                    const AlignmentOptions& alignmentOptions,
+                                    bool canUseGpu);
+
+    void get_semi_global_alignment_results(SGAdata& mybuffers, BatchElem& b,
                                     int firstIndex, int N,
                                     const AlignmentOptions& alignmentOptions,
                                     bool canUseGpu);

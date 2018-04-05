@@ -129,6 +129,8 @@ struct ErrorCorrectionThread{
     bool isRunning = false;
     volatile bool stopAndAbort = false;
 
+    std::map<std::uint64_t, std::uint64_t> ncandidates;
+
     void run(){
         if(isRunning) throw std::runtime_error("ErrorCorrectionThread::run: Is already running.");
         isRunning = true;
@@ -166,19 +168,24 @@ void ErrorCorrectionThread::execute() {
         threadOpts.locksForProcessedFlags[index].unlock();
     };
 
-    MinhasherBuffers minhasherbuffers(threadOpts.deviceId);
+	std::vector<SHDdata> shdbuffers(correctionOptions.batchsize);
+    for(auto& buffer : shdbuffers){
+        cuda_init_SHDdata(buffer,
+                          threadOpts.deviceId,
+                          fileProperties.maxSequenceLength,
+                          SDIV(fileProperties.maxSequenceLength, 4),
+                          threadOpts.gpuThresholdSHD);
+    }
 
-	SHDdata shddata(threadOpts.deviceId,
-                    fileProperties.maxSequenceLength,
-                    SDIV(fileProperties.maxSequenceLength, 4),
-                    correctionOptions.batchsize,
-                    threadOpts.gpuThresholdSHD);
+    std::vector<SGAdata> sgabuffers(correctionOptions.batchsize);
+    for(auto& buffer : sgabuffers){
+        cuda_init_SGAdata(buffer,
+                          threadOpts.deviceId,
+                          fileProperties.maxSequenceLength,
+                          SDIV(fileProperties.maxSequenceLength, 4),
+                          threadOpts.gpuThresholdSGA);
+    }
 
-	SGAdata sgadata(threadOpts.deviceId,
-                    fileProperties.maxSequenceLength,
-                    SDIV(fileProperties.maxSequenceLength, 4),
-                    correctionOptions.batchsize,
-                    threadOpts.gpuThresholdSGA);
 
     PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
                                                         correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
@@ -230,6 +237,7 @@ void ErrorCorrectionThread::execute() {
         for(auto& b : batchElems){
             if(b.active){
                 b.findCandidates();
+                ncandidates[b.n_unique_candidates]++;
             }
         }
 
@@ -238,19 +246,76 @@ void ErrorCorrectionThread::execute() {
 
         tpa = std::chrono::system_clock::now();
 
-        AlignmentDevice device = AlignmentDevice::None;
-        if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-            device = shifted_hamming_distance(shddata, batchElems, goodAlignmentProperties, true);
-        }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
-            device = semi_global_alignment(sgadata, alignmentOptions, batchElems, true);
-        }else{
-            throw std::runtime_error("Alignment: invalid correction mode.");
+        const int alignmentbatchsize = 100;
+
+
+        int maxcandidates = 0;
+
+        for(const auto& b : batchElems)
+            maxcandidates = int(b.n_unique_candidates) > maxcandidates ? int(b.n_unique_candidates) : maxcandidates;
+
+        int iters = SDIV(maxcandidates, alignmentbatchsize);
+
+        for(int iter = 0; iter < iters; iter++){
+            int batchindex = 0;
+            int begin = iter * alignmentbatchsize;
+            //start async alignments
+            for(auto& b : batchElems){
+                if(b.active){
+
+                    AlignmentDevice device = AlignmentDevice::None;
+                    if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
+                        device = shifted_hamming_distance_async(shdbuffers[batchindex],
+                                                                b,
+                                                                begin,
+                                                                alignmentbatchsize,
+                                                                goodAlignmentProperties,
+                                                                true);
+                    }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
+                        device = semi_global_alignment_async(sgabuffers[batchindex],
+                                                             b,
+                                                             begin,
+                                                             alignmentbatchsize,
+                                                             alignmentOptions,
+                                                             true);
+                    }else{
+                        throw std::runtime_error("Alignment: invalid correction mode.");
+                    }
+
+                    if(device == AlignmentDevice::CPU)
+                        cpuAlignments++;
+                    else if (device == AlignmentDevice::GPU)
+                        gpuAlignments++;
+                }
+                batchindex++;
+            }
+            //get results
+            batchindex = 0;
+            for(auto& b : batchElems){
+                if(b.active){
+                    if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
+                        get_shifted_hamming_distance_results(shdbuffers[batchindex],
+                                                                b,
+                                                                begin,
+                                                                alignmentbatchsize,
+                                                                goodAlignmentProperties,
+                                                                true);
+                    }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
+                        get_semi_global_alignment_results(sgabuffers[batchindex],
+                                                             b,
+                                                             begin,
+                                                             alignmentbatchsize,
+                                                             alignmentOptions,
+                                                             true);
+                    }else{
+                        throw std::runtime_error("Alignment: invalid correction mode.");
+                    }
+                }
+                batchindex++;
+            }
         }
 
-        if(device == AlignmentDevice::CPU)
-            cpuAlignments++;
-        else if (device == AlignmentDevice::GPU)
-            gpuAlignments++;
+
 
         tpb = std::chrono::system_clock::now();
         getAlignmentsTimeTotal += tpb - tpa;
@@ -406,7 +471,7 @@ void ErrorCorrectionThread::execute() {
 			std::cout << "thread " << threadOpts.threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer "
+			/*std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer "
 					<< shddata.resizetime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment preprocessing "
 					<< shddata.preprocessingtime.count() << '\n';
@@ -417,7 +482,7 @@ void ErrorCorrectionThread::execute() {
 			std::cout << "thread " << threadOpts.threadId << " : alignment D2H "
 					<< shddata.d2htime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment postprocessing "
-					<< shddata.postprocessingtime.count() << '\n';
+					<< shddata.postprocessingtime.count() << '\n';*/
 			std::cout << "thread " << threadOpts.threadId << " : alignment total "
 					<< getAlignmentsTimeTotal.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId
@@ -448,14 +513,14 @@ void ErrorCorrectionThread::execute() {
 			std::cout << "thread " << threadOpts.threadId
 					<< " : mapMinhashResultsToSequencesTimeTotal "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer " << sgadata.resizetime.count() << '\n';
+			/*std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer " << sgadata.resizetime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment preprocessing " << sgadata.preprocessingtime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment H2D " << sgadata.h2dtime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment calculation " << sgadata.alignmenttime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : alignment D2H " << sgadata.d2htime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';
+			std::cout << "thread " << threadOpts.threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';*/
+            std::cout << "thread " << threadOpts.threadId << " : alignment total "
+					<< getAlignmentsTimeTotal.count() << '\n';
             std::cout << "thread " << threadOpts.threadId
 					<< " : correction find good alignments "
 					<< determinegoodalignmentsTime.count() << '\n';
@@ -472,9 +537,11 @@ void ErrorCorrectionThread::execute() {
 	}
 #endif
 
-	cuda_cleanup_SHDdata(shddata);
-	cuda_cleanup_SGAdata(sgadata);
-	cuda_cleanup_MinhasherBuffers(minhasherbuffers);
+    for(auto& shdbuffer : shdbuffers)
+	   cuda_cleanup_SHDdata(shdbuffer);
+
+    for(auto& shdbuffer : sgabuffers)
+   	   cuda_cleanup_SGAdata(shdbuffer);
 }
 
 
@@ -497,8 +564,6 @@ void correct(const MinhashOptions& minhashOptions,
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
-    std::cout << "min sequence length " << props.minSequenceLength << ", max sequence length " << props.maxSequenceLength << '\n';
-
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < runtimeOptions.nCorrectorThreads; i++){
         tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(i));
@@ -514,7 +579,7 @@ void correct(const MinhashOptions& minhashOptions,
         int threshold = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
                                                                        SDIV(props.minSequenceLength, 4));
-        gpuThresholdsSHD[i] = threshold;
+        gpuThresholdsSHD[i] = std::min(threshold, 0);
     }
 
     std::vector<int> gpuThresholdsSGA(deviceIds.size());
@@ -522,7 +587,7 @@ void correct(const MinhashOptions& minhashOptions,
         int threshold = find_semi_global_alignment_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
                                                                        SDIV(props.minSequenceLength, 4));
-        gpuThresholdsSGA[i] = threshold;
+        gpuThresholdsSGA[i] = std::min(threshold, 0);
     }
 
     for(size_t i = 0; i < gpuThresholdsSHD.size(); i++)
@@ -607,6 +672,21 @@ void correct(const MinhashOptions& minhashOptions,
 
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);
+
+    std::map<std::uint64_t, std::uint64_t> ncandidates;
+    for(const auto& thread : ecthreads){
+        for(const auto& pair : thread.ncandidates){
+            ncandidates[pair.first] += pair.second;
+        }
+    }
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> vec(ncandidates.begin(), ncandidates.end());
+    std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
+
+    std::ofstream of("ncandidates.txt");
+    for(const auto& p : vec)
+        of << p.first << " " << p.second << '\n';
+    of.flush();
 
     minhasher.init(0);
 	readStorage.destroy();

@@ -118,7 +118,7 @@ namespace care{
 		assert(sequencesflat.size() == seqToSortedIndex.size());
 
 		size_t n_unique_forward_sequences = sequencesflat.size();
-		std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
+		//std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
 
 //TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 		sequencepointers.resize(nSequences);
@@ -146,7 +146,7 @@ namespace care{
 		}
 //TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 
-		std::cout << "ReadStorage: holding a total of " << seqToSortedIndex.size() << " unique sequences\n";
+		//std::cout << "ReadStorage: holding a total of " << seqToSortedIndex.size() << " unique sequences\n";
 
 		seqToSortedIndex.clear();
 
