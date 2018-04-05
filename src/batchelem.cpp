@@ -188,7 +188,7 @@ namespace care{
     */
     void BatchElem::determine_good_alignments(int firstIndex, int N){
         const int querylength = fwdSequence->length();
-        const int lastIndex_excl = std::min(size_t(N), fwdSequences.size());
+        const int lastIndex_excl = std::min(size_t(firstIndex + N), fwdSequences.size());
 
         for(int i = firstIndex; i < lastIndex_excl; i++){
             const auto& res = fwdAlignments[i];
