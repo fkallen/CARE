@@ -244,10 +244,9 @@ void ErrorCorrectionThread::execute() {
 		tpb = std::chrono::system_clock::now();
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
-        tpa = std::chrono::system_clock::now();
+
 
         const int alignmentbatchsize = 100;
-
 
         int maxcandidates = 0;
 
@@ -260,6 +259,7 @@ void ErrorCorrectionThread::execute() {
             int batchindex = 0;
             int begin = iter * alignmentbatchsize;
             //start async alignments
+            tpa = std::chrono::system_clock::now();
             for(auto& b : batchElems){
                 if(b.active){
 
@@ -313,12 +313,15 @@ void ErrorCorrectionThread::execute() {
                 }
                 batchindex++;
             }
+            tpb = std::chrono::system_clock::now();
+            getAlignmentsTimeTotal += tpb - tpa;
+
+                        
         }
 
 
 
-        tpb = std::chrono::system_clock::now();
-        getAlignmentsTimeTotal += tpb - tpa;
+
 
         //select candidates from alignments
         for(auto& b : batchElems){
