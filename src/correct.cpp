@@ -196,10 +196,10 @@ void ErrorCorrectionThread::execute() {
     std::vector<BatchElem> batchElems;
     std::vector<std::uint32_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-    std::uint64_t numberOfBadAlignments = 0;
     std::uint64_t cpuAlignments = 0;
     std::uint64_t gpuAlignments = 0;
     std::uint64_t savedAlignments = 0;
+    std::uint64_t performedAlignments = 0;
 
 	while(!stopAndAbort &&!readIds.empty()){
 
@@ -246,8 +246,6 @@ void ErrorCorrectionThread::execute() {
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
 
-
-        const int alignmentbatchsize = 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
         int finalIters[16]{0};
         int maxcandidates = 0;
 
@@ -255,16 +253,17 @@ void ErrorCorrectionThread::execute() {
             if(b.active)
                 maxcandidates = int(b.n_unique_candidates) > maxcandidates ? int(b.n_unique_candidates) : maxcandidates;
         }
+        const int alignmentbatchsize = 1*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
 
-        int iters = SDIV(maxcandidates, alignmentbatchsize);
+        const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
 
-        for(int iter = 0; iter < iters; iter++){
+        for(int iter = 0; iter < maxiters; iter++){
             int batchindex = 0;
             int begin = iter * alignmentbatchsize;
             //start async alignments
             tpa = std::chrono::system_clock::now();
             for(auto& b : batchElems){
-                if(b.active || !b.hasEnoughGoodCandidates()){
+                if(b.active && !b.hasEnoughGoodCandidates()){
 
                     AlignmentDevice device = AlignmentDevice::None;
                     if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
@@ -337,9 +336,10 @@ void ErrorCorrectionThread::execute() {
         int batchindex = 0;
         for(auto& b : batchElems){
             if(b.active){
-                const int performedAlignments = 2 * std::min(size_t(finalIters[batchindex]) * size_t(alignmentbatchsize),
+                std::uint64_t alignments = 2 * std::min(size_t(finalIters[batchindex] + 1) * size_t(alignmentbatchsize),
                                                          b.fwdSequences.size());
-                savedAlignments += 2 * b.fwdSequences.size() - performedAlignments;
+                savedAlignments += 2 * b.fwdSequences.size() - alignments;
+                performedAlignments += alignments;
             }
         }
 
@@ -436,12 +436,6 @@ void ErrorCorrectionThread::execute() {
             throw std::runtime_error("Correction: invalid correction mode.");
         }
 
-        for(auto& b : batchElems){
-            if(b.active){
-                numberOfBadAlignments += std::count_if(b.activeCandidates.begin(), b.activeCandidates.end(), [](bool b){return !b;});
-            }
-        }
-
 		// update local progress
 		nProcessedReads += readIds.size();
 
@@ -471,9 +465,7 @@ void ErrorCorrectionThread::execute() {
                   << " GPU alignments " << gpuAlignments << std::endl;*/
 
         std::cout << "thread " << threadOpts.threadId << " savedAlignments "
-                << savedAlignments << std::endl;
-        std::cout << "thread " << threadOpts.threadId << " numberOfBadAlignments "
-                << numberOfBadAlignments << std::endl;
+                << savedAlignments << " performedAlignments " << performedAlignments << std::endl;
 	}
 
 #if 1
