@@ -64,7 +64,7 @@ namespace care{
 
     void BatchElem::set_number_of_unique_sequences(std::uint64_t num){
         candidateCountsPrefixSum.resize(num+1);
-        activeCandidates.resize(num);
+        activeCandidates.resize(num, false);
         fwdSequences.resize(num);
         revcomplSequences.resize(num);
         fwdAlignments.resize(num);
@@ -119,7 +119,7 @@ namespace care{
         set_number_of_unique_sequences(candidateIds.size());
 
         for(size_t k = 0; k < activeCandidates.size(); k++)
-            activeCandidates[k] = true;
+            activeCandidates[k] = false;
     }
 
     void BatchElem::make_unique_sequences(){
@@ -212,8 +212,11 @@ namespace care{
                 }();
                 const int candidateCount = candidateCountsPrefixSum[i+1] - candidateCountsPrefixSum[i];
                 if(mismatchratio >= 4 * errorrate){
+                    //best alignments is still not good enough, cannot use this candidate for correction
                     activeCandidates[i] = false;
                 }else{
+                    activeCandidates[i] = true;
+                    
                     if (mismatchratio < 2 * errorrate) {
                         counts[0] += candidateCount;
                     }
