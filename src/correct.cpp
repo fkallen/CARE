@@ -199,6 +199,7 @@ void ErrorCorrectionThread::execute() {
     std::uint64_t numberOfBadAlignments = 0;
     std::uint64_t cpuAlignments = 0;
     std::uint64_t gpuAlignments = 0;
+    std::uint64_t savedAlignments = 0;
 
 	while(!stopAndAbort &&!readIds.empty()){
 
@@ -246,12 +247,14 @@ void ErrorCorrectionThread::execute() {
 
 
 
-        const int alignmentbatchsize = 100;
-
+        const int alignmentbatchsize = 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
+        int finalIters[16]{0};
         int maxcandidates = 0;
 
-        for(const auto& b : batchElems)
-            maxcandidates = int(b.n_unique_candidates) > maxcandidates ? int(b.n_unique_candidates) : maxcandidates;
+        for(const auto& b : batchElems){
+            if(b.active)
+                maxcandidates = int(b.n_unique_candidates) > maxcandidates ? int(b.n_unique_candidates) : maxcandidates;
+        }
 
         int iters = SDIV(maxcandidates, alignmentbatchsize);
 
@@ -261,7 +264,7 @@ void ErrorCorrectionThread::execute() {
             //start async alignments
             tpa = std::chrono::system_clock::now();
             for(auto& b : batchElems){
-                if(b.active){
+                if(b.active || !b.hasEnoughGoodCandidates()){
 
                     AlignmentDevice device = AlignmentDevice::None;
                     if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
@@ -286,13 +289,16 @@ void ErrorCorrectionThread::execute() {
                         cpuAlignments++;
                     else if (device == AlignmentDevice::GPU)
                         gpuAlignments++;
+
+                    if(device != AlignmentDevice::None)
+                        finalIters[batchindex] = iter;
                 }
                 batchindex++;
             }
             //get results
             batchindex = 0;
             for(auto& b : batchElems){
-                if(b.active){
+                if(b.active && !b.hasEnoughGoodCandidates()){
                     if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
                         get_shifted_hamming_distance_results(shdbuffers[batchindex],
                                                                 b,
@@ -316,39 +322,39 @@ void ErrorCorrectionThread::execute() {
             tpb = std::chrono::system_clock::now();
             getAlignmentsTimeTotal += tpb - tpa;
 
-                        
+            //check quality of alignments
+            batchindex = 0;
+            tpc = std::chrono::system_clock::now();
+            for(auto& b : batchElems){
+                if(b.active && !b.hasEnoughGoodCandidates()){
+                    b.determine_good_alignments(begin, alignmentbatchsize);
+                }
+            }
+            tpd = std::chrono::system_clock::now();
+            determinegoodalignmentsTime += tpd - tpc;
         }
 
-
-
-
-
-        //select candidates from alignments
+        int batchindex = 0;
         for(auto& b : batchElems){
             if(b.active){
+                const int performedAlignments = 2 * std::min(size_t(finalIters[batchindex]) * size_t(alignmentbatchsize),
+                                                         b.fwdSequences.size());
+                savedAlignments += 2 * b.fwdSequences.size() - performedAlignments;
+            }
+        }
+
+        for(auto& b : batchElems){
+            if(b.active && b.hasEnoughGoodCandidates()){
                 tpc = std::chrono::system_clock::now();
-
-                //DetermineGoodAlignmentStats Astats = b.determine_good_alignments();
-                b.determine_good_alignments(0, b.fwdSequences.size());
-
-                tpd = std::chrono::system_clock::now();
-                determinegoodalignmentsTime += tpd - tpc;
-
-                /*goodAlignmentStats.correctionCases[0] += Astats.correctionCases[0];
-                goodAlignmentStats.correctionCases[1] += Astats.correctionCases[1];
-                goodAlignmentStats.correctionCases[2] += Astats.correctionCases[2];
-                goodAlignmentStats.correctionCases[3] += Astats.correctionCases[3];
-                goodAlignmentStats.uniqueCandidatesWithoutGoodAlignment += Astats.uniqueCandidatesWithoutGoodAlignment;
-                */
-                tpc = std::chrono::system_clock::now();
-
                 if(b.active){
                     //move candidates which are used for correction to the front
                     b.prepare_good_candidates();
                 }
-
                 tpd = std::chrono::system_clock::now();
                 fetchgoodcandidatesTime += tpd - tpc;
+            }else{
+                //not enough good candidates. cannot correct this read.
+                b.active = false;
             }
         }
 
@@ -460,9 +466,12 @@ void ErrorCorrectionThread::execute() {
 				<< sobadcouldnotcorrect << std::endl;
 		std::cout << "thread " << threadOpts.threadId << " verygoodalignment "
 				<< verygoodalignment << std::endl;
-		std::cout << "thread " << threadOpts.threadId
+		/*std::cout << "thread " << threadOpts.threadId
                   << " CPU alignments " << cpuAlignments
-                  << " GPU alignments " << gpuAlignments << std::endl;
+                  << " GPU alignments " << gpuAlignments << std::endl;*/
+
+        std::cout << "thread " << threadOpts.threadId << " savedAlignments "
+                << savedAlignments << std::endl;
         std::cout << "thread " << threadOpts.threadId << " numberOfBadAlignments "
                 << numberOfBadAlignments << std::endl;
 	}
