@@ -14,34 +14,6 @@
 
 namespace care{
 
-MinhasherBuffers::MinhasherBuffers(int id){
-	deviceId = id;
-#ifdef __NVCC__
-	cudaSetDevice(deviceId); CUERR;
-	cudaStreamCreate(&stream); CUERR;
-#endif
-}
-
-void MinhasherBuffers::grow(size_t newcapacity){
-#ifdef __NVCC__
-	cudaSetDevice(deviceId);
-	if(newcapacity > capacity){
-		cudaFree(d_allMinhashResults); CUERR;
-		cudaMalloc(&d_allMinhashResults, sizeof(std::uint64_t) * newcapacity); CUERR;
-	}
-#endif
-	size = 0;
-	capacity = newcapacity;
-}
-
-void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer){
-#ifdef __NVCC__
-	cudaSetDevice(buffer.deviceId);
-	cudaFree(buffer.d_allMinhashResults); CUERR;
-	cudaStreamDestroy(buffer.stream); CUERR;
-#endif
-}
-
 Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16})
 {
 }
@@ -53,9 +25,16 @@ Minhasher::Minhasher(const MinhashOptions& parameters)
     if(maximum_number_of_maps < minparams.maps)
         throw std::runtime_error("Minhasher: Maximum number of maps is "
                                 + std::to_string(maximum_number_of_maps) + "!");
+
+    if(maximum_kmer_length < minparams.k){
+        throw std::runtime_error("Minhasher is configured for maximum kmer length of "
+                                + std::to_string(maximum_kmer_length) + "!");
+    }
 }
 
 void Minhasher::init(std::uint64_t nReads_){
+    if(nReads_-1 > max_read_num)
+		throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads!!!");
 
 	nReads = nReads_;
 

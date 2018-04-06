@@ -4,6 +4,7 @@
 #include "alignment.hpp"
 #include "readstorage.hpp"
 #include "minhasher.hpp"
+#include "types.hpp"
 
 #include <vector>
 #include <string>
@@ -33,28 +34,28 @@ struct BatchElem{
 
     //query properties
     bool corrected;
-    std::uint64_t readId;
-    const Sequence* fwdSequence;
+    ReadId_t readId;
+    const Sequence_t* fwdSequence;
 	std::string fwdSequenceString;
     const std::string* fwdQuality;
     std::string correctedSequence;
 
-	size_t n_unique_candidates;
-	size_t n_candidates;
+	std::uint64_t n_unique_candidates;
+	std::uint64_t n_candidates;
 
     //candidates properties
-    std::vector<std::uint64_t> candidateIds;
+    std::vector<ReadId_t> candidateIds;
     std::vector<int> candidateCountsPrefixSum;
 
     std::vector<bool> activeCandidates;
-    std::vector<const Sequence*> fwdSequences;
-    std::vector<const Sequence*> revcomplSequences;
+    std::vector<const Sequence_t*> fwdSequences;
+    std::vector<const Sequence_t*> revcomplSequences;
     //std::vector<const std::string*> fwdQualities;
 	//std::vector<const std::string*> revcomplQualities;
     std::vector<AlignResultCompact> fwdAlignments;
     std::vector<AlignResultCompact> revcomplAlignments;
     std::vector<AlignResultCompact> bestAlignments;
-    std::vector<const Sequence*> bestSequences;
+    std::vector<const Sequence_t*> bestSequences;
 	std::vector<std::string> bestSequenceStrings;
 	std::vector<const std::string*> bestQualities;
     std::vector<bool> bestIsForward;
@@ -91,7 +92,7 @@ struct BatchElem{
     void clear();
     void set_number_of_sequences(std::uint64_t num);
     void set_number_of_unique_sequences(std::uint64_t num);
-    void set_read_id(std::uint64_t id);
+    void set_read_id(ReadId_t id);
     void findCandidates();
     void fetch_query_data_from_readstorage();
     void set_candidate_ids(std::vector<Minhasher::Result_t>&& ids);

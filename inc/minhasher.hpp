@@ -4,6 +4,7 @@
 #include "options.hpp"
 #include "kvmapfixed.hpp"
 #include "hpc_helpers.cuh"
+#include "types.hpp"
 
 #include <set>
 #include <cstdint>
@@ -16,26 +17,18 @@
 
 namespace care{
 
-struct MinhasherBuffers{
-	std::uint64_t* allMinhashResults = nullptr;
-	std::uint64_t* d_allMinhashResults = nullptr;
-	size_t size = 0;
-	size_t capacity = 0;
-	int deviceId = -1;
-#ifdef __NVCC__
-	cudaStream_t stream;
-#endif
-
-	MinhasherBuffers(int id);
-	void grow(size_t newcapacity);
-};
-
-void cuda_cleanup_MinhasherBuffers(MinhasherBuffers& buffer);
+    namespace minhasherdetail{
+        template<class T> struct max_k;
+        template<> struct max_k<std::uint8_t>{static constexpr int value = 4;};
+        template<> struct max_k<std::uint16_t>{static constexpr int value = 8;};
+        template<> struct max_k<std::uint32_t>{static constexpr int value = 16;};
+        template<> struct max_k<std::uint64_t>{static constexpr int value = 32;};
+    }
 
 struct Minhasher {
 
-    using Key_t = std::uint64_t; //hash value type
-    using Index_t = std::uint64_t; //read id type
+    using Key_t = std::uint32_t; //hash value type
+    using Index_t = ReadId_t; //read id type
 
     struct Value{
         HOSTDEVICEQUALIFIER
@@ -68,6 +61,7 @@ struct Minhasher {
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
     static constexpr int maximum_number_of_maps = 16;
+    static constexpr int maximum_kmer_length = minhasherdetail::max_k<Key_t>::value;
 
 
 	// the actual hash maps
@@ -82,14 +76,13 @@ struct Minhasher {
 
 	Minhasher(const MinhashOptions& parameters);
 
-	void init(Index_t nReads);
+	void init(std::uint64_t nReads);
 
 	void clear();
 
 	void insertSequence(const std::string& sequence, const std::uint64_t readnum);
 
     std::vector<Result_t> getCandidates(const std::string& sequence) const;
-	//std::vector<Result_t> getCandidates(MinhasherBuffers& buffers, const std::string& sequence) const;
 
 	void saveTablesToFile(std::string filename) const;
 

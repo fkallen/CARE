@@ -3,6 +3,7 @@
 #include "../inc/alignment.hpp"
 #include "../inc/readstorage.hpp"
 #include "../inc/sequence.hpp"
+#include "../inc/types.hpp"
 
 #include <vector>
 #include <string>
@@ -79,7 +80,7 @@ namespace care{
         revcomplAlignOps.resize(num);
     }
 
-    void BatchElem::set_read_id(std::uint64_t id){
+    void BatchElem::set_read_id(ReadId_t id){
         clear();
         readId = id;
         corrected = false;
@@ -123,7 +124,7 @@ namespace care{
     }
 
     void BatchElem::make_unique_sequences(){
-        std::vector<std::pair<std::uint64_t, const Sequence*>> numseqpairs;
+        std::vector<std::pair<ReadId_t, const Sequence*>> numseqpairs;
         numseqpairs.reserve(candidateIds.size());
 
         //std::chrono::time_point < std::chrono::system_clock > t1 =
@@ -146,7 +147,7 @@ namespace care{
         candidateIds[0] = numseqpairs[0].first;
         fwdSequences[0] = numseqpairs[0].second;
 
-        const Sequence* prevSeq = numseqpairs[0].second;
+        const Sequence_t* prevSeq = numseqpairs[0].second;
 
         for (size_t k = 1; k < numseqpairs.size(); k++) {
             auto pair = numseqpairs[k];
@@ -216,7 +217,7 @@ namespace care{
                     activeCandidates[i] = false;
                 }else{
                     activeCandidates[i] = true;
-                    
+
                     if (mismatchratio < 2 * errorrate) {
                         counts[0] += candidateCount;
                     }
@@ -234,7 +235,7 @@ namespace care{
                         bestAlignments[i] = res;
                         bestAlignOps[i] = &fwdAlignOps[i];
                         for(int j = 0; j < candidateCount; j++){
-                            const std::uint64_t id = candidateIds[begin + j];
+                            const ReadId_t id = candidateIds[begin + j];
                             bestQualities[begin + j] = readStorage->fetchQuality_ptr(id);
                         }
                     }else{
@@ -243,7 +244,7 @@ namespace care{
                         bestAlignments[i] = revcomplres;
                         bestAlignOps[i] = &revcomplAlignOps[i];
                         for(int j = 0; j < candidateCount; j++){
-                            const std::uint64_t id = candidateIds[begin + j];
+                            const ReadId_t id = candidateIds[begin + j];
                             bestQualities[begin + j] = readStorage->fetchReverseComplementQuality_ptr(id);
                         }
                     }
