@@ -258,19 +258,17 @@ AlignmentDevice shifted_hamming_distance_async(SHDdata& mybuffers, BatchElem& b,
 
     AlignmentDevice device = AlignmentDevice::None;
 
-    std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
-    std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
-
     const int lastIndex_excl = std::min(size_t(firstIndex + N), b.fwdSequences.size());
     const int numberOfCandidates = firstIndex >= lastIndex_excl ? 0 : lastIndex_excl - firstIndex;
     const int numberOfAlignments = 2 * numberOfCandidates;
-    const int numberOfSubjects = 1;
 
     //nothing to do here
     if(!b.active || numberOfAlignments == 0)
         return device;
 
 #ifdef __NVCC__
+    std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+    std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         device = AlignmentDevice::GPU;

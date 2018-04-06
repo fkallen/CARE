@@ -117,7 +117,7 @@ namespace care{
 //TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
 		assert(sequencesflat.size() == seqToSortedIndex.size());
 
-		size_t n_unique_forward_sequences = sequencesflat.size();
+		//size_t n_unique_forward_sequences = sequencesflat.size();
 		//std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
 
 //TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
