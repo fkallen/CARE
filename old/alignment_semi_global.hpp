@@ -2,7 +2,7 @@
 #define ALIGNMENT_SEMI_GLOBAL_HPP
 
 #include "alignment.hpp"
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 
 #include <cstdio>
 #include <algorithm>

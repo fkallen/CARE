@@ -1,4 +1,4 @@
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 
 HOSTDEVICEQUALIFIER
 char encoded_accessor(const char* data, int length, int index){

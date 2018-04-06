@@ -1,6 +1,6 @@
 #include "../inc/alignment_semi_global.hpp"
 #include "../inc/alignment.hpp"
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/hpc_helpers.cuh"
 
 #include <stdio.h>
 #include <algorithm>

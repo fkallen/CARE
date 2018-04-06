@@ -3,7 +3,7 @@
 
 #include "alignment.hpp"
 //#include "alignment_semi_global.hpp"
-//#include "ganja/hpc_helpers.cuh"
+//#include "hpc_helpers.cuh"
 //#include "hamming.hpp"
 
 #include <stdexcept>

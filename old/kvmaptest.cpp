@@ -1,5 +1,5 @@
 #include "inc/kvmapfixed.hpp"
-#include "inc/ganja/hpc_helpers.cuh"
+#include "inc/hpc_helpers.cuh"
 #include "inc/ganja/open_addressing_multi_hash_map.cuh"
 #include "inc/ganja/hash_functions.cuh"
 

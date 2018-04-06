@@ -1,6 +1,6 @@
 #include "../inc/pileup.hpp"
 #include "../inc/alignment.hpp"
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/hpc_helpers.cuh"
 #include "../inc/cudareduce.cuh"
 #include "../inc/batchelem.hpp"
 

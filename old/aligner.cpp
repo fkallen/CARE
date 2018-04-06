@@ -2,7 +2,7 @@
 
 #include "../inc/alignment.hpp"
 #include "../inc/alignment_semi_global.hpp"
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/hpc_helpers.cuh"
 #include "../inc/hamming.hpp"
 
 #include <vector>

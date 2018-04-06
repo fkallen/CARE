@@ -1,7 +1,7 @@
 #include "../inc/minhasher.hpp"
 #include "../inc/binarysequencehelpers.hpp"
 #include "../inc/ntHash/nthash.hpp"
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/hpc_helpers.cuh"
 
 #include <stdexcept>
 #include <chrono>

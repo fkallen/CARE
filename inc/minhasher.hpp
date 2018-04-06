@@ -3,7 +3,7 @@
 
 #include "options.hpp"
 #include "kvmapfixed.hpp"
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 
 #include <set>
 #include <cstdint>

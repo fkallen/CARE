@@ -1,4 +1,4 @@
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/hpc_helpers.cuh"
 #include "../inc/cudareduce.cuh"
 
 #include "../inc/shd.hpp"

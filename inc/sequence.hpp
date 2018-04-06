@@ -2,7 +2,7 @@
 #define READ_HPP
 
 #include "binarysequencehelpers.hpp"
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 
 #include <algorithm>
 #include <string>

@@ -1,7 +1,7 @@
 #ifndef ALIGNMENT_HPP
 #define ALIGNMENT_HPP
 
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 #ifdef __NVCC__
 	#include "cuda_unique.cuh"
 #endif

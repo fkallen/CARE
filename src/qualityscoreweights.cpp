@@ -1,6 +1,6 @@
 #include "../inc/qualityscoreweights.hpp"
 
-#include "../inc/ganja/hpc_helpers.cuh"
+#include "../inc/hpc_helpers.cuh"
 
 #include <cmath>
 

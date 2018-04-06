@@ -1,7 +1,7 @@
 #ifndef CUDA_UNIQUE_CUH
 #define CUDA_UNIQUE_CUH
 
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 
 //#include <cuda.h>
 //#include <cuda_runtime.h>

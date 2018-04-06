@@ -3,7 +3,7 @@
 
 #include "graphtools.hpp"
 #include "alignment.hpp"
-#include "ganja/hpc_helpers.cuh"
+#include "hpc_helpers.cuh"
 
 namespace care{
 namespace graphtools{

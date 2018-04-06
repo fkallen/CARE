@@ -253,7 +253,7 @@ void ErrorCorrectionThread::execute() {
             if(b.active)
                 maxcandidates = int(b.n_unique_candidates) > maxcandidates ? int(b.n_unique_candidates) : maxcandidates;
         }
-        const int alignmentbatchsize = 1*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
+        const int alignmentbatchsize = 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
 
         const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
 
@@ -580,30 +580,24 @@ void correct(const MinhashOptions& minhashOptions,
 
     std::vector<int> gpuThresholdsSHD(deviceIds.size());
     for(size_t i = 0; i < deviceIds.size(); i++){
-        int threshold = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
+        /*int threshold = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
-                                                                       SDIV(props.minSequenceLength, 4));
-        gpuThresholdsSHD[i] = std::min(threshold, 0);
+                                                                       SDIV(props.minSequenceLength, 4));*/
+        gpuThresholdsSHD[i] = std::min(0, 0);
     }
 
     std::vector<int> gpuThresholdsSGA(deviceIds.size());
     for(size_t i = 0; i < deviceIds.size(); i++){
-        int threshold = find_semi_global_alignment_gpu_threshold(deviceIds[i],
+        /*int threshold = find_semi_global_alignment_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
-                                                                       SDIV(props.minSequenceLength, 4));
-        gpuThresholdsSGA[i] = std::min(threshold, 0);
+                                                                       SDIV(props.minSequenceLength, 4));*/
+        gpuThresholdsSGA[i] = std::min(0, 0);
     }
 
     for(size_t i = 0; i < gpuThresholdsSHD.size(); i++)
         std::cout << "GPU " << i
                   << ": gpuThresholdSHD " << gpuThresholdsSHD[i]
                   << " gpuThresholdSGA " << gpuThresholdsSGA[i] << std::endl;
-
-#ifdef DO_PROFILE
-#ifdef __NVCC__
-    cudaProfilerStart(); CUERR;
-#endif
-#endif
 
     for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
 
@@ -658,7 +652,13 @@ void correct(const MinhashOptions& minhashOptions,
             sleepiter++;
 
             #ifdef __NVCC__
-            if(sleepiter > 0){
+                if(sleepiter == 5)
+                    cudaProfilerStart(); CUERR;
+            #endif
+
+
+            #ifdef __NVCC__
+            if(sleepiter == 6){
                 cudaProfilerStop(); CUERR;
                 for(auto& t : ecthreads){
                     t.stopAndAbort = true;
