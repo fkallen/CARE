@@ -301,9 +301,9 @@ AlignmentDevice semi_global_alignment_async(SGAdata& mybuffers, BatchElem& b,
 
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
-        mybuffers.resize(numberOfSubjects, numberOfAlignments);
+        mybuffers.resize(1, numberOfAlignments);
 
-        mybuffers.n_subjects = numberOfSubjects;
+        mybuffers.n_subjects = 1;
         mybuffers.n_queries = numberOfAlignments;
 
         tpb = std::chrono::system_clock::now();

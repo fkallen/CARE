@@ -276,7 +276,7 @@ AlignmentDevice shifted_hamming_distance_async(SHDdata& mybuffers, BatchElem& b,
 
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
-        mybuffers.resize(numberOfSubjects, numberOfAlignments);
+        mybuffers.resize(1, numberOfAlignments);
 
         tpb = std::chrono::system_clock::now();
 

@@ -9,6 +9,7 @@
 #include "../inc/sequencefileio.hpp"
 #include "../inc/qualityscoreweights.hpp"
 #include "../inc/tasktiming.hpp"
+#include "../inc/correct.hpp"
 
 #include <cstdint>
 #include <thread>
@@ -26,16 +27,16 @@ namespace care{
 */
 struct BatchGenerator{
     BatchGenerator(){}
-    BatchGenerator(std::uint32_t firstId, std::uint32_t lastIdExcl, std::uint32_t batchsize)
+    BatchGenerator(std::uint64_t firstId, std::uint64_t lastIdExcl, std::uint64_t batchsize)
             : batchsize(batchsize), firstId(firstId), lastIdExcl(lastIdExcl), currentId(firstId){
                 if(batchsize == 0) throw std::runtime_error("BatchGenerator: invalid batch size");
                 if(firstId >= lastIdExcl) throw std::runtime_error("BatchGenerator: firstId >= lastIdExcl");
             }
-    BatchGenerator(std::uint32_t totalNumberOfReads, std::uint32_t batchsize_, int threadId, int nThreads){
+    BatchGenerator(std::uint64_t totalNumberOfReads, std::uint64_t batchsize_, int threadId, int nThreads){
         if(threadId < 0) throw std::runtime_error("BatchGenerator: invalid threadId");
         if(nThreads < 0) throw std::runtime_error("BatchGenerator: invalid nThreads");
 
-    	std::uint32_t chunksize = totalNumberOfReads / nThreads;
+    	std::uint64_t chunksize = totalNumberOfReads / nThreads;
     	int leftover = totalNumberOfReads % nThreads;
 
     	if(threadId < leftover){
@@ -57,8 +58,8 @@ struct BatchGenerator{
     BatchGenerator& operator=(const BatchGenerator& rhs) = default;
     BatchGenerator& operator=(BatchGenerator&& rhs) = default;
 
-    std::vector<std::uint32_t> getNextReadIds(){
-        std::vector<std::uint32_t> result;
+    std::vector<ReadId_t> getNextReadIds(){
+        std::vector<ReadId_t> result;
     	while(result.size() < batchsize && currentId < lastIdExcl){
     		result.push_back(currentId);
     		currentId++;
@@ -66,10 +67,10 @@ struct BatchGenerator{
         return result;
     }
 private:
-    std::uint32_t batchsize;
-    std::uint32_t firstId;
-    std::uint32_t lastIdExcl;
-    std::uint32_t currentId;
+    std::uint64_t batchsize;
+    std::uint64_t firstId;
+    std::uint64_t lastIdExcl;
+    std::uint64_t currentId;
 };
 
 
@@ -98,7 +99,7 @@ struct ErrorCorrectionThread{
     CorrectionThreadOptions threadOpts;
     SequenceFileProperties fileProperties;
 
-    std::uint32_t nProcessedReads = 0;
+    std::uint64_t nProcessedReads = 0;
 
     DetermineGoodAlignmentStats goodAlignmentStats;
     std::uint64_t minhashcandidates = 0;
@@ -158,13 +159,13 @@ void ErrorCorrectionThread::execute() {
 		stream << sequence << '\n';
 	};
 
-    auto lock = [&](std::uint64_t readId){
-        std::uint64_t index = readId % threadOpts.nLocksForProcessedFlags;
+    auto lock = [&](ReadId_t readId){
+        ReadId_t index = readId % threadOpts.nLocksForProcessedFlags;
         threadOpts.locksForProcessedFlags[index].lock();
     };
 
-    auto unlock = [&](std::uint64_t readId){
-        std::uint64_t index = readId % threadOpts.nLocksForProcessedFlags;
+    auto unlock = [&](ReadId_t readId){
+        ReadId_t index = readId % threadOpts.nLocksForProcessedFlags;
         threadOpts.locksForProcessedFlags[index].unlock();
     };
 
@@ -194,7 +195,7 @@ void ErrorCorrectionThread::execute() {
                                                   correctionOptions.graphalpha, correctionOptions.graphx);
 
     std::vector<BatchElem> batchElems;
-    std::vector<std::uint32_t> readIds = threadOpts.batchGen->getNextReadIds();
+    std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
     std::uint64_t cpuAlignments = 0;
     std::uint64_t gpuAlignments = 0;
@@ -388,7 +389,7 @@ void ErrorCorrectionThread::execute() {
                             const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
                             - b.candidateCountsPrefixSum[correctedCandidate.index];
                             for(int f = 0; f < count; f++){
-                                std::uint64_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
+                                ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
                                 bool savingIsOk = false;
                                 if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
                                     lock(candidateId);
@@ -632,7 +633,7 @@ void correct(const MinhashOptions& minhashOptions,
     if(runtimeOptions.showProgress){
         std::chrono::duration<int> runtime = std::chrono::seconds(0);
         std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
-        std::uint64_t progress = 0;
+        ReadId_t progress = 0;
         while(progress < props.nReads){
             progress = 0;
             for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){

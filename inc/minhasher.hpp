@@ -67,7 +67,7 @@ struct Minhasher {
 	// the actual hash maps
 	std::vector<std::unique_ptr<KVMapFixed<Key_t, Value_t, Index_t>>> minhashTables;
 	MinhashOptions minparams;
-	std::uint64_t nReads;
+	ReadId_t nReads;
 
 	std::chrono::duration<double> minhashtime;
 	std::chrono::duration<double> maptime;
@@ -76,11 +76,11 @@ struct Minhasher {
 
 	Minhasher(const MinhashOptions& parameters);
 
-	void init(std::uint64_t nReads);
+	void init(ReadId_t nReads);
 
 	void clear();
 
-	void insertSequence(const std::string& sequence, const std::uint64_t readnum);
+	void insertSequence(const std::string& sequence, const ReadId_t readnum);
 
     std::vector<Result_t> getCandidates(const std::string& sequence) const;
 

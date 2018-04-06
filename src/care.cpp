@@ -6,6 +6,7 @@
 #include "../inc/minhasher.hpp"
 #include "../inc/options.hpp"
 #include "../inc/readstorage.hpp"
+#include "../inc/types.hpp"
 
 #include <vector>
 #include <iostream>
@@ -86,6 +87,13 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	filesys::create_directories(fileOptions.outputdirectory);
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+
+    if(props.nReads > std::numeric_limits<ReadId_t>::max()){
+        throw std::runtime_error("Found " + std::to_string(props.nReads)
+                                + " reads, but CARE is compiled for only "
+                                + std::to_string(std::numeric_limits<ReadId_t>::max())
+                                + " reads.");
+    }
 
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "File: " << fileOptions.inputfile << std::endl;

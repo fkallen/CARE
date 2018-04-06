@@ -36,7 +36,7 @@ namespace care{
 		}
 	}
 
-	void ReadStorage::init(size_t nReads){
+	void ReadStorage::init(ReadId_t nReads){
 		clear();
 
 		//headers.resize(nReads);
@@ -70,10 +70,10 @@ namespace care{
 		all_unique_sequences.shrink_to_fit();
 	}
 
-	void ReadStorage::insertRead(size_t readNumber, const Read& read){
+	void ReadStorage::insertRead(ReadId_t readNumber, const Read& read){
 		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling noMoreInserts()");
 
-		Sequence seq(read.sequence);
+		Sequence_t seq(read.sequence);
 		std::string q(read.quality);
 		std::reverse(q.begin(),q.end());
 
@@ -92,23 +92,23 @@ namespace care{
 
 		if(nSequences == 0) return;
 
-		std::vector<Sequence> sequencesflat;
+		std::vector<Sequence_t> sequencesflat;
 		sequencesflat.reserve(2*nSequences);
 
-		for(size_t readnum = 0; readnum < nSequences; readnum++){
-			sequencesflat.push_back(std::move(sequences.at(readnum)));
+		for(size_t index = 0; index < nSequences; index++){
+			sequencesflat.push_back(std::move(sequences.at(index)));
 		}
 
 		sequences.clear();
 		sequences.shrink_to_fit();
 
-		std::vector<Sequence> tmp(sequencesflat);
+		std::vector<Sequence_t> tmp(sequencesflat);
 
 //TIMERSTARTCPU(READ_STORAGE_SORT);
 		std::sort(sequencesflat.begin(), sequencesflat.end());
 		sequencesflat.erase(std::unique(sequencesflat.begin(), sequencesflat.end()), sequencesflat.end());
 //TIMERSTOPCPU(READ_STORAGE_SORT);
-		std::map<const Sequence, int> seqToSortedIndex;
+		std::map<const Sequence_t, int> seqToSortedIndex;
 
 //TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
 		for(const auto& s : sequencesflat){
@@ -129,7 +129,7 @@ namespace care{
 //TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
 		reverseComplSequencepointers.resize(nSequences);
 		for(size_t i = 0; i < nSequences; i++){
-			Sequence revcompl = sequencepointers[i]->reverseComplement();
+			Sequence_t revcompl = sequencepointers[i]->reverseComplement();
 			auto it = seqToSortedIndex.find(revcompl);
 			if(it == seqToSortedIndex.end()){
 				//sequence does not exist yet, insert into map and save pointer in list
@@ -168,7 +168,7 @@ namespace care{
 
 		//make combined quality weights for identical forward sequences
 
-		std::map<const Sequence*, std::vector<size_t>> seqToIds;
+		std::map<const Sequence_t*, std::vector<size_t>> seqToIds;
 		for(size_t i = 0; i < nSequences; i++){
 			seqToIds[sequencepointers[i]].push_back(i);
 		}
@@ -192,7 +192,7 @@ namespace care{
 */
 	}
 
-	Read ReadStorage::fetchRead(size_t readNumber) const{
+	Read ReadStorage::fetchRead(ReadId_t readNumber) const{
 		Read returnvalue;
 
 		returnvalue.header = *fetchHeader_ptr(readNumber);
@@ -205,12 +205,12 @@ namespace care{
 		return returnvalue;
 	}
 
-	const std::string* ReadStorage::fetchHeader_ptr(size_t readNumber) const{
+	const std::string* ReadStorage::fetchHeader_ptr(ReadId_t readNumber) const{
 		//return &(headers.at(readNumber));
         return nullptr;
 	}
 
-    	const std::string* ReadStorage::fetchQuality_ptr(size_t readNumber) const{
+    	const std::string* ReadStorage::fetchQuality_ptr(ReadId_t readNumber) const{
 		if(useQualityScores){
 			return &(qualityscores.at(readNumber));
 		}else{
@@ -218,7 +218,7 @@ namespace care{
 		}
 	}
 
-    	const std::string* ReadStorage::fetchReverseComplementQuality_ptr(size_t readNumber) const{
+    	const std::string* ReadStorage::fetchReverseComplementQuality_ptr(ReadId_t readNumber) const{
 		if(useQualityScores){
 			return &(reverseComplqualityscores.at(readNumber));
 		}else{
@@ -226,7 +226,7 @@ namespace care{
 		}
 	}
 
-    	const Sequence* ReadStorage::fetchSequence_ptr(size_t readNumber) const{
+    	const Sequence_t* ReadStorage::fetchSequence_ptr(ReadId_t readNumber) const{
 		if(isReadOnly){
 			return sequencepointers.at(readNumber);
 		}else{
@@ -234,7 +234,7 @@ namespace care{
 		}
 	}
 
-	const Sequence* ReadStorage::fetchReverseComplementSequence_ptr(size_t readNumber) const{
+	const Sequence_t* ReadStorage::fetchReverseComplementSequence_ptr(ReadId_t readNumber) const{
 		if(isReadOnly){
 			return reverseComplSequencepointers.at(readNumber);
 		}else{

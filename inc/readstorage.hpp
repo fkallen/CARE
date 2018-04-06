@@ -3,6 +3,7 @@
 
 #include "sequencefileio.hpp"
 #include "sequence.hpp"
+#include "types.hpp"
 
 #include <map>
 #include <vector>
@@ -21,32 +22,32 @@ struct ReadStorage{
     std::vector<std::string> headers;
     std::vector<std::string> qualityscores;
     std::vector<std::string> reverseComplqualityscores;
-    std::vector<Sequence> sequences;
+    std::vector<Sequence_t> sequences;
 
-    std::vector<Sequence*> sequencepointers;
-    std::vector<Sequence*> reverseComplSequencepointers;
+    std::vector<Sequence_t*> sequencepointers;
+    std::vector<Sequence_t*> reverseComplSequencepointers;
 
-    std::vector<Sequence> all_unique_sequences; //forward and reverse complement
+    std::vector<Sequence_t> all_unique_sequences; //forward and reverse complement
 
     ReadStorage();
 
     ReadStorage& operator=(const ReadStorage&& other);
 
     void clear();
-    void init(size_t nReads);
+    void init(ReadId_t nReads);
     void destroy();
 
     void setUseQualityScores(bool use);
 
-    void insertRead(size_t readNumber, const Read& read);
+    void insertRead(ReadId_t readNumber, const Read& read);
     void noMoreInserts();
-    Read fetchRead(size_t readNumber) const;
+    Read fetchRead(ReadId_t readNumber) const;
 
-    const std::string* fetchHeader_ptr(size_t readNumber) const;
-    const std::string* fetchQuality_ptr(size_t readNumber) const;
-    const std::string* fetchReverseComplementQuality_ptr(size_t readNumber) const;
-    const Sequence* fetchSequence_ptr(size_t readNumber) const;
-    const Sequence* fetchReverseComplementSequence_ptr(size_t readNumber) const;
+    const std::string* fetchHeader_ptr(ReadId_t readNumber) const;
+    const std::string* fetchQuality_ptr(ReadId_t readNumber) const;
+    const std::string* fetchReverseComplementQuality_ptr(ReadId_t readNumber) const;
+    const Sequence_t* fetchSequence_ptr(ReadId_t readNumber) const;
+    const Sequence_t* fetchReverseComplementSequence_ptr(ReadId_t readNumber) const;
 
     double getMemUsageMB() const;
 };

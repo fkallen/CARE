@@ -2,6 +2,7 @@
 #include "../inc/sequencefileio.hpp"
 #include "../inc/sequence.hpp"
 #include "../inc/threadsafe_buffer.hpp"
+#include "../inc/types.hpp"
 
 #include <stdexcept>
 #include <iostream>
@@ -22,9 +23,9 @@ namespace care{
         Buffer_t* buffer;
         ReadStorage* readStorage;
         Minhasher* minhasher;
-        std::uint64_t totalNumberOfReads;
+        ReadId_t totalNumberOfReads;
 
-        std::uint64_t progress;
+        ReadId_t progress;
         bool isRunning;
         std::thread thread;
 
@@ -43,12 +44,12 @@ namespace care{
             isRunning = true;
             progress = 0;
 
-            std::pair<Read, std::uint64_t> pair = buffer->get();
+            std::pair<Read, ReadId_t> pair = buffer->get();
             int Ncount = 0;
             char bases[4]{'A', 'C', 'G', 'T'};
             while (pair != buffer->defaultValue) {
                 Read& read = pair.first;
-                const std::uint64_t readnum = pair.second;
+                const ReadId_t readnum = pair.second;
 
                 //replace 'N' with "random" base
                 for(auto& c : read.sequence){
@@ -87,12 +88,12 @@ namespace care{
         	}
 
         	Read read;
-        	std::uint64_t progress = 0;
+        	ReadId_t progress = 0;
             int Ncount = 0;
             char bases[4]{'A', 'C', 'G', 'T'};
 
         	while (reader->getNextRead(&read)) {
-                std::uint64_t readIndex = reader->getReadnum() - 1;
+                ReadId_t readIndex = reader->getReadnum() - 1;
 
         		//replace 'N' with 'A'
                 for(auto& c : read.sequence){
@@ -109,7 +110,7 @@ namespace care{
         }else{
             //multi-threaded insertion
 
-            using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
+            using Buffer_t = ThreadsafeBuffer<std::pair<Read, ReadId_t>, 30000>;
 
             std::vector<BuildThread<Buffer_t>> buildthreads(nThreads);
             std::vector<Buffer_t> buffers(nThreads);
@@ -138,7 +139,7 @@ namespace care{
         	int target = 0;
 
         	while (reader->getNextRead(&read)) {
-                std::uint64_t readnum = reader->getReadnum()-1;
+                ReadId_t readnum = reader->getReadnum()-1;
         		target = readnum % nThreads;
         		buffers[target].add( { read, readnum });
         	}

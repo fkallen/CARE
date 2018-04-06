@@ -32,7 +32,7 @@ Minhasher::Minhasher(const MinhashOptions& parameters)
     }
 }
 
-void Minhasher::init(std::uint64_t nReads_){
+void Minhasher::init(ReadId_t nReads_){
     if(nReads_-1 > max_read_num)
 		throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads!!!");
 
@@ -54,7 +54,7 @@ void Minhasher::clear(){
 }
 
 
-void Minhasher::insertSequence(const std::string& sequence, const std::uint64_t readnum)
+void Minhasher::insertSequence(const std::string& sequence, const ReadId_t readnum)
 {
 	if(readnum > max_read_num)
 		throw std::runtime_error("Minhasher::insertSequence: Index_t cannot represent readnum. "
