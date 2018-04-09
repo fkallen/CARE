@@ -59,7 +59,7 @@ namespace args{
         }
         CorrectionOptions result{
             correctionMode,
-            false, //correct candidates
+            true, //correct candidates
 			pr["useQualityScores"].as<bool>(),
             pr["coverage"].as<double>(),
             pr["errorrate"].as<double>(),

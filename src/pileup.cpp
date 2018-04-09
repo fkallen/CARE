@@ -419,15 +419,23 @@ namespace care{
 
 			batchElem.correctedSequence.resize(subjectlength);
 
+            auto isGoodAvgSupport = [&](){
+                return properties.avg_support >= 1.0-correctionSettings.errorrate;
+            };
+            auto isGoodMinSupport = [&](){
+                return properties.min_support >= 1.0-3.0 * correctionSettings.errorrate;
+            };
+            auto isGoodMinCoverage = [&](){
+                return properties.min_coverage >= correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
+            };
+
 			//TODO vary parameters
-			properties.isHQ = properties.avg_support >= 1.0-correctionSettings.errorrate
-				&& properties.min_support >= 1.0-3.0*correctionSettings.errorrate
-				&& properties.min_coverage >= correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
+			properties.isHQ = isGoodAvgSupport() && isGoodMinSupport() && isGoodMinCoverage();
 
 			if(properties.isHQ){
-                properties.failedAvgSupport = false;
-                properties.failedMinSupport = false;
-                properties.failedMinCoverage = false;
+                properties.failedAvgSupport = !isGoodAvgSupport();
+                properties.failedMinSupport = !isGoodMinSupport();
+                properties.failedMinCoverage = !isGoodMinCoverage();
 		#if 1
 				//correct anchor
 				for(int i = 0; i < subjectlength; i++){

@@ -22,6 +22,67 @@
 
 namespace care{
 
+    namespace caredetail{
+
+        template<class T, class Count>
+		struct Dist{
+			T max;
+			T average;
+			T stddev;
+			Count maxCount;
+			Count averageCount;
+		};
+
+		template<class T, class Count>
+		Dist<T,Count> estimateDist(const std::map<T,Count>& map){
+			Dist<T, Count> distribution;
+
+			Count sum = 0;
+			std::vector<std::pair<T, Count>> vec(map.begin(), map.end());
+			std::sort(vec.begin(), vec.end(), [](const auto& a, const auto& b){
+				return a.second < b.second;
+			});
+			
+		// AVG	
+			sum = 0;
+			for(const auto& pair : map){
+				sum += pair.second;
+			}
+			distribution.averageCount = sum / vec.size();
+			
+			auto it = std::lower_bound(vec.begin(),
+										vec.end(),
+										std::make_pair(T{}, distribution.averageCount),
+										[](const auto& a, const auto& b){
+											return a.second < b.second;
+										});	
+			if(it == vec.end())
+				it = vec.end() - 1;	
+			
+			distribution.average = it->first;
+		// MAX	
+			it = std::max_element(vec.begin(), vec.end(), [](const auto& a, const auto& b){
+				return a.second < b.second;
+			});
+
+			distribution.max = it->first;
+			distribution.maxCount = it->second;
+		// STDDEV
+			T sum2 = 0;
+			distribution.stddev = 0;
+			for(const auto& pair : map){
+				T tmp = sum2;
+				sum2 += pair.first - distribution.average;
+				if((tmp > 0 && sum2 < 0 && pair.first - distribution.average > 0) || (tmp < 0 && sum2 > 0 && pair.first - distribution.average < 0))
+					std::cout << "overflow" << std::endl;
+			}
+
+			distribution.stddev = std::sqrt(1.0/vec.size() * sum2);
+
+			return distribution;
+		} 
+    }
+
 /*
     Block distribution
 */
@@ -66,7 +127,7 @@ struct BatchGenerator{
     	}
         return result;
     }
-private:
+
     std::uint64_t batchsize;
     std::uint64_t firstId;
     std::uint64_t lastIdExcl;
@@ -129,8 +190,9 @@ struct ErrorCorrectionThread{
     std::thread thread;
     bool isRunning = false;
     volatile bool stopAndAbort = false;
-
-    std::map<std::uint64_t, std::uint64_t> ncandidates;
+    volatile bool doEstimateDeviation = false;
+    std::map<std::int64_t, std::int64_t>* allncandidates;
+    std::map<std::int64_t, std::int64_t> ncandidates;
 
     void run(){
         if(isRunning) throw std::runtime_error("ErrorCorrectionThread::run: Is already running.");
@@ -202,7 +264,22 @@ void ErrorCorrectionThread::execute() {
     std::uint64_t savedAlignments = 0;
     std::uint64_t performedAlignments = 0;
 
+    bool hasEstimatedDeviation = false;
+    std::uint64_t estimatedMeanAlignedCandidates = 0;
+    std::uint64_t estimatedDeviationAlignedCandidates = 0;
+	std::uint64_t estimatedAlignmentCountThreshold = 0;
+
 	while(!stopAndAbort &&!readIds.empty()){
+
+        if(doEstimateDeviation){
+            hasEstimatedDeviation = true;
+			doEstimateDeviation = false;
+
+            auto alignmentdist = caredetail::estimateDist(*allncandidates);
+			estimatedMeanAlignedCandidates = alignmentdist.max;
+			estimatedDeviationAlignedCandidates = alignmentdist.stddev;
+			estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates + 2.5 * estimatedDeviationAlignedCandidates;
+        }
 
 		//fit vector size to actual batch size
 		if (batchElems.size() != readIds.size()) {
@@ -248,13 +325,20 @@ void ErrorCorrectionThread::execute() {
 
 
         int finalIters[16]{0};
-        int maxcandidates = 0;
+        std::uint64_t maxcandidates = 0;
 
         for(const auto& b : batchElems){
             if(b.active)
-                maxcandidates = int(b.n_unique_candidates) > maxcandidates ? int(b.n_unique_candidates) : maxcandidates;
+                maxcandidates = std::max(b.n_unique_candidates, maxcandidates);
         }
+        if(hasEstimatedDeviation)
+			maxcandidates = std::min(estimatedAlignmentCountThreshold, maxcandidates);
+        
+#if 0
         const int alignmentbatchsize = 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
+#else
+        const std::uint64_t alignmentbatchsize = maxcandidates;
+#endif
 
         const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
 
@@ -630,46 +714,69 @@ void correct(const MinhashOptions& minhashOptions,
 #ifdef DO_PROFILE
     int sleepiter = 0;
 #endif
-    if(runtimeOptions.showProgress){
-        std::chrono::duration<int> runtime = std::chrono::seconds(0);
-        std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
-        ReadId_t progress = 0;
-        while(progress < props.nReads){
-            progress = 0;
-            for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
-                progress += ecthreads[threadId].nProcessedReads;
+    std::map<std::int64_t, std::int64_t> allncandidates;
+
+    std::chrono::duration<int> runtime = std::chrono::seconds(0);
+    std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
+    ReadId_t progress = 0;
+	double previousDiv = 0.0;
+    while(progress < props.nReads){
+        progress = 0;
+        for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
+            progress += ecthreads[threadId].nProcessedReads;
+        }
+
+        if(progress / 1000000.0 >= previousDiv + 1){
+            std::cout << "Estimating number of alignments per read...\n";
+			allncandidates.clear();
+            for(const auto& thread : ecthreads){
+                for(const auto& pair : thread.ncandidates){
+                    allncandidates[pair.first] += pair.second;
+                }
             }
+            for(auto& thread : ecthreads){
+                thread.allncandidates = &allncandidates;
+                thread.doEstimateDeviation = true;
+            }            
+			previousDiv = progress / 1000000.0;
+            auto distribution = caredetail::estimateDist(allncandidates);
+            std::cout << "argmax: " << distribution.max << ", avg: " << distribution.average << ", stddev: " << distribution.stddev << std::endl;
+        }
+        
+        
+
+        if(runtimeOptions.showProgress){
             printf("Progress: %3.2f %% (Runtime: %03d:%02d:%02d)\r",
                     ((progress * 1.0 / props.nReads) * 100.0),
                     int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
                     int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count() % 60),
                     int(runtime.count() % 60));
             std::cout << std::flush;
-            if(progress < props.nReads){
-                  std::this_thread::sleep_for(sleepinterval);
-                  runtime += sleepinterval;
-            }
-#ifdef DO_PROFILE
-            sleepiter++;
-
-            #ifdef __NVCC__
-                if(sleepiter == 5)
-                    cudaProfilerStart(); CUERR;
-            #endif
-
-
-            #ifdef __NVCC__
-            if(sleepiter == 6){
-                cudaProfilerStop(); CUERR;
-                for(auto& t : ecthreads){
-                    t.stopAndAbort = true;
-                    t.join();
-                }
-                std::exit(0);
-            }
-            #endif
-#endif
         }
+        if(progress < props.nReads){
+              std::this_thread::sleep_for(sleepinterval);
+              runtime += sleepinterval;
+        }
+#ifdef DO_PROFILE
+        sleepiter++;
+
+        #ifdef __NVCC__
+            if(sleepiter == 5)
+                cudaProfilerStart(); CUERR;
+        #endif
+
+
+        #ifdef __NVCC__
+        if(sleepiter == 6){
+            cudaProfilerStop(); CUERR;
+            for(auto& t : ecthreads){
+                t.stopAndAbort = true;
+                t.join();
+            }
+            std::exit(0);
+        }
+        #endif
+#endif
     }
 
     for (auto& thread : ecthreads)
@@ -678,14 +785,21 @@ void correct(const MinhashOptions& minhashOptions,
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);
 
-    std::map<std::uint64_t, std::uint64_t> ncandidates;
+    std::map<std::int64_t, std::int64_t> ncandidates;
     for(const auto& thread : ecthreads){
         for(const auto& pair : thread.ncandidates){
             ncandidates[pair.first] += pair.second;
         }
     }
 
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> vec(ncandidates.begin(), ncandidates.end());
+    auto distribution = caredetail::estimateDist(ncandidates);
+	std::cout << "distribution.max " << distribution.max << std::endl;
+	std::cout << "distribution.average " << distribution.average << std::endl;
+	std::cout << "distribution.stddev " << distribution.stddev << std::endl;
+	std::cout << "distribution.maxCount " << distribution.maxCount << std::endl;
+	std::cout << "distribution.averageCount " << distribution.averageCount << std::endl;			  
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> vec(ncandidates.begin(), ncandidates.end());
     std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
 
     std::ofstream of("ncandidates.txt");
