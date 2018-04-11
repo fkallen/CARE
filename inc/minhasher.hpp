@@ -82,7 +82,8 @@ struct Minhasher {
 
 	void insertSequence(const std::string& sequence, const ReadId_t readnum);
 
-    std::vector<Result_t> getCandidates(const std::string& sequence) const;
+    std::vector<Result_t> getCandidates(const std::string& sequence,
+                                        std::uint64_t max_number_candidates = std::numeric_limits<std::uint64_t>::max()) const;
 
 	void saveTablesToFile(std::string filename) const;
 

@@ -93,7 +93,7 @@ struct BatchElem{
     void set_number_of_sequences(std::uint64_t num);
     void set_number_of_unique_sequences(std::uint64_t num);
     void set_read_id(ReadId_t id);
-    void findCandidates();
+    void findCandidates(std::uint64_t max_number_candidates);
     void fetch_query_data_from_readstorage();
     void set_candidate_ids(std::vector<Minhasher::Result_t>&& ids);
     void make_unique_sequences();

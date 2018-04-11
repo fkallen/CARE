@@ -87,12 +87,12 @@ namespace care{
         active = true;
     }
 
-    void BatchElem::findCandidates(){
+    void BatchElem::findCandidates(std::uint64_t max_number_candidates){
         //get data of sequence which should be corrected
         fetch_query_data_from_readstorage();
 
         //get candidate ids from minhasher
-        set_candidate_ids(minhasher->getCandidates(fwdSequenceString));
+        set_candidate_ids(minhasher->getCandidates(fwdSequenceString, max_number_candidates));
         if(candidateIds.size() == 0){
             //no need for further processing without candidates
             active = false;

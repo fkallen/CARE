@@ -87,7 +87,8 @@ void Minhasher::insertSequence(const std::string& sequence, const ReadId_t readn
 	}
 }
 
-std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& sequence) const{
+std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& sequence,
+                                                          std::uint64_t max_number_candidates) const{
     static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
 	// we do not consider reads which are shorter than k
 	if(sequence.size() < unsigned(minparams.k))
@@ -99,24 +100,39 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& seq
 
 	minhashfunc(sequence, hashValues, isForwardStrand);
 
-	std::vector<Value_t> allMinhashResults;
 
-	for(int map = 0; map < minparams.maps; ++map) {
+    std::vector<Value_t> allUniqueResults;
+    Index_t n_unique_elements = 0;
+	for(int map = 0; map < minparams.maps && allUniqueResults.size() <= max_number_candidates; ++map) {
 		Key_t key = hashValues[map] & key_mask;
 
 		std::vector<Value_t> entries = minhashTables[map]->get(key);
 
-		allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
+		/*allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
+        std::sort(allMinhashResults.begin(), allMinhashResults.end());
+    	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
+    	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
+    	allMinhashResults.resize(n_unique_elements);*/
+
+        std::sort(entries.begin(), entries.end());
+        auto uniqueEnd = std::unique(entries.begin(), entries.end());
+        entries.resize(std::distance(entries.begin(), uniqueEnd));
+
+        std::vector<Value_t> tmp(allUniqueResults);
+        allUniqueResults.resize(tmp.size() + entries.size());
+        std::merge(entries.begin(), entries.end(), tmp.begin(), tmp.end(), allUniqueResults.begin());
+        auto uniqueEnd2 = std::unique(allUniqueResults.begin(), allUniqueResults.end());
+        allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd2));
 	}
 
-	Index_t n_unique_elements = 0;
 
-	std::sort(allMinhashResults.begin(), allMinhashResults.end());
+
+	/*std::sort(allMinhashResults.begin(), allMinhashResults.end());
 	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
 	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
-	allMinhashResults.resize(n_unique_elements);
+	allMinhashResults.resize(n_unique_elements);*/
 
-	return allMinhashResults;
+	return allUniqueResults;
 }
 
 #if 0
