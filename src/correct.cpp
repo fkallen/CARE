@@ -42,25 +42,25 @@ namespace care{
 			std::sort(vec.begin(), vec.end(), [](const auto& a, const auto& b){
 				return a.second < b.second;
 			});
-			
-		// AVG	
+
+		// AVG
 			sum = 0;
 			for(const auto& pair : map){
 				sum += pair.second;
 			}
 			distribution.averageCount = sum / vec.size();
-			
+
 			auto it = std::lower_bound(vec.begin(),
 										vec.end(),
 										std::make_pair(T{}, distribution.averageCount),
 										[](const auto& a, const auto& b){
 											return a.second < b.second;
-										});	
+										});
 			if(it == vec.end())
-				it = vec.end() - 1;	
-			
+				it = vec.end() - 1;
+
 			distribution.average = it->first;
-		// MAX	
+		// MAX
 			it = std::max_element(vec.begin(), vec.end(), [](const auto& a, const auto& b){
 				return a.second < b.second;
 			});
@@ -71,16 +71,13 @@ namespace care{
 			T sum2 = 0;
 			distribution.stddev = 0;
 			for(const auto& pair : map){
-				T tmp = sum2;
 				sum2 += pair.first - distribution.average;
-				if((tmp > 0 && sum2 < 0 && pair.first - distribution.average > 0) || (tmp < 0 && sum2 > 0 && pair.first - distribution.average < 0))
-					std::cout << "overflow" << std::endl;
 			}
 
 			distribution.stddev = std::sqrt(1.0/vec.size() * sum2);
 
 			return distribution;
-		} 
+		}
     }
 
 /*
@@ -315,7 +312,8 @@ void ErrorCorrectionThread::execute() {
         // get query data, determine candidates via minhashing, get candidate data
         for(auto& b : batchElems){
             if(b.active){
-                b.findCandidates();
+                b.findCandidates(hasEstimatedDeviation ? estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage
+                                                       : std::numeric_limits<std::uint64_t>::max());
                 ncandidates[b.n_unique_candidates]++;
             }
         }
@@ -331,11 +329,17 @@ void ErrorCorrectionThread::execute() {
             if(b.active)
                 maxcandidates = std::max(b.n_unique_candidates, maxcandidates);
         }
-        if(hasEstimatedDeviation)
-			maxcandidates = std::min(estimatedAlignmentCountThreshold, maxcandidates);
-        
+        //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
+        if(hasEstimatedDeviation){
+            for(auto& b : batchElems){
+                if(b.active && b.n_unique_candidates > estimatedAlignmentCountThreshold)
+                    b.active = false;
+            }
+        }
+			//maxcandidates = std::min(estimatedAlignmentCountThreshold, maxcandidates);
+
 #if 0
-        const int alignmentbatchsize = 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage);
+        const std::uint64_t alignmentbatchsize = std::min(maxcandidates, 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage));
 #else
         const std::uint64_t alignmentbatchsize = maxcandidates;
 #endif
@@ -728,7 +732,6 @@ void correct(const MinhashOptions& minhashOptions,
 
         if(progress / 1000000.0 >= previousDiv + 1){
             std::cout << "Estimating number of alignments per read...\n";
-			allncandidates.clear();
             for(const auto& thread : ecthreads){
                 for(const auto& pair : thread.ncandidates){
                     allncandidates[pair.first] += pair.second;
@@ -737,13 +740,13 @@ void correct(const MinhashOptions& minhashOptions,
             for(auto& thread : ecthreads){
                 thread.allncandidates = &allncandidates;
                 thread.doEstimateDeviation = true;
-            }            
+            }
 			previousDiv = progress / 1000000.0;
             auto distribution = caredetail::estimateDist(allncandidates);
             std::cout << "argmax: " << distribution.max << ", avg: " << distribution.average << ", stddev: " << distribution.stddev << std::endl;
         }
-        
-        
+
+
 
         if(runtimeOptions.showProgress){
             printf("Progress: %3.2f %% (Runtime: %03d:%02d:%02d)\r",
@@ -797,7 +800,7 @@ void correct(const MinhashOptions& minhashOptions,
 	std::cout << "distribution.average " << distribution.average << std::endl;
 	std::cout << "distribution.stddev " << distribution.stddev << std::endl;
 	std::cout << "distribution.maxCount " << distribution.maxCount << std::endl;
-	std::cout << "distribution.averageCount " << distribution.averageCount << std::endl;			  
+	std::cout << "distribution.averageCount " << distribution.averageCount << std::endl;
 
     std::vector<std::pair<std::int64_t, std::int64_t>> vec(ncandidates.begin(), ncandidates.end());
     std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
