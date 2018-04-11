@@ -419,23 +419,28 @@ namespace care{
 
 			batchElem.correctedSequence.resize(subjectlength);
 
+            const double avg_support_threshold = 1.0-1.0*correctionSettings.errorrate;
+            const double min_support_threshold = 1.0-3.0*correctionSettings.errorrate;
+            const double min_coverage_threshold = correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
+
             auto isGoodAvgSupport = [&](){
-                return properties.avg_support >= 1.0-correctionSettings.errorrate;
+                return properties.avg_support >= avg_support_threshold;
             };
             auto isGoodMinSupport = [&](){
-                return properties.min_support >= 1.0-3.0 * correctionSettings.errorrate;
+                return properties.min_support >= min_support_threshold;
             };
             auto isGoodMinCoverage = [&](){
-                return properties.min_coverage >= correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
+                return properties.min_coverage >= min_coverage_threshold;
             };
 
 			//TODO vary parameters
 			properties.isHQ = isGoodAvgSupport() && isGoodMinSupport() && isGoodMinCoverage();
 
+            properties.failedAvgSupport = !isGoodAvgSupport();
+            properties.failedMinSupport = !isGoodMinSupport();
+            properties.failedMinCoverage = !isGoodMinCoverage();
+
 			if(properties.isHQ){
-                properties.failedAvgSupport = !isGoodAvgSupport();
-                properties.failedMinSupport = !isGoodMinSupport();
-                properties.failedMinCoverage = !isGoodMinCoverage();
 		#if 1
 				//correct anchor
 				for(int i = 0; i < subjectlength; i++){
@@ -486,8 +491,8 @@ namespace care{
 								newColMinCov = h_coverage[columnindex] < newColMinCov ? h_coverage[columnindex] : newColMinCov;
 							}
 
-							if(newColMinSupport >= 1-3*correctionSettings.errorrate
-								&& newColMinCov >= correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage){
+							if(newColMinSupport >= min_support_threshold
+								&& newColMinCov >= min_coverage_threshold){
 
                                 std::string correctedString(&h_consensus[queryColumnsBegin_incl], &h_consensus[queryColumnsEnd_excl]);
 
@@ -502,9 +507,6 @@ namespace care{
 				}
 		#endif
 			}else{
-                properties.failedAvgSupport = properties.avg_support < 1.0-correctionSettings.errorrate;
-                properties.failedMinSupport = properties.min_support < 1.0-3.0*correctionSettings.errorrate;
-                properties.failedMinCoverage = properties.min_coverage < correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
 		#if 0
 				//correct anchor
 		//TODO vary parameters
@@ -516,20 +518,19 @@ namespace care{
 					const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
 
 		#if 1
-					if(h_support[globalIndex] >= 1.0-3.0*correctionSettings.errorrate){
+					if(h_support[globalIndex] >= min_support_threshold){
 						batchElem.correctedSequence[i] = h_consensus[globalIndex];
 						foundAColumn = true;
 					}else{
 		//#else
-                    const double limit = correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
-					if(h_support[globalIndex] > 0.5 && h_origCoverage[globalIndex] < limit){
+					if(h_support[globalIndex] > 0.5 && h_origCoverage[globalIndex] < min_coverage_threshold){
 						double avgsupportkregion = 0;
 						int c = 0;
 						bool kregioncoverageisgood = true;
 						for(int j = i - correctionSettings.k/2; j <= i + correctionSettings.k/2 && kregioncoverageisgood; j++){
 							if(j != i && j >= 0 && j < subjectlength){
 								avgsupportkregion += h_support[columnProperties.subjectColumnsBegin_incl + j];
-								kregioncoverageisgood &= (h_coverage[columnProperties.subjectColumnsBegin_incl + j] >= limit);
+								kregioncoverageisgood &= (h_coverage[columnProperties.subjectColumnsBegin_incl + j] >= min_coverage_threshold);
 								c++;
 							}
 						}
