@@ -330,7 +330,7 @@ void ErrorCorrectionThread::execute() {
 #endif
 
         const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
-
+        constexpr bool canUseGpu = true;
         for(int iter = 0; iter < maxiters; iter++){
             int batchindex = 0;
             int begin = iter * alignmentbatchsize;
@@ -346,14 +346,14 @@ void ErrorCorrectionThread::execute() {
                                                                 begin,
                                                                 alignmentbatchsize,
                                                                 goodAlignmentProperties,
-                                                                true);
+                                                                canUseGpu);
                     }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
                         device = semi_global_alignment_async(sgabuffers[batchindex],
                                                              b,
                                                              begin,
                                                              alignmentbatchsize,
                                                              alignmentOptions,
-                                                             true);
+                                                             canUseGpu);
                     }else{
                         throw std::runtime_error("Alignment: invalid correction mode.");
                     }
@@ -378,14 +378,14 @@ void ErrorCorrectionThread::execute() {
                                                                 begin,
                                                                 alignmentbatchsize,
                                                                 goodAlignmentProperties,
-                                                                true);
+                                                                canUseGpu);
                     }else if (correctionOptions.correctionMode == CorrectionMode::Graph){
                         get_semi_global_alignment_results(sgabuffers[batchindex],
                                                              b,
                                                              begin,
                                                              alignmentbatchsize,
                                                              alignmentOptions,
-                                                             true);
+                                                             canUseGpu);
                     }else{
                         throw std::runtime_error("Alignment: invalid correction mode.");
                     }
@@ -654,15 +654,21 @@ void correct(const MinhashOptions& minhashOptions,
             std::map<std::int64_t, std::int64_t> candidateMap;
 
             for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
-                BatchElem b(&readStorage,
-                          &minhasher,
-                          correctionOptions.estimatedErrorrate,
-                          correctionOptions.estimatedCoverage, correctionOptions.m_coverage,
-                          goodAlignmentProperties.max_mismatch_ratio, goodAlignmentProperties.min_overlap,
-                          goodAlignmentProperties.min_overlap_ratio);
-                b.set_read_id(readId);
-                b.findCandidates(std::numeric_limits<std::uint64_t>::max());
-                candidateMap[b.n_unique_candidates]++;
+                std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
+                auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
+                candidateList.erase(std::find(candidateList.begin(), candidateList.end(), readId));
+
+                std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
+                numseqpairs.reserve(candidateList.size());
+
+                for(const auto id : candidateList){
+                    numseqpairs.emplace_back(id, readStorage.fetchSequence_ptr(id));
+                }
+
+                std::sort(numseqpairs.begin(), numseqpairs.end(), [](auto l, auto r){return l.second < r.second;});
+                auto uniqueend = std::unique(numseqpairs.begin(), numseqpairs.end(), [](auto l, auto r){return l.second == r.second;});
+                std::size_t numunique = std::distance(numseqpairs.begin(), uniqueend);
+                candidateMap[numunique]++;
             }
 
             return candidateMap;
@@ -700,7 +706,7 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
-    const int maxCPUThreadsPerGPU = 8;
+    const int maxCPUThreadsPerGPU = 16;
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 
@@ -714,7 +720,7 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
-    std::vector<int> gpuThresholdsSHD(deviceIds.size());
+    std::vector<int> gpuThresholdsSHD(deviceIds.size(), 0);
     for(size_t i = 0; i < deviceIds.size(); i++){
         /*int threshold = find_shifted_hamming_distance_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
@@ -722,7 +728,7 @@ void correct(const MinhashOptions& minhashOptions,
         gpuThresholdsSHD[i] = std::min(0, 0);
     }
 
-    std::vector<int> gpuThresholdsSGA(deviceIds.size());
+    std::vector<int> gpuThresholdsSGA(deviceIds.size(), 0);
     for(size_t i = 0; i < deviceIds.size(); i++){
         /*int threshold = find_semi_global_alignment_gpu_threshold(deviceIds[i],
                                                                        props.minSequenceLength,
@@ -730,10 +736,10 @@ void correct(const MinhashOptions& minhashOptions,
         gpuThresholdsSGA[i] = std::min(0, 0);
     }
 
-    for(size_t i = 0; i < gpuThresholdsSHD.size(); i++)
+    /*for(size_t i = 0; i < gpuThresholdsSHD.size(); i++)
         std::cout << "GPU " << i
                   << ": gpuThresholdSHD " << gpuThresholdsSHD[i]
-                  << " gpuThresholdSGA " << gpuThresholdsSGA[i] << std::endl;
+                  << " gpuThresholdSGA " << gpuThresholdsSGA[i] << std::endl;*/
 
     for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
 
@@ -741,8 +747,8 @@ void correct(const MinhashOptions& minhashOptions,
         CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-        threadOpts.gpuThresholdSHD = gpuThresholdsSHD[threadId % deviceIds.size()];
-        threadOpts.gpuThresholdSGA = gpuThresholdsSGA[threadId % deviceIds.size()];
+        threadOpts.gpuThresholdSHD = deviceIds.size() == 0 ? 0 : gpuThresholdsSHD[threadId % deviceIds.size()];
+        threadOpts.gpuThresholdSGA = deviceIds.size() == 0 ? 0 : gpuThresholdsSGA[threadId % deviceIds.size()];
         threadOpts.outputfile = tmpfiles[threadId];
         threadOpts.batchGen = &generators[threadId];
         threadOpts.minhasher = &minhasher;
