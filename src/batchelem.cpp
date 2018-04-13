@@ -124,7 +124,7 @@ namespace care{
     }
 
     void BatchElem::make_unique_sequences(){
-        std::vector<std::pair<ReadId_t, const Sequence*>> numseqpairs;
+        std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
         numseqpairs.reserve(candidateIds.size());
 
         //std::chrono::time_point < std::chrono::system_clock > t1 =
