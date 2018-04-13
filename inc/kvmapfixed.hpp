@@ -26,6 +26,8 @@ struct KVMapFixed{
     using Value_t = value_t;
     using Index_t = index_t;
 
+    static constexpr bool resultsAreSorted = true;
+
 	Index_t size;
 	Index_t nKeys;
 	Index_t nValues;
@@ -110,12 +112,16 @@ struct KVMapFixed{
 
 #ifndef __NVCC__
 //#if 1
-		//sort indices and keys by keys
+
         std::vector<Index_t> indices(size);
 		std::iota(indices.begin(), indices.end(), Index_t(0));
 
+        //sort indices by key. if keys are equal, sort by value
         std::sort(indices.begin(), indices.end(), [&](auto a, auto b)->bool{
-			return keys[a] < keys[b];
+            if(keys[a] == keys[b]){
+    			return values[a] < values[b];
+    		}
+    		return keys[a] < keys[b];
 		});
 
         std::vector<Value_t> sortedValues(size);
@@ -155,16 +161,37 @@ struct KVMapFixed{
 
 		nKeys = unique_end;
 #else
-		//sort indices and keys by keys on gpu
+
+		//sort values and keys by keys on gpu. equal keys are sorted by value
 		thrust::device_vector<Key_t> d_keys(size);
 		thrust::device_vector<Value_t> d_vals(size);
+        thrust::device_vector<Index_t> d_indices(size);
 
 		thrust::copy(keys.begin(), keys.end(), d_keys.begin());
         thrust::copy(values.begin(), values.end(), d_vals.begin());
+        thrust::sequence(d_indices.begin(), d_indices.end(), Index_t(0));
 
-		thrust::sort_by_key(d_keys.begin(), d_keys.end(), d_vals.begin());
+        thrust::device_ptr<Key_t> keysptr = d_keys.data();
+        thrust::device_ptr<Value_t> valuesptr = d_vals.data();
 
-		thrust::copy(d_vals.begin(), d_vals.end(), values.begin());
+        thrust::sort(d_indices.begin(),
+                     d_indices.end(),
+                     [=] __device__ (const Index_t &lhs, const Index_t &rhs) {
+                        if(keysptr[lhs] == keysptr[rhs]){
+                            return valuesptr[lhs] < valuesptr[rhs];
+                        }
+                        return keysptr[lhs] < keysptr[rhs];
+        });
+
+        thrust::copy(thrust::make_permutation_iterator(d_vals.begin(), d_indices.begin()),
+                     thrust::make_permutation_iterator(d_vals.begin(), d_indices.end()),
+                     values.begin());
+
+        thrust::copy(thrust::make_permutation_iterator(d_keys.begin(), d_indices.begin()),
+                     thrust::make_permutation_iterator(d_keys.begin(), d_indices.end()),
+                     keys.begin());
+
+        thrust::copy(keys.begin(), keys.end(), d_keys.begin());
 
 		nKeys = thrust::inner_product(d_keys.begin(), d_keys.end() - 1,
 						d_keys.begin() + 1,

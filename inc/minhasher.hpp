@@ -56,6 +56,7 @@ struct Minhasher {
 
     using Value_t = Index_t; //Value type for hashmap
     using Result_t = Index_t; // Return value for minhash query
+    using Map_t = KVMapFixed<Key_t, Value_t, Index_t>;
 
 	static constexpr int bits_key = sizeof(Key_t) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
@@ -65,7 +66,7 @@ struct Minhasher {
 
 
 	// the actual hash maps
-	std::vector<std::unique_ptr<KVMapFixed<Key_t, Value_t, Index_t>>> minhashTables;
+	std::vector<std::unique_ptr<Map_t>> minhashTables;
 	MinhashOptions minparams;
 	ReadId_t nReads;
 

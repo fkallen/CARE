@@ -42,7 +42,7 @@ void Minhasher::init(ReadId_t nReads_){
 
 	for (int i = 0; i < minparams.maps; ++i) {
 		minhashTables[i].reset();
-		minhashTables[i].reset(new KVMapFixed<Key_t, Value_t, Index_t>(nReads));
+		minhashTables[i].reset(new Map_t(nReads));
 	}
 }
 
@@ -100,23 +100,17 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& seq
 
 	minhashfunc(sequence, hashValues, isForwardStrand);
 
-
     std::vector<Value_t> allUniqueResults;
-    Index_t n_unique_elements = 0;
 	for(int map = 0; map < minparams.maps && allUniqueResults.size() <= max_number_candidates; ++map) {
 		Key_t key = hashValues[map] & key_mask;
 
 		std::vector<Value_t> entries = minhashTables[map]->get(key);
 
-		/*allMinhashResults.insert(allMinhashResults.end(), entries.begin(), entries.end());
-        std::sort(allMinhashResults.begin(), allMinhashResults.end());
-    	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
-    	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
-    	allMinhashResults.resize(n_unique_elements);*/
-
-        std::sort(entries.begin(), entries.end());
-        auto uniqueEnd = std::unique(entries.begin(), entries.end());
-        entries.resize(std::distance(entries.begin(), uniqueEnd));
+        if(!Map_t::resultsAreSorted){
+            std::sort(entries.begin(), entries.end());
+        }
+        //auto uniqueEnd = std::unique(entries.begin(), entries.end());
+        //entries.resize(std::distance(entries.begin(), uniqueEnd));
 
         std::vector<Value_t> tmp(allUniqueResults);
         allUniqueResults.resize(tmp.size() + entries.size());
@@ -124,13 +118,6 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& seq
         auto uniqueEnd2 = std::unique(allUniqueResults.begin(), allUniqueResults.end());
         allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd2));
 	}
-
-
-
-	/*std::sort(allMinhashResults.begin(), allMinhashResults.end());
-	auto uniqueEnd = std::unique(allMinhashResults.begin(), allMinhashResults.end());
-	n_unique_elements = std::distance(allMinhashResults.begin(), uniqueEnd);
-	allMinhashResults.resize(n_unique_elements);*/
 
 	return allUniqueResults;
 }
