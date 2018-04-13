@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <thread>
+#include <future>
 
 //#define DO_PROFILE
 
@@ -22,7 +23,7 @@
 
 namespace care{
 
-    namespace caredetail{
+    namespace correctiondetail{
 
         template<class T, class Count>
 		struct Dist{
@@ -131,8 +132,6 @@ struct BatchGenerator{
     std::uint64_t currentId;
 };
 
-
-
 struct CorrectionThreadOptions{
     int threadId;
     int deviceId;
@@ -156,6 +155,8 @@ struct ErrorCorrectionThread{
     CorrectionOptions correctionOptions;
     CorrectionThreadOptions threadOpts;
     SequenceFileProperties fileProperties;
+
+    correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
 
     std::uint64_t nProcessedReads = 0;
 
@@ -187,9 +188,6 @@ struct ErrorCorrectionThread{
     std::thread thread;
     bool isRunning = false;
     volatile bool stopAndAbort = false;
-    volatile bool doEstimateDeviation = false;
-    std::map<std::int64_t, std::int64_t>* allncandidates;
-    std::map<std::int64_t, std::int64_t> ncandidates;
 
     void run(){
         if(isRunning) throw std::runtime_error("ErrorCorrectionThread::run: Is already running.");
@@ -261,22 +259,12 @@ void ErrorCorrectionThread::execute() {
     std::uint64_t savedAlignments = 0;
     std::uint64_t performedAlignments = 0;
 
-    bool hasEstimatedDeviation = false;
-    std::uint64_t estimatedMeanAlignedCandidates = 0;
-    std::uint64_t estimatedDeviationAlignedCandidates = 0;
-	std::uint64_t estimatedAlignmentCountThreshold = 0;
+    const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
+    const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
+	const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
+                                                    + 2.5 * estimatedDeviationAlignedCandidates;
 
 	while(!stopAndAbort &&!readIds.empty()){
-
-        if(doEstimateDeviation){
-            hasEstimatedDeviation = true;
-			doEstimateDeviation = false;
-
-            auto alignmentdist = caredetail::estimateDist(*allncandidates);
-			estimatedMeanAlignedCandidates = alignmentdist.max;
-			estimatedDeviationAlignedCandidates = alignmentdist.stddev;
-			estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates + 2.5 * estimatedDeviationAlignedCandidates;
-        }
 
 		//fit vector size to actual batch size
 		if (batchElems.size() != readIds.size()) {
@@ -312,31 +300,28 @@ void ErrorCorrectionThread::execute() {
         // get query data, determine candidates via minhashing, get candidate data
         for(auto& b : batchElems){
             if(b.active){
-                b.findCandidates(hasEstimatedDeviation ? estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage
-                                                       : std::numeric_limits<std::uint64_t>::max());
-                ncandidates[b.n_unique_candidates]++;
+                b.findCandidates(estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage);
             }
         }
 
 		tpb = std::chrono::system_clock::now();
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
-
         int finalIters[16]{0};
         std::uint64_t maxcandidates = 0;
 
+        //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
+        for(auto& b : batchElems){
+            if(b.active && b.n_unique_candidates > estimatedAlignmentCountThreshold)
+                b.active = false;
+        }
+
+        //get maximum number of unique candidates in current batches
         for(const auto& b : batchElems){
             if(b.active)
                 maxcandidates = std::max(b.n_unique_candidates, maxcandidates);
         }
-        //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
-        if(hasEstimatedDeviation){
-            for(auto& b : batchElems){
-                if(b.active && b.n_unique_candidates > estimatedAlignmentCountThreshold)
-                    b.active = false;
-            }
-        }
-			//maxcandidates = std::min(estimatedAlignmentCountThreshold, maxcandidates);
+
 
 #if 0
         const std::uint64_t alignmentbatchsize = std::min(maxcandidates, 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage));
@@ -657,13 +642,75 @@ void correct(const MinhashOptions& minhashOptions,
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
+    /*
+        Make candidate statistics
+    */
+
+    TIMERSTARTCPU(candidateestimation);
+    std::vector<std::future<std::map<std::int64_t, std::int64_t>>> candidateCounterFutures;
+    const ReadId_t sampleCount = props.nReads / 10;
+    for(int i = 0; i < runtimeOptions.threads; i++){
+        candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
+            std::map<std::int64_t, std::int64_t> candidateMap;
+
+            for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
+                BatchElem b(&readStorage,
+                          &minhasher,
+                          correctionOptions.estimatedErrorrate,
+                          correctionOptions.estimatedCoverage, correctionOptions.m_coverage,
+                          goodAlignmentProperties.max_mismatch_ratio, goodAlignmentProperties.min_overlap,
+                          goodAlignmentProperties.min_overlap_ratio);
+                b.set_read_id(readId);
+                b.findCandidates(std::numeric_limits<std::uint64_t>::max());
+                candidateMap[b.n_unique_candidates]++;
+            }
+
+            return candidateMap;
+        }));
+    }
+
+    std::map<std::int64_t, std::int64_t> allncandidates;
+
+    for(int i = 0; i < runtimeOptions.threads; i++){
+        auto tmpresult = candidateCounterFutures[i].get();
+        for(const auto& pair : tmpresult){
+            allncandidates[pair.first] += pair.second;
+        }
+    }
+
+    auto candidateDistribution = correctiondetail::estimateDist(allncandidates);
+
+    TIMERSTOPCPU(candidateestimation);
+
+    std::cout << "distribution.max " << candidateDistribution.max << std::endl;
+	std::cout << "distribution.average " << candidateDistribution.average << std::endl;
+	std::cout << "distribution.stddev " << candidateDistribution.stddev << std::endl;
+	std::cout << "distribution.maxCount " << candidateDistribution.maxCount << std::endl;
+	std::cout << "distribution.averageCount " << candidateDistribution.averageCount << std::endl;
+
+    std::vector<std::pair<std::int64_t, std::int64_t>> vec(allncandidates.begin(), allncandidates.end());
+    std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
+
+    std::ofstream of("ncandidates.txt");
+    for(const auto& p : vec)
+        of << p.first << " " << p.second << '\n';
+    of.flush();
+
+    /*
+        Spawn correction threads
+    */
+
+    const int maxCPUThreadsPerGPU = 8;
+    const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
+                        : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
+
     std::vector<std::string> tmpfiles;
-    for(int i = 0; i < runtimeOptions.nCorrectorThreads; i++){
+    for(int i = 0; i < nCorrectorThreads; i++){
         tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(i));
     }
 
-    std::vector<BatchGenerator> generators(runtimeOptions.nCorrectorThreads);
-    std::vector<ErrorCorrectionThread> ecthreads(runtimeOptions.nCorrectorThreads);
+    std::vector<BatchGenerator> generators(nCorrectorThreads);
+    std::vector<ErrorCorrectionThread> ecthreads(nCorrectorThreads);
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
@@ -688,9 +735,9 @@ void correct(const MinhashOptions& minhashOptions,
                   << ": gpuThresholdSHD " << gpuThresholdsSHD[i]
                   << " gpuThresholdSGA " << gpuThresholdsSGA[i] << std::endl;
 
-    for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
+    for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
 
-        generators[threadId] = BatchGenerator(props.nReads, correctionOptions.batchsize, threadId, runtimeOptions.nCorrectorThreads);
+        generators[threadId] = BatchGenerator(props.nReads, correctionOptions.batchsize, threadId, nCorrectorThreads);
         CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
@@ -711,6 +758,7 @@ void correct(const MinhashOptions& minhashOptions,
         ecthreads[threadId].correctionOptions = correctionOptions;
         ecthreads[threadId].threadOpts = threadOpts;
         ecthreads[threadId].fileProperties = props;
+        ecthreads[threadId].candidateDistribution = candidateDistribution;
 
         ecthreads[threadId].run();
     }
@@ -718,47 +766,28 @@ void correct(const MinhashOptions& minhashOptions,
 #ifdef DO_PROFILE
     int sleepiter = 0;
 #endif
-    std::map<std::int64_t, std::int64_t> allncandidates;
 
-    std::chrono::duration<int> runtime = std::chrono::seconds(0);
+    std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
+    std::chrono::duration<double> runtime = std::chrono::seconds(0);
     std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
     ReadId_t progress = 0;
-	double previousDiv = 0.0;
     while(progress < props.nReads){
         progress = 0;
-        for(int threadId = 0; threadId < runtimeOptions.nCorrectorThreads; threadId++){
-            progress += ecthreads[threadId].nProcessedReads;
-        }
 
-        if(progress / 1000000.0 >= previousDiv + 1){
-            std::cout << "Estimating number of alignments per read...\n";
-            for(const auto& thread : ecthreads){
-                for(const auto& pair : thread.ncandidates){
-                    allncandidates[pair.first] += pair.second;
-                }
-            }
-            for(auto& thread : ecthreads){
-                thread.allncandidates = &allncandidates;
-                thread.doEstimateDeviation = true;
-            }
-			previousDiv = progress / 1000000.0;
-            auto distribution = caredetail::estimateDist(allncandidates);
-            std::cout << "argmax: " << distribution.max << ", avg: " << distribution.average << ", stddev: " << distribution.stddev << std::endl;
-        }
-
-
+        for (const auto& thread : ecthreads)
+            progress += thread.nProcessedReads;
 
         if(runtimeOptions.showProgress){
             printf("Progress: %3.2f %% (Runtime: %03d:%02d:%02d)\r",
                     ((progress * 1.0 / props.nReads) * 100.0),
                     int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count() % 60),
-                    int(runtime.count() % 60));
+                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                    int(runtime.count()) % 60);
             std::cout << std::flush;
         }
         if(progress < props.nReads){
               std::this_thread::sleep_for(sleepinterval);
-              runtime += sleepinterval;
+              runtime = std::chrono::system_clock::now() - timepoint_begin;
         }
 #ifdef DO_PROFILE
         sleepiter++;
@@ -787,28 +816,6 @@ void correct(const MinhashOptions& minhashOptions,
 
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);
-
-    std::map<std::int64_t, std::int64_t> ncandidates;
-    for(const auto& thread : ecthreads){
-        for(const auto& pair : thread.ncandidates){
-            ncandidates[pair.first] += pair.second;
-        }
-    }
-
-    auto distribution = caredetail::estimateDist(ncandidates);
-	std::cout << "distribution.max " << distribution.max << std::endl;
-	std::cout << "distribution.average " << distribution.average << std::endl;
-	std::cout << "distribution.stddev " << distribution.stddev << std::endl;
-	std::cout << "distribution.maxCount " << distribution.maxCount << std::endl;
-	std::cout << "distribution.averageCount " << distribution.averageCount << std::endl;
-
-    std::vector<std::pair<std::int64_t, std::int64_t>> vec(ncandidates.begin(), ncandidates.end());
-    std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
-
-    std::ofstream of("ncandidates.txt");
-    for(const auto& p : vec)
-        of << p.first << " " << p.second << '\n';
-    of.flush();
 
     minhasher.init(0);
 	readStorage.destroy();
