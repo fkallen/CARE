@@ -32,9 +32,10 @@ Minhasher::Minhasher(const MinhashOptions& parameters)
     }
 }
 
-void Minhasher::init(ReadId_t nReads_){
+void Minhasher::init(std::uint64_t nReads_){
+    if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
     if(nReads_-1 > max_read_num)
-		throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads!!!");
+		throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
 
 	nReads = nReads_;
 
@@ -51,14 +52,12 @@ void Minhasher::clear(){
 	for (int i = 0; i < minparams.maps; ++i) {
 		minhashTables[i]->clear();
 	}
+	nReads = 0;
 }
 
 
 void Minhasher::insertSequence(const std::string& sequence, const ReadId_t readnum)
 {
-	if(readnum > max_read_num)
-		throw std::runtime_error("Minhasher::insertSequence: Index_t cannot represent readnum. "
-                                + std::to_string(readnum) + " > " + std::to_string(max_read_num));
     if(readnum >= nReads)
 		throw std::runtime_error("Minhasher::insertSequence: read number too large. " + std::to_string(readnum) + " > " + std::to_string(nReads));
 

@@ -11,18 +11,13 @@
 namespace care{
     BatchElem::BatchElem(const ReadStorage* rs,
                         const Minhasher* minhasher,
-                        double errorrate_,
-                int estimatedCoverage_, double m_coverage_,
-                double MAX_MISMATCH_RATIO_, int MIN_OVERLAP_, double MIN_OVERLAP_RATIO_)
+                        const CorrectionOptions& CO,
+                        const GoodAlignmentProperties& GAP)
             :   readStorage(rs),
                 minhasher(minhasher),
-                errorrate(errorrate_),
-                estimatedCoverage(estimatedCoverage_),
-                m_coverage(m_coverage_),
-                goodAlignmentsCountThreshold(estimatedCoverage_ * m_coverage_),
-                MAX_MISMATCH_RATIO(MAX_MISMATCH_RATIO_),
-                MIN_OVERLAP(MIN_OVERLAP_),
-                MIN_OVERLAP_RATIO(MIN_OVERLAP_RATIO_){
+                correctionOptions(CO),
+                goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
+                goodAlignmentProperties(GAP){
 
 
     }
@@ -198,8 +193,9 @@ namespace care{
 
             BestAlignment_t bestAlignment = get_best_alignment(res,
                     revcomplres, querylength, candidatelength,
-                    MAX_MISMATCH_RATIO, MIN_OVERLAP,
-                    MIN_OVERLAP_RATIO);
+                    goodAlignmentProperties.max_mismatch_ratio,
+                    goodAlignmentProperties.min_overlap,
+                    goodAlignmentProperties.min_overlap_ratio);
 
             if(bestAlignment == BestAlignment_t::None){
                 //both alignments are bad, cannot use this candidate for correction
@@ -212,19 +208,19 @@ namespace care{
                         return double(revcomplres.nOps) / double(revcomplres.overlap);
                 }();
                 const int candidateCount = candidateCountsPrefixSum[i+1] - candidateCountsPrefixSum[i];
-                if(mismatchratio >= 4 * errorrate){
+                if(mismatchratio >= 4 * correctionOptions.estimatedErrorrate){
                     //best alignments is still not good enough, cannot use this candidate for correction
                     activeCandidates[i] = false;
                 }else{
                     activeCandidates[i] = true;
 
-                    if (mismatchratio < 2 * errorrate) {
+                    if (mismatchratio < 2 * correctionOptions.estimatedErrorrate) {
                         counts[0] += candidateCount;
                     }
-                    if (mismatchratio < 3 * errorrate) {
+                    if (mismatchratio < 3 * correctionOptions.estimatedErrorrate) {
                         counts[1] += candidateCount;
                     }
-                    if (mismatchratio < 4 * errorrate) {
+                    if (mismatchratio < 4 * correctionOptions.estimatedErrorrate) {
                         counts[2] += candidateCount;
                     }
 
@@ -268,13 +264,13 @@ namespace care{
 
         mismatchratioThreshold = 0;
         if (counts[0] >= goodAlignmentsCountThreshold) {
-            mismatchratioThreshold = 2 * errorrate;
+            mismatchratioThreshold = 2 * correctionOptions.estimatedErrorrate;
             stats.correctionCases[0]++;
         } else if (counts[1] >= goodAlignmentsCountThreshold) {
-            mismatchratioThreshold = 3 * errorrate;
+            mismatchratioThreshold = 3 * correctionOptions.estimatedErrorrate;
             stats.correctionCases[1]++;
         } else if (counts[2] >= goodAlignmentsCountThreshold) {
-            mismatchratioThreshold = 4 * errorrate;
+            mismatchratioThreshold = 4 * correctionOptions.estimatedErrorrate;
             stats.correctionCases[2]++;
         } else { //no correction possible
             stats.correctionCases[3]++;

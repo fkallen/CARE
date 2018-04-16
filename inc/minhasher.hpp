@@ -77,7 +77,7 @@ struct Minhasher {
 
 	Minhasher(const MinhashOptions& parameters);
 
-	void init(ReadId_t nReads);
+	void init(std::uint64_t nReads);
 
 	void clear();
 

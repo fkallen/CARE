@@ -271,10 +271,8 @@ void ErrorCorrectionThread::execute() {
             batchElems.resize(readIds.size(),
                               BatchElem(threadOpts.readStorage,
                                         threadOpts.minhasher,
-                                        correctionOptions.estimatedErrorrate,
-                                        correctionOptions.estimatedCoverage, correctionOptions.m_coverage,
-                                        goodAlignmentProperties.max_mismatch_ratio, goodAlignmentProperties.min_overlap,
-                                        goodAlignmentProperties.min_overlap_ratio));
+                                        correctionOptions,
+                                        goodAlignmentProperties));
         }
 
         for(size_t i = 0; i < readIds.size(); i++){
@@ -517,9 +515,10 @@ void ErrorCorrectionThread::execute() {
 
 	} // end batch processing
 
+#if 0
 	{
-
 		std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
+
 		std::cout << "thread " << threadOpts.threadId << " processed " << nProcessedQueries
 				<< " queries" << std::endl;
 		std::cout << "thread " << threadOpts.threadId << " corrected "
@@ -541,77 +540,36 @@ void ErrorCorrectionThread::execute() {
         std::cout << "thread " << threadOpts.threadId << " savedAlignments "
                 << savedAlignments << " performedAlignments " << performedAlignments << std::endl;
 	}
+#endif
 
 #if 1
 	{
         std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
+
+        std::cout << "thread " << threadOpts.threadId
+                << " : find candidates time "
+                << mapMinhashResultsToSequencesTimeTotal.count() << '\n';
+        std::cout << "thread " << threadOpts.threadId << " : alignment time "
+                << getAlignmentsTimeTotal.count() << '\n';
+        std::cout << "thread " << threadOpts.threadId
+                << " : determine good alignments time "
+                << determinegoodalignmentsTime.count() << '\n';
+        std::cout << "thread " << threadOpts.threadId << " : correction time "
+				<< readcorrectionTimeTotal.count() << '\n';
+#if 0
 		if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-			std::cout << "thread " << threadOpts.threadId
-					<< " : mapMinhashResultsToSequencesTimeTotal "
-					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			/*std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer "
-					<< shddata.resizetime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment preprocessing "
-					<< shddata.preprocessingtime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment H2D "
-					<< shddata.h2dtime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment calculation "
-					<< shddata.alignmenttime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment D2H "
-					<< shddata.d2htime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment postprocessing "
-					<< shddata.postprocessingtime.count() << '\n';*/
-			std::cout << "thread " << threadOpts.threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId
-					<< " : correction find good alignments "
-					<< determinegoodalignmentsTime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId
-					<< " : correction fetch good data "
-					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : pileup vote "
 					<< pileupImage.timings.findconsensustime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : pileup correct "
 					<< pileupImage.timings.correctiontime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : correction calculation "
-					<< readcorrectionTimeTotal.count() << '\n';
-			// std::cout << "thread " << threadOpts.threadId << " : pileup resize buffer "
-			// 		<< hcorrectionbuffers.resizetime.count() << '\n';
-			// std::cout << "thread " << threadOpts.threadId << " : pileup preprocessing "
-			// 		<< hcorrectionbuffers.preprocessingtime.count() << '\n';
-			// std::cout << "thread " << threadOpts.threadId << " : pileup H2D "
-			// 		<< hcorrectionbuffers.h2dtime.count() << '\n';
-			// std::cout << "thread " << threadOpts.threadId << " : pileup calculation "
-			// 		<< hcorrectionbuffers.correctiontime.count() << '\n';
-			// std::cout << "thread " << threadOpts.threadId << " : pileup D2H "
-			// 		<< hcorrectionbuffers.d2htime.count() << '\n';
-			// std::cout << "thread " << threadOpts.threadId << " : pileup postprocessing "
-			// 		<< hcorrectionbuffers.postprocessingtime.count() << '\n';
+
 		} else if (correctionOptions.correctionMode == CorrectionMode::Graph) {
-			std::cout << "thread " << threadOpts.threadId
-					<< " : mapMinhashResultsToSequencesTimeTotal "
-					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			/*std::cout << "thread " << threadOpts.threadId << " : alignment resize buffer " << sgadata.resizetime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment preprocessing " << sgadata.preprocessingtime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment H2D " << sgadata.h2dtime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment calculation " << sgadata.alignmenttime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment D2H " << sgadata.d2htime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment postprocessing " << sgadata.postprocessingtime.count() << '\n';*/
-            std::cout << "thread " << threadOpts.threadId << " : alignment total "
-					<< getAlignmentsTimeTotal.count() << '\n';
-            std::cout << "thread " << threadOpts.threadId
-					<< " : correction find good alignments "
-					<< determinegoodalignmentsTime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId
-					<< " : correction fetch good data "
-					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : graph build "
 					<< graphbuildtime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : graph correct "
 					<< graphcorrectiontime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : correction calculation "
-					<< readcorrectionTimeTotal.count() << '\n';
 		}
+#endif
 	}
 #endif
 
@@ -688,11 +646,9 @@ void correct(const MinhashOptions& minhashOptions,
 
     TIMERSTOPCPU(candidateestimation);
 
-    std::cout << "distribution.max " << candidateDistribution.max << std::endl;
-	std::cout << "distribution.average " << candidateDistribution.average << std::endl;
-	std::cout << "distribution.stddev " << candidateDistribution.stddev << std::endl;
-	std::cout << "distribution.maxCount " << candidateDistribution.maxCount << std::endl;
-	std::cout << "distribution.averageCount " << candidateDistribution.averageCount << std::endl;
+    std::cout << "candidates.max " << candidateDistribution.max << std::endl;
+	std::cout << "candidates.average " << candidateDistribution.average << std::endl;
+	std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
 
     std::vector<std::pair<std::int64_t, std::int64_t>> vec(allncandidates.begin(), allncandidates.end());
     std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
@@ -706,7 +662,7 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
-    const int maxCPUThreadsPerGPU = 16;
+    const int maxCPUThreadsPerGPU = 8;
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 
@@ -823,7 +779,7 @@ void correct(const MinhashOptions& minhashOptions,
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);
 
-    minhasher.init(0);
+    minhasher.clear();
 	readStorage.destroy();
 
     std::cout << "begin merge" << std::endl;

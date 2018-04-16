@@ -71,22 +71,17 @@ struct BatchElem{
     const ReadStorage* readStorage;
     const Minhasher* minhasher;
 
-    double errorrate;
-    int estimatedCoverage;
-    double m_coverage;
     double goodAlignmentsCountThreshold;
-    double MAX_MISMATCH_RATIO;
-    int MIN_OVERLAP;
-    double MIN_OVERLAP_RATIO;
+    CorrectionOptions correctionOptions;
+    GoodAlignmentProperties goodAlignmentProperties;
 
     int counts[3] { 0, 0, 0 }; //count number of cases of mismatchratio < 2*errorrate, 3*errorrate, 4*errorrate
 
     //BatchElem() : BatchElem(nullptr, 0.0, 0.0){}
 
     BatchElem(const ReadStorage* rs, const Minhasher* minhasher,
-                double errorrate_,
-                int estimatedCoverage_, double m_coverage_,
-                double MAX_MISMATCH_RATIO_, int MIN_OVERLAP_, double MIN_OVERLAP_RATIO_);
+                const CorrectionOptions& CO,
+                const GoodAlignmentProperties& GAP);
 
     std::uint64_t get_number_of_duplicate_sequences() const;
     void clear();
