@@ -61,12 +61,6 @@ void correctFile(const MinhashOptions& minhashOptions,
 
 
 	TIMERSTOPCPU(CORRECT);
-
-    if (correctionOptions.correctCandidates) {
-		int asd = std::count_if(readIsCorrectedVector.begin(),
-				readIsCorrectedVector.end(), [](auto b) {return b;});
-		std::cout << "total corrected reads: " << asd << std::endl;
-	}
 }
 
 void performCorrection(const cxxopts::ParseResult& args) {
