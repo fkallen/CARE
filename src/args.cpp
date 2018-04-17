@@ -126,9 +126,9 @@ namespace args{
         //check good alignment properties
         auto goodAlignmentProperties = args::to<GoodAlignmentProperties>(args);
 
-        if(goodAlignmentProperties.max_mismatch_ratio < 0.0 || goodAlignmentProperties.max_mismatch_ratio > 1.0){
+        if(goodAlignmentProperties.maxErrorRate < 0.0 || goodAlignmentProperties.maxErrorRate > 1.0){
             valid = false;
-            std::cout << "Error: maxmismatchratio must be in range [0.0, 1.0], is " + std::to_string(goodAlignmentProperties.max_mismatch_ratio) << std::endl;
+            std::cout << "Error: maxmismatchratio must be in range [0.0, 1.0], is " + std::to_string(goodAlignmentProperties.maxErrorRate) << std::endl;
         }
 
         if(goodAlignmentProperties.min_overlap < 1){
