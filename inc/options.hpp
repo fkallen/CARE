@@ -25,7 +25,7 @@ namespace care{
 
     struct GoodAlignmentProperties{
         int min_overlap = 35;
-        double max_mismatch_ratio = 0.2;
+        double maxErrorRate = 0.2;
         double min_overlap_ratio = 0.35;
     };
 
