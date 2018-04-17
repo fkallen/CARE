@@ -2,6 +2,7 @@
 #define CARE_TASK_TIMING_HPP
 
 #include <chrono>
+#include <iostream>
 
 namespace care{
 
@@ -64,6 +65,15 @@ namespace care{
         void postprocessingEnd(){
             b = std::chrono::system_clock::now();
             postprocessingtime += b-a;
+        }
+
+        friend std::ostream& operator<<(std::ostream& stream, const TaskTimings& tt){
+            stream << "Preprocessing: " << tt.preprocessingtime.count();
+            //stream << "H2D: " << tt.h2dtime.count();
+            stream << "Execution: " << tt.executiontime.count();
+            //stream << "D2H: " << tt.d2htime.count();
+            stream << "Postprocessing: " << tt.postprocessingtime.count();
+            return stream;
         }
     };
 

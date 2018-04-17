@@ -15,6 +15,7 @@ namespace care{
                         const GoodAlignmentProperties& GAP)
             :   readStorage(rs),
                 minhasher(minhasher),
+                mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
                 correctionOptions(CO),
                 goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
                 goodAlignmentProperties(GAP){
@@ -86,16 +87,23 @@ namespace care{
         //get data of sequence which should be corrected
         fetch_query_data_from_readstorage();
 
+        findCandidatesTiming.preprocessingBegin();
         //get candidate ids from minhasher
         set_candidate_ids(minhasher->getCandidates(fwdSequenceString, max_number_candidates));
+        findCandidatesTiming.preprocessingEnd();
         if(candidateIds.size() == 0){
             //no need for further processing without candidates
             active = false;
         }else{
+            findCandidatesTiming.executionBegin();
             //find unique candidate sequences
             make_unique_sequences();
+            findCandidatesTiming.executionEnd();
+
+            findCandidatesTiming.postprocessingBegin();
             //get reverse complements of unique candidate sequences
             fetch_revcompl_sequences_from_readstorage();
+            findCandidatesTiming.postprocessingEnd();
         }
     }
 
@@ -193,7 +201,7 @@ namespace care{
 
             BestAlignment_t bestAlignment = get_best_alignment(res,
                     revcomplres, querylength, candidatelength,
-                    goodAlignmentProperties.max_mismatch_ratio,
+                    goodAlignmentProperties.maxErrorRate,
                     goodAlignmentProperties.min_overlap,
                     goodAlignmentProperties.min_overlap_ratio);
 
@@ -208,19 +216,19 @@ namespace care{
                         return double(revcomplres.nOps) / double(revcomplres.overlap);
                 }();
                 const int candidateCount = candidateCountsPrefixSum[i+1] - candidateCountsPrefixSum[i];
-                if(mismatchratio >= 4 * correctionOptions.estimatedErrorrate){
+                if(mismatchratio >= 4 * mismatchratioBaseFactor){
                     //best alignments is still not good enough, cannot use this candidate for correction
                     activeCandidates[i] = false;
                 }else{
                     activeCandidates[i] = true;
 
-                    if (mismatchratio < 2 * correctionOptions.estimatedErrorrate) {
+                    if (mismatchratio < 2 * mismatchratioBaseFactor) {
                         counts[0] += candidateCount;
                     }
-                    if (mismatchratio < 3 * correctionOptions.estimatedErrorrate) {
+                    if (mismatchratio < 3 * mismatchratioBaseFactor) {
                         counts[1] += candidateCount;
                     }
-                    if (mismatchratio < 4 * correctionOptions.estimatedErrorrate) {
+                    if (mismatchratio < 4 * mismatchratioBaseFactor) {
                         counts[2] += candidateCount;
                     }
 
@@ -264,13 +272,13 @@ namespace care{
 
         mismatchratioThreshold = 0;
         if (counts[0] >= goodAlignmentsCountThreshold) {
-            mismatchratioThreshold = 2 * correctionOptions.estimatedErrorrate;
+            mismatchratioThreshold = 2 * mismatchratioBaseFactor;
             stats.correctionCases[0]++;
         } else if (counts[1] >= goodAlignmentsCountThreshold) {
-            mismatchratioThreshold = 3 * correctionOptions.estimatedErrorrate;
+            mismatchratioThreshold = 3 * mismatchratioBaseFactor;
             stats.correctionCases[1]++;
         } else if (counts[2] >= goodAlignmentsCountThreshold) {
-            mismatchratioThreshold = 4 * correctionOptions.estimatedErrorrate;
+            mismatchratioThreshold = 4 * mismatchratioBaseFactor;
             stats.correctionCases[2]++;
         } else { //no correction possible
             stats.correctionCases[3]++;

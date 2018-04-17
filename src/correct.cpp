@@ -245,10 +245,8 @@ void ErrorCorrectionThread::execute() {
     }
 
 
-    PileupImage pileupImage(correctionOptions.useQualityScores, correctionOptions.correctCandidates,
-                                                        correctionOptions.estimatedCoverage, goodAlignmentProperties.max_mismatch_ratio,
-                                                        correctionOptions.estimatedErrorrate, correctionOptions.m_coverage, correctionOptions.kmerlength);
-    ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.max_mismatch_ratio,
+    PileupImage pileupImage(correctionOptions, goodAlignmentProperties);
+    ErrorGraph errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.maxErrorRate,
                                                   correctionOptions.graphalpha, correctionOptions.graphx);
 
     std::vector<BatchElem> batchElems;
@@ -541,6 +539,16 @@ void ErrorCorrectionThread::execute() {
                 << savedAlignments << " performedAlignments " << performedAlignments << std::endl;
 	}
 #endif
+
+#if 1
+    {
+        std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
+        for(int i = 0; i < threadOpts.batchGen->batchsize; i++){
+    	   std::cout << "thread " << threadOpts.threadId << " BatchElem " << i << "findCandidatesTiming:\n";
+           std::cout << batchElems[i].findCandidatesTiming << std::endl;
+        }
+    }
+#endif    
 
 #if 1
 	{

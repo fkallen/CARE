@@ -4,6 +4,7 @@
 #include "alignment.hpp"
 #include "readstorage.hpp"
 #include "minhasher.hpp"
+#include "tasktiming.hpp"
 #include "types.hpp"
 
 #include <vector>
@@ -72,8 +73,11 @@ struct BatchElem{
     const Minhasher* minhasher;
 
     double goodAlignmentsCountThreshold;
+    double mismatchratioBaseFactor;
     CorrectionOptions correctionOptions;
     GoodAlignmentProperties goodAlignmentProperties;
+
+    TaskTimings findCandidatesTiming;
 
     int counts[3] { 0, 0, 0 }; //count number of cases of mismatchratio < 2*errorrate, 3*errorrate, 4*errorrate
 
