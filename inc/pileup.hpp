@@ -4,6 +4,7 @@
 #include "alignment.hpp"
 #include "batchelem.hpp"
 #include "tasktiming.hpp"
+#include "options.hpp"
 
 #include <chrono>
 #include <memory>
@@ -31,7 +32,7 @@ namespace care{
 
         struct PileupCorrectionSettings{
             bool useQScores;
-            bool correctQueries;
+            bool correctCandidates;
             int estimatedCoverage;
             double maxErrorRate;
             double errorrate;
@@ -46,7 +47,7 @@ namespace care{
 
         struct PileupImage{
 
-            static constexpr int candidate_correction_new_cols = 0;
+            static constexpr int candidate_correction_new_cols = 3;
 
             //buffers
             std::unique_ptr<int[]> h_As;
@@ -72,8 +73,7 @@ namespace care{
             PileupTimings timings;
             TaskTimings taskTimings;
 
-            PileupImage(bool useQScores, bool correctQueries, int estimatedCoverage,
-                        double maxErrorRate, double errorrate, double m, double k);
+            PileupImage(const CorrectionOptions& CO, const GoodAlignmentProperties GAP);
 
             PileupImage(const PileupImage& other);
             PileupImage(PileupImage&& other);

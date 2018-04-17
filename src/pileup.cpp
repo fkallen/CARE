@@ -27,15 +27,14 @@ using namespace cooperative_groups;
 
 namespace care{
 
-        PileupImage::PileupImage(bool useQScores, bool correctQueries, int estimatedCoverage,
-                    double maxErrorRate, double errorrate, double m, double k){
-            correctionSettings.useQScores = useQScores;
-            correctionSettings.correctQueries = correctQueries;
-            correctionSettings.estimatedCoverage = estimatedCoverage;
-            correctionSettings.maxErrorRate = maxErrorRate;
-            correctionSettings.errorrate = errorrate;
-            correctionSettings.m = m;
-            correctionSettings.k = k;
+        PileupImage::PileupImage(const CorrectionOptions& CO, const GoodAlignmentProperties GAP){
+            correctionSettings.useQScores = CO.useQualityScores;
+            correctionSettings.correctCandidates = CO.correctCandidates;
+            correctionSettings.estimatedCoverage = CO.estimatedCoverage;
+            correctionSettings.maxErrorRate = GAP.maxErrorRate;
+            correctionSettings.errorrate = CO.estimatedErrorrate;
+            correctionSettings.m = CO.m_coverage;
+            correctionSettings.k = CO.kmerlength;
         }
 
         PileupImage::PileupImage(const PileupImage& other){
@@ -451,7 +450,7 @@ namespace care{
 		#endif
 		#if 1
 				//correct candidates
-				if(correctionSettings.correctQueries){
+				if(correctionSettings.correctCandidates){
                     /*
                         Correct candidates which begin in column range
                         [subjectColumnsBegin_incl - candidate_correction_new_cols, subjectColumnsBegin_incl + candidate_correction_new_cols],
@@ -466,7 +465,7 @@ namespace care{
 						//check range condition and length condition
 						if(columnProperties.subjectColumnsBegin_incl - candidate_correction_new_cols <= queryColumnsBegin_incl
                             && queryColumnsBegin_incl <= columnProperties.subjectColumnsBegin_incl + candidate_correction_new_cols
-							&& queryLength <= subjectlength + candidate_correction_new_cols){
+							&& queryColumnsEnd_excl <= subjectColumnsEnd_excl + candidate_correction_new_cols){
 
 							double newColMinSupport = 1.0;
 							int newColMinCov = std::numeric_limits<int>::max();
@@ -507,7 +506,7 @@ namespace care{
 				}
 		#endif
 			}else{
-		#if 1
+		#if 0
 				//correct anchor
 		//TODO vary parameters
 
