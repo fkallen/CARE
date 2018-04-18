@@ -47,7 +47,7 @@ namespace care{
 
         struct PileupImage{
 
-            static constexpr int candidate_correction_new_cols = 3;
+            static constexpr int candidate_correction_new_cols = 0;
 
             //buffers
             std::unique_ptr<int[]> h_As;

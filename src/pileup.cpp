@@ -465,7 +465,7 @@ namespace care{
 						//check range condition and length condition
 						if(columnProperties.subjectColumnsBegin_incl - candidate_correction_new_cols <= queryColumnsBegin_incl
                             && queryColumnsBegin_incl <= columnProperties.subjectColumnsBegin_incl + candidate_correction_new_cols
-							&& queryColumnsEnd_excl <= subjectColumnsEnd_excl + candidate_correction_new_cols){
+							&& queryColumnsEnd_excl <= columnProperties.subjectColumnsEnd_excl + candidate_correction_new_cols){
 
 							double newColMinSupport = 1.0;
 							int newColMinCov = std::numeric_limits<int>::max();
@@ -506,7 +506,7 @@ namespace care{
 				}
 		#endif
 			}else{
-		#if 0
+		#if 1
 				//correct anchor
 		//TODO vary parameters
 
