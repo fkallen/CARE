@@ -6,20 +6,22 @@ executable=./errorcorrector_gpu
 #executable=./errorcorrector_cpu
 
 #max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
-threads=8
+threads=16
 
 #input file
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 #inputfile=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/readscorrected.fq
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/D.melanogaster_SRR823377.fastq
 
 #coverage=21
-coverage=255
-#coverage=31
+#coverage=255
+coverage=31
+#coverage=52
 
 #estimated error rate
-errorrate=0.01
+errorrate=0.03
 m=0.6
 
 #output path. this is used as temporary storage, too
@@ -37,7 +39,7 @@ outfile="--outfile=$outputfile"
 fileformat=fastq
 
 #only valid for fastq fileformat
-useQualityScores=--useQualityScores
+useQualityScores=--useQualityScores=false
 #useQualityScores=
 
 #if indels should be corrected, too
@@ -57,7 +59,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=3
+batchsize=2
 
 #properties of good alignment
 maxmismatchratio=0.20
