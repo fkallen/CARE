@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -26,6 +27,21 @@ struct KVMapFixed{
     using Value_t = value_t;
     using Index_t = index_t;
 
+    /*struct KeyIndexMap{
+        std::vector<std::pair<Key_t, Index_t>> keyToIndexMap;
+        Index_t size;
+
+        static constexpr std::pair<Key_t, Index_t> Empty;
+
+        KeyIndexMap() : KeyIndexMap(Index_t(0)){}
+        KeyIndexMap(Index_t size) : size(size){
+            keyToIndexMap.resize(size);
+        }
+
+        bool insert(Key_t key, Index_t value){
+        }
+    };*/
+
     static constexpr bool resultsAreSorted = true;
 
 	Index_t size;
@@ -35,6 +51,8 @@ struct KVMapFixed{
 	std::vector<Key_t> keys;
 	std::vector<Value_t> values;
 	std::vector<Index_t> countsPrefixSum;
+
+
 
 	KVMapFixed() : KVMapFixed(0){
 	}
