@@ -78,6 +78,7 @@ struct BatchElem{
     GoodAlignmentProperties goodAlignmentProperties;
 
     TaskTimings findCandidatesTiming;
+    std::vector<std::pair<ReadId_t, const Sequence_t*>> make_unique_sequences_numseqpairs;
 
     int counts[3] { 0, 0, 0 }; //count number of cases of mismatchratio < 2*errorrate, 3*errorrate, 4*errorrate
 

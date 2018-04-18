@@ -127,12 +127,14 @@ namespace care{
     }
 
     void BatchElem::make_unique_sequences(){
-        std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
-        numseqpairs.reserve(candidateIds.size());
+        //vector
+        auto& numseqpairs = make_unique_sequences_numseqpairs;
+        numseqpairs.clear();
+        numseqpairs.reserve(candidateIds.size()*1.3);
 
         //std::chrono::time_point < std::chrono::system_clock > t1 =
         //        std::chrono::system_clock::now();
-        for(const auto id : candidateIds){
+        for(const auto& id : candidateIds){
             numseqpairs.emplace_back(id, readStorage->fetchSequence_ptr(id));
         }
         //std::chrono::time_point < std::chrono::system_clock > t2 =

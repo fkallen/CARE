@@ -513,7 +513,7 @@ void ErrorCorrectionThread::execute() {
 
 	} // end batch processing
 
-#if 0
+#if 1
 	{
 		std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 
@@ -535,8 +535,8 @@ void ErrorCorrectionThread::execute() {
                   << " CPU alignments " << cpuAlignments
                   << " GPU alignments " << gpuAlignments << std::endl;*/
 
-        std::cout << "thread " << threadOpts.threadId << " savedAlignments "
-                << savedAlignments << " performedAlignments " << performedAlignments << std::endl;
+     //   std::cout << "thread " << threadOpts.threadId << " savedAlignments "
+     //           << savedAlignments << " performedAlignments " << performedAlignments << std::endl;
 	}
 #endif
 
@@ -548,7 +548,7 @@ void ErrorCorrectionThread::execute() {
            std::cout << batchElems[i].findCandidatesTiming << std::endl;
         }
     }
-#endif    
+#endif
 
 #if 1
 	{
@@ -618,13 +618,14 @@ void correct(const MinhashOptions& minhashOptions,
     for(int i = 0; i < runtimeOptions.threads; i++){
         candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
             std::map<std::int64_t, std::int64_t> candidateMap;
+            std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
 
             for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
                 std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
                 auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
                 candidateList.erase(std::find(candidateList.begin(), candidateList.end(), readId));
 
-                std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
+                numseqpairs.clear();
                 numseqpairs.reserve(candidateList.size());
 
                 for(const auto id : candidateList){
