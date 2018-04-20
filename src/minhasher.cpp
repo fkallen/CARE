@@ -96,14 +96,20 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& seq
 	std::uint64_t hashValues[maximum_number_of_maps]{0};
 
 	bool isForwardStrand[maximum_number_of_maps]{0};
-
+    //TIMERSTARTCPU(minhashfunc);
 	minhashfunc(sequence, hashValues, isForwardStrand);
-
+    //TIMERSTOPCPU(minhashfunc);
     std::vector<Value_t> allUniqueResults;
+    std::vector<Value_t> tmp;
+    //TIMERSTARTCPU(getcandrest);
 	for(int map = 0; map < minparams.maps && allUniqueResults.size() <= max_number_candidates; ++map) {
 		Key_t key = hashValues[map] & key_mask;
 
 		std::vector<Value_t> entries = minhashTables[map]->get(key);
+        if(map == 0){
+            //allUniqueResults.reserve(minparams.maps * entries.size());
+            tmp.reserve(minparams.maps * entries.size());
+        }
 
         if(!Map_t::resultsAreSorted){
             std::sort(entries.begin(), entries.end());
@@ -111,13 +117,19 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& seq
         //auto uniqueEnd = std::unique(entries.begin(), entries.end());
         //entries.resize(std::distance(entries.begin(), uniqueEnd));
 
-        std::vector<Value_t> tmp(allUniqueResults);
+        /*std::vector<Value_t> tmp(allUniqueResults);
         allUniqueResults.resize(tmp.size() + entries.size());
         std::merge(entries.begin(), entries.end(), tmp.begin(), tmp.end(), allUniqueResults.begin());
         auto uniqueEnd2 = std::unique(allUniqueResults.begin(), allUniqueResults.end());
+        allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd2));*/
+
+        tmp.resize(allUniqueResults.size() + entries.size());
+        std::merge(entries.begin(), entries.end(), allUniqueResults.begin(), allUniqueResults.end(), tmp.begin());
+        std::swap(tmp, allUniqueResults);
+        auto uniqueEnd2 = std::unique(allUniqueResults.begin(), allUniqueResults.end());
         allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd2));
 	}
-
+    //TIMERSTOPCPU(getcandrest);
 	return allUniqueResults;
 }
 
