@@ -8,6 +8,7 @@
 #include <vector>
 #include <cassert>
 #include <map>
+#include <omp.h>
 
 namespace care{
 
@@ -21,7 +22,7 @@ namespace care{
 
 		sequencepointers = std::move(other.sequencepointers);
 		reverseComplSequencepointers = std::move(other.reverseComplSequencepointers);
-		all_unique_sequences = std::move(other.all_unique_sequences);
+		//all_unique_sequences = std::move(other.all_unique_sequences);
 
 		return *this;
 	}
@@ -55,7 +56,7 @@ namespace care{
 
 		sequencepointers.clear();
 		reverseComplSequencepointers.clear();
-		all_unique_sequences.clear();
+		//all_unique_sequences.clear();
 
 		isReadOnly = false;
 	}
@@ -67,7 +68,7 @@ namespace care{
 		reverseComplqualityscores.shrink_to_fit();
 		sequencepointers.shrink_to_fit();
 		reverseComplSequencepointers.shrink_to_fit();
-		all_unique_sequences.shrink_to_fit();
+		//all_unique_sequences.shrink_to_fit();
 	}
 
 	void ReadStorage::insertRead(ReadId_t readNumber, const Read& read){
@@ -77,53 +78,94 @@ namespace care{
 		std::string q(read.quality);
 		std::reverse(q.begin(),q.end());
 
-		//headers.at(readNumber) = std::move(read.header);
-		sequences.at(readNumber) = std::move(seq);
+		//headers[readNumber] = std::move(read.header);
+		sequences[readNumber] = std::move(seq);
 		if(useQualityScores){
-			qualityscores.at(readNumber) = std::move(read.quality);
-			reverseComplqualityscores.at(readNumber) = std::move(q);
+			qualityscores[readNumber] = std::move(read.quality);
+			reverseComplqualityscores[readNumber] = std::move(q);
 		}
 	}
 
 	void ReadStorage::noMoreInserts(){
+        if(isReadOnly)
+            return;
+
 		isReadOnly = true;
 
 		size_t nSequences = sequences.size();
 
 		if(nSequences == 0) return;
 
-		std::vector<Sequence_t> sequencesflat;
-		sequencesflat.reserve(2*nSequences);
+        std::vector<Sequence_t> tmp(sequences);
+        sequences.reserve(2*nSequences);
+		//std::vector<Sequence_t> sequencesflat;
+		//sequencesflat.reserve(2*nSequences);
 
-		for(size_t index = 0; index < nSequences; index++){
-			sequencesflat.push_back(std::move(sequences.at(index)));
-		}
+		//for(size_t index = 0; index < nSequences; index++){
+		//	sequencesflat.push_back(std::move(sequences[index]));
+		//}
 
-		sequences.clear();
-		sequences.shrink_to_fit();
+		//sequences.clear();
+		//sequences.shrink_to_fit();
 
-		std::vector<Sequence_t> tmp(sequencesflat);
+		//std::vector<Sequence_t> tmp(sequencesflat);
 
 //TIMERSTARTCPU(READ_STORAGE_SORT);
-		std::sort(sequencesflat.begin(), sequencesflat.end());
-		sequencesflat.erase(std::unique(sequencesflat.begin(), sequencesflat.end()), sequencesflat.end());
+		//std::sort(sequencesflat.begin(), sequencesflat.end());
+		//sequencesflat.erase(std::unique(sequencesflat.begin(), sequencesflat.end()), sequencesflat.end());
+        std::sort(sequences.begin(), sequences.end());
+        sequences.erase(std::unique(sequences.begin(), sequences.end()), sequences.end());
 //TIMERSTOPCPU(READ_STORAGE_SORT);
-		std::map<const Sequence_t, int> seqToSortedIndex;
+
+        std::map<const Sequence_t, int> seqToSortedIndex;
+		std::vector<std::map<const Sequence_t, int>> seqToSortedIndextmpvec;
+
+        #pragma omp parallel
+        {
+            int threadId = omp_get_thread_num();
+            #pragma omp single
+            seqToSortedIndextmpvec.resize(omp_get_num_threads()-1);
+
+            #pragma omp barrier
+
+            auto& mymap = threadId == 0 ? seqToSortedIndex : seqToSortedIndextmpvec[threadId-1];
+            #pragma omp for
+            //for(std::size_t i = 0; i < sequencesflat.size(); i++){
+            //    const auto& sequence = sequencesflat[i];
+            //    mymap[sequence] = &sequence - sequencesflat.data();
+            //}
+            for(std::size_t i = 0; i < sequences.size(); i++){
+                const auto& sequence = sequences[i];
+                mymap[sequence] = &sequence - sequences.data();
+            }
+        }
+
+        for(auto& tmpmap : seqToSortedIndextmpvec){
+            seqToSortedIndex.insert(tmpmap.begin(), tmpmap.end());
+            tmpmap.clear();
+        }
+        seqToSortedIndextmpvec.clear();
 
 //TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
-		for(const auto& s : sequencesflat){
+	/*	for(const auto& s : sequencesflat){
 			seqToSortedIndex[s] = &s - sequencesflat.data();
-		}
+		}*/
+        /*	for(const auto& s : sequences){
+    			seqToSortedIndex[s] = &s - sequences.data();
+    		}*/
 //TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
-		assert(sequencesflat.size() == seqToSortedIndex.size());
+		//assert(sequencesflat.size() == seqToSortedIndex.size());
+        assert(sequences.size() == seqToSortedIndex.size());
 
 		//size_t n_unique_forward_sequences = sequencesflat.size();
 		//std::cout << "ReadStorage: found " << (nSequences - n_unique_forward_sequences) << " duplicates\n";
 
 //TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 		sequencepointers.resize(nSequences);
+        #pragma omp parallel for
 		for(size_t i = 0; i < nSequences; i++)
-			sequencepointers[i] = &sequencesflat[seqToSortedIndex[tmp[i]]];
+			//sequencepointers[i] = &sequencesflat[seqToSortedIndex[tmp[i]]];
+            sequencepointers[i] = &sequences[seqToSortedIndex[tmp[i]]];
 //TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
 
 //TIMERSTARTCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
@@ -134,14 +176,18 @@ namespace care{
 			if(it == seqToSortedIndex.end()){
 				//sequence does not exist yet, insert into map and save pointer in list
 
-				sequencesflat.push_back(std::move(revcompl));
-				reverseComplSequencepointers[i] = &(sequencesflat.back());
-				seqToSortedIndex[*reverseComplSequencepointers[i]] = reverseComplSequencepointers[i] - sequencesflat.data();
+				//sequencesflat.push_back(std::move(revcompl));
+                sequences.push_back(std::move(revcompl));
+			//	reverseComplSequencepointers[i] = &(sequencesflat.back());
+            	reverseComplSequencepointers[i] = &(sequences.back());
+				//seqToSortedIndex[*reverseComplSequencepointers[i]] = reverseComplSequencepointers[i] - sequencesflat.data();
+                seqToSortedIndex[*reverseComplSequencepointers[i]] = reverseComplSequencepointers[i] - sequences.data();
 
 
 			}else{
 				//sequence is a duplicate, read position from map
-				reverseComplSequencepointers[i] = &(sequencesflat[it->second]);
+				//reverseComplSequencepointers[i] = &(sequencesflat[it->second]);
+                reverseComplSequencepointers[i] = &(sequences[it->second]);
 			}
 		}
 //TIMERSTOPCPU(READ_STORAGE_MAKE_REVCOMPL_POINTERS);
@@ -162,34 +208,7 @@ namespace care{
 //TIMERSTOPCPU(READ_STORAGE_CHECK);
 #endif
 
-		all_unique_sequences = std::move(sequencesflat);
-
-/*
-
-		//make combined quality weights for identical forward sequences
-
-		std::map<const Sequence_t*, std::vector<size_t>> seqToIds;
-		for(size_t i = 0; i < nSequences; i++){
-			seqToIds[sequencepointers[i]].push_back(i);
-		}
-
-		quality_weights.reserve(n_unique_forward_sequences);
-
-		for(auto pair : seqToIds){
-			const int len = pair.first->length();
-			std::vector<float> weights(0.0f, len);
-			for(size_t id : pair.second){
-				const std::string* qptr = fetchQuality_ptr(id);
-				for(int i = 0; i < len; i++){
-					weights[i] += 1.0f; // TODO lookup weight
-				}
-			}
-			quality_weights.push_back(std::move(weights));
-			for(size_t id : pair.second){
-				quality_weights_pointers[id] = &(quality_weights.back());
-			}
-		}
-*/
+		//all_unique_sequences = std::move(sequencesflat);
 	}
 
 	Read ReadStorage::fetchRead(ReadId_t readNumber) const{
@@ -206,13 +225,13 @@ namespace care{
 	}
 
 	const std::string* ReadStorage::fetchHeader_ptr(ReadId_t readNumber) const{
-		//return &(headers.at(readNumber));
+		//return &(headers[readNumber]);
         return nullptr;
 	}
 
     	const std::string* ReadStorage::fetchQuality_ptr(ReadId_t readNumber) const{
 		if(useQualityScores){
-			return &(qualityscores.at(readNumber));
+			return &(qualityscores[readNumber]);
 		}else{
 			return nullptr;
 		}
@@ -220,26 +239,26 @@ namespace care{
 
     	const std::string* ReadStorage::fetchReverseComplementQuality_ptr(ReadId_t readNumber) const{
 		if(useQualityScores){
-			return &(reverseComplqualityscores.at(readNumber));
+			return &(reverseComplqualityscores[readNumber]);
 		}else{
 			return nullptr;
 		}
 	}
 
     	const Sequence_t* ReadStorage::fetchSequence_ptr(ReadId_t readNumber) const{
-		if(isReadOnly){
-			return sequencepointers.at(readNumber);
-		}else{
-			return &(sequences.at(readNumber));
-		}
+		//if(isReadOnly){
+			return sequencepointers[readNumber];
+		//}else{
+		//	return &(sequences[readNumber]);
+		//}
 	}
 
 	const Sequence_t* ReadStorage::fetchReverseComplementSequence_ptr(ReadId_t readNumber) const{
-		if(isReadOnly){
-			return reverseComplSequencepointers.at(readNumber);
-		}else{
-			throw std::runtime_error("fetchReverseComplementSequence_ptr");
-		}
+		//if(isReadOnly){
+			return reverseComplSequencepointers[readNumber];
+		//}else{
+		//	throw std::runtime_error("fetchReverseComplementSequence_ptr");
+		//}
 	}
 
 	double ReadStorage::getMemUsageMB() const{
@@ -249,9 +268,9 @@ namespace care{
 			bytes += s.getNumBytes();
 		}
 
-		for(const auto& s : all_unique_sequences){
-			bytes += s.getNumBytes();
-		}
+		//for(const auto& s : all_unique_sequences){
+		//	bytes += s.getNumBytes();
+		//}
 
 		for(const auto& s : headers){
 			bytes += s.size();

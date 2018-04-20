@@ -27,7 +27,7 @@ struct ReadStorage{
     std::vector<Sequence_t*> sequencepointers;
     std::vector<Sequence_t*> reverseComplSequencepointers;
 
-    std::vector<Sequence_t> all_unique_sequences; //forward and reverse complement
+    //std::vector<Sequence_t> all_unique_sequences; //forward and reverse complement
 
     ReadStorage();
 
@@ -41,12 +41,15 @@ struct ReadStorage{
 
     void insertRead(ReadId_t readNumber, const Read& read);
     void noMoreInserts();
-    Read fetchRead(ReadId_t readNumber) const;
 
+    //Must only be called after at least one call to noMoreInserts()
+    Read fetchRead(ReadId_t readNumber) const;
     const std::string* fetchHeader_ptr(ReadId_t readNumber) const;
     const std::string* fetchQuality_ptr(ReadId_t readNumber) const;
     const std::string* fetchReverseComplementQuality_ptr(ReadId_t readNumber) const;
+    //Must only be called after at least one call to noMoreInserts()
     const Sequence_t* fetchSequence_ptr(ReadId_t readNumber) const;
+    //Must only be called after at least one call to noMoreInserts()
     const Sequence_t* fetchReverseComplementSequence_ptr(ReadId_t readNumber) const;
 
     double getMemUsageMB() const;
