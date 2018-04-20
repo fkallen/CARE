@@ -26,6 +26,8 @@ int main(int argc, const char** argv){
 				 cxxopts::value<int>()->default_value("5"))
 		("useQualityScores", "If set, quality scores (if any) are considered during read correction",
 				 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+        ("candidateCorrection", "If set, candidate reads will be corrected,too.",
+ 				 cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 
 		("matchscore", "Score for match during alignment.", cxxopts::value<int>()->default_value("1")->implicit_value("1"))
 		("subscore", "Score for substitution during alignment.", cxxopts::value<int>()->default_value("-1")->implicit_value("-1"))
