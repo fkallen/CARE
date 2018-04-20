@@ -6,6 +6,9 @@
 #include <memory>
 #include <numeric>
 #include <vector>
+#include <stdexcept>
+
+#include "hpc_helpers.cuh"
 
 #ifdef __NVCC__
 #include <thrust/host_vector.h>
@@ -27,20 +30,58 @@ struct KVMapFixed{
     using Value_t = value_t;
     using Index_t = index_t;
 
-    /*struct KeyIndexMap{
+    struct KeyIndexMap{
+        std::pair<Key_t, Index_t> EmptySlot{0, std::numeric_limits<Index_t>::max()};
+
+        std::uint64_t murmur_hash_3_uint64_t(std::uint64_t x) const{
+
+            x ^= x >> 33;
+            x *= 0xff51afd7ed558ccd;
+            x ^= x >> 33;
+            x *= 0xc4ceb9fe1a85ec53;
+            x ^= x >> 33;
+
+            return x;
+        }
+
         std::vector<std::pair<Key_t, Index_t>> keyToIndexMap;
-        Index_t size;
+        std::uint64_t size;
 
-        static constexpr std::pair<Key_t, Index_t> Empty;
+        KeyIndexMap() : KeyIndexMap(0){}
+        KeyIndexMap(std::uint64_t size) : size(size){
+            if(size == std::numeric_limits<Index_t>::max())
+                throw std::runtime_error("KeyIndexMap: too many keys!");
 
-        KeyIndexMap() : KeyIndexMap(Index_t(0)){}
-        KeyIndexMap(Index_t size) : size(size){
-            keyToIndexMap.resize(size);
+            keyToIndexMap.resize(size, KeyIndexMap::EmptySlot);
         }
 
-        bool insert(Key_t key, Index_t value){
+        /*KeyIndexMap(const KeyIndexMap& other){
+            EmptySlot = other.EmptySlot;
+            keyToIndexMap = other.keyToIndexMap;
+            size = other.size;
+        }*/
+
+        void insert(Key_t key, Index_t value){
+            std::uint64_t probes = 1;
+            std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+            while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
+                pos = (pos + 1) % size;
+                probes++;
+            }
+            keyToIndexMap[pos].first = key;
+            keyToIndexMap[pos].second = value;
         }
-    };*/
+
+        Index_t get(Key_t key) const{
+            std::uint64_t probes = 1;
+            std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+            while(keyToIndexMap[pos].first != key){
+                pos = (pos + 1) % size;
+                probes++;
+            }
+            return keyToIndexMap[pos].second;
+        }
+    };
 
     static constexpr bool resultsAreSorted = true;
 
@@ -52,7 +93,8 @@ struct KVMapFixed{
 	std::vector<Value_t> values;
 	std::vector<Index_t> countsPrefixSum;
 
-
+    double load = 0.5;
+    KeyIndexMap keyIndexMap;
 
 	KVMapFixed() : KVMapFixed(0){
 	}
@@ -116,10 +158,17 @@ struct KVMapFixed{
 			return {};
 		}
 
+        //TIMERSTARTCPU(binarysearch);
 		auto range = std::equal_range(keys.begin(), keys.end(), key);
 		if(range.first == keys.end()) return {};
 
 		Index_t index = std::distance(keys.begin(), range.first);
+        //TIMERSTOPCPU(binarysearch);
+
+        //TIMERSTARTCPU(probing);
+        //Index_t index = keyIndexMap.get(key);
+        //TIMERSTOPCPU(probing);
+        //assert(index == index2);
 		return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
 	}
 
@@ -238,6 +287,14 @@ struct KVMapFixed{
 		thrust::copy(histogram_values.begin(), histogram_values.end(), keys.begin());
 		thrust::copy(histogram_counts_prefixsum.begin(), histogram_counts_prefixsum.end(), countsPrefixSum.begin());
 #endif
+
+        /*keyIndexMap = KeyIndexMap(nKeys / load);
+        for(Index_t i = 0; i < nKeys; i++){
+            keyIndexMap.insert(keys[i], i);
+        }
+        for(Index_t i = 0; i < nKeys; i++){
+            assert(keyIndexMap.get(keys[i]) == i);
+        }*/
 	}
 };
 
