@@ -144,8 +144,11 @@ namespace care{
         //t1 = std::chrono::system_clock::now();
 
         //sort pairs by sequence
-        std::sort(numseqpairs.begin(), numseqpairs.end(), [](auto l, auto r){return l.second < r.second;});
+        findCandidatesTiming.h2dBegin();
+        std::sort(numseqpairs.begin(), numseqpairs.end(), [](const auto& l, const auto& r){return l.second < r.second;});
+        findCandidatesTiming.h2dEnd();
 
+        findCandidatesTiming.d2hBegin();
         std::uint64_t n_unique_elements = 1;
         candidateCountsPrefixSum[0] = 0;
         candidateCountsPrefixSum[1] = 1;
@@ -155,7 +158,7 @@ namespace care{
         const Sequence_t* prevSeq = numseqpairs[0].second;
 
         for (size_t k = 1; k < numseqpairs.size(); k++) {
-            auto pair = numseqpairs[k];
+            const auto& pair = numseqpairs[k];
             candidateIds[k] = pair.first;
             const Sequence* curSeq = pair.second;
             if (prevSeq == curSeq) {
@@ -167,6 +170,7 @@ namespace care{
             }
             prevSeq = curSeq;
         }
+        findCandidatesTiming.d2hEnd();
 
         set_number_of_unique_sequences(n_unique_elements);
         n_unique_candidates = fwdSequences.size();
