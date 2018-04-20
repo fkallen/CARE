@@ -1,6 +1,7 @@
 #include "../inc/shifted_hamming_distance.hpp"
 #include "../inc/shifted_hamming_distance_impl.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace care{
@@ -28,6 +29,12 @@ void SHDdata::resize(int n_sub, int n_quer){
 
         cudaFreeHost(h_subjectlengths); CUERR;
         cudaMallocHost(&h_subjectlengths, sizeof(int) * n_sub); CUERR;
+
+        cudaFree(d_NqueriesPrefixSum); CUERR;
+        cudaMalloc(&d_NqueriesPrefixSum, sizeof(int) * (n_sub+1)); CUERR;
+
+        cudaFreeHost(h_NqueriesPrefixSum); CUERR;
+        cudaMallocHost(&h_NqueriesPrefixSum, sizeof(int) * (n_sub+1)); CUERR;
 
         max_n_subjects = n_sub;
 
@@ -93,12 +100,14 @@ void cuda_cleanup_SHDdata(SHDdata& data){
     cudaFree(data.d_queriesdata); CUERR;
     cudaFree(data.d_subjectlengths); CUERR;
     cudaFree(data.d_querylengths); CUERR;
+    cudaFree(data.d_NqueriesPrefixSum); CUERR;
 
     cudaFreeHost(data.h_results); CUERR;
     cudaFreeHost(data.h_subjectsdata); CUERR;
     cudaFreeHost(data.h_queriesdata); CUERR;
     cudaFreeHost(data.h_subjectlengths); CUERR;
     cudaFreeHost(data.h_querylengths); CUERR;
+    cudaFreeHost(data.h_NqueriesPrefixSum); CUERR;
 
     for(int i = 0; i < SHDdata::n_streams; i++)
         cudaStreamDestroy(data.streams[i]); CUERR;
@@ -115,6 +124,34 @@ AlignResultCompact cpu_shifted_hamming_distance(const GoodAlignmentProperties& p
 
 void call_shd_kernel(const shdparams& buffer, int maxQueryLength, cudaStream_t stream);
 void call_shd_kernel_async(const shdparams& buffer, int maxQueryLength, cudaStream_t stream);
+void call_shd_kernel(AlignResultCompact* results,
+                      const char* subjectsdata,
+                      const int* subjectlengths,
+                      const char* queriesdata,
+                      const int* querylengths,
+                      const int* NqueriesPrefixSum,
+                      int Nsubjects,
+                      int Nqueries,
+                      int max_sequence_bytes,
+                      size_t sequencepitch,
+                      const GoodAlignmentProperties& props,
+                      int maxSubjectLength,
+                      int maxQueryLength,
+                      cudaStream_t stream);
+void call_shd_kernel_async(AlignResultCompact* results,
+                    const char* subjectsdata,
+                    const int* subjectlengths,
+                    const char* queriesdata,
+                    const int* querylengths,
+                    const int* NqueriesPrefixSum,
+                    int Nsubjects,
+                    int Nqueries,
+                    int max_sequence_bytes,
+                    size_t sequencepitch,
+                    const GoodAlignmentProperties& props,
+                    int maxSubjectLength,
+                    int maxQueryLength,
+                    cudaStream_t stream);
 
 #endif
 
@@ -449,6 +486,229 @@ void get_shifted_hamming_distance_results(SHDdata& mybuffers, BatchElem& b,
 }
 
 
+
+
+AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers,
+                                        std::vector<BatchElem>& batch,
+                                        const GoodAlignmentProperties& props,
+                                        bool canUseGpu){
+
+        std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();
+        std::chrono::time_point<std::chrono::system_clock> tpb = std::chrono::system_clock::now();
+        AlignmentDevice device = AlignmentDevice::None;
+
+        int numberOfSubjects = 0;
+        int totalNumberOfAlignments = 0;
+
+        for(auto& b : batch){
+            if(b.active){
+                numberOfSubjects++;
+                totalNumberOfAlignments += b.fwdSequences.size();
+                totalNumberOfAlignments += b.revcomplSequences.size();
+            }
+        }
+
+        // check for empty input
+        if(totalNumberOfAlignments == 0){
+            return device;
+        }
+
+    #ifdef __NVCC__
+
+        if(canUseGpu){ // use gpu for alignment
+            device = AlignmentDevice::GPU;
+            tpa = std::chrono::system_clock::now();
+
+            cudaSetDevice(mybuffers.deviceId); CUERR;
+
+            mybuffers.resize(numberOfSubjects, totalNumberOfAlignments);
+
+            tpb = std::chrono::system_clock::now();
+
+            mybuffers.resizetime += tpb - tpa;
+
+            int querysum = 0;
+            int subjectindex = 0;
+            mybuffers.h_NqueriesPrefixSum[0] = 0;
+
+            //copy everything to transfer buffers
+            tpa = std::chrono::system_clock::now();
+
+            for(auto& b : batch){
+                if(b.active){
+
+                    char* h_subjectsdata = mybuffers.h_subjectsdata + mybuffers.sequencepitch * subjectindex;
+                	char* h_queriesdata = mybuffers.h_queriesdata + mybuffers.sequencepitch * querysum;
+                	int* h_subjectlengths = mybuffers.h_subjectlengths;
+                	int* h_querylengths = mybuffers.h_querylengths + querysum;
+                    int* h_NqueriesPrefixSum = mybuffers.h_NqueriesPrefixSum;
+
+                    assert(b.fwdSequence->length() <= mybuffers.max_sequence_length);
+                    assert(b.fwdSequence->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                    std::memcpy(h_subjectsdata, b.fwdSequence->begin(), b.fwdSequence->getNumBytes());
+                    h_subjectlengths[subjectindex] = b.fwdSequence->length();
+
+                    int count = 0;
+                    for(const auto& seqptr : b.fwdSequences){
+                        assert(seqptr->length() <= mybuffers.max_sequence_length);
+                        assert(seqptr->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                        std::memcpy(h_queriesdata + count * mybuffers.sequencepitch,
+                                seqptr->begin(),
+                                seqptr->getNumBytes());
+
+                        h_querylengths[count] = seqptr->length();
+                        count++;
+                    }
+                    for(const auto& seqptr : b.revcomplSequences){
+                        assert(seqptr->length() <= mybuffers.max_sequence_length);
+                        assert(seqptr->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                        std::memcpy(h_queriesdata + count * mybuffers.sequencepitch,
+                                seqptr->begin(),
+                                seqptr->getNumBytes());
+
+                        h_querylengths[count] = seqptr->length();
+                        count++;
+                    }
+
+                    h_NqueriesPrefixSum[subjectindex + 1] = h_NqueriesPrefixSum[subjectindex] + count;
+
+                    querysum += count;
+                    subjectindex++;
+                }
+            }
+
+            tpb = std::chrono::system_clock::now();
+            mybuffers.preprocessingtime += tpb - tpa;
+
+            // copy data to gpu
+            cudaMemcpyAsync(mybuffers.d_subjectsdata,
+                    mybuffers.h_subjectsdata,
+                    numberOfSubjects * mybuffers.sequencepitch,
+                    H2D,
+                    mybuffers.streams[0]); CUERR;
+            cudaMemcpyAsync(mybuffers.d_queriesdata,
+                    mybuffers.h_queriesdata,
+                    totalNumberOfAlignments * mybuffers.sequencepitch,
+                    H2D,
+                    mybuffers.streams[0]); CUERR;
+            cudaMemcpyAsync(mybuffers.d_subjectlengths,
+                    mybuffers.h_subjectlengths,
+                    sizeof(int) * numberOfSubjects,
+                    H2D,
+                    mybuffers.streams[0]); CUERR;
+            cudaMemcpyAsync(mybuffers.d_querylengths,
+                    mybuffers.h_querylengths,
+                    sizeof(int) * totalNumberOfAlignments,
+                    H2D,
+                    mybuffers.streams[0]); CUERR;
+            cudaMemcpyAsync(mybuffers.d_NqueriesPrefixSum,
+                    mybuffers.h_NqueriesPrefixSum,
+                    sizeof(int) * (numberOfSubjects + 1),
+                    H2D,
+                    mybuffers.streams[0]); CUERR;
+
+            const int maxSubjectLength = *std::max_element(mybuffers.h_subjectlengths, mybuffers.h_subjectlengths + numberOfSubjects);
+            const int maxQueryLength = *std::max_element(mybuffers.h_querylengths, mybuffers.h_querylengths + totalNumberOfAlignments);
+
+            // run kernel
+            call_shd_kernel_async(mybuffers.d_results,
+                                  mybuffers.d_subjectsdata,
+                                  mybuffers.d_subjectlengths,
+                                  mybuffers.d_queriesdata,
+                                  mybuffers.d_querylengths,
+                                  mybuffers.d_NqueriesPrefixSum,
+                                  numberOfSubjects,
+                                  totalNumberOfAlignments,
+                                  mybuffers.max_sequence_bytes,
+                                  mybuffers.sequencepitch,
+                                  props,
+                                  maxSubjectLength,
+                                  maxQueryLength,
+                                  mybuffers.streams[0]);
+
+            cudaMemcpyAsync(mybuffers.h_results,
+                          mybuffers.d_results,
+                          sizeof(AlignResultCompact) * totalNumberOfAlignments,
+                          D2H,
+                          mybuffers.streams[0]); CUERR;
+
+            cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
+
+            subjectindex = 0;
+            querysum = 0;
+
+			//wait for d2h transfer to complete and fetch results
+            for(auto& b : batch){
+                if(b.active){
+                    const AlignResultCompact* results = mybuffers.h_results + querysum;
+
+                    tpa = std::chrono::system_clock::now();
+
+                    int count = 0;
+                    for(auto& alignment : b.fwdAlignments){
+                        alignment = results[count++];
+                    }
+                    for(auto& alignment : b.revcomplAlignments){
+                        alignment = results[count++];
+                    }
+
+                    tpb = std::chrono::system_clock::now();
+                    mybuffers.postprocessingtime += tpb - tpa;
+
+                    querysum += count;
+                }
+            }
+
+        }else{ // use cpu for alignment
+
+    #endif // __NVCC__
+            device = AlignmentDevice::CPU;
+            tpa = std::chrono::system_clock::now();
+
+            for(auto& b : batch){
+                if(b.active){
+                    const char* const subject = (const char*)b.fwdSequence->begin();
+                    const int subjectLength = b.fwdSequence->length();
+
+                    for(size_t i = 0; i < b.fwdSequences.size(); i++){
+                        const char* query =  (const char*)b.fwdSequences[i]->begin();
+                        const int queryLength = b.fwdSequences[i]->length();
+                        b.fwdAlignments[i] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
+                    }
+
+                    for(size_t i = 0; i < b.revcomplSequences.size(); i++){
+                        const char* query =  (const char*)b.revcomplSequences[i]->begin();
+                        const int queryLength = b.revcomplSequences[i]->length();
+                        b.revcomplAlignments[i] = cpu_shifted_hamming_distance(props, subject, query, subjectLength, queryLength);
+                    }
+                }
+            }
+
+            tpb = std::chrono::system_clock::now();
+
+            mybuffers.alignmenttime += tpb - tpa;
+    #ifdef __NVCC__
+        }
+    #endif // __NVCC__
+
+        return device;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
 /*
     Alignment functions implementations
 */
@@ -477,6 +737,14 @@ size_t shd_kernel_getSharedMemSize(const shdparams& buffer){
 
     size_t smem = 0;
     smem += sizeof(char) * 2 * buffer.max_sequence_bytes;
+
+    return smem;
+}
+
+size_t shd_kernel_getSharedMemSize(int max_sequence_bytes){
+
+    size_t smem = 0;
+    smem += sizeof(char) * 2 * max_sequence_bytes;
 
     return smem;
 }
@@ -510,6 +778,109 @@ void call_shd_kernel_async(const shdparams& buffer, int maxQueryLength, cudaStre
     case 192: cuda_shifted_hamming_distance<192><<<grid, block, smem, stream>>>(buffer, accessor); CUERR; break;
     case 224: cuda_shifted_hamming_distance<224><<<grid, block, smem, stream>>>(buffer, accessor); CUERR; break;
     case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, stream>>>(buffer, accessor); CUERR; break;
+    default: throw std::runtime_error("Want to call shd kernel with 0 threads due to a bug.");
+    }
+}
+
+void call_shd_kernel(AlignResultCompact* results,
+                      const char* subjectsdata,
+                      const int* subjectlengths,
+                      const char* queriesdata,
+                      const int* querylengths,
+                      const int* NqueriesPrefixSum,
+                      int Nsubjects,
+                      int Nqueries,
+                      int max_sequence_bytes,
+                      size_t sequencepitch,
+                      const GoodAlignmentProperties& props,
+                      int maxSubjectLength,
+                      int maxQueryLength,
+                      cudaStream_t stream){
+
+    call_shd_kernel_async(results,
+                        subjectsdata,
+                        subjectlengths,
+                        queriesdata,
+                        querylengths,
+                        NqueriesPrefixSum,
+                        Nsubjects,
+                        Nqueries,
+                        max_sequence_bytes,
+                        sequencepitch,
+                        props,
+                        maxSubjectLength,
+                        maxQueryLength,
+                        stream);
+    cudaStreamSynchronize(stream); CUERR;
+}
+
+void call_shd_kernel_async(AlignResultCompact* results,
+                      const char* subjectsdata,
+                      const int* subjectlengths,
+                      const char* queriesdata,
+                      const int* querylengths,
+                      const int* NqueriesPrefixSum,
+                      int Nsubjects,
+                      int Nqueries,
+                      int max_sequence_bytes,
+                      size_t sequencepitch,
+                      const GoodAlignmentProperties& props,
+                      int maxSubjectLength,
+                      int maxQueryLength,
+                      cudaStream_t stream){
+
+    const int minoverlap = max(props.min_overlap, int(double(maxSubjectLength) * props.min_overlap_ratio));
+    const int maxShiftsToCheck = maxSubjectLength+1 + maxQueryLength - 2*minoverlap;
+    dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
+    dim3 grid(Nqueries, 1, 1);
+
+    size_t smem = shd_kernel_getSharedMemSize(max_sequence_bytes);
+
+    auto accessor = [] __device__ (const char* data, int length, int index){
+      return shddetail::encoded_accessor(data, length, index);
+    };
+
+    switch(block.x){
+    case 32: cuda_shifted_hamming_distance<32><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 64: cuda_shifted_hamming_distance<64><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 96: cuda_shifted_hamming_distance<96><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 128: cuda_shifted_hamming_distance<128><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 160: cuda_shifted_hamming_distance<160><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 192: cuda_shifted_hamming_distance<192><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 224: cuda_shifted_hamming_distance<224><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
+    case 256: cuda_shifted_hamming_distance<256><<<grid, block, smem, stream>>>(results,
+                                                                            subjectsdata, subjectlengths,
+                                                                            queriesdata, querylengths,
+                                                                            NqueriesPrefixSum, Nsubjects,
+                                                                            max_sequence_bytes, sequencepitch, props, accessor); CUERR; break;
     default: throw std::runtime_error("Want to call shd kernel with 0 threads due to a bug.");
     }
 }

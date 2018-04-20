@@ -19,12 +19,14 @@ namespace care{
     	char* d_queriesdata = nullptr;
     	int* d_subjectlengths = nullptr;
     	int* d_querylengths = nullptr;
+        int* d_NqueriesPrefixSum = nullptr;
 
     	AlignResultCompact* h_results = nullptr;
     	char* h_subjectsdata = nullptr;
     	char* h_queriesdata = nullptr;
     	int* h_subjectlengths = nullptr;
     	int* h_querylengths = nullptr;
+        int* h_NqueriesPrefixSum = nullptr;
 
     #ifdef __NVCC__
         static constexpr int n_streams = 1;
@@ -81,6 +83,11 @@ namespace care{
     void get_shifted_hamming_distance_results(SHDdata& mybuffers, BatchElem& b,
                                     int firstIndex, int N, const GoodAlignmentProperties& props,
                                     bool canUseGpu);
+
+    AlignmentDevice shifted_hamming_distance(SHDdata& mybuffers,
+                                            std::vector<BatchElem>& batch,
+                                            const GoodAlignmentProperties& props,
+                                            bool canUseGpu);
 
 }
 
