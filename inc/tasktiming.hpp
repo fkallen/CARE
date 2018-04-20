@@ -69,9 +69,9 @@ namespace care{
 
         friend std::ostream& operator<<(std::ostream& stream, const TaskTimings& tt){
             stream << "Preprocessing: " << tt.preprocessingtime.count() << '\n';
-            //stream << "H2D: " << tt.h2dtime.count() << '\n';
+            stream << "H2D: " << tt.h2dtime.count() << '\n';
             stream << "Execution: " << tt.executiontime.count() << '\n';
-            //stream << "D2H: " << tt.d2htime.count() << '\n';
+            stream << "D2H: " << tt.d2htime.count() << '\n';
             stream << "Postprocessing: " << tt.postprocessingtime.count() << '\n';
             return stream;
         }
