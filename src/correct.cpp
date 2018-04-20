@@ -23,6 +23,8 @@
 
 namespace care{
 
+    constexpr int maxCPUThreadsPerGPU = 8;
+
     namespace correctiondetail{
 
         template<class T, class Count>
@@ -303,14 +305,49 @@ void ErrorCorrectionThread::execute() {
 		tpb = std::chrono::system_clock::now();
 		mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
-        int finalIters[16]{0};
-        std::uint64_t maxcandidates = 0;
-
         //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
         for(auto& b : batchElems){
             if(b.active && b.n_unique_candidates > estimatedAlignmentCountThreshold)
                 b.active = false;
         }
+
+        constexpr bool canUseGpu = true;
+
+// if 1, align all batch elements in a single kernel. if 0, use one alignment kernel per elements
+// 1 can only handle shifted hamming distance
+#if 0
+
+        tpa = std::chrono::system_clock::now();
+
+        //std::vector<BatchElem> tmpvec = batchElems;
+
+        AlignmentDevice device = shifted_hamming_distance(shdbuffers[0],
+                                        batchElems,
+                                        goodAlignmentProperties,
+                                        canUseGpu);
+
+        tpb = std::chrono::system_clock::now();
+        getAlignmentsTimeTotal += tpb - tpa;
+
+        if(device == AlignmentDevice::CPU)
+            cpuAlignments++;
+        else if (device == AlignmentDevice::GPU)
+            gpuAlignments++;
+
+        tpc = std::chrono::system_clock::now();
+        for(auto& b : batchElems){
+            if(b.active){
+                b.determine_good_alignments();
+            }
+        }
+        tpd = std::chrono::system_clock::now();
+        determinegoodalignmentsTime += tpd - tpc;
+
+
+#else
+
+        //int finalIters[16]{0};
+        std::uint64_t maxcandidates = 0;
 
         //get maximum number of unique candidates in current batches
         for(const auto& b : batchElems){
@@ -326,7 +363,7 @@ void ErrorCorrectionThread::execute() {
 #endif
 
         const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
-        constexpr bool canUseGpu = true;
+        //constexpr bool canUseGpu = true;
         for(int iter = 0; iter < maxiters; iter++){
             int batchindex = 0;
             int begin = iter * alignmentbatchsize;
@@ -359,8 +396,8 @@ void ErrorCorrectionThread::execute() {
                     else if (device == AlignmentDevice::GPU)
                         gpuAlignments++;
 
-                    if(device != AlignmentDevice::None)
-                        finalIters[batchindex] = iter;
+                    //if(device != AlignmentDevice::None)
+                    //    finalIters[batchindex] = iter;
                 }
                 batchindex++;
             }
@@ -402,8 +439,10 @@ void ErrorCorrectionThread::execute() {
             tpd = std::chrono::system_clock::now();
             determinegoodalignmentsTime += tpd - tpc;
         }
+#endif
 
-        int batchindex = 0;
+
+        /*int batchindex = 0;
         for(auto& b : batchElems){
             if(b.active){
                 std::uint64_t alignments = 2 * std::min(size_t(finalIters[batchindex] + 1) * size_t(alignmentbatchsize),
@@ -411,7 +450,7 @@ void ErrorCorrectionThread::execute() {
                 savedAlignments += 2 * b.fwdSequences.size() - alignments;
                 performedAlignments += alignments;
             }
-        }
+        }*/
 
         for(auto& b : batchElems){
             if(b.active && b.hasEnoughGoodCandidates()){
@@ -542,11 +581,13 @@ void ErrorCorrectionThread::execute() {
 
 #if 1
     {
+        TaskTimings tmp;
+        for(std::uint64_t i = 0; i < threadOpts.batchGen->batchsize; i++)
+            tmp += batchElems[i].findCandidatesTiming;
+
         std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
-        for(int i = 0; i < threadOpts.batchGen->batchsize; i++){
-    	   std::cout << "thread " << threadOpts.threadId << " BatchElem " << i << "findCandidatesTiming:\n";
-           std::cout << batchElems[i].findCandidatesTiming << std::endl;
-        }
+    	std::cout << "thread " << threadOpts.threadId << " findCandidatesTiming:\n";
+        std::cout << tmp << std::endl;
     }
 #endif
 
@@ -644,8 +685,8 @@ void correct(const MinhashOptions& minhashOptions,
 
     std::map<std::int64_t, std::int64_t> allncandidates;
 
-    for(int i = 0; i < runtimeOptions.threads; i++){
-        auto tmpresult = candidateCounterFutures[i].get();
+    for(auto& future : candidateCounterFutures){
+        const auto& tmpresult = future.get();
         for(const auto& pair : tmpresult){
             allncandidates[pair.first] += pair.second;
         }
@@ -671,7 +712,6 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
-    const int maxCPUThreadsPerGPU = 8;
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 
