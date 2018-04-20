@@ -420,7 +420,7 @@ namespace care{
 
             const double avg_support_threshold = 1.0-1.0*correctionSettings.errorrate;
             const double min_support_threshold = 1.0-3.0*correctionSettings.errorrate;
-            const double min_coverage_threshold = correctionSettings.m / 2.0 * correctionSettings.estimatedCoverage;
+            const double min_coverage_threshold = correctionSettings.m / 6.0 * correctionSettings.estimatedCoverage;
 
             auto isGoodAvgSupport = [&](){
                 return properties.avg_support >= avg_support_threshold;
@@ -516,12 +516,12 @@ namespace care{
 				for(int i = 0; i < subjectlength; i++){
 					const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
 
-		#if 1
+		#if 0
 					if(h_support[globalIndex] >= min_support_threshold){
 						batchElem.correctedSequence[i] = h_consensus[globalIndex];
 						foundAColumn = true;
 					}else{
-		//#else
+		#else
 					if(h_support[globalIndex] > 0.5 && h_origCoverage[globalIndex] < min_coverage_threshold){
 						double avgsupportkregion = 0;
 						int c = 0;
@@ -540,7 +540,7 @@ namespace care{
 						}
 					}
 
-				}
+				//}
 		#endif
 				}
 
