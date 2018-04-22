@@ -450,14 +450,16 @@ void get_semi_global_alignment_results(SGAdata& mybuffers, BatchElem& b,
             std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
                       ops + count * mybuffers.max_ops_per_alignment + b.fwdAlignments[index].nOps,
                       b.fwdAlignOps[index].begin());
+			count++;
         }
 
         for(int index = firstIndex; index < lastIndex_excl; index++){
-            b.revcomplAlignments[index] = results[(numberOfCandidates + count)];
+            b.revcomplAlignments[index] = results[count];
             b.revcomplAlignOps[index].resize(b.revcomplAlignments[index].nOps);
-            std::reverse_copy(ops + (numberOfCandidates + count) * mybuffers.max_ops_per_alignment,
-                      ops + (numberOfCandidates + count) * mybuffers.max_ops_per_alignment + b.revcomplAlignments[index].nOps,
+            std::reverse_copy(ops + count * mybuffers.max_ops_per_alignment,
+                      ops + count * mybuffers.max_ops_per_alignment + b.revcomplAlignments[index].nOps,
                       b.revcomplAlignOps[index].begin());
+			count++;
         }
 
         tpb = std::chrono::system_clock::now();
