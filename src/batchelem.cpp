@@ -15,9 +15,9 @@ namespace care{
                         const GoodAlignmentProperties& GAP)
             :   readStorage(rs),
                 minhasher(minhasher),
-                mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
-                correctionOptions(CO),
                 goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
+                mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),               
+                correctionOptions(CO),
                 goodAlignmentProperties(GAP){
 
 
