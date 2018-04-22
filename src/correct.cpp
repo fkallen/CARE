@@ -256,8 +256,8 @@ void ErrorCorrectionThread::execute() {
 
     std::uint64_t cpuAlignments = 0;
     std::uint64_t gpuAlignments = 0;
-    std::uint64_t savedAlignments = 0;
-    std::uint64_t performedAlignments = 0;
+    //std::uint64_t savedAlignments = 0;
+    //std::uint64_t performedAlignments = 0;
 
     const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
     const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
