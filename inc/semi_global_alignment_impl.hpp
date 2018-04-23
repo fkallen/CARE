@@ -183,25 +183,7 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
 
 #ifdef __NVCC__
 
-struct sgaparams{
-    int max_sequence_length;
-    int max_ops_per_alignment;
-    int sequencepitch;
-    int n_queries;
-    int subjectlength;
-    int alignmentscore_match = 1;
-    int alignmentscore_sub = -1;
-    int alignmentscore_ins = -1;
-    int alignmentscore_del = -1;
-    const int* __restrict__ querylengths;
-    const char* __restrict__ subjectdata;
-    const char* __restrict__ queriesdata;
-    AlignResultCompact* __restrict__ results;
-    AlignOp* __restrict__ ops;
-};
-
-
-template<int MAX_SEQUENCE_LENGTH=128, class Accessor>
+template<int MAX_SEQUENCE_LENGTH, class Accessor>
 __global__
 void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar){
 

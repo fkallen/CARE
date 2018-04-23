@@ -67,18 +67,6 @@ cpu_shifted_hamming_distance_impl(const GoodAlignmentProperties& prop,
 */
 #ifdef __NVCC__
 
-struct shdparams{
-    GoodAlignmentProperties props;
-    int max_sequence_bytes;
-    int sequencepitch;
-    int n_queries;
-    int subjectlength;
-    const int* __restrict__ querylengths;
-    const char* __restrict__ subjectdata;
-    const char* __restrict__ queriesdata;
-    AlignResultCompact* __restrict__ results;
-};
-
 template<int BLOCKSIZE, class Accessor>
 __global__
 void

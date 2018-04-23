@@ -13,7 +13,7 @@
 
 namespace care{
 
-enum class BestAlignment_t {Forward, ReverseComplement, None};
+
 enum class AlignmentDevice {CPU, GPU, None};
 
 enum AlignType : char{
@@ -189,16 +189,6 @@ struct AlignResult{
 	}
 };
 
-
-// split substitutions in alignment into deletion + insertion
-int split_subs(AlignResult& alignment, const char* subject);
-
-
-
-// Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments
-BestAlignment_t get_best_alignment(const AlignResultCompact& fwdAlignment, const AlignResultCompact& revcmplAlignment,
-				int querylength, int candidatelength,
-				double MAX_MISMATCH_RATIO, int MIN_OVERLAP, double MIN_OVERLAP_RATIO);
 
 
 }
