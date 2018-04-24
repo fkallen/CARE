@@ -26,19 +26,19 @@ struct DetermineGoodAlignmentStats{
 
 template<class minhasher_t,
 		 class readStorage_t,
-		 bool alignops>
+		 class alignment_result_t>
 struct BatchElem{
-	
+
 	using Minhasher_t = minhasher_t;
 	using ReadStorage_t = readStorage_t;
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
-	
-	static constexpr bool canUseAlignOps = alignops;
-	static constexpr bool canUseQualityScores = ReadStorage_t::hasQualityScores;	
-	
+    using AlignmentResult_t = alignment_result_t;
+
+	static constexpr bool canUseQualityScores = ReadStorage_t::hasQualityScores;
+
 	enum class BestAlignment_t {Forward, ReverseComplement, None};
-	
+
     bool active;
 
     //query properties
@@ -59,18 +59,16 @@ struct BatchElem{
     std::vector<bool> activeCandidates;
     std::vector<const Sequence_t*> fwdSequences;
     std::vector<const Sequence_t*> revcomplSequences;
-    std::vector<AlignResultCompact> fwdAlignments;
-    std::vector<AlignResultCompact> revcomplAlignments;
-    std::vector<AlignResultCompact> bestAlignments;
+    std::vector<AlignmentResult_t> fwdAlignments;
+    std::vector<AlignmentResult_t> revcomplAlignments;
+
+    std::vector<AlignmentResult_t*> bestAlignments;
     std::vector<const Sequence_t*> bestSequences;
 	std::vector<std::string> bestSequenceStrings;
 	std::vector<const std::string*> bestQualities;
     std::vector<bool> bestIsForward;
-    std::vector<CorrectedCandidate> correctedCandidates;
 
-    std::vector<std::vector<AlignOp>> fwdAlignOps;
-    std::vector<std::vector<AlignOp>> revcomplAlignOps;
-    std::vector<std::vector<AlignOp>*> bestAlignOps;
+    std::vector<CorrectedCandidate> correctedCandidates;
 
     double mismatchratioThreshold;
 
@@ -93,7 +91,7 @@ struct BatchElem{
 	            :   readStorage(&rs),
                 minhasher(&minhasher),
                 goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
-                mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),               
+                mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
                 correctionOptions(CO),
                 goodAlignmentProperties(GAP){
 
@@ -103,7 +101,7 @@ struct BatchElem{
     std::uint64_t get_number_of_duplicate_sequences() const{
         return candidateIds.size() - fwdSequences.size();
     }
-    
+
     void clear(){
         active = false;
         corrected = false;
@@ -123,15 +121,11 @@ struct BatchElem{
         correctedCandidates.clear();
 		bestQualities.clear();
 
-        fwdAlignOps.clear();
-        revcomplAlignOps.clear();
-        bestAlignOps.clear();
-
         counts[0] = 0;
         counts[1] = 0;
         counts[2] = 0;
     }
-    
+
    void set_number_of_sequences(std::uint64_t num){
 		if(canUseQualityScores){
 			bestQualities.resize(num);
@@ -149,12 +143,6 @@ struct BatchElem{
         bestSequences.resize(num);
 		bestSequenceStrings.resize(num);
         bestIsForward.resize(num);
-		
-		if(canUseAlignOps){
-			bestAlignOps.resize(num);
-			fwdAlignOps.resize(num);
-			revcomplAlignOps.resize(num);
-		}
     }
 
     void set_read_id(ReadId_t id){
@@ -280,40 +268,39 @@ struct BatchElem{
         alignments[min(firstIndex + N-1, number of alignments - 1)]
     */
     void determine_good_alignments(int firstIndex, int N){
-		
+
 		// Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments
-		auto get_best_alignment = [](const AlignResultCompact& fwdAlignment, 
-									 const AlignResultCompact& revcmplAlignment,
-									 int querylength, 
-									 int candidatelength,
-									 double maxErrorRate, int minimumOverlap, 
-									 double minimumRelativeOverlap) -> BestAlignment_t{
-			const int overlap = fwdAlignment.overlap;
-			const int revcomploverlap = revcmplAlignment.overlap;
-			const int fwdMismatches = fwdAlignment.nOps;
-			const int revcmplMismatches = revcmplAlignment.nOps;
+		auto get_best_alignment = [this](const AlignmentResult_t& fwdAlignment,
+									 const AlignmentResult_t& revcmplAlignment,
+									 int querylength,
+									 int candidatelength) -> BestAlignment_t{
+			const int overlap = fwdAlignment.get_overlap();
+			const int revcomploverlap = revcmplAlignment.get_overlap();
+			const int fwdMismatches = fwdAlignment.get_nOps();
+			const int revcmplMismatches = revcmplAlignment.get_nOps();
 
 			BestAlignment_t retval = BestAlignment_t::None;
 
-			minimumOverlap = int(querylength * minimumRelativeOverlap) > minimumOverlap ? int(querylength * minimumRelativeOverlap) : minimumOverlap;
+			const int minimumOverlap = int(querylength * goodAlignmentProperties.min_overlap_ratio) > goodAlignmentProperties.min_overlap
+                            ? int(querylength * goodAlignmentProperties.min_overlap_ratio) : goodAlignmentProperties.min_overlap;
 
 			//find alignment with lowest mismatch ratio. if both have same ratio choose alignment with longer overlap
 
-			if(fwdAlignment.isValid && overlap >= minimumOverlap){
-				if(revcmplAlignment.isValid && revcomploverlap >= minimumOverlap){
+			if(fwdAlignment.get_isValid() && overlap >= minimumOverlap){
+				if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
 					const double ratio = (double)fwdMismatches / overlap;
 					const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
 
 					if(ratio < revcomplratio){
-						if(ratio < maxErrorRate){
+						if(ratio < goodAlignmentProperties.maxErrorRate){
 							retval = BestAlignment_t::Forward;
 						}
 					}else if(revcomplratio < ratio){
-						if(revcomplratio < maxErrorRate){
+						if(revcomplratio < goodAlignmentProperties.maxErrorRate){
 							retval = BestAlignment_t::ReverseComplement;
 						}
 					}else{
-						if(ratio < maxErrorRate){
+						if(ratio < goodAlignmentProperties.maxErrorRate){
 							// both have same mismatch ratio, choose longest overlap
 							if(overlap > revcomploverlap){
 								retval = BestAlignment_t::Forward;
@@ -323,22 +310,22 @@ struct BatchElem{
 						}
 					}
 				}else{
-					if((double)fwdMismatches / overlap < maxErrorRate){
+					if((double)fwdMismatches / overlap < goodAlignmentProperties.maxErrorRate){
 						retval = BestAlignment_t::Forward;
 					}
 				}
 			}else{
-				if(revcmplAlignment.isValid && revcomploverlap >= minimumOverlap){
-					if((double)revcmplMismatches / revcomploverlap < maxErrorRate){
+				if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
+					if((double)revcmplMismatches / revcomploverlap < goodAlignmentProperties.maxErrorRate){
 						retval = BestAlignment_t::ReverseComplement;
 					}
 				}
 			}
 
-			return retval;					
+			return retval;
 		};
-		
-		
+
+
         const int querylength = fwdSequence->length();
         const int lastIndex_excl = std::min(std::size_t(firstIndex + N), fwdSequences.size());
 
@@ -348,10 +335,7 @@ struct BatchElem{
             const int candidatelength = fwdSequences[i]->length();
 
             BestAlignment_t bestAlignment = get_best_alignment(res,
-														revcomplres, querylength, candidatelength,
-														goodAlignmentProperties.maxErrorRate,
-														goodAlignmentProperties.min_overlap,
-														goodAlignmentProperties.min_overlap_ratio);
+														revcomplres, querylength, candidatelength);
 
             if(bestAlignment == BestAlignment_t::None){
                 //both alignments are bad, cannot use this candidate for correction
@@ -359,9 +343,9 @@ struct BatchElem{
             }else{
                 const double mismatchratio = [&](){
                     if(bestAlignment == BestAlignment_t::Forward)
-                        return double(res.nOps) / double(res.overlap);
+                        return double(res.get_nOps()) / double(res.get_overlap());
                     else
-                        return double(revcomplres.nOps) / double(revcomplres.overlap);
+                        return double(revcomplres.get_nOps()) / double(revcomplres.get_overlap());
                 }();
                 const int candidateCount = candidateCountsPrefixSum[i+1] - candidateCountsPrefixSum[i];
                 if(mismatchratio >= 4 * mismatchratioBaseFactor){
@@ -384,10 +368,8 @@ struct BatchElem{
                     if(bestAlignment == BestAlignment_t::Forward){
                         bestIsForward[i] = true;
                         bestSequences[i] = fwdSequences[i];
-                        bestAlignments[i] = res;
-						if(canUseAlignOps){
-							bestAlignOps[i] = &fwdAlignOps[i];
-						}
+                        bestAlignments[i] = &fwdAlignments[i];
+
 						if(canUseQualityScores){
 							for(int j = 0; j < candidateCount; j++){
 								const ReadId_t id = candidateIds[begin + j];
@@ -397,10 +379,8 @@ struct BatchElem{
                     }else{
                         bestIsForward[i] = false;
                         bestSequences[i] = revcomplSequences[i];
-                        bestAlignments[i] = revcomplres;
-						if(canUseAlignOps){
-							bestAlignOps[i] = &revcomplAlignOps[i];
-						}
+                        bestAlignments[i] = &revcomplAlignments[i];
+
 						if(canUseQualityScores){
 							for(int j = 0; j < candidateCount; j++){
 								const ReadId_t id = candidateIds[begin + j];
@@ -448,15 +428,12 @@ struct BatchElem{
         //stable_partition with condition (activeCandidates[i] && notremoved) ?
         for(std::size_t i = 0; i < activeCandidates.size(); i++){
             if(activeCandidates[i]){
-                const double mismatchratio = double(bestAlignments[i].nOps) / double(bestAlignments[i].overlap);
+                const double mismatchratio = double(bestAlignments[i]->get_nOps()) / double(bestAlignments[i]->get_overlap());
                 const bool notremoved = mismatchratio < mismatchratioThreshold;
                 if(notremoved){
                     fwdSequences[activeposition_unique] = fwdSequences[i];
                     revcomplSequences[activeposition_unique] = revcomplSequences[i];
                     bestAlignments[activeposition_unique] = bestAlignments[i];
-					if(canUseAlignOps){
-						bestAlignOps[activeposition_unique] = bestAlignOps[i];
-					}
                     bestSequences[activeposition_unique] = bestSequences[i];
                     bestSequenceStrings[activeposition_unique] = bestSequences[i]->toString();
                     bestIsForward[activeposition_unique] = bestIsForward[i];

@@ -123,6 +123,56 @@ struct AlignResultCompact{
     bool operator!=(const AlignResultCompact& rhs){
         return !(*this == rhs);
     }
+
+    int get_score() const{
+        return score;
+    }
+    int get_subject_begin_incl() const{
+        return subject_begin_incl;
+    }
+    int get_query_begin_incl() const{
+        return query_begin_incl;
+    }
+    int get_overlap() const{
+        return overlap;
+    }
+    int get_shift() const{
+        return shift;
+    }
+    int get_nOps() const{
+        return nOps;
+    }
+    bool get_isNormalized() const{
+        return isNormalized;
+    }
+    bool get_isValid() const{
+        return isValid;
+    }
+
+    int& get_score(){
+        return score;
+    }
+    int& get_subject_begin_incl(){
+        return subject_begin_incl;
+    }
+    int& get_query_begin_incl(){
+        return query_begin_incl;
+    }
+    int& get_overlap(){
+        return overlap;
+    }
+    int& get_shift(){
+        return shift;
+    }
+    int& get_nOps(){
+        return nOps;
+    }
+    bool& get_isNormalized(){
+        return isNormalized;
+    }
+    bool& get_isValid(){
+        return isValid;
+    }
 };
 
 
@@ -147,22 +197,55 @@ struct AlignResult{
 		return !(*this == other);
 	}
 
-	void writeOpsToStream(std::ostream& stream){
-		for(size_t i = 0; operations.size() != 0 && i < operations.size()-1; i++)
-			stream << operations[i] << '\n';
-		stream << operations.back();
-	}
+    int get_score() const{
+        return arc.score;
+    }
+    int get_subject_begin_incl() const{
+        return arc.subject_begin_incl;
+    }
+    int get_query_begin_incl() const{
+        return arc.query_begin_incl;
+    }
+    int get_overlap() const{
+        return arc.overlap;
+    }
+    int get_shift() const{
+        return arc.shift;
+    }
+    int get_nOps() const{
+        return arc.nOps;
+    }
+    bool get_isNormalized() const{
+        return arc.isNormalized;
+    }
+    bool get_isValid() const{
+        return arc.isValid;
+    }
 
-	void writeArcToStream(std::ostream& stream){
-		stream << "score: " << arc.score << '\n';
-		stream << "subject_begin_incl: " << arc.subject_begin_incl << '\n';
-		stream << "query_begin_incl: " << arc.query_begin_incl << '\n';
-		stream << "overlap: " << arc.overlap << '\n';
-		stream << "shift: " << arc.shift << '\n';
-		stream << "nOps: " << arc.nOps << '\n';
-		stream << "isNormalized: " << arc.isNormalized << '\n';
-		stream << "isValid: " << arc.isValid << '\n';
-	}
+    int& get_score(){
+        return arc.score;
+    }
+    int& get_subject_begin_incl(){
+        return arc.subject_begin_incl;
+    }
+    int& get_query_begin_incl(){
+        return arc.query_begin_incl;
+    }
+    int& get_overlap(){
+        return arc.overlap;
+    }
+    int& get_shift(){
+        return arc.shift;
+    }
+    int& get_nOps(){
+        return arc.nOps;
+    }
+    bool& get_isNormalized(){
+        return arc.isNormalized;
+    }
+    bool& get_isValid(){
+        return arc.isValid;
+    }
 
 	void setOpsAndDataFromAlignResultCompact(const AlignResultCompact& cudaresult, const AlignOp* h_ops, bool opsAreReversed){
 		setDataFromAlignResultCompact(cudaresult);

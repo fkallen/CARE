@@ -228,7 +228,7 @@ namespace care{
 					properties.failedMinSupport = false;
 					properties.failedMinCoverage = false;
 			}
-			
+
 			void destroy(){
 					h_consensus.reset();
 					h_support.reset();
@@ -242,7 +242,7 @@ namespace care{
 					h_Aweights.reset();
 					h_Cweights.reset();
 					h_Gweights.reset();
-					h_Tweights.reset();				
+					h_Tweights.reset();
 
 					properties.avg_support = 0;
 					properties.min_support = 0;
@@ -295,7 +295,7 @@ namespace care{
 				columnProperties.endindex = batchElem.fwdSequenceString.length();
 
 				for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-					const int shift = batchElem.bestAlignments[i].shift;
+					const int shift = batchElem.bestAlignments[i]->get_shift();
 					columnProperties.startindex = std::min(shift, columnProperties.startindex);
 					const int queryEndsAt = batchElem.bestSequences[i]->length() + shift;
 					columnProperties.endindex = std::max(queryEndsAt, columnProperties.endindex);
@@ -343,15 +343,17 @@ namespace care{
 			#if WEIGHTMODE == 2
 
 				for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-					const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i].nOps / (batchElem.bestAlignments[i].overlap * correctionSettings.maxErrorRate));
+					const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i]->get_nOps()
+                                                                / (batchElem.bestAlignments[i]->get_overlap()
+                                                                    * correctionSettings.maxErrorRate));
 					const int len = batchElem.bestSequenceStrings[i].length();
 					const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
 
 					for(int j = 0; j < len; j++){
-						const int globalIndex = columnProperties.subjectColumnsBegin_incl + batchElem.bestAlignments[i].shift + j;
+						const int globalIndex = columnProperties.subjectColumnsBegin_incl + batchElem.bestAlignments[i]->get_shift() + j;
 						assert(globalIndex < max_n_columns);
 						double qw = 0.0;
-						for(int f = 0; f < freq; f++){                        
+						for(int f = 0; f < freq; f++){
 							if(BatchElem::canUseQualityScores){
 								const std::string* scores = batchElem.bestQualities[batchElem.candidateCountsPrefixSum[i] + f];
 								qw += qscore_to_weight[(unsigned char)(*scores)[j]];
@@ -379,10 +381,12 @@ namespace care{
 				for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
 			//TIMERSTARTCPU(prepare);
 
-					const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i].nOps / (batchElem.bestAlignments[i].overlap * correctionSettings.maxErrorRate));
+					const double defaultweight = 1.0 - std::sqrt(batchElem.bestAlignments[i]->get_nOps()
+                                                                / (batchElem.bestAlignments[i]->get_overlap()
+                                                                    * correctionSettings.maxErrorRate));
 					const int len = batchElem.bestSequenceStrings[i].length();
 					const int freq = batchElem.candidateCountsPrefixSum[i+1] - batchElem.candidateCountsPrefixSum[i];
-					const int defaultcolumnoffset = columnProperties.subjectColumnsBegin_incl + batchElem.bestAlignments[i].shift;
+					const int defaultcolumnoffset = columnProperties.subjectColumnsBegin_incl + batchElem.bestAlignments[i]->get_shift();
 			//TIMERSTOPCPU(prepare);
 			//TIMERSTARTCPU(addquality);
 					//use h_support as temporary storage to store sum of quality weights
@@ -538,7 +542,7 @@ namespace care{
 						*/
 
 						for(size_t i = 0; i < batchElem.n_unique_candidates; i++){
-							const int queryColumnsBegin_incl = batchElem.bestAlignments[i].shift - columnProperties.startindex;
+							const int queryColumnsBegin_incl = batchElem.bestAlignments[i]->get_shift() - columnProperties.startindex;
 							const int queryLength = batchElem.bestSequences[i]->length();
 							const int queryColumnsEnd_excl = queryColumnsBegin_incl + queryLength;
 

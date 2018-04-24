@@ -18,7 +18,7 @@
 #define ASSERT_TOPOLOGIC_SORT
 
 namespace care{
-	
+
 	namespace errorgraphdetail{
 		// split substitutions in alignment into deletion + insertion
 		int split_subs(std::vector<AlignOp>& ops, const std::string& subject){
@@ -39,7 +39,7 @@ namespace care{
 				}
 			}
 			return splitted_subs;
-		};		
+		};
 	}
 
 struct GraphTimings{
@@ -79,9 +79,9 @@ struct ErrorGraph{
 		int to;
 		bool isOriginal; // if true, graph uses chars from its query, if false, use chars from chs
 		std::vector<char> chs;
-		
+
 		LinkOperation():from(0), to(0), isOriginal(false){}
-		LinkOperation(int f, int t, bool o):from(f), to(t), isOriginal(o){}		
+		LinkOperation(int f, int t, bool o):from(f), to(t), isOriginal(o){}
 	};
 
     GraphTimings timings;
@@ -113,7 +113,7 @@ struct ErrorGraph{
 	void init(const std::string& seq){
 		init(seq, nullptr);
 	}
-	
+
 	void init(const std::string& seq, const std::string* qualityScores){
 		assert(seq.length() > 0);
 		assert(!BatchElem::canUseQualityScores || (BatchElem::canUseQualityScores && qualityScores != nullptr));
@@ -168,14 +168,14 @@ struct ErrorGraph{
 		topoIndices.clear();
 		finalPath.clear();
 	}
-	
-	void insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
+
+	void insertAlignment(AlignResult& alignment,
 						 const int nTimes){
-		insertAlignment(alignment, ops, nullptr, nTimes);
+		insertAlignment(alignment, nullptr, nTimes);
 	}
 
 	// insert alignment nTimes into the graph
-	void insertAlignment(AlignResultCompact& alignment, std::vector<AlignOp>& ops,
+	void insertAlignment(AlignResult& alignment,
 							const std::string* qualityScores_, const int nTimes){
 
 		assert(!(useQscores && !qualityScores_));
@@ -184,21 +184,21 @@ struct ErrorGraph{
 		insertCalls++;
 		totalInsertedAlignments += nTimes;
 
-		const double weight = 1 - std::sqrt(alignment.nOps / (alignment.overlap * max_mismatch_ratio));
+		const double weight = 1 - std::sqrt(alignment.get_nOps() / (alignment.get_overlap() * max_mismatch_ratio));
 
-		int last_a = alignment.subject_begin_incl + alignment.overlap;
+		int last_a = alignment.get_subject_begin_incl() + alignment.get_overlap();
 
-		normalizeAlignment(alignment, ops); //returns immediatly if already normalized (e.g. by previous insert)
+		normalizeAlignment(alignment); //returns immediatly if already normalized (e.g. by previous insert)
 
-		const auto& linkOps = makeLinkOperations(alignment, ops);
+		const auto& linkOps = makeLinkOperations(alignment);
 
-		int prev_node = alignment.subject_begin_incl;
+		int prev_node = alignment.get_subject_begin_incl();
 
 		if (prev_node != 0) {
 			prev_node = -1;
 		}
 
-		int qindex = alignment.query_begin_incl;
+		int qindex = alignment.get_query_begin_incl();
 
 		for (const auto& op : linkOps) {
 
@@ -209,7 +209,7 @@ struct ErrorGraph{
 					}else{
 						double qweight = weight;
 						if(BatchElem::canUseQualityScores){
-							if(qindex < alignment.query_begin_incl + alignment.overlap){
+							if(qindex < alignment.get_query_begin_incl() + alignment.get_overlap()){
 								qweight *= qscore_to_weight[(unsigned char)qualityScores[qindex]];
 							}
 						}
@@ -226,7 +226,7 @@ struct ErrorGraph{
 					}else{
 						double qweight = weight;
 						if(BatchElem::canUseQualityScores){
-							if(qindex < alignment.query_begin_incl + alignment.overlap){
+							if(qindex < alignment.get_query_begin_incl() + alignment.get_overlap()){
 								qweight *= qscore_to_weight[(unsigned char)qualityScores[qindex]];
 							}
 						}
@@ -457,10 +457,11 @@ struct ErrorGraph{
 
 	}
 
-	void normalizeAlignment(AlignResultCompact& alignment,
-										std::vector<AlignOp>& alignOps) const{
-		if(alignment.isNormalized)
+	void normalizeAlignment(AlignResult& alignment) const{
+		if(alignment.get_isNormalized())
 			return;
+
+        std::vector<AlignOp>& alignOps = alignment.operations;
 
 		int na = int(read.length());
 		int last_val = na;
@@ -534,13 +535,14 @@ struct ErrorGraph{
 			}
 		}
 
-		alignment.isNormalized = true;
+		alignment.get_isNormalized() = true;
 	}
 
-	std::vector<LinkOperation> makeLinkOperations(const AlignResultCompact& alignment,
-																		const std::vector<AlignOp>& alignOps) const{
-		int cur_a = alignment.subject_begin_incl;
-		int last_a = cur_a + alignment.overlap;
+	std::vector<LinkOperation> makeLinkOperations(const AlignResult& alignment) const{
+		int cur_a = alignment.get_subject_begin_incl();
+		int last_a = cur_a + alignment.get_overlap();
+
+        const std::vector<AlignOp>& alignOps = alignment.operations;
 
 		std::vector<LinkOperation> linkOps;
 
@@ -634,19 +636,18 @@ struct ErrorGraph{
 		tpa = std::chrono::system_clock::now();
 
 		for(size_t i = 0; i < b.n_unique_candidates; i++){
-			auto& alignment = b.bestAlignments[i];
-			auto& alignOps = b.bestAlignOps[i];
+			auto& alignmentptr = b.bestAlignments[i];
 			const int freq = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
 
-			errorgraphdetail::split_subs(*alignOps, b.fwdSequenceString);
+			errorgraphdetail::split_subs(alignmentptr->operations, b.fwdSequenceString);
 
 			for(int f = 0; f < freq; f++){
 				if(BatchElem::canUseQualityScores){
 					const int qualindex = b.candidateCountsPrefixSum[i] + f;
 					const std::string* qual = b.bestQualities[qualindex];
-					insertAlignment(alignment, *alignOps, qual, 1);
+					insertAlignment(*alignmentptr, qual, 1);
 				}else{
-					insertAlignment(alignment, *alignOps, 1);
+					insertAlignment(*alignmentptr, 1);
 				}
 			}
 		}
