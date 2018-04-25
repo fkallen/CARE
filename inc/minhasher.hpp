@@ -34,7 +34,7 @@ namespace care{
         template<> struct max_k<std::uint16_t>{static constexpr int value = 8;};
         template<> struct max_k<std::uint32_t>{static constexpr int value = 16;};
         template<> struct max_k<std::uint64_t>{static constexpr int value = 32;};
-		
+
 		/*
 		 * hash map to map keys to indices using linear probing
 		 */
@@ -83,17 +83,17 @@ namespace care{
 				}
 				return keyToIndexMap[pos].second;
 			}
-			
+
 			void clear(){
 				keyToIndexMap.clear();
 			}
-			
+
 			void destroy(){
 				clear();
 				keyToIndexMap.shrink_to_fit();
-			}			
-		};		
-		
+			}
+		};
+
 		template<class key_t, class value_t, class index_t>
 		struct KeyValueMapFixedSize{
 			using Key_t = key_t;
@@ -131,7 +131,7 @@ namespace care{
 				countsPrefixSum.clear();
 				keyIndexMap.clear();
 			}
-			
+
 			void destroy(){
 				clear();
 				keys.shrink_to_fit();
@@ -299,14 +299,14 @@ namespace care{
 		};
     }
 
-template<class Key_t, class ReadId_t>    
+template<class Key_t, class ReadId_t>
 struct Minhasher {
 	static_assert(std::is_integral<Key_t>::value, "Minhasher Key_t must be integral");
 	static_assert(std::is_integral<ReadId_t>::value, "Minhasher ReadId_t must be integral");
 
     using Index_t = ReadId_t; //read id type
     using Value_t = Index_t; //Value type for hashmap
-    using Result_t = Index_t; // Return value for minhash query    
+    using Result_t = Index_t; // Return value for minhash query
     using Map_t = minhasherdetail::KeyValueMapFixedSize<Key_t, Value_t, Index_t>; //internal map type
 
 	static constexpr int bits_key = sizeof(Key_t) * 8;
@@ -354,7 +354,7 @@ struct Minhasher {
 		minhashTables.clear();
 		nReads = 0;
 	}
-	
+
 	void destroy(){
 		clear();
 		minhashTables.shrink_to_fit();
@@ -435,21 +435,15 @@ struct Minhasher {
 
 private:
 	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const{
-		std::uint64_t fhVal = 0; std::uint64_t rhVal = 0;
+        std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
 
-		// bitmask for kmer, k_max = 32
-		const int kmerbits = (2*unsigned(minparams.k) <= bits_key ? 2*minparams.k : bits_key);
-
-		const std::uint64_t kmerbitmask = (kmerbits < 64 ? (1ULL << kmerbits) - 1 : 1ULL - 2);
-
-		std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
-
+		std::uint64_t fhVal = 0;
+        std::uint64_t rhVal = 0;
 		bool isForward = false;
 		// calc hash values of first canonical kmer
 		NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature, fhVal, rhVal, isForward);
 
 		for (int j = 0; j < minparams.maps; ++j) {
-			minhashSignature[j] &= kmerbitmask;
 			isForwardStrand[j] = isForward;
 		}
 
@@ -458,9 +452,8 @@ private:
 			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, kmerHashValues, isForward);
 
 			for (int j = 0; j < minparams.maps; ++j) {
-				std::uint64_t tmp = kmerHashValues[j] & kmerbitmask;
-				if (minhashSignature[j] > tmp){
-					minhashSignature[j] = tmp;
+				if (minhashSignature[j] > kmerHashValues[j]){
+					minhashSignature[j] = kmerHashValues[j];
 					isForwardStrand[j] = isForward;
 				}
 			}
