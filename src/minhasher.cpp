@@ -229,21 +229,16 @@ std::vector<Minhasher::Result_t> Minhasher::getCandidates(MinhasherBuffers& buff
 #endif
 
 void Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const{
-	std::uint64_t fhVal = 0; std::uint64_t rhVal = 0;
-
-	// bitmask for kmer, k_max = 32
-	const int kmerbits = (2*unsigned(minparams.k) <= bits_key ? 2*minparams.k : bits_key);
-
-	const std::uint64_t kmerbitmask = (kmerbits < 64 ? (1ULL << kmerbits) - 1 : 1ULL - 2);
 
 	std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
 
 	bool isForward = false;
+    std::uint64_t fhVal = 0;
+    std::uint64_t rhVal = 0;
 	// calc hash values of first canonical kmer
 	NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature, fhVal, rhVal, isForward);
 
 	for (int j = 0; j < minparams.maps; ++j) {
-		minhashSignature[j] &= kmerbitmask;
 		isForwardStrand[j] = isForward;
 	}
 
@@ -252,9 +247,8 @@ void Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashS
 		NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, kmerHashValues, isForward);
 
 		for (int j = 0; j < minparams.maps; ++j) {
-			std::uint64_t tmp = kmerHashValues[j] & kmerbitmask;
-			if (minhashSignature[j] > tmp){
-				minhashSignature[j] = tmp;
+			if (minhashSignature[j] > kmerHashValues[j]){
+				minhashSignature[j] = kmerHashValues[j];
 				isForwardStrand[j] = isForward;
 			}
 		}
