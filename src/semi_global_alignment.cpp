@@ -28,6 +28,12 @@ void SGAdata::resize(int n_sub, int n_quer){
 		cudaFreeHost(h_subjectlengths); CUERR;
 		cudaMallocHost(&h_subjectlengths, sizeof(int) * newmax); CUERR;
 
+        cudaFree(d_NqueriesPrefixSum); CUERR;
+        cudaMalloc(&d_NqueriesPrefixSum, sizeof(int) * (n_sub+1)); CUERR;
+
+        cudaFreeHost(h_NqueriesPrefixSum); CUERR;
+        cudaMallocHost(&h_NqueriesPrefixSum, sizeof(int) * (n_sub+1)); CUERR;
+
 		max_n_subjects = newmax;
 		resizeResult = true;
 	}
@@ -103,6 +109,7 @@ void cuda_cleanup_SGAdata(SGAdata& data){
 		cudaFree(data.d_queriesdata); CUERR;
 		cudaFree(data.d_subjectlengths); CUERR;
 		cudaFree(data.d_querylengths); CUERR;
+        cudaFree(data.d_NqueriesPrefixSum); CUERR;
 
 		cudaFreeHost(data.h_results); CUERR;
 		cudaFreeHost(data.h_ops); CUERR;
@@ -110,6 +117,7 @@ void cuda_cleanup_SGAdata(SGAdata& data){
 		cudaFreeHost(data.h_queriesdata); CUERR;
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
+        cudaFreeHost(data.h_NqueriesPrefixSum); CUERR; 
 
 		for(int i = 0; i < SGAdata::n_streams; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;

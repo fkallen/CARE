@@ -16,6 +16,7 @@
 #include "sequencefileio.hpp"
 #include "qualityscoreweights.hpp"
 #include "tasktiming.hpp"
+#include "concatcontainer.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -867,12 +868,34 @@ private:
 				for(auto& b : batchElems){
 					if(b.active && !b.hasEnoughGoodCandidates()){
 
-						AlignmentDevice device = semi_global_alignment_async(sgabuffers[batchindex],
+						/*AlignmentDevice device = semi_global_alignment_async(sgabuffers[batchindex],
 																b,
 																begin,
 																alignmentbatchsize,
 																alignmentOptions,
-																canUseGpu);
+																canUseGpu);*/
+
+                        auto subjectsBegin = &b.fwdSequence;
+                        auto subjectsEnd = subjectsBegin + 1;
+                        auto queries = make_concat_container(b.fwdSequences.cbegin(), b.fwdSequences.cend(),
+                                                          b.revcomplSequences.cbegin(), b.revcomplSequences.cend());
+
+                        auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                            b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+
+                        AlignmentDevice device = semi_global_alignment_async<Sequence_t>(sgabuffers[batchindex],
+                                                                        subjectsBegin,
+                                                                        subjectsEnd,
+                                                                        queries.begin(),
+                                                                        queries.end(),
+                                                                        alignments.begin(),
+                                                                        alignments.end(),
+                                                                        {int(std::distance(queries.begin(), queries.end()))},
+                                                                        alignmentOptions.alignmentscore_match,
+                                                                        alignmentOptions.alignmentscore_sub,
+                                                                        alignmentOptions.alignmentscore_ins,
+                                                                        alignmentOptions.alignmentscore_del,
+                                                                        canUseGpu);
 
 						if(device == AlignmentDevice::CPU)
 							cpuAlignments++;
@@ -888,12 +911,18 @@ private:
 				batchindex = 0;
 				for(auto& b : batchElems){
 					if(b.active && !b.hasEnoughGoodCandidates()){
-							get_semi_global_alignment_results(sgabuffers[batchindex],
+							/*get_semi_global_alignment_results(sgabuffers[batchindex],
 																b,
 																begin,
 																alignmentbatchsize,
 																alignmentOptions,
-																canUseGpu);
+																canUseGpu);*/
+                        auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                            b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+                        semi_global_alignment_get_results(sgabuffers[batchindex],
+                                                        alignments.begin(),
+                                                        alignments.end(),
+                                                        canUseGpu);
 					}
 					batchindex++;
 				}

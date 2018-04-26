@@ -19,11 +19,14 @@ namespace care{
 template<class Accessor>
 AlignResult
 cpu_semi_global_alignment_impl(const SGAdata* buffers,
-                               const AlignmentOptions& alignmentOptions,
                                const char* subject,
                                const char* query,
                                int subjectbases,
                                int querybases,
+                               int score_match,
+                               int score_sub,
+                               int score_ins,
+                               int score_del,
                                Accessor getChar){
 
     using Score_t = std::int64_t;
@@ -51,9 +54,9 @@ cpu_semi_global_alignment_impl(const SGAdata* buffers,
 
             const bool ismatch = getChar(subject, subjectbases, row - 1) == getChar(query, querybases, col - 1);
             const Score_t matchscore = scores[(row - 1) * numcols + (col - 1)]
-                        + (ismatch ? Score_t(alignmentOptions.alignmentscore_match) : Score_t(alignmentOptions.alignmentscore_sub));
-            const Score_t insscore = scores[(row) * numcols + (col - 1)] + Score_t(alignmentOptions.alignmentscore_ins);
-            const Score_t delscore = scores[(row - 1) * numcols + (col)] + Score_t(alignmentOptions.alignmentscore_del);
+                        + (ismatch ? Score_t(score_match) : Score_t(score_sub));
+            const Score_t insscore = scores[(row) * numcols + (col - 1)] + Score_t(score_ins);
+            const Score_t delscore = scores[(row - 1) * numcols + (col)] + Score_t(score_del);
 
             int maximum = 0;
             if (matchscore < delscore) {
@@ -433,6 +436,306 @@ void cuda_semi_global_alignment_kernel(const sgaparams buffers, Accessor getChar
         }
     }
 }
+
+
+
+
+
+
+
+
+
+template<int MAX_SEQUENCE_LENGTH, class Accessor>
+__global__
+void cuda_semi_global_alignment_kernel(AlignResultCompact* results,
+                                       AlignOp* ops,
+                                       const int max_ops_per_alignment,
+                                       const char* subjectsdata,
+                                       const int* subjectlengths,
+                                       const char* queriesdata,
+                                       const int* querylengths,
+                                       const int* NqueriesPrefixSum,
+                                       const int Nsubjects,
+                                       const size_t sequencepitch,
+                                       const int score_match,
+                                       const int score_sub,
+                                       const int score_ins,
+                                       const int score_del,
+                                       Accessor getChar){
+
+    static_assert(MAX_SEQUENCE_LENGTH % 32 == 0, "MAX_SEQUENCE_LENGTH must be divisible by 32");
+
+    using Score_t = short;
+
+    constexpr int MAX_SEQUENCE_BYTES = MAX_SEQUENCE_LENGTH; //uses some more smem, but simpler code.
+
+    constexpr int prevsPerInt = (sizeof(int)*8/2);
+
+    __shared__ char subject_shared[MAX_SEQUENCE_BYTES];
+    __shared__ char query_shared[MAX_SEQUENCE_BYTES];
+    __shared__ int prevs[MAX_SEQUENCE_LENGTH*(MAX_SEQUENCE_LENGTH / prevsPerInt)];
+    __shared__ Score_t scores[3 * MAX_SEQUENCE_LENGTH];
+    __shared__ Score_t bestrow;
+    __shared__ Score_t bestcol;
+    __shared__ Score_t bestrowscore;
+    __shared__ Score_t bestcolscore;
+
+    for(unsigned queryIndex = blockIdx.x; queryIndex < NqueriesPrefixSum[Nsubjects]; queryIndex += gridDim.x){
+
+        //find subjectindex
+        int subjectIndex = 0;
+        for(; subjectIndex < Nsubjects; subjectIndex++){
+            if(queryIndex < NqueriesPrefixSum[subjectIndex+1])
+                break;
+        }
+
+        //save subject in shared memory
+        const int subjectbases = subjectlengths[subjectIndex];
+        for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_BYTES; threadid += blockDim.x){
+            subject_shared[threadid] = subjectsdata[subjectIndex * sequencepitch + threadid];
+        }
+
+        //save query in shared memory
+        const int querybases = querylengths[queryIndex];
+        for(int threadid = threadIdx.x; threadid < MAX_SEQUENCE_BYTES; threadid += blockDim.x){
+            query_shared[threadid] = queriesdata[queryIndex * sequencepitch + threadid];
+        }
+
+        for (int l = threadIdx.x; l < MAX_SEQUENCE_LENGTH; l += blockDim.x) {
+            scores[0*MAX_SEQUENCE_LENGTH+l] = Score_t(0);
+            scores[1*MAX_SEQUENCE_LENGTH+l] = Score_t(0);
+            scores[2*MAX_SEQUENCE_LENGTH+l] = Score_t(0);
+        }
+
+        for(int i = 0; i < MAX_SEQUENCE_LENGTH + 1; i++){
+            for (int j = threadIdx.x; j < MAX_SEQUENCE_LENGTH / prevsPerInt; j += blockDim.x) {
+                prevs[i * MAX_SEQUENCE_LENGTH / prevsPerInt + j] = 0;
+            }
+        }
+
+        if (threadIdx.x == 0) {
+            bestrow = Score_t(0);
+            bestcol = Score_t(0);
+            bestrowscore = std::numeric_limits<Score_t>::min();
+            bestcolscore = std::numeric_limits<Score_t>::min();
+        }
+
+        __syncthreads();
+
+        const int globalsubjectpos = threadIdx.x;
+        const char subjectbase = getChar(subject_shared, subjectbases, globalsubjectpos);
+        int calculatedCells = 0;
+        int myprev = 0;
+
+        for (int threaddiagonal = 0; threaddiagonal < subjectbases + querybases - 1; threaddiagonal++) {
+
+            const int targetrow = threaddiagonal % 3;
+            const int indelrow = (targetrow == 0 ? 2 : targetrow - 1);
+            const int matchrow = (indelrow == 0 ? 2 : indelrow - 1);
+
+            const int globalquerypos = threaddiagonal - threadIdx.x;
+            const char querybase = globalquerypos < querybases ? getChar(query_shared, querybases, globalquerypos) : 'F';
+
+            const Score_t scoreDiag = globalsubjectpos == 0 ? 0 : scores[matchrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
+            const Score_t scoreLeft = scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x];
+            const Score_t scoreUp = globalsubjectpos == 0 ? 0 :  scores[indelrow * MAX_SEQUENCE_LENGTH + threadIdx.x - 1];
+
+            if(globalsubjectpos >= 0 && globalsubjectpos < MAX_SEQUENCE_LENGTH
+                && globalquerypos >= 0 && globalquerypos < MAX_SEQUENCE_LENGTH){
+
+                const bool ismatch = subjectbase == querybase;
+                const Score_t matchscore = scoreDiag
+                            + (ismatch ? Score_t(score_match) : Score_t(score_sub));
+                const Score_t insscore = scoreUp + Score_t(score_ins);
+                const Score_t delscore = scoreLeft + Score_t(score_del);
+
+                Score_t maximum = 0;
+                const unsigned int colindex = globalquerypos / prevsPerInt;
+
+                if (matchscore < delscore) {
+                    maximum = delscore;
+
+                    int t = ALIGNTYPE_DELETE;
+                    t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+                    myprev |= t;
+                }else{
+                    maximum = matchscore;
+
+                    int t = ismatch ? ALIGNTYPE_MATCH : ALIGNTYPE_SUBSTITUTE;
+                    t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+                    myprev |= t;
+                }
+                if (maximum < insscore) {
+                    maximum = insscore;
+
+                    int t = ALIGNTYPE_INSERT;
+                    t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
+                    myprev |= t;
+                }
+
+                calculatedCells++;
+                if(calculatedCells == prevsPerInt || threaddiagonal == subjectbases + querybases - 2){
+                    calculatedCells = 0;
+                    prevs[globalsubjectpos * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colindex] = myprev;
+                    myprev = 0;
+                }
+
+                scores[targetrow * MAX_SEQUENCE_LENGTH + threadIdx.x] = maximum;
+
+                if (globalsubjectpos == subjectbases-1) {
+                    if (bestcolscore < maximum) {
+                        bestcolscore = maximum;
+                        bestcol = globalquerypos;
+                        //printf("qborder %d : %d\n", mycol - 1, maximum);
+                    }
+                }
+
+                // update best score in last column
+                if (globalquerypos == querybases-1) {
+                    if (bestrowscore < maximum) {
+                        bestrowscore = maximum;
+                        bestrow = globalsubjectpos;
+                        //printf("sborder %d : %d\n", myrow - 1, maximum);
+                    }
+                }
+            }
+
+            __syncthreads();
+        }
+
+        // get alignment and alignment score
+        if (threadIdx.x == 0) {
+            short currow;
+            short curcol;
+
+            AlignResultCompact result;
+
+            if (bestcolscore > bestrowscore) {
+                currow = subjectbases-1;
+                curcol = bestcol;
+                result.score = bestcolscore;
+            }else{
+                currow = bestrow;
+                curcol = querybases-1;
+                result.score = bestrowscore;
+            }
+
+            const int subject_end_excl = currow + 1;
+
+            AlignResultCompact * const my_result_out = results + queryIndex;
+            AlignOp * const my_ops_out = ops + max_ops_per_alignment * queryIndex;
+
+            int nOps = 0;
+            bool isValid = true;
+            AlignOp currentOp;
+            char previousType = 0;
+            while(currow != -1 && curcol != -1){
+                const unsigned int colIntIndex = curcol / prevsPerInt;
+                const unsigned int col2Bitindex = curcol % prevsPerInt;
+
+                switch((prevs[currow * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colIntIndex] >> 2*(prevsPerInt-1-col2Bitindex)) & 0x3){
+
+                case ALIGNTYPE_MATCH:
+                    curcol -= 1;
+                    currow -= 1;
+                    previousType = ALIGNTYPE_MATCH;
+
+                    break;
+                case ALIGNTYPE_SUBSTITUTE:
+                    currentOp.position = currow;
+                    currentOp.type = ALIGNTYPE_SUBSTITUTE;
+                    currentOp.base = getChar(query_shared, querybases, curcol);
+
+                    my_ops_out[nOps] = currentOp;
+                    ++nOps;
+
+                    curcol -= 1;
+                    currow -= 1;
+                    previousType = ALIGNTYPE_SUBSTITUTE;
+
+                    break;
+                case ALIGNTYPE_DELETE:
+                    currentOp.position = currow;
+                    currentOp.type = ALIGNTYPE_DELETE;
+                    currentOp.base = getChar(subject_shared, subjectbases, currow);
+
+                    my_ops_out[nOps] = currentOp;
+                    ++nOps;
+
+                    curcol -= 0;
+                    currow -= 1;
+                    previousType = ALIGNTYPE_DELETE;
+
+                    break;
+                case ALIGNTYPE_INSERT:
+                    currentOp.position = currow+1;
+                    currentOp.type = ALIGNTYPE_INSERT;
+                    currentOp.base = getChar(query_shared, querybases, curcol);
+
+                    my_ops_out[nOps] = currentOp;
+                    ++nOps;
+
+                    curcol -= 1;
+                    currow -= 0;
+                    previousType = ALIGNTYPE_INSERT;
+
+                    break;
+                default : // code should not reach here
+                    isValid = false;
+                    printf("alignment backtrack error");
+                }
+            }
+            switch(previousType){
+            case ALIGNTYPE_MATCH:
+                curcol += 1;
+                currow += 1;
+                break;
+            case ALIGNTYPE_SUBSTITUTE:
+                curcol += 1;
+                currow += 1;
+                break;
+            case ALIGNTYPE_DELETE:
+                curcol += 0;
+                currow += 1;
+                break;
+            case ALIGNTYPE_INSERT:
+                curcol += 1;
+                currow += 0;
+                break;
+            default : break;
+            }
+            result.subject_begin_incl = currow;
+            result.query_begin_incl = curcol;
+            result.overlap = subject_end_excl - result.subject_begin_incl;
+            result.shift = result.subject_begin_incl == 0 ? -result.query_begin_incl : result.subject_begin_incl;
+            result.nOps = nOps;
+            result.isNormalized = false;
+            result.isValid = isValid;
+
+            *my_result_out = result;
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 //----------------------------below is unused------------------------------------------
 

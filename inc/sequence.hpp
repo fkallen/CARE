@@ -223,6 +223,12 @@ struct Sequence {
 		}
 	}
 
+    HOSTDEVICEQUALIFIER
+    // return number of data bytes for a sequence of length l
+    static constexpr int number_of_bytes(int l){
+        return SDIV(l, 4);
+    }
+
 	std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> data;
 	int nBases;
 };

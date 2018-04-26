@@ -511,7 +511,7 @@ void set_number_of_unique_sequences(BE& b, std::uint64_t num){
 }
 
 template<class BE>
-void set_read_id(BE& b, ReadId_t id){
+void set_read_id(BE& b, typename BE::ReadId_t id){
     clear(b);
     b.readId = id;
     b.corrected = false;
@@ -529,7 +529,7 @@ void findCandidates(BE& b, std::uint64_t max_number_candidates){
     b.findCandidatesTiming.preprocessingEnd();
     if(b.candidateIds.size() == 0){
         //no need for further processing without candidates
-        active = false;
+        b.active = false;
     }else{
         b.findCandidatesTiming.executionBegin();
         //find unique candidate sequences
@@ -553,7 +553,7 @@ void fetch_query_data_from_readstorage(BE& b){
 }
 
 template<class BE>
-void set_candidate_ids(BE& b, std::vector<typename Minhasher_t::Result_t>&& minhashResults){
+void set_candidate_ids(BE& b, std::vector<typename BE::Minhasher_t::Result_t>&& minhashResults){
     b.candidateIds = std::move(minhashResults);
 
     //remove self from candidates
@@ -596,6 +596,7 @@ void make_unique_sequences(BE& b){
     b.candidateIds[0] = numseqpairs[0].first;
     b.fwdSequences[0] = numseqpairs[0].second;
 
+    using Sequence_t = typename BE::Sequence_t;
     const Sequence_t* prevSeq = numseqpairs[0].second;
 
     for (std::size_t k = 1; k < numseqpairs.size(); k++) {
@@ -614,8 +615,8 @@ void make_unique_sequences(BE& b){
     b.findCandidatesTiming.d2hEnd();
 
     set_number_of_unique_sequences(b, n_unique_elements);
-    b.n_unique_candidates = fwdSequences.size();
-    b.n_candidates = candidateIds.size();
+    b.n_unique_candidates = b.fwdSequences.size();
+    b.n_candidates = b.candidateIds.size();
 
     assert(b.candidateCountsPrefixSum.back() == int(b.candidateIds.size()));
 }
@@ -642,6 +643,10 @@ void determine_good_alignments(BE& b){
 template<class BE>
 void determine_good_alignments(BE& b, int firstIndex, int N){
 
+    using AlignmentResult_t = typename BE::AlignmentResult_t;
+    using BestAlignment_t = typename BE::BestAlignment_t;
+    using ReadId_t = typename BE::ReadId_t;
+
     // Given AlignmentResults for a read and its reverse complement, find the "best" of both alignments
     auto get_best_alignment = [&](const AlignmentResult_t& fwdAlignment,
                                  const AlignmentResult_t& revcmplAlignment,
@@ -665,15 +670,15 @@ void determine_good_alignments(BE& b, int firstIndex, int N){
                 const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
 
                 if(ratio < revcomplratio){
-                    if(ratio < goodAlignmentProperties.maxErrorRate){
+                    if(ratio < b.goodAlignmentProperties.maxErrorRate){
                         retval = BestAlignment_t::Forward;
                     }
                 }else if(revcomplratio < ratio){
-                    if(revcomplratio < goodAlignmentProperties.maxErrorRate){
+                    if(revcomplratio < b.goodAlignmentProperties.maxErrorRate){
                         retval = BestAlignment_t::ReverseComplement;
                     }
                 }else{
-                    if(ratio < goodAlignmentProperties.maxErrorRate){
+                    if(ratio < b.goodAlignmentProperties.maxErrorRate){
                         // both have same mismatch ratio, choose longest overlap
                         if(overlap > revcomploverlap){
                             retval = BestAlignment_t::Forward;
@@ -683,13 +688,13 @@ void determine_good_alignments(BE& b, int firstIndex, int N){
                     }
                 }
             }else{
-                if((double)fwdMismatches / overlap < goodAlignmentProperties.maxErrorRate){
+                if((double)fwdMismatches / overlap < b.goodAlignmentProperties.maxErrorRate){
                     retval = BestAlignment_t::Forward;
                 }
             }
         }else{
             if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
-                if((double)revcmplMismatches / revcomploverlap < goodAlignmentProperties.maxErrorRate){
+                if((double)revcmplMismatches / revcomploverlap < b.goodAlignmentProperties.maxErrorRate){
                     retval = BestAlignment_t::ReverseComplement;
                 }
             }
@@ -720,7 +725,7 @@ void determine_good_alignments(BE& b, int firstIndex, int N){
                 else
                     return double(revcomplres.get_nOps()) / double(revcomplres.get_overlap());
             }();
-            const int candidateCount = candidateCountsPrefixSum[i+1] - candidateCountsPrefixSum[i];
+            const int candidateCount = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
             if(mismatchratio >= 4 * b.mismatchratioBaseFactor){
                 //best alignments is still not good enough, cannot use this candidate for correction
                 b.activeCandidates[i] = false;
@@ -728,16 +733,16 @@ void determine_good_alignments(BE& b, int firstIndex, int N){
                 b.activeCandidates[i] = true;
 
                 if (mismatchratio < 2 * b.mismatchratioBaseFactor) {
-                    counts[0] += candidateCount;
+                    b.counts[0] += candidateCount;
                 }
                 if (mismatchratio < 3 * b.mismatchratioBaseFactor) {
-                    counts[1] += candidateCount;
+                    b.counts[1] += candidateCount;
                 }
                 if (mismatchratio < 4 * b.mismatchratioBaseFactor) {
-                    counts[2] += candidateCount;
+                    b.counts[2] += candidateCount;
                 }
 
-                const int begin = candidateCountsPrefixSum[i];
+                const int begin = b.candidateCountsPrefixSum[i];
                 if(bestAlignment == BestAlignment_t::Forward){
                     b.bestIsForward[i] = true;
                     b.bestSequences[i] = b.fwdSequences[i];

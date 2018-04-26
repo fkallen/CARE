@@ -9,11 +9,11 @@ executable=./errorcorrector_gpu
 threads=16
 
 #input file
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
-#coverage=21
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+coverage=21
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
-coverage=255
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#coverage=255
 
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
 #coverage=31
@@ -40,7 +40,7 @@ outfile="--outfile=$outputfile"
 fileformat=fastq
 
 #only valid for fastq fileformat
-useQualityScores=--useQualityScores=false
+useQualityScores=--useQualityScores=true
 #useQualityScores=
 
 candidateCorrection=--candidateCorrection=true
@@ -67,9 +67,9 @@ batchsize=3
 #properties of good alignment
 maxmismatchratio=0.20
 #minimum overlap size
-minalignmentoverlap=35
+minalignmentoverlap=30
 #minimum relative overlap size
-minalignmentoverlapratio=0.35
+minalignmentoverlapratio=0.30
 
 #correction parameters
 #during the voting phase, if at a fixed position in the read base B from the original read occurs N times and base D occurs M times,
