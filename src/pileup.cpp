@@ -526,7 +526,8 @@ namespace care{
 						double avgsupportkregion = 0;
 						int c = 0;
 						bool kregioncoverageisgood = true;
-						for(int j = i - correctionSettings.k/2; j <= i + correctionSettings.k/2 && kregioncoverageisgood; j++){
+                        const int k = correctionSettings.k;
+						for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
 							if(j != i && j >= 0 && j < subjectlength){
 								avgsupportkregion += h_support[columnProperties.subjectColumnsBegin_incl + j];
 								kregioncoverageisgood &= (h_coverage[columnProperties.subjectColumnsBegin_incl + j] >= min_coverage_threshold);
@@ -534,7 +535,7 @@ namespace care{
 							}
 						}
                         avgsupportkregion /= c;
-						if(kregioncoverageisgood && avgsupportkregion >= 1.0-correctionSettings.errorrate){
+						if(kregioncoverageisgood && avgsupportkregion >= 1.0-0.5*correctionSettings.errorrate){
 							batchElem.correctedSequence[i] = h_consensus[globalIndex];
 							foundAColumn = true;
 						}
