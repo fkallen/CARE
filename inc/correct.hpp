@@ -163,7 +163,7 @@ struct ErrorCorrectionThread<minhasher_t, readStorage_t, false>{
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
     using AlignmentResult_t = typename alignment_result_type<false>::type;
-	using BatchElem_t = BatchElem<Minhasher_t, ReadStorage_t, AlignmentResult_t>;
+    using BatchElem_t = BatchElem<ReadStorage_t, AlignmentResult_t>;
 
 	struct CorrectionThreadOptions{
 		int threadId;
@@ -287,13 +287,11 @@ private:
 			if (batchElems.size() != readIds.size()) {
 				batchElems.resize(readIds.size(),
 								BatchElem_t(*threadOpts.readStorage,
-											*threadOpts.minhasher,
-											correctionOptions,
-											goodAlignmentProperties));
+											correctionOptions));
 			}
 
 			for(std::size_t i = 0; i < readIds.size(); i++){
-				batchElems[i].set_read_id(readIds[i]);
+				set_read_id(batchElems[i], readIds[i]);
 				nProcessedQueries++;
 			}
 
@@ -315,7 +313,11 @@ private:
 			// get query data, determine candidates via minhashing, get candidate data
 			for(auto& b : batchElems){
 				if(b.active){
-					b.findCandidates(estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage);
+                    findCandidates(b, [&, this](const std::string& sequencestring){
+                        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold
+                                                        * correctionOptions.estimatedCoverage;
+                        return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
+                    });
 				}
 			}
 
@@ -333,7 +335,7 @@ private:
 			tpa = std::chrono::system_clock::now();
             int batchindex = 0;
 			for(auto& b : batchElems){
-				if(b.active && !b.hasEnoughGoodCandidates()){
+				if(b.active && !hasEnoughGoodCandidates(b)){
 
                     auto subjectsBegin = &b.fwdSequence;
                     auto subjectsEnd = subjectsBegin + 1;
@@ -384,7 +386,61 @@ private:
 			tpc = std::chrono::system_clock::now();
 			for(auto& b : batchElems){
 				if(b.active){
-					b.determine_good_alignments();
+					determine_good_alignments(b, [&](const AlignmentResult_t& fwdAlignment,
+                                                 const AlignmentResult_t& revcmplAlignment,
+                                                 int querylength,
+                                                 int candidatelength) -> BestAlignment_t{
+                        const int overlap = fwdAlignment.get_overlap();
+                        const int revcomploverlap = revcmplAlignment.get_overlap();
+                        const int fwdMismatches = fwdAlignment.get_nOps();
+                        const int revcmplMismatches = revcmplAlignment.get_nOps();
+
+                        BestAlignment_t retval = BestAlignment_t::None;
+
+                        const int minimumOverlap = int(querylength * goodAlignmentProperties.min_overlap_ratio) > goodAlignmentProperties.min_overlap
+                                        ? int(querylength * goodAlignmentProperties.min_overlap_ratio) : goodAlignmentProperties.min_overlap;
+
+                        //find alignment with lowest mismatch ratio. if both have same ratio choose alignment with longer overlap
+
+                        if(fwdAlignment.get_isValid() && overlap >= minimumOverlap){
+                            if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
+                                const double ratio = (double)fwdMismatches / overlap;
+                                const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
+
+                                if(ratio < revcomplratio){
+                                    if(ratio < goodAlignmentProperties.maxErrorRate){
+                                        retval = BestAlignment_t::Forward;
+                                    }
+                                }else if(revcomplratio < ratio){
+                                    if(revcomplratio < goodAlignmentProperties.maxErrorRate){
+                                        retval = BestAlignment_t::ReverseComplement;
+                                    }
+                                }else{
+                                    if(ratio < goodAlignmentProperties.maxErrorRate){
+                                        // both have same mismatch ratio, choose longest overlap
+                                        if(overlap > revcomploverlap){
+                                            retval = BestAlignment_t::Forward;
+                                        }else{
+                                            retval = BestAlignment_t::ReverseComplement;
+                                        }
+                                    }
+                                }
+                            }else{
+                                if((double)fwdMismatches / overlap < goodAlignmentProperties.maxErrorRate){
+                                    retval = BestAlignment_t::Forward;
+                                }
+                            }
+                        }else{
+                            if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
+                                if((double)revcmplMismatches / revcomploverlap < goodAlignmentProperties.maxErrorRate){
+                                    retval = BestAlignment_t::ReverseComplement;
+                                }
+                            }
+                        }
+
+                        return retval;
+                    });
+
 				}
 			}
 
@@ -393,11 +449,11 @@ private:
 
 
 			for(auto& b : batchElems){
-				if(b.active && b.hasEnoughGoodCandidates()){
+				if(b.active && hasEnoughGoodCandidates(b)){
 					tpc = std::chrono::system_clock::now();
 					if(b.active){
 						//move candidates which are used for correction to the front
-						b.prepare_good_candidates();
+						prepare_good_candidates(b);
 					}
 					tpd = std::chrono::system_clock::now();
 					fetchgoodcandidatesTime += tpd - tpc;
@@ -557,7 +613,7 @@ struct ErrorCorrectionThread<minhasher_t, readStorage_t, true>{
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
     using AlignmentResult_t = typename alignment_result_type<true>::type;
-	using BatchElem_t = BatchElem<Minhasher_t, ReadStorage_t, AlignmentResult_t>;
+	using BatchElem_t = BatchElem<ReadStorage_t, AlignmentResult_t>;
 
 	struct CorrectionThreadOptions{
 		int threadId;
@@ -682,13 +738,11 @@ private:
 			if (batchElems.size() != readIds.size()) {
 				batchElems.resize(readIds.size(),
 								BatchElem_t(*threadOpts.readStorage,
-											*threadOpts.minhasher,
-											correctionOptions,
-											goodAlignmentProperties));
+											correctionOptions));
 			}
 
 			for(std::size_t i = 0; i < readIds.size(); i++){
-				batchElems[i].set_read_id(readIds[i]);
+				set_read_id(batchElems[i], readIds[i]);
 				nProcessedQueries++;
 			}
 
@@ -710,7 +764,11 @@ private:
 			// get query data, determine candidates via minhashing, get candidate data
 			for(auto& b : batchElems){
 				if(b.active){
-					b.findCandidates(estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage);
+                    findCandidates(b, [&, this](const std::string& sequencestring){
+                        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold
+                                                        * correctionOptions.estimatedCoverage;
+                        return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
+                    });
 				}
 			}
 
@@ -728,7 +786,7 @@ private:
 			tpa = std::chrono::system_clock::now();
             int batchindex = 0;
 			for(auto& b : batchElems){
-				if(b.active && !b.hasEnoughGoodCandidates()){
+				if(b.active && !hasEnoughGoodCandidates(b)){
 
                     auto subjectsBegin = &b.fwdSequence;
                     auto subjectsEnd = subjectsBegin + 1;
@@ -780,18 +838,72 @@ private:
 			tpc = std::chrono::system_clock::now();
 			for(auto& b : batchElems){
 				if(b.active){
-					b.determine_good_alignments();
+                    determine_good_alignments(b, [&](const AlignmentResult_t& fwdAlignment,
+                                                 const AlignmentResult_t& revcmplAlignment,
+                                                 int querylength,
+                                                 int candidatelength) -> BestAlignment_t{
+                        const int overlap = fwdAlignment.get_overlap();
+                        const int revcomploverlap = revcmplAlignment.get_overlap();
+                        const int fwdMismatches = fwdAlignment.get_nOps();
+                        const int revcmplMismatches = revcmplAlignment.get_nOps();
+
+                        BestAlignment_t retval = BestAlignment_t::None;
+
+                        const int minimumOverlap = int(querylength * goodAlignmentProperties.min_overlap_ratio) > goodAlignmentProperties.min_overlap
+                                        ? int(querylength * goodAlignmentProperties.min_overlap_ratio) : goodAlignmentProperties.min_overlap;
+
+                        //find alignment with lowest mismatch ratio. if both have same ratio choose alignment with longer overlap
+
+                        if(fwdAlignment.get_isValid() && overlap >= minimumOverlap){
+                            if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
+                                const double ratio = (double)fwdMismatches / overlap;
+                                const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
+
+                                if(ratio < revcomplratio){
+                                    if(ratio < goodAlignmentProperties.maxErrorRate){
+                                        retval = BestAlignment_t::Forward;
+                                    }
+                                }else if(revcomplratio < ratio){
+                                    if(revcomplratio < goodAlignmentProperties.maxErrorRate){
+                                        retval = BestAlignment_t::ReverseComplement;
+                                    }
+                                }else{
+                                    if(ratio < goodAlignmentProperties.maxErrorRate){
+                                        // both have same mismatch ratio, choose longest overlap
+                                        if(overlap > revcomploverlap){
+                                            retval = BestAlignment_t::Forward;
+                                        }else{
+                                            retval = BestAlignment_t::ReverseComplement;
+                                        }
+                                    }
+                                }
+                            }else{
+                                if((double)fwdMismatches / overlap < goodAlignmentProperties.maxErrorRate){
+                                    retval = BestAlignment_t::Forward;
+                                }
+                            }
+                        }else{
+                            if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
+                                if((double)revcmplMismatches / revcomploverlap < goodAlignmentProperties.maxErrorRate){
+                                    retval = BestAlignment_t::ReverseComplement;
+                                }
+                            }
+                        }
+
+                        return retval;
+                    });
+
 				}
 			}
 			tpd = std::chrono::system_clock::now();
 			determinegoodalignmentsTime += tpd - tpc;
 
 			for(auto& b : batchElems){
-				if(b.active && b.hasEnoughGoodCandidates()){
+				if(b.active && hasEnoughGoodCandidates(b)){
 					tpc = std::chrono::system_clock::now();
 					if(b.active){
 						//move candidates which are used for correction to the front
-						b.prepare_good_candidates();
+						prepare_good_candidates(b);
 					}
 					tpd = std::chrono::system_clock::now();
 					fetchgoodcandidatesTime += tpd - tpc;
