@@ -1,7 +1,22 @@
 #include "../inc/semi_global_alignment.hpp"
 
-namespace shd{
+#include <cassert>
 
+namespace sga{
+
+bool AlignmentAttributes::operator==(const AlignmentAttributes& rhs) const{
+    return score == rhs.score
+        && subject_begin_incl == rhs.subject_begin_incl
+        && query_begin_incl == rhs.query_begin_incl
+        && overlap == rhs.overlap
+        && shift == rhs.shift
+        && nOps == rhs.nOps
+        && isNormalized == rhs.isNormalized
+        && isValid == rhs.isValid;
+}
+bool AlignmentAttributes::operator!=(const AlignmentAttributes& rhs) const{
+    return !(*this == rhs);
+}
 bool AlignmentResult::operator==(const AlignmentResult& rhs) const{
     return attributes == rhs.attributes && operations == rhs.operations;
 }

@@ -47,7 +47,7 @@ void destroy_SHDhandle(SHDhandle& handle);
     which derive the required accessor from Sequence_t
 */
 template<class Sequence_t>
-shd::Result_t cpu_shifted_hamming_distance(const char* subject,
+SHDResult cpu_shifted_hamming_distance(const char* subject,
                                         int subjectlength,
 										const char* query,
 										int querylength,
@@ -66,7 +66,7 @@ shd::Result_t cpu_shifted_hamming_distance(const char* subject,
 #ifdef __NVCC__
 
 template<class Sequence_t>
-void call_shd_kernel_async(const SHDdata& shddata,
+void call_shd_kernel_async(const shd::SHDdata& shddata,
                       int min_overlap,
                       double maxErrorRate,
                       double min_overlap_ratio,
@@ -81,7 +81,7 @@ void call_shd_kernel_async(const SHDdata& shddata,
 }
 
 template<class Sequence_t>
-void call_shd_kernel(const SHDdata& shddata,
+void call_shd_kernel(const shd::SHDdata& shddata,
                       int min_overlap,
                       double maxErrorRate,
                       double min_overlap_ratio,
@@ -122,12 +122,11 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
 
     static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
 
-    auto& mybuffers = handle.buffers.
+    auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
 
     AlignmentDevice device = AlignmentDevice::None;
 
-    const int numberOfSubjects = queriesPerSubject.size();
     const int numberOfAlignments = std::distance(alignmentsbegin, alignmentsend);
     assert(numberOfAlignments == std::distance(queriesbegin, queriesend));
 
@@ -135,6 +134,8 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
     if(numberOfAlignments == 0)
         return device;
 #ifdef __NVCC__
+
+    const int numberOfSubjects = queriesPerSubject.size();
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         device = AlignmentDevice::GPU;
@@ -220,19 +221,19 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
                 H2D,
                 mybuffers.streams[0]); CUERR;
 
-        shd::call_shd_kernel_async<Sequence_t>(mybuffers,
+        call_shd_kernel_async<Sequence_t>(mybuffers,
                                     min_overlap,
                                     maxErrorRate,
                                     min_overlap_ratio,
                                     maxSubjectLength,
                                     maxQueryLength); CUERR;
 
-        sha::Result_t* results = mybuffers.h_results;
-        sha::Result_t* d_results = mybuffers.d_results;
+        shd::Result_t* results = mybuffers.h_results;
+        shd::Result_t* d_results = mybuffers.d_results;
 
         cudaMemcpyAsync(results,
             d_results,
-            sizeof(sha::Result_t) * numberOfAlignments,
+            sizeof(shd::Result_t) * numberOfAlignments,
             D2H,
             mybuffers.streams[0]); CUERR;
 
@@ -262,7 +263,7 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
                 const char* query =  (const char*)(*queryIt)->begin();
                 const int queryLength = (*queryIt)->length();
 
-                *alignmentsIt = shd::cpu_shifted_hamming_distance<Sequence_t>(subject, query, subjectLength, queryLength,
+                *alignmentsIt = cpu_shifted_hamming_distance<Sequence_t>(subject, subjectLength, query, queryLength,
                                                                         min_overlap,
                                                                         maxErrorRate,
                                                                         min_overlap_ratio);
@@ -295,10 +296,7 @@ void shifted_hamming_distance_get_results(SHDhandle& handle,
                                 AlignmentIter alignmentsend,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, AlignResultCompact>::value, "shifted hamming distance unexpected Alignement type");
-
-    auto& mybuffers = handle.buffers.
-    auto& timings = handle.timings;
+    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignement type");
 
     const int numberOfAlignments = std::distance(alignmentsbegin, alignmentsend);
 
@@ -306,6 +304,9 @@ void shifted_hamming_distance_get_results(SHDhandle& handle,
     if(numberOfAlignments == 0)
         return;
 #ifdef __NVCC__
+
+    auto& mybuffers = handle.buffers;
+    auto& timings = handle.timings;
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         cudaSetDevice(mybuffers.deviceId); CUERR;
@@ -353,7 +354,7 @@ AlignmentDevice shifted_hamming_distance(SHDhandle& handle,
                                 double min_overlap_ratio,
                                 bool canUseGpu){
 
-    shifted_hamming_distance_async(handle, subjectsbegin, subjectsend,
+    AlignmentDevice device = shifted_hamming_distance_async(handle, subjectsbegin, subjectsend,
                                     queriesbegin, queriesend,
                                     alignmentsbegin, alignmentsend,
                                     queriesPerSubject, min_overlap,
@@ -364,6 +365,7 @@ AlignmentDevice shifted_hamming_distance(SHDhandle& handle,
                                     alignmentsend,
                                     canUseGpu);
 
+    return device;
 }
 
 
@@ -389,7 +391,7 @@ void destroy_SGAhandle(SGAhandle& handle);
     which derive the required accessor from Sequence_t
 */
 template<class Sequence_t>
-sga::Result_t cpu_semi_global_alignment(const char* subject,
+SGAResult cpu_semi_global_alignment(const char* subject,
                                     int subjectlength,
                                     const char* query,
                                     int querylength,
@@ -409,7 +411,7 @@ sga::Result_t cpu_semi_global_alignment(const char* subject,
 #ifdef __NVCC__
 
 template<class Sequence_t>
-void call_semi_global_alignment_kernel_async(const SGAdata& sgadata,
+void call_semi_global_alignment_kernel_async(const sga::SGAdata& sgadata,
                                             const int score_match,
                                             const int score_sub,
                                             const int score_ins,
@@ -426,7 +428,7 @@ void call_semi_global_alignment_kernel_async(const SGAdata& sgadata,
 }
 
 template<class Sequence_t>
-void call_semi_global_alignment_kernel(const SGAdata& sgadata,
+void call_semi_global_alignment_kernel(const sga::SGAdata& sgadata,
                                             const int score_match,
                                             const int score_sub,
                                             const int score_ins,
@@ -466,14 +468,13 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
                                 int score_del,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, AlignResult>::value, "semi_global_alignment unexpected Alignement type");
+    static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi_global_alignment unexpected Alignement type");
 
-    auto& mybuffers = handle.buffers.
+    auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
 
     AlignmentDevice device = AlignmentDevice::None;
 
-    const int numberOfSubjects = queriesPerSubject.size();
     const int numberOfAlignments = std::distance(alignmentsbegin, alignmentsend);
     assert(numberOfAlignments == std::distance(queriesbegin, queriesend));
 
@@ -481,6 +482,8 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
     if(numberOfAlignments == 0)
         return device;
 #ifdef __NVCC__
+
+    const int numberOfSubjects = queriesPerSubject.size();
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         device = AlignmentDevice::GPU;
@@ -566,7 +569,7 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
                 H2D,
                 mybuffers.streams[0]); CUERR;
 
-        sga::call_semi_global_alignment_kernel_async<Sequence_t>(mybuffers,
+        call_semi_global_alignment_kernel_async<Sequence_t>(mybuffers,
                                                     score_match,
                                                     score_sub,
                                                     score_ins,
@@ -596,7 +599,7 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
 #endif
         device = AlignmentDevice::CPU;
 
-        tpa = std::chrono::system_clock::now();
+        timings.executionBegin();
 
         auto queryIt = queriesbegin;
         auto alignmentsIt = alignmentsbegin;
@@ -616,10 +619,10 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
             for(int i = 0; i < nQueries; i++){
                 const char* query =  (const char*)(*queryIt)->begin();
                 const int queryLength = (*queryIt)->length();
-                *alignmentsIt = sga::cpu_semi_global_alignment(subject,
-                                                    subjectlength,
+                *alignmentsIt = cpu_semi_global_alignment<Sequence_t>(subject,
+                                                    subjectLength,
                                                     query,
-                                                    querylength,
+                                                    queryLength,
                                                     score_match,
                                                     score_sub,
                                                     score_ins,
@@ -630,9 +633,7 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
             }
         }
 
-        tpb = std::chrono::system_clock::now();
-
-        mybuffers.alignmenttime += tpb - tpa;
+        timings.executionEnd();
 
 #ifdef __NVCC__
     }
@@ -656,10 +657,7 @@ void semi_global_alignment_get_results(SGAhandle& handle,
                                 AlignmentIter alignmentsend,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, AlignResult>::value, "semi_global_alignment unexpected Alignement type");
-
-    auto& mybuffers = handle.buffers.
-    auto& timings = handle.timings;
+    static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi_global_alignment unexpected Alignement type");
 
     const int numberOfAlignments = std::distance(alignmentsbegin, alignmentsend);
 
@@ -667,6 +665,9 @@ void semi_global_alignment_get_results(SGAhandle& handle,
     if(numberOfAlignments == 0)
         return;
 #ifdef __NVCC__
+
+    auto& mybuffers = handle.buffers;
+    auto& timings = handle.timings;
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         cudaSetDevice(mybuffers.deviceId); CUERR;
@@ -723,21 +724,23 @@ AlignmentDevice semi_global_alignment(SGAhandle& handle,
                                 int score_del,
                                 bool canUseGpu){
 
-    semi_global_alignment_async(handle,
-        subjectsbegin, subjectsend,
-        queriesbegin, queriesend,
-        alignmentsbegin,
-        alignmentsend,
-        queriesPerSubject,
-        score_match,
-        score_sub,
-        score_ins,
-        score_del,
-        canUseGpu);
+    AlignmentDevice device = semi_global_alignment_async(handle,
+                                                        subjectsbegin,
+                                                        subjectsend,
+                                                        queriesbegin,
+                                                        queriesend,
+                                                        alignmentsbegin,
+                                                        alignmentsend,
+                                                        queriesPerSubject,
+                                                        score_match,
+                                                        score_sub,
+                                                        score_ins,
+                                                        score_del,
+                                                        canUseGpu);
 
     semi_global_alignment_get_results(handle, alignmentsbegin,
                                       alignmentsend, canUseGpu);
-
+    return device;
 }
 
 

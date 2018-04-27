@@ -21,16 +21,17 @@ namespace care{
 
 	namespace errorgraphdetail{
 		// split substitutions in alignment into deletion + insertion
-		int split_subs(std::vector<AlignOp>& ops, const std::string& subject){
+        template<class Op>
+		int split_subs(std::vector<Op>& ops, const std::string& subject){
 			int splitted_subs = 0;
 			for(auto it = ops.begin(); it != ops.end(); it++){
-				if(it->type == ALIGNTYPE_SUBSTITUTE){
-					AlignOp del = *it;
+				if(it->type == Op::Type::sub){
+					Op del = *it;
 					del.base = subject[it->position];
-					del.type = ALIGNTYPE_DELETE;
+					del.type = Op::Type::match;
 
-					AlignOp ins = *it;
-					ins.type = ALIGNTYPE_INSERT;
+					Op ins = *it;
+					ins.type = Op::Type::ins;
 
 					it = ops.erase(it);
 					it = ops.insert(it, del);
@@ -169,13 +170,15 @@ struct ErrorGraph{
 		finalPath.clear();
 	}
 
-	void insertAlignment(AlignResult& alignment,
+    template<class Alignment>
+	void insertAlignment(Alignment& alignment,
 						 const int nTimes){
 		insertAlignment(alignment, nullptr, nTimes);
 	}
 
 	// insert alignment nTimes into the graph
-	void insertAlignment(AlignResult& alignment,
+    template<class Alignment>
+	void insertAlignment(Alignment& alignment,
 							const std::string* qualityScores_, const int nTimes){
 
 		assert(!(useQscores && !qualityScores_));
@@ -457,11 +460,13 @@ struct ErrorGraph{
 
 	}
 
-	void normalizeAlignment(AlignResult& alignment) const{
+    template<class Alignment>
+	void normalizeAlignment(Alignment& alignment) const{
+        using Op_t = typename Alignment::Op_t;
 		if(alignment.get_isNormalized())
 			return;
 
-        std::vector<AlignOp>& alignOps = alignment.operations;
+        auto& alignOps = alignment.operations;
 
 		int na = int(read.length());
 		int last_val = na;
@@ -469,11 +474,11 @@ struct ErrorGraph{
 		// delay operations as long as possible
 
 		for (int i = alignOps.size() - 1; i >= 0; i--) {
-			AlignOp& op = alignOps[i];
+			auto& op = alignOps[i];
 			int position = op.position;
 			const int base = op.base;
 
-			if (op.type == ALIGNTYPE_DELETE) {
+			if (op.type == Op_t::Type::del) {
 				position++;
 				while (position < last_val && read[position] == base)
 					position++;
@@ -482,7 +487,7 @@ struct ErrorGraph{
 				last_val = position;
 
 				for (size_t j = i; j < alignOps.size() - 1; j++) {
-					if (alignOps[j + 1].type == ALIGNTYPE_DELETE)
+					if (alignOps[j + 1].type == Op_t::Type::del)
 						break;
 
 					if (alignOps[j].position >= alignOps[j + 1].position) {
@@ -490,7 +495,7 @@ struct ErrorGraph{
 						alignOps[j].position--;
 					}else break;
 				}
-			}else if (op.type == ALIGNTYPE_INSERT) {
+			}else if (op.type == Op_t::Type::ins) {
 
 				if (position < na && read[position] == base) {
 					position++;
@@ -500,7 +505,7 @@ struct ErrorGraph{
 				}
 
 				for (size_t j = i; j < alignOps.size() - 1; j++) {
-					if (alignOps[j + 1].type == ALIGNTYPE_DELETE) {
+					if (alignOps[j + 1].type == Op_t::Type::del) {
 						if (alignOps[j].position >= alignOps[j + 1].position) {
 
 							// insertion and deletion of same base cancel each other. don't need this op
@@ -538,16 +543,19 @@ struct ErrorGraph{
 		alignment.get_isNormalized() = true;
 	}
 
-	std::vector<LinkOperation> makeLinkOperations(const AlignResult& alignment) const{
+    template<class Alignment>
+	std::vector<LinkOperation> makeLinkOperations(const Alignment& alignment) const{
+        using Op_t = typename Alignment::Op_t;
+
 		int cur_a = alignment.get_subject_begin_incl();
 		int last_a = cur_a + alignment.get_overlap();
 
-        const std::vector<AlignOp>& alignOps = alignment.operations;
+        const auto& alignOps = alignment.operations;
 
 		std::vector<LinkOperation> linkOps;
 
 		for (size_t i = 0; i < alignOps.size(); i++) {
-			const AlignOp& alignop = alignOps[i];
+			const auto& alignop = alignOps[i];
 			const int ca = alignop.position;
 			const char ch = alignop.base;
 
@@ -558,7 +566,7 @@ struct ErrorGraph{
 			}else {
 				LinkOperation linkop(ca, ca, false);
 
-				if (alignop.type == ALIGNTYPE_DELETE) {
+				if (alignop.type == Op_t::Type::del) {
 					linkop.to++;
 					cur_a++;
 				}else{
@@ -568,7 +576,7 @@ struct ErrorGraph{
 				i++;
 				for (; i < alignOps.size(); i++) {
 					if (alignOps[i].position > cur_a) break;
-					if (alignOps[i].type == ALIGNTYPE_DELETE) {
+					if (alignOps[i].type == Op_t::Type::del) {
 						linkop.to++;
 						cur_a++;
 					}else{

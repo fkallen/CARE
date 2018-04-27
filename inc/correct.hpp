@@ -370,7 +370,7 @@ private:
 				if(b.active){
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-                    semi_global_alignment_get_results(shdhandles[batchindex],
+                    shifted_hamming_distance_get_results(shdhandles[batchindex],
                                                     alignments.begin(),
                                                     alignments.end(),
                                                     canUseGpu);

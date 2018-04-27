@@ -2,6 +2,10 @@
 #define SHIFTED_HAMMING_DISTANCE_HPP
 
 #include "cudareduce.cuh"
+#include "hpc_helpers.cuh"
+
+#include <cstdint>
+#include <algorithm>
 
 namespace shd{
 
@@ -59,7 +63,7 @@ struct SHDdata{
 #endif
 
 	int deviceId = -1;
-	size_t sequencepitch = 0;
+	std::size_t sequencepitch = 0;
 	int max_sequence_length = 0;
 	int max_sequence_bytes = 0;
     int min_sequence_length = 0;

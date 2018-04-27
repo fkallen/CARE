@@ -1,5 +1,7 @@
 #include "../inc/shifted_hamming_distance.hpp"
 
+#include <cassert>
+
 namespace shd{
 
     bool AlignmentResult::operator==(const AlignmentResult& rhs) const{

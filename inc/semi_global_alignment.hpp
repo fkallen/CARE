@@ -3,6 +3,7 @@
 
 #include "hpc_helpers.cuh"
 
+#include <algorithm>
 #include <limits>
 #include <vector>
 #include <iostream>
@@ -73,11 +74,16 @@ struct AlignmentAttributes{
 	int nOps; //edit distance / number of operations
 	bool isNormalized;
 	bool isValid;
+
+    bool operator==(const AlignmentAttributes& rhs) const;
+    bool operator!=(const AlignmentAttributes& rhs) const;
 };
 
 struct AlignmentResult{
+    using Op_t = AlignOp;
+
     AlignmentAttributes attributes;
-	std::vector<AlignOp> operations;
+	std::vector<Op_t> operations;
 
     bool operator==(const AlignmentResult& rhs) const;
     bool operator!=(const AlignmentResult& rhs) const;
@@ -157,7 +163,7 @@ void cuda_cleanup_SGAdata(SGAdata& data);
 */
 
 template<class Accessor>
-AlignResult
+Result_t
 cpu_semi_global_alignment(const char* subject,
                             int subjectbases,
                             const char* query,
@@ -200,14 +206,14 @@ cpu_semi_global_alignment(const char* subject,
             int maximum = 0;
             if (matchscore < delscore) {
                 maximum = delscore;
-                prevs[(row) * numcols + (col)] = AlignOp::Type::del;
+                prevs[(row) * numcols + (col)] = char(AlignOp::Type::del);
             }else{
                 maximum = matchscore;
-                prevs[(row) * numcols + (col)] = ismatch ? AlignOp::Type::match; : AlignOp::Type::sub;
+                prevs[(row) * numcols + (col)] = ismatch ? char(AlignOp::Type::match) : char(AlignOp::Type::sub);
             }
             if (maximum < insscore) {
                 maximum = insscore;
-                prevs[(row) * numcols + (col)] = AlignOp::Type::ins;
+                prevs[(row) * numcols + (col)] = char(AlignOp::Type::ins);
             }
 
             scores[(row) * numcols + (col)] = maximum;
@@ -274,7 +280,7 @@ cpu_semi_global_alignment(const char* subject,
     alignresult.get_isNormalized() = false;
 
     while(currow != 0 && curcol != 0){
-        switch (prevs[(currow) * numcols + (curcol)]) {
+        switch (AlignOp::Type(prevs[(currow) * numcols + (curcol)])) {
         case AlignOp::Type::match: //printf("m\n");
             curcol -= 1;
             currow -= 1;
@@ -327,7 +333,7 @@ cpu_semi_global_alignment(const char* subject,
 
 template<int MAX_SEQUENCE_LENGTH, class Accessor>
 __global__
-void cuda_semi_global_alignment_kernel(AlignResultCompact* results,
+void cuda_semi_global_alignment_kernel(AlignmentAttributes* results,
                                        AlignOp* ops,
                                        const int max_ops_per_alignment,
                                        const char* subjectsdata,
@@ -435,20 +441,20 @@ void cuda_semi_global_alignment_kernel(AlignResultCompact* results,
                 if (matchscore < delscore) {
                     maximum = delscore;
 
-                    int t = AlignOp::Type::del;
+                    int t = int(AlignOp::Type::del);
                     t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
                     myprev |= t;
                 }else{
                     maximum = matchscore;
 
-                    int t = ismatch ? AlignOp::Type::match : AlignOp::Type::sub;
+                    int t = int(ismatch ? AlignOp::Type::match : AlignOp::Type::sub);
                     t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
                     myprev |= t;
                 }
                 if (maximum < insscore) {
                     maximum = insscore;
 
-                    int t = AlignOp::Type::ins;
+                    int t = int(AlignOp::Type::ins);
                     t <<= 2*(prevsPerInt-1- (globalquerypos % prevsPerInt));
                     myprev |= t;
                 }
@@ -508,12 +514,12 @@ void cuda_semi_global_alignment_kernel(AlignResultCompact* results,
             int nOps = 0;
             bool isValid = true;
             AlignOp currentOp;
-            char previousType = 0;
+            AlignOp::Type previousType;
             while(currow != -1 && curcol != -1){
                 const unsigned int colIntIndex = curcol / prevsPerInt;
                 const unsigned int col2Bitindex = curcol % prevsPerInt;
 
-                switch((prevs[currow * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colIntIndex] >> 2*(prevsPerInt-1-col2Bitindex)) & 0x3){
+                switch(AlignOp::Type((prevs[currow * (MAX_SEQUENCE_LENGTH / prevsPerInt) + colIntIndex] >> 2*(prevsPerInt-1-col2Bitindex)) & 0x3)){
 
                 case AlignOp::Type::match:
                     curcol -= 1;
@@ -612,7 +618,7 @@ void call_semi_global_alignment_kernel_async(const SGAdata& sgadata,
     dim3 grid(sgadata.n_queries, 1, 1);
 
     #define mycall(length) cuda_semi_global_alignment_kernel<(length)> \
-                            <<<grid, block, 0, stream>>>(sgadata.d_results, \
+                            <<<grid, block, 0, sgadata.streams[0]>>>(sgadata.d_results, \
                             sgadata.d_ops, \
                             sgadata.max_ops_per_alignment, \
                             sgadata.d_subjectsdata, \
