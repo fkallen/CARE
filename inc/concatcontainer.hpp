@@ -34,15 +34,15 @@ namespace care{
     				assert(baseiters[2*i] != baseiters[2*i+1]);
             }
 
-            bool operator==(const ConcatIterator& rhs) const{
+            bool operator==(const ConcatIterator& rhs) const noexcept{
                 return cur == rhs.cur;
             }
 
-            bool operator!=(const ConcatIterator& rhs) const{
+            bool operator!=(const ConcatIterator& rhs) const noexcept{
                 return !(*this == rhs);
             }
 
-            ConcatIterator& operator++(){
+            ConcatIterator& operator++() noexcept{
                 cur++;
     			//if we reached end of a range, switch to begin of next range
                 if(cur != end_of_range(N-1) && cur == end_of_range(which_orig_range)){
@@ -52,25 +52,25 @@ namespace care{
                 return *this;
             }
 
-            ConcatIterator operator++(int){
+            ConcatIterator operator++(int) noexcept{
                 ConcatIterator old(*this);
                 ++(*this);
                 return old;
             }
 
-            reference operator*() const{
+            reference operator*() const noexcept{
                 return *cur;
             }
 
-            pointer operator->() const{
+            pointer operator->() const noexcept{
                 return cur.operator->();
             }
     	private:
-            Iter begin_of_range(int i){
+            Iter begin_of_range(int i) const noexcept{
     			return baseiters[2*i];
     		}
 
-            Iter end_of_range(int i){
+            Iter end_of_range(int i) const noexcept{
     			return baseiters[2*i+1];
     		}
         };
@@ -86,11 +86,11 @@ namespace care{
             static_assert(sizeof...(Iters) % 2 == 0, "");
         }
 
-        iterator begin() const{
+        iterator begin() const noexcept{
             return iterator(baseiters, baseiters[0], 0);
         }
 
-        iterator end() const{
+        iterator end() const noexcept{
             return iterator(baseiters, baseiters[2*N-1], N-1);
         }
     };

@@ -342,125 +342,69 @@ private:
 					b.active = false;
 			}
 
-			constexpr bool canUseGpu = true;
-
-	// if 1, align all batch elements in a single kernel. if 0, use one alignment kernel per elements
-	// 1 can only handle shifted hamming distance
-	#if 0
+            constexpr bool canUseGpu = true;
 
 			tpa = std::chrono::system_clock::now();
+            int batchindex = 0;
+			for(auto& b : batchElems){
+				if(b.active && !b.hasEnoughGoodCandidates()){
 
-			//std::vector<BatchElem> tmpvec = batchElems;
+                    auto subjectsBegin = &b.fwdSequence;
+                    auto subjectsEnd = subjectsBegin + 1;
+                    auto queries = make_concat_container(b.fwdSequences.cbegin(), b.fwdSequences.cend(),
+                                                      b.revcomplSequences.cbegin(), b.revcomplSequences.cend());
 
-			AlignmentDevice device = shifted_hamming_distance(shdbuffers[0],
-											batchElems,
-											goodAlignmentProperties,
-											canUseGpu);
+                    auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                        b.revcomplAlignments.begin(), b.revcomplAlignments.end());
 
+                    AlignmentDevice device = shifted_hamming_distance_async<Sequence_t>(shdbuffers[batchindex],
+                                                                    subjectsBegin,
+                                                                    subjectsEnd,
+                                                                    queries.begin(),
+                                                                    queries.end(),
+                                                                    alignments.begin(),
+                                                                    alignments.end(),
+                                                                    {int(std::distance(queries.begin(), queries.end()))},
+                                                                    goodAlignmentProperties.min_overlap,
+                                                                    goodAlignmentProperties.maxErrorRate,
+                                                                    goodAlignmentProperties.min_overlap_ratio,
+                                                                    canUseGpu);
+
+					if(device == AlignmentDevice::CPU)
+						cpuAlignments++;
+					else if (device == AlignmentDevice::GPU)
+						gpuAlignments++;
+				}
+                batchindex++;
+			}
+
+			//get results
+            batchindex = 0;
+			for(auto& b : batchElems){
+				if(b.active){
+                    auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                        b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+                    semi_global_alignment_get_results(shdbuffers[batchindex],
+                                                    alignments.begin(),
+                                                    alignments.end(),
+                                                    canUseGpu);
+				}
+                batchindex++;
+			}
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
 
-			if(device == AlignmentDevice::CPU)
-				cpuAlignments++;
-			else if (device == AlignmentDevice::GPU)
-				gpuAlignments++;
-
+			//check quality of alignments
 			tpc = std::chrono::system_clock::now();
 			for(auto& b : batchElems){
 				if(b.active){
 					b.determine_good_alignments();
 				}
 			}
+
 			tpd = std::chrono::system_clock::now();
 			determinegoodalignmentsTime += tpd - tpc;
 
-
-	#else
-
-			//int finalIters[16]{0};
-			std::uint64_t maxcandidates = 0;
-
-			//get maximum number of unique candidates in current batches
-			for(const auto& b : batchElems){
-				if(b.active)
-					maxcandidates = std::max(b.n_unique_candidates, maxcandidates);
-			}
-
-
-	#if 0
-			const std::uint64_t alignmentbatchsize = std::min(maxcandidates, 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage));
-	#else
-			const std::uint64_t alignmentbatchsize = maxcandidates;
-	#endif
-
-			const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
-			//constexpr bool canUseGpu = true;
-			for(int iter = 0; iter < maxiters; iter++){
-				int batchindex = 0;
-				int begin = iter * alignmentbatchsize;
-				//start async alignments
-				tpa = std::chrono::system_clock::now();
-				for(auto& b : batchElems){
-					if(b.active && !b.hasEnoughGoodCandidates()){
-
-						AlignmentDevice device = shifted_hamming_distance_async(shdbuffers[batchindex],
-																	b,
-																	begin,
-																	alignmentbatchsize,
-																	goodAlignmentProperties,
-																	canUseGpu);
-
-
-						if(device == AlignmentDevice::CPU)
-							cpuAlignments++;
-						else if (device == AlignmentDevice::GPU)
-							gpuAlignments++;
-
-						//if(device != AlignmentDevice::None)
-						//    finalIters[batchindex] = iter;
-					}
-					batchindex++;
-				}
-				//get results
-				batchindex = 0;
-				for(auto& b : batchElems){
-					if(b.active && !b.hasEnoughGoodCandidates()){
-							get_shifted_hamming_distance_results(shdbuffers[batchindex],
-																	b,
-																	begin,
-																	alignmentbatchsize,
-																	goodAlignmentProperties,
-																	canUseGpu);
-
-					}
-					batchindex++;
-				}
-				tpb = std::chrono::system_clock::now();
-				getAlignmentsTimeTotal += tpb - tpa;
-
-				//check quality of alignments
-				batchindex = 0;
-				tpc = std::chrono::system_clock::now();
-				for(auto& b : batchElems){
-					if(b.active && !b.hasEnoughGoodCandidates()){
-						b.determine_good_alignments(begin, alignmentbatchsize);
-					}
-				}
-				tpd = std::chrono::system_clock::now();
-				determinegoodalignmentsTime += tpd - tpc;
-			}
-	#endif
-
-
-			/*int batchindex = 0;
-			for(auto& b : batchElems){
-				if(b.active){
-					std::uint64_t alignments = 2 * std::min(std::size_t(finalIters[batchindex] + 1) * std::size_t(alignmentbatchsize),
-															b.fwdSequences.size());
-					savedAlignments += 2 * b.fwdSequences.size() - alignments;
-					performedAlignments += alignments;
-				}
-			}*/
 
 			for(auto& b : batchElems){
 				if(b.active && b.hasEnoughGoodCandidates()){
@@ -477,60 +421,60 @@ private:
 				}
 			}
 
-				for(auto& b : batchElems){
-					if(b.active){
-						tpc = std::chrono::system_clock::now();
+			for(auto& b : batchElems){
+				if(b.active){
+					tpc = std::chrono::system_clock::now();
 
-						pileupImage.correct_batch_elem(b);
+					pileupImage.correct_batch_elem(b);
 
-						tpd = std::chrono::system_clock::now();
-						readcorrectionTimeTotal += tpd - tpc;
+					tpd = std::chrono::system_clock::now();
+					readcorrectionTimeTotal += tpd - tpc;
 
-						majorityvotetime += pileupImage.timings.findconsensustime;
-						basecorrectiontime += pileupImage.timings.correctiontime;
+					majorityvotetime += pileupImage.timings.findconsensustime;
+					basecorrectiontime += pileupImage.timings.correctiontime;
 
-						avgsupportfail += pileupImage.properties.failedAvgSupport;
-						minsupportfail += pileupImage.properties.failedMinSupport;
-						mincoveragefail += pileupImage.properties.failedMinCoverage;
-						verygoodalignment += pileupImage.properties.isHQ;
+					avgsupportfail += pileupImage.properties.failedAvgSupport;
+					minsupportfail += pileupImage.properties.failedMinSupport;
+					mincoveragefail += pileupImage.properties.failedMinCoverage;
+					verygoodalignment += pileupImage.properties.isHQ;
 
-						if(b.corrected){
-							write_read(b.readId, b.correctedSequence);
-							lock(b.readId);
-							(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
-							unlock(b.readId);
-						}
+					if(b.corrected){
+						write_read(b.readId, b.correctedSequence);
+						lock(b.readId);
+						(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
+						unlock(b.readId);
+					}
 
-						if (correctionOptions.correctCandidates) {
-							for(const auto& correctedCandidate : b.correctedCandidates){
-								const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
-								- b.candidateCountsPrefixSum[correctedCandidate.index];
-								for(int f = 0; f < count; f++){
-									ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
-									bool savingIsOk = false;
-									if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
-										lock(candidateId);
-										if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
-											(*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
-											savingIsOk = true;
-											nCorrectedCandidates++;
-										}
-										unlock(candidateId);
+					if (correctionOptions.correctCandidates) {
+						for(const auto& correctedCandidate : b.correctedCandidates){
+							const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
+							- b.candidateCountsPrefixSum[correctedCandidate.index];
+							for(int f = 0; f < count; f++){
+								ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
+								bool savingIsOk = false;
+								if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
+									lock(candidateId);
+									if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
+										(*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
+										savingIsOk = true;
+										nCorrectedCandidates++;
 									}
-									if (savingIsOk) {
-										if (b.bestIsForward[correctedCandidate.index])
-											write_read(candidateId, correctedCandidate.sequence);
-										else {
-											//correctedCandidate.sequence is reverse complement, make reverse complement again
-											const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
-											write_read(candidateId, fwd);
-										}
+									unlock(candidateId);
+								}
+								if (savingIsOk) {
+									if (b.bestIsForward[correctedCandidate.index])
+										write_read(candidateId, correctedCandidate.sequence);
+									else {
+										//correctedCandidate.sequence is reverse complement, make reverse complement again
+										const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
+										write_read(candidateId, fwd);
 									}
 								}
 							}
 						}
 					}
 				}
+			}
 
 			// update local progress
 			nProcessedReads += readIds.size();
@@ -809,27 +753,58 @@ private:
 
 			constexpr bool canUseGpu = true;
 
-	// if 1, align all batch elements in a single kernel. if 0, use one alignment kernel per elements
-	// 1 can only handle shifted hamming distance
-	#if 0
-
 			tpa = std::chrono::system_clock::now();
+            int batchindex = 0;
+			for(auto& b : batchElems){
+				if(b.active && !b.hasEnoughGoodCandidates()){
 
-			//std::vector<BatchElem> tmpvec = batchElems;
+                    auto subjectsBegin = &b.fwdSequence;
+                    auto subjectsEnd = subjectsBegin + 1;
+                    auto queries = make_concat_container(b.fwdSequences.cbegin(), b.fwdSequences.cend(),
+                                                      b.revcomplSequences.cbegin(), b.revcomplSequences.cend());
 
-			AlignmentDevice device = shifted_hamming_distance(shdbuffers[0],
-											batchElems,
-											goodAlignmentProperties,
-											canUseGpu);
+                    auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                        b.revcomplAlignments.begin(), b.revcomplAlignments.end());
 
+                    AlignmentDevice device = semi_global_alignment_async<Sequence_t>(sgabuffers[batchindex],
+                                                                    subjectsBegin,
+                                                                    subjectsEnd,
+                                                                    queries.begin(),
+                                                                    queries.end(),
+                                                                    alignments.begin(),
+                                                                    alignments.end(),
+                                                                    {int(std::distance(queries.begin(), queries.end()))},
+                                                                    alignmentOptions.alignmentscore_match,
+                                                                    alignmentOptions.alignmentscore_sub,
+                                                                    alignmentOptions.alignmentscore_ins,
+                                                                    alignmentOptions.alignmentscore_del,
+                                                                    canUseGpu);
+
+					if(device == AlignmentDevice::CPU)
+						cpuAlignments++;
+					else if (device == AlignmentDevice::GPU)
+						gpuAlignments++;
+				}
+                batchindex++;
+			}
+
+			//get results
+            batchindex = 0;
+			for(auto& b : batchElems){
+				if(b.active){
+                    auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                        b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+                    semi_global_alignment_get_results(sgabuffers[batchindex],
+                                                    alignments.begin(),
+                                                    alignments.end(),
+                                                    canUseGpu);
+				}
+                batchindex++;
+			}
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
 
-			if(device == AlignmentDevice::CPU)
-				cpuAlignments++;
-			else if (device == AlignmentDevice::GPU)
-				gpuAlignments++;
-
+			//check quality of alignments
 			tpc = std::chrono::system_clock::now();
 			for(auto& b : batchElems){
 				if(b.active){
@@ -838,120 +813,6 @@ private:
 			}
 			tpd = std::chrono::system_clock::now();
 			determinegoodalignmentsTime += tpd - tpc;
-
-
-	#else
-
-			//int finalIters[16]{0};
-			std::uint64_t maxcandidates = 0;
-
-			//get maximum number of unique candidates in current batches
-			for(const auto& b : batchElems){
-				if(b.active)
-					maxcandidates = std::max(b.n_unique_candidates, maxcandidates);
-			}
-
-
-	#if 0
-			const std::uint64_t alignmentbatchsize = std::min(maxcandidates, 2*int(correctionOptions.estimatedCoverage * correctionOptions.m_coverage));
-	#else
-			const std::uint64_t alignmentbatchsize = maxcandidates;
-	#endif
-
-			const int maxiters = alignmentbatchsize == 0 ? 0 : SDIV(maxcandidates, alignmentbatchsize);
-			//constexpr bool canUseGpu = true;
-			for(int iter = 0; iter < maxiters; iter++){
-				int batchindex = 0;
-				int begin = iter * alignmentbatchsize;
-				//start async alignments
-				tpa = std::chrono::system_clock::now();
-				for(auto& b : batchElems){
-					if(b.active && !b.hasEnoughGoodCandidates()){
-
-						/*AlignmentDevice device = semi_global_alignment_async(sgabuffers[batchindex],
-																b,
-																begin,
-																alignmentbatchsize,
-																alignmentOptions,
-																canUseGpu);*/
-
-                        auto subjectsBegin = &b.fwdSequence;
-                        auto subjectsEnd = subjectsBegin + 1;
-                        auto queries = make_concat_container(b.fwdSequences.cbegin(), b.fwdSequences.cend(),
-                                                          b.revcomplSequences.cbegin(), b.revcomplSequences.cend());
-
-                        auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
-                                                            b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-
-                        AlignmentDevice device = semi_global_alignment_async<Sequence_t>(sgabuffers[batchindex],
-                                                                        subjectsBegin,
-                                                                        subjectsEnd,
-                                                                        queries.begin(),
-                                                                        queries.end(),
-                                                                        alignments.begin(),
-                                                                        alignments.end(),
-                                                                        {int(std::distance(queries.begin(), queries.end()))},
-                                                                        alignmentOptions.alignmentscore_match,
-                                                                        alignmentOptions.alignmentscore_sub,
-                                                                        alignmentOptions.alignmentscore_ins,
-                                                                        alignmentOptions.alignmentscore_del,
-                                                                        canUseGpu);
-
-						if(device == AlignmentDevice::CPU)
-							cpuAlignments++;
-						else if (device == AlignmentDevice::GPU)
-							gpuAlignments++;
-
-						//if(device != AlignmentDevice::None)
-						//    finalIters[batchindex] = iter;
-					}
-					batchindex++;
-				}
-				//get results
-				batchindex = 0;
-				for(auto& b : batchElems){
-					if(b.active && !b.hasEnoughGoodCandidates()){
-							/*get_semi_global_alignment_results(sgabuffers[batchindex],
-																b,
-																begin,
-																alignmentbatchsize,
-																alignmentOptions,
-																canUseGpu);*/
-                        auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
-                                                            b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-                        semi_global_alignment_get_results(sgabuffers[batchindex],
-                                                        alignments.begin(),
-                                                        alignments.end(),
-                                                        canUseGpu);
-					}
-					batchindex++;
-				}
-				tpb = std::chrono::system_clock::now();
-				getAlignmentsTimeTotal += tpb - tpa;
-
-				//check quality of alignments
-				batchindex = 0;
-				tpc = std::chrono::system_clock::now();
-				for(auto& b : batchElems){
-					if(b.active && !b.hasEnoughGoodCandidates()){
-						b.determine_good_alignments(begin, alignmentbatchsize);
-					}
-				}
-				tpd = std::chrono::system_clock::now();
-				determinegoodalignmentsTime += tpd - tpc;
-			}
-	#endif
-
-
-			/*int batchindex = 0;
-			for(auto& b : batchElems){
-				if(b.active){
-					std::uint64_t alignments = 2 * std::min(std::size_t(finalIters[batchindex] + 1) * std::size_t(alignmentbatchsize),
-															b.fwdSequences.size());
-					savedAlignments += 2 * b.fwdSequences.size() - alignments;
-					performedAlignments += alignments;
-				}
-			}*/
 
 			for(auto& b : batchElems){
 				if(b.active && b.hasEnoughGoodCandidates()){
@@ -968,23 +829,23 @@ private:
 				}
 			}
 
-				for(auto& b : batchElems){
-					if(b.active){
-						tpc = std::chrono::system_clock::now();
+			for(auto& b : batchElems){
+				if(b.active){
+					tpc = std::chrono::system_clock::now();
 
-						errorgraph.correct_batch_elem(b);
+					errorgraph.correct_batch_elem(b);
 
-						tpd = std::chrono::system_clock::now();
-						readcorrectionTimeTotal += tpd - tpc;
+					tpd = std::chrono::system_clock::now();
+					readcorrectionTimeTotal += tpd - tpc;
 
-						if(b.corrected){
-							write_read(b.readId, b.correctedSequence);
-							lock(b.readId);
-							(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
-							unlock(b.readId);
-						}
+					if(b.corrected){
+						write_read(b.readId, b.correctedSequence);
+						lock(b.readId);
+						(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
+						unlock(b.readId);
 					}
 				}
+			}
 
 			// update local progress
 			nProcessedReads += readIds.size();
