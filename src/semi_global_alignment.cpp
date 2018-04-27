@@ -1,10 +1,61 @@
 #include "../inc/semi_global_alignment.hpp"
 
-namespace care{
+namespace shd{
 
-/*
-    SGAdata implementation
-*/
+bool AlignmentResult::operator==(const AlignmentResult& rhs) const{
+    return attributes == rhs.attributes && operations == rhs.operations;
+}
+bool AlignmentResult::operator!=(const AlignmentResult& rhs) const{
+    return !(*this == rhs);
+}
+int AlignmentResult::get_score() const{
+    return attributes.score;
+}
+int AlignmentResult::get_subject_begin_incl() const{
+    return attributes.subject_begin_incl;
+}
+int AlignmentResult::get_query_begin_incl() const{
+    return attributes.query_begin_incl;
+}
+int AlignmentResult::get_overlap() const{
+    return attributes.overlap;
+}
+int AlignmentResult::get_shift() const{
+    return attributes.shift;
+}
+int AlignmentResult::get_nOps() const{
+    return attributes.nOps;
+}
+bool AlignmentResult::get_isNormalized() const{
+    return attributes.isNormalized;
+}
+bool AlignmentResult::get_isValid() const{
+    return attributes.isValid;
+}
+int& AlignmentResult::get_score(){
+    return attributes.score;
+}
+int& AlignmentResult::get_subject_begin_incl(){
+    return attributes.subject_begin_incl;
+}
+int& AlignmentResult::get_query_begin_incl(){
+    return attributes.query_begin_incl;
+}
+int& AlignmentResult::get_overlap(){
+    return attributes.overlap;
+}
+int& AlignmentResult::get_shift(){
+    return attributes.shift;
+}
+int& AlignmentResult::get_nOps(){
+    return attributes.nOps;
+}
+bool& AlignmentResult::get_isNormalized(){
+    return attributes.isNormalized;
+}
+bool& AlignmentResult::get_isValid(){
+    return attributes.isValid;
+}
 
 void SGAdata::resize(int n_sub, int n_quer){
 #ifdef __NVCC__
@@ -61,16 +112,16 @@ void SGAdata::resize(int n_sub, int n_quer){
 
 	if(resizeResult){
 		cudaFree(d_results); CUERR;
-		cudaMalloc(&d_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
+		cudaMalloc(&d_results, sizeof(Attributes_t) * max_n_subjects * max_n_queries); CUERR;
 
 		cudaFreeHost(h_results); CUERR;
-		cudaMallocHost(&h_results, sizeof(AlignResultCompact) * max_n_subjects * max_n_queries); CUERR;
+		cudaMallocHost(&h_results, sizeof(Attributes_t) * max_n_subjects * max_n_queries); CUERR;
 
 		cudaFree(d_ops); CUERR;
 		cudaFreeHost(h_ops); CUERR;
 
-		cudaMalloc(&d_ops, sizeof(AlignOp) * max_n_queries * max_ops_per_alignment); CUERR;
-		cudaMallocHost(&h_ops, sizeof(AlignOp) * max_n_queries * max_ops_per_alignment); CUERR;
+		cudaMalloc(&d_ops, sizeof(Op_t) * max_n_queries * max_ops_per_alignment); CUERR;
+		cudaMallocHost(&h_ops, sizeof(Op_t) * max_n_queries * max_ops_per_alignment); CUERR;
 	}
 #endif
 
@@ -117,7 +168,7 @@ void cuda_cleanup_SGAdata(SGAdata& data){
 		cudaFreeHost(data.h_queriesdata); CUERR;
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
-        cudaFreeHost(data.h_NqueriesPrefixSum); CUERR; 
+        cudaFreeHost(data.h_NqueriesPrefixSum); CUERR;
 
 		for(int i = 0; i < SGAdata::n_streams; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;

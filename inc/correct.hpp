@@ -9,8 +9,6 @@
 #include "alignment.hpp"
 #include "batchelem.hpp"
 #include "graph.hpp"
-#include "shifted_hamming_distance.hpp"
-#include "semi_global_alignment.hpp"
 #include "pileup.hpp"
 #include "sequence.hpp"
 #include "sequencefileio.hpp"
@@ -145,10 +143,10 @@ template<bool indels>
 struct alignment_result_type;
 
 template<>
-struct alignment_result_type<true>{using type = AlignResult;};
+struct alignment_result_type<true>{using type = SGAResult;};
 
 template<>
-struct alignment_result_type<false>{using type = AlignResultCompact;};
+struct alignment_result_type<false>{using type = SHDResult;};
 
 template<class minhasher_t,
 		 class readStorage_t,
@@ -259,28 +257,16 @@ private:
 			threadOpts.locksForProcessedFlags[index].unlock();
 		};
 
-		std::vector<SHDdata> shdbuffers(correctionOptions.batchsize);
-		for(auto& buffer : shdbuffers){
-			cuda_init_SHDdata(buffer,
+		std::vector<SHDhandle> shdhandles(correctionOptions.batchsize);
+		for(auto& handle : shdhandles){
+			init_SHDhandle(handle,
 							threadOpts.deviceId,
 							fileProperties.maxSequenceLength,
 							SDIV(fileProperties.maxSequenceLength, 4),
 							threadOpts.gpuThresholdSHD);
 		}
 
-		std::vector<SGAdata> sgabuffers(correctionOptions.batchsize);
-		for(auto& buffer : sgabuffers){
-			cuda_init_SGAdata(buffer,
-							threadOpts.deviceId,
-							fileProperties.maxSequenceLength,
-							SDIV(fileProperties.maxSequenceLength, 4),
-							threadOpts.gpuThresholdSGA);
-		}
-
-
 		PileupImage<BatchElem_t> pileupImage(correctionOptions, goodAlignmentProperties);
-		ErrorGraph<BatchElem_t> errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.maxErrorRate,
-													correctionOptions.graphalpha, correctionOptions.graphx);
 
 		std::vector<BatchElem_t> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
@@ -357,7 +343,7 @@ private:
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
 
-                    AlignmentDevice device = shifted_hamming_distance_async<Sequence_t>(shdbuffers[batchindex],
+                    AlignmentDevice device = shifted_hamming_distance_async<Sequence_t>(shdhandles[batchindex],
                                                                     subjectsBegin,
                                                                     subjectsEnd,
                                                                     queries.begin(),
@@ -384,7 +370,7 @@ private:
 				if(b.active){
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-                    semi_global_alignment_get_results(shdbuffers[batchindex],
+                    semi_global_alignment_get_results(shdhandles[batchindex],
                                                     alignments.begin(),
                                                     alignments.end(),
                                                     canUseGpu);
@@ -553,11 +539,8 @@ private:
 		}
 	#endif
 
-		for(auto& shdbuffer : shdbuffers)
-		cuda_cleanup_SHDdata(shdbuffer);
-
-		for(auto& shdbuffer : sgabuffers)
-		cuda_cleanup_SGAdata(shdbuffer);
+		for(auto& handle : shdhandles)
+		      destroy_SHDhandle(handle);
 	}
 };
 
@@ -668,26 +651,15 @@ private:
 			threadOpts.locksForProcessedFlags[index].unlock();
 		};
 
-		std::vector<SHDdata> shdbuffers(correctionOptions.batchsize);
-		for(auto& buffer : shdbuffers){
-			cuda_init_SHDdata(buffer,
-							threadOpts.deviceId,
-							fileProperties.maxSequenceLength,
-							SDIV(fileProperties.maxSequenceLength, 4),
-							threadOpts.gpuThresholdSHD);
-		}
-
-		std::vector<SGAdata> sgabuffers(correctionOptions.batchsize);
-		for(auto& buffer : sgabuffers){
-			cuda_init_SGAdata(buffer,
+		std::vector<SGAhandle> sgahandles(correctionOptions.batchsize);
+		for(auto& handle : sgahandles){
+			init_SGAhandle(handle,
 							threadOpts.deviceId,
 							fileProperties.maxSequenceLength,
 							SDIV(fileProperties.maxSequenceLength, 4),
 							threadOpts.gpuThresholdSGA);
 		}
 
-
-		PileupImage<BatchElem_t> pileupImage(correctionOptions, goodAlignmentProperties);
 		ErrorGraph<BatchElem_t> errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.maxErrorRate,
 													correctionOptions.graphalpha, correctionOptions.graphx);
 
@@ -766,7 +738,7 @@ private:
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
 
-                    AlignmentDevice device = semi_global_alignment_async<Sequence_t>(sgabuffers[batchindex],
+                    AlignmentDevice device = semi_global_alignment_async<Sequence_t>(sgahandles[batchindex],
                                                                     subjectsBegin,
                                                                     subjectsEnd,
                                                                     queries.begin(),
@@ -794,7 +766,7 @@ private:
 				if(b.active){
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-                    semi_global_alignment_get_results(sgabuffers[batchindex],
+                    semi_global_alignment_get_results(sgahandles[batchindex],
                                                     alignments.begin(),
                                                     alignments.end(),
                                                     canUseGpu);
@@ -924,11 +896,8 @@ private:
 		}
 	#endif
 
-		for(auto& shdbuffer : shdbuffers)
-		cuda_cleanup_SHDdata(shdbuffer);
-
-		for(auto& shdbuffer : sgabuffers)
-		cuda_cleanup_SGAdata(shdbuffer);
+		for(auto& handle : sgahandles)
+		      destroy_SGAhandle(handle);
 	}
 };
 
