@@ -28,7 +28,7 @@ namespace care{
 				if(it->type == Op::Type::sub){
 					Op del = *it;
 					del.base = subject[it->position];
-					del.type = Op::Type::match;
+					del.type = Op::Type::del;
 
 					Op ins = *it;
 					ins.type = Op::Type::ins;
