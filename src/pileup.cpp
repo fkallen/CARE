@@ -526,16 +526,16 @@ namespace care{
 						double avgsupportkregion = 0;
 						int c = 0;
 						bool kregioncoverageisgood = true;
-                        const int k = correctionSettings.k;
+                        const int k = std::max(3, correctionSettings.k * 5);
 						for(int j = i - k/2; j <= i + k/2 && kregioncoverageisgood; j++){
-							if(j != i && j >= 0 && j < subjectlength){
+							if(j >= 0 && j < subjectlength){
 								avgsupportkregion += h_support[columnProperties.subjectColumnsBegin_incl + j];
 								kregioncoverageisgood &= (h_coverage[columnProperties.subjectColumnsBegin_incl + j] >= min_coverage_threshold);
 								c++;
 							}
 						}
                         avgsupportkregion /= c;
-						if(kregioncoverageisgood && avgsupportkregion >= 1.0-0.5*correctionSettings.errorrate){
+						if(kregioncoverageisgood && avgsupportkregion >= 1.0-1*correctionSettings.errorrate){
 							batchElem.correctedSequence[i] = h_consensus[globalIndex];
 							foundAColumn = true;
 						}

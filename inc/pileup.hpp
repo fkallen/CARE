@@ -37,7 +37,7 @@ namespace care{
             double maxErrorRate;
             double errorrate;
             double m;
-            double k;
+            int k;
         };
 
         struct PileupTimings{
