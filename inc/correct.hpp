@@ -329,7 +329,7 @@ private:
 							threadOpts.gpuThresholdSHD);
 		}
 
-		pileup::PileupImage2 pileupImage(correctionOptions.m_coverage, correctionOptions.kmerlength);
+		pileup::PileupImage pileupImage(correctionOptions.m_coverage, correctionOptions.kmerlength);
 
 		std::vector<BatchElem_t> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
@@ -486,7 +486,7 @@ private:
 			for(auto& b : batchElems){
 				if(b.active){
 					tpc = std::chrono::system_clock::now();
-                    std::pair<pileup::CorrectionResult, TaskTimings> res =
+                    std::pair<PileupCorrectionResult, TaskTimings> res =
                                                                     correct(pileupImage,
                                                                             b,
                                                                             goodAlignmentProperties.maxErrorRate,

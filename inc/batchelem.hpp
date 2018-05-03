@@ -13,14 +13,6 @@ namespace care{
 
     enum class BestAlignment_t {Forward, ReverseComplement, None};
 
-struct CorrectedCandidate{
-    std::uint64_t index;
-    std::string sequence;
-    CorrectedCandidate(){}
-    CorrectedCandidate(std::uint64_t index, const std::string& sequence)
-        : index(index), sequence(sequence){}
-};
-
 struct DetermineGoodAlignmentStats{
     int correctionCases[4]{0,0,0,0};
     int uniqueCandidatesWithoutGoodAlignment=0;
@@ -67,8 +59,6 @@ struct BatchElem{
 	std::vector<std::string> bestSequenceStrings;
 	std::vector<const std::string*> bestQualities;
     std::vector<bool> bestIsForward;
-
-    std::vector<CorrectedCandidate> correctedCandidates;
 
     double mismatchratioThreshold;
 
@@ -120,7 +110,6 @@ void clear(BE& b){
     b.bestSequences.clear();
     b.bestSequenceStrings.clear();
     b.bestIsForward.clear();
-    b.correctedCandidates.clear();
     b.bestQualities.clear();
 
     b.counts[0] = 0;
