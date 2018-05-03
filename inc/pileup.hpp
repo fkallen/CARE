@@ -51,7 +51,7 @@ struct PileupImage{
         double m;
         double k;
     };
-    
+
     struct PileupColumnProperties{
         int startindex;
         int endindex;
@@ -237,42 +237,6 @@ struct PileupImage{
             h_Gweights.reset();
             h_Tweights.reset();
     }
-
-#if 0
-    TaskTimings correct_batch_elem(BatchElem& batchElem){
-        TaskTimings tt;
-        std::chrono::time_point<std::chrono::system_clock> tpc, tpd;
-
-        tpc = std::chrono::system_clock::now();
-        init_from_batch_elem(batchElem);
-        tpd = std::chrono::system_clock::now();
-        taskTimings.preprocessingtime += tpd - tpc;
-        tt.preprocessingtime += tpd - tpc;
-
-        tpc = std::chrono::system_clock::now();
-        cpu_add_weights(batchElem);
-        tpd = std::chrono::system_clock::now();
-        taskTimings.executiontime += tpd - tpc;
-        tt.executiontime += tpd - tpc;
-        timings.findconsensustime += tpd - tpc;
-
-        tpc = std::chrono::system_clock::now();
-        cpu_find_consensus(batchElem);
-        tpd = std::chrono::system_clock::now();
-        taskTimings.executiontime += tpd - tpc;
-        tt.executiontime += tpd - tpc;
-        timings.findconsensustime += tpd - tpc;
-
-        tpc = std::chrono::system_clock::now();
-        cpu_correct(batchElem);
-        tpd = std::chrono::system_clock::now();
-        taskTimings.executiontime += tpd - tpc;
-        tt.executiontime += tpd - tpc;
-        timings.correctiontime += tpd - tpc;
-
-        return tt;
-    }
-#endif
 
 /*
     AlignmentIter: Iterator to Alignment pointer
