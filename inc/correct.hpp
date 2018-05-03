@@ -16,6 +16,8 @@
 #include "tasktiming.hpp"
 #include "concatcontainer.hpp"
 
+#include "correctionwrapper.hpp"
+
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -327,7 +329,7 @@ private:
 							threadOpts.gpuThresholdSHD);
 		}
 
-		PileupImage<BatchElem_t> pileupImage(correctionOptions, goodAlignmentProperties);
+		pileup::PileupImage2 pileupImage(correctionOptions.m_coverage, correctionOptions.kmerlength);
 
 		std::vector<BatchElem_t> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
@@ -484,51 +486,53 @@ private:
 			for(auto& b : batchElems){
 				if(b.active){
 					tpc = std::chrono::system_clock::now();
-
-					pileupImage.correct_batch_elem(b);
+                    std::pair<pileup::CorrectionResult, TaskTimings> res =
+                                                                    correct(pileupImage,
+                                                                            b,
+                                                                            goodAlignmentProperties.maxErrorRate,
+                                                                            correctionOptions.estimatedErrorrate,
+                                                                            correctionOptions.estimatedCoverage,
+                                                                            correctionOptions.correctCandidates,
+                                                                            correctionOptions.new_columns_to_correct);
 
 					tpd = std::chrono::system_clock::now();
 					readcorrectionTimeTotal += tpd - tpc;
 
-					majorityvotetime += pileupImage.timings.findconsensustime;
-					basecorrectiontime += pileupImage.timings.correctiontime;
+                    auto& correctionResult = res.first;
 
-					avgsupportfail += pileupImage.properties.failedAvgSupport;
-					minsupportfail += pileupImage.properties.failedMinSupport;
-					mincoveragefail += pileupImage.properties.failedMinCoverage;
-					verygoodalignment += pileupImage.properties.isHQ;
+					avgsupportfail += correctionResult.stats.failedAvgSupport;
+					minsupportfail += correctionResult.stats.failedMinSupport;
+					mincoveragefail += correctionResult.stats.failedMinCoverage;
+					verygoodalignment += correctionResult.stats.isHQ;
 
-					if(b.corrected){
-						write_read(b.readId, b.correctedSequence);
+					if(correctionResult.isCorrected){
+						write_read(b.readId, correctionResult.correctedSequence);
 						lock(b.readId);
 						(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
 						unlock(b.readId);
 					}
 
-					if (correctionOptions.correctCandidates) {
-						for(const auto& correctedCandidate : b.correctedCandidates){
-							const int count = b.candidateCountsPrefixSum[correctedCandidate.index+1]
-							- b.candidateCountsPrefixSum[correctedCandidate.index];
-							for(int f = 0; f < count; f++){
-								ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
-								bool savingIsOk = false;
-								if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
-									lock(candidateId);
-									if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
-										(*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
-										savingIsOk = true;
-										nCorrectedCandidates++;
-									}
-									unlock(candidateId);
+					for(const auto& correctedCandidate : correctionResult.correctedCandidates){
+						const int count = b.candidateCounts[correctedCandidate.index];
+						for(int f = 0; f < count; f++){
+							ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
+							bool savingIsOk = false;
+							if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
+								lock(candidateId);
+								if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
+									(*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
+									savingIsOk = true;
+									nCorrectedCandidates++;
 								}
-								if (savingIsOk) {
-									if (b.bestIsForward[correctedCandidate.index])
-										write_read(candidateId, correctedCandidate.sequence);
-									else {
-										//correctedCandidate.sequence is reverse complement, make reverse complement again
-										const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
-										write_read(candidateId, fwd);
-									}
+								unlock(candidateId);
+							}
+							if (savingIsOk) {
+								if (b.bestIsForward[correctedCandidate.index])
+									write_read(candidateId, correctedCandidate.sequence);
+								else {
+									//correctedCandidate.sequence is reverse complement, make reverse complement again
+									const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
+									write_read(candidateId, fwd);
 								}
 							}
 						}

@@ -187,31 +187,31 @@ struct FixedSizeSequence{
 
 struct Sequence {
 
-	Sequence();
-	Sequence(const std::string& sequence);
-	Sequence(const std::uint8_t* rawdata, int nBases_);
-	Sequence(Sequence&& other);
-	Sequence(const Sequence& other);
-	Sequence& operator=(const Sequence& other);
-	Sequence& operator=(Sequence&& other);
-	bool operator==(const Sequence& rhs) const;
-	bool operator!=(const Sequence& other) const;
-	bool operator==(const std::string& other) const;
-	bool operator!=(const std::string& other) const;
-	bool operator<(const Sequence& rhs) const;
-	char operator[](int i) const;
-	std::string toString() const;
-	Sequence reverseComplement() const;
-	int getNumBytes() const;
-	int length() const;
-	bool isCompressed() const;
-	std::uint8_t* begin() const;
-	std::uint8_t* end() const;
+	Sequence() noexcept;
+	Sequence(const std::string& sequence) noexcept;
+	Sequence(const std::uint8_t* rawdata, int nBases_) noexcept;
+	Sequence(Sequence&& other) noexcept;
+	Sequence(const Sequence& other) noexcept;
+	Sequence& operator=(const Sequence& other) noexcept;
+	Sequence& operator=(Sequence&& other) noexcept;
+	bool operator==(const Sequence& rhs) const noexcept;
+	bool operator!=(const Sequence& other) const noexcept;
+	bool operator==(const std::string& other) const noexcept;
+	bool operator!=(const std::string& other) const noexcept;
+	bool operator<(const Sequence& rhs) const noexcept;
+	char operator[](int i) const noexcept;
+	std::string toString() const noexcept;
+	Sequence reverseComplement() const noexcept;
+	int getNumBytes() const noexcept;
+	int length() const noexcept;
+	bool isCompressed() const noexcept;
+	std::uint8_t* begin() const noexcept;
+	std::uint8_t* end() const noexcept;
 	friend std::ostream& operator<<(std::ostream& stream, const Sequence& seq);
 
     HOSTDEVICEQUALIFIER
      // static access to i-th base in data
-    static char get(const char* data, int length, int index){
+    static char get(const char* data, int length, int index) noexcept{
 		const int byte = index / 4;
 		const int basepos = index % 4;
 		switch((data[byte] >> (3-basepos) * 2) & 0x03){
@@ -225,7 +225,7 @@ struct Sequence {
 
     HOSTDEVICEQUALIFIER
     // return number of data bytes for a sequence of length l
-    static constexpr int number_of_bytes(int l){
+    static constexpr int number_of_bytes(int l) noexcept{
         return SDIV(l, 4);
     }
 
@@ -234,7 +234,7 @@ struct Sequence {
 };
 
 struct SequencePtrLess{
-	bool operator() (const Sequence* lhs, const Sequence* rhs) const{
+	bool operator() (const Sequence* lhs, const Sequence* rhs) const noexcept{
 		const int bases = lhs->length();
 		const int otherbases = rhs->length();
 		if(bases < otherbases) return true;

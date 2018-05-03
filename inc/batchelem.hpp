@@ -54,6 +54,7 @@ struct BatchElem{
     //candidates properties
     std::vector<ReadId_t> candidateIds;
     std::vector<int> candidateCountsPrefixSum;
+    std::vector<int> candidateCounts;
 
     std::vector<bool> activeCandidates;
     std::vector<const Sequence_t*> fwdSequences;
@@ -108,6 +109,7 @@ void clear(BE& b){
     b.fwdQuality = nullptr;
     b.fwdSequence = nullptr;
     b.candidateIds.clear();
+    b.candidateCounts.clear();
     b.candidateCountsPrefixSum.clear();
     b.fwdSequences.clear();
     b.activeCandidates.clear();
@@ -128,13 +130,12 @@ void clear(BE& b){
 
 template<class BE>
 void set_number_of_sequences(BE& b, std::uint64_t num){
-    if(BE::canUseQualityScores){
-        b.bestQualities.resize(num);
-    }
+    b.bestQualities.resize(num, nullptr);
 }
 
 template<class BE>
 void set_number_of_unique_sequences(BE& b, std::uint64_t num){
+    b.candidateCounts.resize(num);
     b.candidateCountsPrefixSum.resize(num+1);
     b.activeCandidates.resize(num, false);
     b.fwdSequences.resize(num);
@@ -224,6 +225,7 @@ void make_unique_sequences(BE& b){
 
     b.findCandidatesTiming.d2hBegin();
     std::uint64_t n_unique_elements = 1;
+    b.candidateCounts[0] = 1;
     b.candidateCountsPrefixSum[0] = 0;
     b.candidateCountsPrefixSum[1] = 1;
     b.candidateIds[0] = numseqpairs[0].first;
@@ -237,8 +239,10 @@ void make_unique_sequences(BE& b){
         b.candidateIds[k] = pair.first;
         const Sequence_t* curSeq = pair.second;
         if (prevSeq == curSeq) {
+            b.candidateCounts[n_unique_elements-1]++;
             b.candidateCountsPrefixSum[n_unique_elements]++;
         }else {
+            b.candidateCounts[n_unique_elements]++;
             b.candidateCountsPrefixSum[n_unique_elements+1] = 1 + b.candidateCountsPrefixSum[n_unique_elements];
             b.fwdSequences[n_unique_elements] = curSeq;
             n_unique_elements++;
@@ -299,7 +303,7 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                 else
                     return double(revcomplres.get_nOps()) / double(revcomplres.get_overlap());
             }();
-            const int candidateCount = b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
+            const int candidateCount = b.candidateCounts[i];//b.candidateCountsPrefixSum[i+1] - b.candidateCountsPrefixSum[i];
             if(mismatchratio >= 4 * b.mismatchratioBaseFactor){
                 //best alignments is still not good enough, cannot use this candidate for correction
                 b.activeCandidates[i] = false;
@@ -401,11 +405,26 @@ void prepare_good_candidates(BE& b){
                     }
                     activeposition++;
                 }
+                b.candidateCounts[activeposition_unique] = count;
                 b.candidateCountsPrefixSum[activeposition_unique+1] = b.candidateCountsPrefixSum[activeposition_unique] + count;
                 activeposition_unique++;
             }
         }
     }
+
+    b.fwdSequences.resize(activeposition_unique);
+    b.revcomplSequences.resize(activeposition_unique);
+    b.bestAlignments.resize(activeposition_unique);
+    b.bestSequences.resize(activeposition_unique);
+    b.bestSequenceStrings.resize(activeposition_unique);
+    b.bestIsForward.resize(activeposition_unique);
+    b.candidateCounts.resize(activeposition_unique);
+    b.candidateCountsPrefixSum.resize(activeposition_unique+1);
+
+    b.candidateIds.resize(activeposition);
+    b.bestQualities.resize(activeposition);
+
+    b.activeCandidates.clear(); //no longer need this
 
     b.n_unique_candidates = activeposition_unique;
     b.n_candidates = activeposition;

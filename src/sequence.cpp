@@ -1,18 +1,18 @@
 #include "../inc/sequence.hpp"
 
 namespace care{
-	Sequence::Sequence() : nBases(0)
+	Sequence::Sequence() noexcept: nBases(0)
 	{
 		data.second = 0;
 	}
 
-	Sequence::Sequence(const std::string& sequence)
+	Sequence::Sequence(const std::string& sequence) noexcept
 		: nBases(sequence.length())
 	{
 		data = encode_2bit(sequence);
 	}
 
-	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_)
+	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_) noexcept
 		: nBases(nBases_)
 	{
 		const int size = SDIV(nBases,4);
@@ -22,17 +22,17 @@ namespace care{
 		std::copy(rawdata, rawdata + size, begin());
 	}
 
-	Sequence::Sequence(Sequence&& other)
+	Sequence::Sequence(Sequence&& other) noexcept
 	{
 		*this = std::move(other);
 	}
 
-	Sequence::Sequence(const Sequence& other)
+	Sequence::Sequence(const Sequence& other) noexcept
 	{
 		*this = other;
 	}
 
-	Sequence& Sequence::operator=(const Sequence& other)
+	Sequence& Sequence::operator=(const Sequence& other) noexcept
 	{
 		nBases = other.nBases;
 
@@ -45,7 +45,7 @@ namespace care{
 		return *this;
 	}
 
-	Sequence& Sequence::operator=(Sequence&& other){
+	Sequence& Sequence::operator=(Sequence&& other) noexcept{
 		if(this != &other){
 			nBases = other.nBases;
 
@@ -57,38 +57,38 @@ namespace care{
 	        return *this;
 	}
 
-	bool Sequence::operator==(const Sequence& rhs) const
+	bool Sequence::operator==(const Sequence& rhs) const noexcept
 	{
 		if(length() != rhs.length()) return false;
 		return (std::memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
 	}
 
-	bool Sequence::operator!=(const Sequence& other) const
+	bool Sequence::operator!=(const Sequence& other) const noexcept
 	{
 		return !(*this == other);
 	}
 
-	bool Sequence::operator==(const std::string& other) const
+	bool Sequence::operator==(const std::string& other) const noexcept
 	{
 		return toString() == other;
 	}
 
-	bool Sequence::operator!=(const std::string& other) const
+	bool Sequence::operator!=(const std::string& other) const noexcept
 	{
 		return !(*this == other);
 	}
 
-	char Sequence::operator[](int i) const
+	char Sequence::operator[](int i) const noexcept
 	{
         return get((const char*)data.first.get(), length(), i);
 	}
 
-	std::string Sequence::toString() const
+	std::string Sequence::toString() const noexcept
 	{
 		return decode_2bit(data.first, nBases);
 	}
 
-	bool Sequence::operator<(const Sequence& rhs) const{
+	bool Sequence::operator<(const Sequence& rhs) const noexcept{
 		const int bases = length();
 		const int otherbases = rhs.length();
 		if(bases < otherbases) return true;
@@ -97,7 +97,7 @@ namespace care{
 		return (std::memcmp(begin(), rhs.begin(), getNumBytes()) < 0);
 	}
 
-	Sequence Sequence::reverseComplement() const{
+	Sequence Sequence::reverseComplement() const noexcept{
 		Sequence revcompl;
 		revcompl.nBases = length();
 		revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
@@ -109,23 +109,23 @@ namespace care{
         return revcompl;
 	}
 
-	int Sequence::getNumBytes() const{
+	int Sequence::getNumBytes() const noexcept{
 		return data.second;
 	}
 
-	int Sequence::length() const{
+	int Sequence::length() const noexcept{
 		return nBases;
 	}
 
-	bool Sequence::isCompressed() const{
+	bool Sequence::isCompressed() const noexcept{
 		return true;
 	}
 
-	std::uint8_t* Sequence::begin() const{
+	std::uint8_t* Sequence::begin() const noexcept{
 		return data.first.get();
 	}
 
-	std::uint8_t* Sequence::end() const{
+	std::uint8_t* Sequence::end() const noexcept{
 		return data.first.get() + getNumBytes();
 	}
 
