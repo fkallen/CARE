@@ -3,7 +3,7 @@ CUDACC=nvcc
 HOSTLINKER=g++
 
 CXXFLAGS = -std=c++14
-CFLAGS = -Wall -g -fopenmp
+CFLAGS = -Wall -g -fopenmp -O3
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr
 
 #TODO CUDA_PATH =

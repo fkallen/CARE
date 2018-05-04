@@ -46,7 +46,7 @@ useQualityScores=--useQualityScores=true
 candidateCorrection=--candidateCorrection=true
 
 #if indels should be corrected, too
-indels=--indels=true
+indels=--indels=false
 
 #minhashing parameters
 #kmer length
