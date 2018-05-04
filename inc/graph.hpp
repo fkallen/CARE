@@ -775,7 +775,7 @@ struct ErrorGraph{
         vertices.emplace_back('S');
         topoIndices.emplace_back(0);
 
-        //vertices[0].bestPathProb = 0.0;
+        vertices[0].bestPathProb = 0.0;
 
         for(std::size_t i = 0; i < sequence_to_correct.size(); i++){
             const char base = sequence_to_correct[i];
@@ -1026,6 +1026,8 @@ struct ErrorGraph{
             for (const Edge& e : cur.edges) {
                 if (e.canBeUsed) {
 
+                    //it is important that bestPathProb of the start node is set to 0 during init.
+                    //otherwise, the condition will never be met if start node only has one outgoing edge with probability 1
                     double newBestLogPathProb = cur.bestPathProb + std::log(e.prob);
                     if (newBestLogPathProb > vertices[e.to].bestPathProb) {
                         vertices[e.to].bestPathProb = newBestLogPathProb;
