@@ -6,14 +6,14 @@ executable=./errorcorrector_gpu
 #executable=./errorcorrector_cpu
 
 #max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
-threads=16
+threads=1
 
 #input file
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
-#coverage=21
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+coverage=21
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
-coverage=255
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#coverage=255
 
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
 #coverage=31
