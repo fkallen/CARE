@@ -738,8 +738,7 @@ private:
 							threadOpts.gpuThresholdSGA);
 		}
 
-		ErrorGraph<BatchElem_t> errorgraph(correctionOptions.useQualityScores, goodAlignmentProperties.maxErrorRate,
-													correctionOptions.graphalpha, correctionOptions.graphx);
+		errorgraph::ErrorGraph errorgraph;
 
 		std::vector<BatchElem_t> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
@@ -897,17 +896,21 @@ private:
 				if(b.active){
 					tpc = std::chrono::system_clock::now();
 
-					errorgraph.correct_batch_elem(b);
+                    std::pair<GraphCorrectionResult, TaskTimings> res = correct(errorgraph,
+                                                                        b,
+                                                                        goodAlignmentProperties.maxErrorRate,
+                                                                        correctionOptions.graphalpha,
+                                                                        correctionOptions.graphx);
+
+                    auto& correctionResult = res.first;
 
 					tpd = std::chrono::system_clock::now();
 					readcorrectionTimeTotal += tpd - tpc;
 
-					if(b.corrected){
-						write_read(b.readId, b.correctedSequence);
-						lock(b.readId);
-						(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
-						unlock(b.readId);
-					}
+					write_read(b.readId, correctionResult.correctedSequence);
+					lock(b.readId);
+					(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
+					unlock(b.readId);
 				}
 			}
 
