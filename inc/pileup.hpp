@@ -60,11 +60,6 @@ struct PileupImage{
         int subjectColumnsEnd_excl;
     };
 
-    struct PileupTimings{
-        std::chrono::duration<double> findconsensustime{0};
-        std::chrono::duration<double> correctiontime{0};
-    };
-
     //buffers
     std::unique_ptr<int[]> h_As;
     std::unique_ptr<int[]> h_Cs;
@@ -85,8 +80,6 @@ struct PileupImage{
 
     PileupColumnProperties columnProperties;
     PileupCorrectionSettings correctionSettings;
-    PileupTimings timings;
-    TaskTimings taskTimings;
 
     PileupImage(double m_coverage,
                 int kmerlength){
@@ -122,8 +115,6 @@ struct PileupImage{
         n_columns = other.n_columns;
         columnProperties = other.columnProperties;
         correctionSettings = other.correctionSettings;
-        timings = other.timings;
-        taskTimings = other.taskTimings;
 
         return *this;
     }
@@ -146,8 +137,6 @@ struct PileupImage{
         n_columns = other.n_columns;
         columnProperties = other.columnProperties;
         correctionSettings = other.correctionSettings;
-        timings = other.timings;
-        taskTimings = other.taskTimings;
 
         return *this;
     }

@@ -9,11 +9,11 @@ executable=./errorcorrector_gpu
 threads=16
 
 #input file
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
-#coverage=21
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+coverage=21
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
-coverage=255
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#coverage=255
 
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
 #coverage=31
@@ -46,7 +46,7 @@ useQualityScores=--useQualityScores=true
 candidateCorrection=--candidateCorrection=true
 
 #if indels should be corrected, too
-indels=--indels=false
+indels=--indels=true
 
 #minhashing parameters
 #kmer length
