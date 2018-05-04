@@ -93,380 +93,186 @@ void correctFile(const MinhashOptions& minhashOptions,
 		if(nReads <= std::numeric_limits<std::uint32_t>::max()){
 			using ReadId_t = std::uint32_t;
 
-			if(correctionOptions.useQualityScores){
-				constexpr bool useQ = true;
+			if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+				using Sequence_t = NoIndelSequence_t;
+				constexpr bool indels = false;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}else{
-				constexpr bool useQ = false;
+				using Sequence_t = IndelSequence_t;
+				constexpr bool indels = true;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}
+
 		}else{
 			using ReadId_t = std::uint64_t;
 
-			if(correctionOptions.useQualityScores){
-				constexpr bool useQ = true;
+			if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+				using Sequence_t = NoIndelSequence_t;
+				constexpr bool indels = false;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}else{
-				constexpr bool useQ = false;
+				using Sequence_t = IndelSequence_t;
+				constexpr bool indels = true;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}
 		}
-
 	}else{
 		using Key_t = std::uint64_t;
 
 		if(nReads <= std::numeric_limits<std::uint32_t>::max()){
 			using ReadId_t = std::uint32_t;
 
-			if(correctionOptions.useQualityScores){
-				constexpr bool useQ = true;
+			if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+				using Sequence_t = NoIndelSequence_t;
+				constexpr bool indels = false;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}else{
-				constexpr bool useQ = false;
+				using Sequence_t = IndelSequence_t;
+				constexpr bool indels = true;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}
 		}else{
 			using ReadId_t = std::uint64_t;
 
-			if(correctionOptions.useQualityScores){
-				constexpr bool useQ = true;
+			if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+				using Sequence_t = NoIndelSequence_t;
+				constexpr bool indels = false;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}else{
-				constexpr bool useQ = false;
+				using Sequence_t = IndelSequence_t;
+				constexpr bool indels = true;
 
-				if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-					using Sequence_t = NoIndelSequence_t;
-					constexpr bool indels = false;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}else{
-					using Sequence_t = IndelSequence_t;
-					constexpr bool indels = true;
-
-					correctFile_impl<Minhasher<Key_t, ReadId_t>,
-									ReadStorage<Sequence_t, ReadId_t, useQ>,
-									indels>
-									(
-										minhashOptions,
-										alignmentOptions,
-										goodAlignmentProperties,
-										correctionOptions,
-										runtimeOptions,
-										fileOptions,
-										nReads,
-										readIsCorrectedVector,
-										locksForProcessedFlags,
-										nLocksForProcessedFlags,
-										deviceIds
-									);
-				}
+				correctFile_impl<Minhasher<Key_t, ReadId_t>,
+								ReadStorage<Sequence_t, ReadId_t>,
+								indels>
+								(
+									minhashOptions,
+									alignmentOptions,
+									goodAlignmentProperties,
+									correctionOptions,
+									runtimeOptions,
+									fileOptions,
+									nReads,
+									readIsCorrectedVector,
+									locksForProcessedFlags,
+									nLocksForProcessedFlags,
+									deviceIds
+								);
 			}
 		}
 	}
-
-
 }
 
 void performCorrection(const cxxopts::ParseResult& args) {

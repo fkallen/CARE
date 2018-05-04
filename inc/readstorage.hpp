@@ -13,22 +13,24 @@ namespace care{
     Data structure to store sequences and their quality scores
 */
 template<class sequence_t,
-		 class readId_t,
-		 bool useQualityScores>
+		 class readId_t>
 struct ReadStorage{
 	
 	using Sequence_t = sequence_t;
 	using ReadId_t = readId_t;
-	static constexpr bool hasQualityScores = useQualityScores;
 
-    bool isReadOnly;
+	bool useQualityScores = false;
+    bool isReadOnly = false;
 
     std::vector<std::string> qualityscores;
     std::vector<std::string> reverseComplqualityscores;
     std::vector<Sequence_t> sequences;
     std::vector<Sequence_t*> sequencepointers;
     std::vector<Sequence_t*> reverseComplSequencepointers;
-	
+
+    ReadStorage() : ReadStorage(false){}
+    ReadStorage(bool b) : useQualityScores(b){}
+
 	void init(ReadId_t nReads){
 		clear();
 
@@ -37,7 +39,7 @@ struct ReadStorage{
             qualityscores.resize(nReads);
     		reverseComplqualityscores.resize(nReads);
         }
-	}	
+	}
 
 	void clear(){
 		qualityscores.clear();
@@ -48,7 +50,7 @@ struct ReadStorage{
 
 		isReadOnly = false;
 	}
-	
+
 	void destroy(){
 		clear();
 		qualityscores.shrink_to_fit();
@@ -56,7 +58,7 @@ struct ReadStorage{
 		sequencepointers.shrink_to_fit();
 		reverseComplSequencepointers.shrink_to_fit();
 	}
-	
+
     void insertRead(ReadId_t readNumber, const std::string& sequence){
 		if(useQualityScores){
 			insertRead(readNumber, sequence, std::string(sequence.length(), 'A'));
@@ -64,7 +66,7 @@ struct ReadStorage{
 			Sequence_t seq(sequence);
 			sequences[readNumber] = std::move(seq);
 		}
-	}	
+	}
 
     void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
 		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling transform()");
@@ -79,7 +81,7 @@ struct ReadStorage{
 			reverseComplqualityscores[readNumber] = std::move(q);
 		}
 	}
-	
+
 	const std::string* fetchQuality_ptr(ReadId_t readNumber) const{
 		if(useQualityScores){
 			return &(qualityscores[readNumber]);
@@ -87,7 +89,7 @@ struct ReadStorage{
 			return nullptr;
 		}
 	}
-	
+
    	const std::string* fetchReverseComplementQuality_ptr(ReadId_t readNumber) const{
 		if(useQualityScores){
 			return &(reverseComplqualityscores[readNumber]);
@@ -104,7 +106,7 @@ struct ReadStorage{
 	//Must call transform() beforehand
 	const Sequence_t* fetchReverseComplementSequence_ptr(ReadId_t readNumber) const{
 		return reverseComplSequencepointers[readNumber];
-	}	
+	}
 
 	void transform(){
         if(isReadOnly)
@@ -127,7 +129,7 @@ struct ReadStorage{
         std::map<const Sequence_t, int> seqToSortedIndex;
 		std::vector<std::map<const Sequence_t, int>> seqToSortedIndextmpvec;
 
-//TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);		
+//TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
         #pragma omp parallel
         {
             int threadId = omp_get_thread_num();
@@ -149,7 +151,7 @@ struct ReadStorage{
             tmpmap.clear();
         }
         seqToSortedIndextmpvec.clear();
-		
+
 //TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
 
         assert(sequences.size() == seqToSortedIndex.size());
@@ -197,7 +199,7 @@ struct ReadStorage{
 #endif
 
 	}
-	
+
 };
 
 }

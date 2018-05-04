@@ -28,7 +28,7 @@ struct BatchElem{
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
     using AlignmentResult_t = alignment_result_t;
 
-	static constexpr bool canUseQualityScores = ReadStorage_t::hasQualityScores;
+	bool canUseQualityScores;
 
     bool active;
 
@@ -77,10 +77,11 @@ struct BatchElem{
 
     BatchElem(const ReadStorage_t& rs,
                 const CorrectionOptions& CO)
-                :   readStorage(&rs),
-                goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
-                mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
-                correctionOptions(CO){
+                :   canUseQualityScores(CO.useQualityScores),
+                    readStorage(&rs),
+                    goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
+                    mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
+                    correctionOptions(CO){
 
 
     }
@@ -183,7 +184,7 @@ void findCandidates(BE& b, Func get_candidates){
 template<class BE>
 void fetch_query_data_from_readstorage(BE& b){
     b.fwdSequence = b.readStorage->fetchSequence_ptr(b.readId);
-    if(BE::canUseQualityScores){
+    if(b.canUseQualityScores){
         b.fwdQuality = b.readStorage->fetchQuality_ptr(b.readId);
     }
     b.fwdSequenceString = b.fwdSequence->toString();
@@ -315,7 +316,7 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     b.bestSequences[i] = b.fwdSequences[i];
                     b.bestAlignments[i] = &b.fwdAlignments[i];
 
-                    if(BE::canUseQualityScores){
+                    if(b.canUseQualityScores){
                         for(int j = 0; j < candidateCount; j++){
                             const ReadId_t id = b.candidateIds[begin + j];
                             b.bestQualities[begin + j] = b.readStorage->fetchQuality_ptr(id);
@@ -326,7 +327,7 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     b.bestSequences[i] = b.revcomplSequences[i];
                     b.bestAlignments[i] = &b.revcomplAlignments[i];
 
-                    if(BE::canUseQualityScores){
+                    if(b.canUseQualityScores){
                         for(int j = 0; j < candidateCount; j++){
                             const ReadId_t id = b.candidateIds[begin + j];
                             b.bestQualities[begin + j] = b.readStorage->fetchReverseComplementQuality_ptr(id);
@@ -389,7 +390,7 @@ void prepare_good_candidates(BE& b){
                 const int count = b.candidateCountsPrefixSum[i+1] - begin;
                 for(int j = 0; j < count; j++){
                     b.candidateIds[activeposition] = b.candidateIds[begin + j];
-                    if(BE::canUseQualityScores){
+                    if(b.canUseQualityScores){
                         b.bestQualities[activeposition] = b.bestQualities[begin + j];
                     }
                     activeposition++;
