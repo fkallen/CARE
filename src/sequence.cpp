@@ -103,9 +103,7 @@ namespace care{
 		revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 		revcompl.data.second = getNumBytes();
 
-		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
-		if(!res)
-			throw std::runtime_error("could not get reverse complement of " + toString());
+		encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
         return revcompl;
 	}
 
