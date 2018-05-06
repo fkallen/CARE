@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <numeric>
+#include <cmath>
 
 #define ASSERT_TOPOLOGIC_SORT
 
@@ -56,7 +58,7 @@ namespace errorgraph{
     		int to;
     		bool canBeUsed;
 
-    		Edge(int t, double w) noexcept : to(t), weight(w), canBeUsed(true){}
+    		Edge(int t, double w) noexcept : weight(w), to(t), canBeUsed(true){}
     	};
 
     	struct Vertex {
@@ -168,7 +170,7 @@ namespace errorgraph{
                 std::get<0>(t)++, std::get<1>(t)++, std::get<2>(t)++/*quality iter is incremented in loop body*/){
 
                 auto& alignmentiter = std::get<0>(t);
-                auto& sequenceiter = std::get<1>(t);
+                //auto& sequenceiter = std::get<1>(t);
                 auto& countiter = std::get<2>(t);
                 auto& candidateQualityiter = std::get<3>(t);
 
@@ -239,7 +241,7 @@ namespace errorgraph{
     	// insert edge from --weight--> to
     	// to == unknown_destination_index means it is unknown if to is already in the graph
     	// returns the index of to in vertices
-    	int makeLink(const int from, const int to, const char base_of_to, const double weight) noexcept
+    	int makeLink(const int from, const int to, const char base_of_to, const double weight)
     	{
     	#if 0
     		std::cout << "makeLink(" << from << ", " << to << ", " << base_of_to << ", " << weight << ")" << std::endl;
@@ -352,7 +354,7 @@ namespace errorgraph{
     		}
     	}
 
-        CorrectionResult extractCorrectedSequence(double alpha, double x) noexcept{
+        CorrectionResult extractCorrectedSequence(double alpha, double x){
             #ifdef ASSERT_TOPOLOGIC_SORT
                 // better be safe
                 assertTopologicallySorted();
