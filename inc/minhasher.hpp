@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <limits>
+#include <numeric>
 
 #ifdef __NVCC__
 #include <thrust/host_vector.h>
