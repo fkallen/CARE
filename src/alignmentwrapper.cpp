@@ -1,4 +1,4 @@
-#include "../inc/alignment.hpp"
+#include "../inc/alignmentwrapper.hpp"
 
 namespace care{
 

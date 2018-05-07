@@ -3,10 +3,9 @@
 
 #include "options.hpp"
 
-#include "minhasher.hpp"
-#include "readstorage.hpp"
+#include "alignmentwrapper.hpp"
+#include "correctionwrapper.hpp"
 
-#include "alignment.hpp"
 #include "batchelem.hpp"
 #include "graph.hpp"
 #include "pileup.hpp"
@@ -16,7 +15,7 @@
 #include "tasktiming.hpp"
 #include "concatcontainer.hpp"
 
-#include "correctionwrapper.hpp"
+
 
 #include <cstdint>
 #include <memory>

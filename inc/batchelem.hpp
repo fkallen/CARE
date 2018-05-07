@@ -1,7 +1,6 @@
 #ifndef CARE_BATCH_ELEM_HPP
 #define CARE_BATCH_ELEM_HPP
 
-#include "alignment.hpp"
 #include "tasktiming.hpp"
 #include "options.hpp"
 
