@@ -374,11 +374,10 @@ private:
 			tpa = std::chrono::system_clock::now();
 
 			// get query data, determine candidates via minhashing, get candidate data
+			const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
 			for(auto& b : batchElems){
 				if(b.active){
                     findCandidates(b, [&, this](const std::string& sequencestring){
-                        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold
-                                                        * correctionOptions.estimatedCoverage;
                         return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
                     });
 				}
@@ -783,11 +782,10 @@ private:
 			tpa = std::chrono::system_clock::now();
 
 			// get query data, determine candidates via minhashing, get candidate data
+			const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
 			for(auto& b : batchElems){
 				if(b.active){
                     findCandidates(b, [&, this](const std::string& sequencestring){
-                        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold
-                                                        * correctionOptions.estimatedCoverage;
                         return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
                     });
 				}
