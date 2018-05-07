@@ -60,6 +60,9 @@ struct BatchElem{
 	std::vector<const std::string*> bestQualities;
     std::vector<bool> bestIsForward;
 
+    std::vector<Sequence_t> reverseComplements;
+    std::vector<std::string> reverseComplementQualities;
+
     double mismatchratioThreshold;
 
     const ReadStorage_t* readStorage;
@@ -113,6 +116,9 @@ void clear(BE& b){
     b.bestIsForward.clear();
     b.bestQualities.clear();
 
+    b.reverseComplements.clear();
+    b.reverseComplementQualities.clear();
+
     b.counts[0] = 0;
     b.counts[1] = 0;
     b.counts[2] = 0;
@@ -136,6 +142,10 @@ void set_number_of_unique_sequences(BE& b, std::uint64_t num){
     b.bestSequences.resize(num);
     b.bestSequenceStrings.resize(num);
     b.bestIsForward.resize(num);
+
+    if(!BE::ReadStorage_t::has_reverse_complement){
+        b.reverseComplements.resize(num);
+    }
 }
 
 template<class BE>
@@ -250,9 +260,16 @@ void make_unique_sequences(BE& b){
 
 template<class BE>
 void fetch_revcompl_sequences_from_readstorage(BE& b){
-    for(std::size_t k = 0; k < b.fwdSequences.size(); k++){
-        int first = b.candidateCountsPrefixSum[k];
-        b.revcomplSequences[k] = b.readStorage->fetchReverseComplementSequence_ptr(b.candidateIds[first]);
+    if(BE::ReadStorage_t::has_reverse_complement){
+        for(std::size_t k = 0; k < b.fwdSequences.size(); k++){
+            int first = b.candidateCountsPrefixSum[k];
+            b.revcomplSequences[k] = b.readStorage->fetchReverseComplementSequence_ptr(b.candidateIds[first]);
+        }
+    }else{
+        for(std::size_t k = 0; k < b.fwdSequences.size(); k++){
+            b.reverseComplements[k] = std::move(b.fwdSequences[k]->reverseComplement());
+            b.revcomplSequences[k] = &b.reverseComplements[k];
+        }
     }
 }
 
@@ -275,6 +292,9 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
     const int querylength = b.fwdSequence->length();
     const int lastIndex_excl = std::min(std::size_t(firstIndex + N), b.fwdSequences.size());
 
+    if(!BE::ReadStorage_t::has_reverse_complement){
+        b.reverseComplementQualities.reserve(b.candidateIds.size());
+    }
     for(int i = firstIndex; i < lastIndex_excl; i++){
         const auto& res = b.fwdAlignments[i];
         const auto& revcomplres = b.revcomplAlignments[i];
@@ -328,9 +348,19 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     b.bestAlignments[i] = &b.revcomplAlignments[i];
 
                     if(b.canUseQualityScores){
-                        for(int j = 0; j < candidateCount; j++){
-                            const ReadId_t id = b.candidateIds[begin + j];
-                            b.bestQualities[begin + j] = b.readStorage->fetchReverseComplementQuality_ptr(id);
+                        if(BE::ReadStorage_t::has_reverse_complement){
+                            for(int j = 0; j < candidateCount; j++){
+                                const ReadId_t id = b.candidateIds[begin + j];
+                                b.bestQualities[begin + j] = b.readStorage->fetchReverseComplementQuality_ptr(id);
+                            }
+                        }else{
+                            for(int j = 0; j < candidateCount; j++){
+                                const ReadId_t id = b.candidateIds[begin + j];
+                                std::string qualitystring = *(b.readStorage->fetchQuality_ptr(id));
+                                std::reverse(qualitystring.begin(), qualitystring.end());
+                                b.reverseComplementQualities.push_back(std::move(qualitystring));
+                                b.bestQualities[begin + j] = &b.reverseComplementQualities.back();
+                            }
                         }
                     }
                 }

@@ -225,8 +225,8 @@ struct ReadStorageMinMemory{
     std::vector<Sequence_t> sequences;
     std::vector<Sequence_t*> sequencepointers;
 
-    ReadStorage() : ReadStorage(false){}
-    ReadStorage(bool b) : useQualityScores(b){}
+    ReadStorageMinMemory() : ReadStorageMinMemory(false){}
+    ReadStorageMinMemory(bool b) : useQualityScores(b){}
 
 	void init(ReadId_t nReads){
 		clear();
@@ -283,6 +283,16 @@ struct ReadStorageMinMemory{
 	const Sequence_t* fetchSequence_ptr(ReadId_t readNumber) const{
 		return sequencepointers[readNumber];
 	}
+
+   //not supported
+   const std::string* fetchReverseComplementQuality_ptr(ReadId_t readNumber) const{
+       throw std::runtime_error("not supported");
+   }
+
+   //not supported
+   const Sequence_t* fetchReverseComplementSequence_ptr(ReadId_t readNumber) const{
+       throw std::runtime_error("not supported");
+   }
 
 	void transform(){
         if(isReadOnly)
