@@ -165,6 +165,10 @@ namespace errorgraph{
                     QualityIter candidateQualitiesEnd) noexcept{
 
             // loop over alignments and insert them to the graph
+		auto alignmentiter = alignmentsBegin;
+		auto countiter = candidateCountsBegin;
+		auto candidateQualityiter = candidateQualitiesBegin;
+#if 0
             for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, candidateCountsBegin, candidateQualitiesBegin);
                 std::get<0>(t) != alignmentsEnd;
                 std::get<0>(t)++, std::get<1>(t)++, std::get<2>(t)++/*quality iter is incremented in loop body*/){
@@ -173,6 +177,8 @@ namespace errorgraph{
                 //auto& sequenceiter = std::get<1>(t);
                 auto& countiter = std::get<2>(t);
                 auto& candidateQualityiter = std::get<3>(t);
+#endif
+	    for(; alignmentiter != alignmentsEnd; alignmentiter++, countiter++){
 
                 assert(*alignmentiter != nullptr);
                 errorgraphdetail::split_subs((*alignmentiter)->operations, sequence_to_correct);

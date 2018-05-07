@@ -308,6 +308,11 @@ struct PileupImage{
                 QualityIter candidateQualitiesEnd) const{
 
         // add weights for each base in every candidate sequences
+	auto alignmentiter = alignmentsBegin;
+	auto sequenceiter = candidateSequencesBegin;
+	auto countiter = candidateCountsBegin;
+	auto candidateQualityiter = candidateQualitiesBegin;
+#if 0
         for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, candidateCountsBegin, candidateQualitiesBegin);
             std::get<0>(t) != alignmentsEnd;
             std::get<0>(t)++, std::get<1>(t)++, std::get<2>(t)++/*quality iter is incremented in loop body*/){
@@ -316,7 +321,8 @@ struct PileupImage{
             auto& sequenceiter = std::get<1>(t);
             auto& countiter = std::get<2>(t);
             auto& candidateQualityiter = std::get<3>(t);
-
+#endif
+	for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++, countiter++){
             const double defaultweight = 1.0 - std::sqrt((*alignmentiter)->get_nOps()
                                                         / ((*alignmentiter)->get_overlap()
                                                             * desiredAlignmentMaxErrorRate));
@@ -522,6 +528,10 @@ struct PileupImage{
             and are not longer than subjectlength + candidate_correction_new_cols
         */
 
+	auto alignmentiter = alignmentsBegin;
+	auto sequenceiter = candidateSequencesBegin;
+	int i = 0;
+#if 0
         for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, 0);
             std::get<0>(t) != alignmentsEnd;
             std::get<0>(t)++, std::get<1>(t)++, std::get<2>(t)++){
@@ -529,6 +539,8 @@ struct PileupImage{
             auto& alignmentiter = std::get<0>(t);
             auto& sequenceiter = std::get<1>(t);
             auto i = std::get<2>(t);
+#endif
+	for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++, i++){
 
             const int queryColumnsBegin_incl = (*alignmentiter)->get_shift() - columnProperties.startindex;
             const int queryLength = sequenceiter->length();
