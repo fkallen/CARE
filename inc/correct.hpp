@@ -344,6 +344,10 @@ private:
 		const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
 														+ 2.5 * estimatedDeviationAlignedCandidates;
 
+        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
+
+        constexpr bool canUseGpu = true;
+
 		while(!stopAndAbort &&!readIds.empty()){
 
 			//fit vector size to actual batch size
@@ -371,32 +375,30 @@ private:
 
 			std::partition(batchElems.begin(), batchElems.end(), [](const auto& b){return b.active;});
 
-			tpa = std::chrono::system_clock::now();
 
-			// get query data, determine candidates via minhashing, get candidate data
-			const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
-			for(auto& b : batchElems){
+            //pipelining to overlap gpu alignment computation with retrieval of canidates
+            for(std::size_t batchindex = 0; batchindex < batchElems.size(); batchindex++){
+                auto& b = batchElems[batchindex];
+
+                tpa = std::chrono::system_clock::now();
+
+	             // get query data, determine candidates via minhashing, get candidate data
 				if(b.active){
                     findCandidates(b, [&, this](const std::string& sequencestring){
                         return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
                     });
+
+                    //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
+                    if(b.n_unique_candidates > estimatedAlignmentCountThreshold)
+    					b.active = false;
 				}
-			}
 
-			tpb = std::chrono::system_clock::now();
-			mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
+                tpb = std::chrono::system_clock::now();
+                mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
-			//don't correct candidates with more than estimatedAlignmentCountThreshold alignments
-			for(auto& b : batchElems){
-				if(b.active && b.n_unique_candidates > estimatedAlignmentCountThreshold)
-					b.active = false;
-			}
+			    tpa = std::chrono::system_clock::now();
 
-            constexpr bool canUseGpu = true;
-
-			tpa = std::chrono::system_clock::now();
-            int batchindex = 0;
-			for(auto& b : batchElems){
+                //start alignment
 				if(b.active && !hasEnoughGoodCandidates(b)){
 
                     auto subjectsBegin = &b.fwdSequence;
@@ -425,12 +427,11 @@ private:
 					else if (device == AlignmentDevice::GPU)
 						gpuAlignments++;
 				}
-                batchindex++;
-			}
+            }
 
 			//get results
-            batchindex = 0;
-			for(auto& b : batchElems){
+            for(std::size_t batchindex = 0; batchindex < batchElems.size(); batchindex++){
+                auto& b = batchElems[batchindex];
 				if(b.active){
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
@@ -439,7 +440,6 @@ private:
                                                     alignments.end(),
                                                     canUseGpu);
 				}
-                batchindex++;
 			}
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
@@ -751,6 +751,9 @@ private:
 		const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
 		const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
 														+ 2.5 * estimatedDeviationAlignedCandidates;
+        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
+
+        constexpr bool canUseGpu = true;
 
 		while(!stopAndAbort &&!readIds.empty()){
 
@@ -779,32 +782,29 @@ private:
 
 			std::partition(batchElems.begin(), batchElems.end(), [](const auto& b){return b.active;});
 
-			tpa = std::chrono::system_clock::now();
+            //pipelining to overlap gpu alignment computation with retrieval of canidates
+            for(std::size_t batchindex = 0; batchindex < batchElems.size(); batchindex++){
+                auto& b = batchElems[batchindex];
 
-			// get query data, determine candidates via minhashing, get candidate data
-			const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
-			for(auto& b : batchElems){
+                tpa = std::chrono::system_clock::now();
+
+	             // get query data, determine candidates via minhashing, get candidate data
 				if(b.active){
                     findCandidates(b, [&, this](const std::string& sequencestring){
                         return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
                     });
+
+                    //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
+                    if(b.n_unique_candidates > estimatedAlignmentCountThreshold)
+    					b.active = false;
 				}
-			}
 
-			tpb = std::chrono::system_clock::now();
-			mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
+                tpb = std::chrono::system_clock::now();
+                mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
-			//don't correct candidates with more than estimatedAlignmentCountThreshold alignments
-			for(auto& b : batchElems){
-				if(b.active && b.n_unique_candidates > estimatedAlignmentCountThreshold)
-					b.active = false;
-			}
+			    tpa = std::chrono::system_clock::now();
 
-			constexpr bool canUseGpu = true;
-
-			tpa = std::chrono::system_clock::now();
-            int batchindex = 0;
-			for(auto& b : batchElems){
+                //start alignment
 				if(b.active && !hasEnoughGoodCandidates(b)){
 
                     auto subjectsBegin = &b.fwdSequence;
@@ -814,6 +814,7 @@ private:
 
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+
 
                     AlignmentDevice device = semi_global_alignment_async<Sequence_t>(sgahandles[batchindex],
                                                                     subjectsBegin,
@@ -834,12 +835,11 @@ private:
 					else if (device == AlignmentDevice::GPU)
 						gpuAlignments++;
 				}
-                batchindex++;
 			}
 
 			//get results
-            batchindex = 0;
-			for(auto& b : batchElems){
+            for(std::size_t batchindex = 0; batchindex < batchElems.size(); batchindex++){
+                auto& b = batchElems[batchindex];
 				if(b.active){
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
@@ -848,7 +848,6 @@ private:
                                                     alignments.end(),
                                                     canUseGpu);
 				}
-                batchindex++;
 			}
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
