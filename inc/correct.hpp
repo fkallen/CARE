@@ -1042,7 +1042,7 @@ void correct(const MinhashOptions& minhashOptions,
         candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
             std::map<std::int64_t, std::int64_t> candidateMap;
             std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
-
+#if 0
             for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
                 std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
                 auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
@@ -1060,7 +1060,14 @@ void correct(const MinhashOptions& minhashOptions,
                 std::size_t numunique = std::distance(numseqpairs.begin(), uniqueend);
                 candidateMap[numunique]++;
             }
-
+#else
+            for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
+                std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
+                auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
+                std::int64_t count = std::int64_t(candidateList.size()) - 1;
+                candidateMap[count]++;
+            }
+#endif
             return candidateMap;
         }));
     }

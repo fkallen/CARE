@@ -180,7 +180,8 @@ void findCandidates(BE& b, Func get_candidates){
     }else{
         b.findCandidatesTiming.executionBegin();
         //find unique candidate sequences
-        make_unique_sequences(b);
+        //make_unique_sequences(b);
+        fetch_sequences_from_readstorage(b);
         b.findCandidatesTiming.executionEnd();
 
         b.findCandidatesTiming.postprocessingBegin();
@@ -249,6 +250,21 @@ void make_unique_sequences(BE& b){
         prevSeq = curSeq;
     }
     b.findCandidatesTiming.d2hEnd();
+
+    set_number_of_unique_sequences(b, n_unique_elements);
+    b.n_unique_candidates = b.fwdSequences.size();
+    b.n_candidates = b.candidateIds.size();
+
+    assert(b.candidateCountsPrefixSum.back() == int(b.candidateIds.size()));
+}
+
+template<class BE>
+void fetch_sequences_from_readstorage(BE& b){
+    std::fill(b.candidateCounts.begin(), b.candidateCounts.end(), 1);
+    std::iota(b.candidateCountsPrefixSum.begin(), b.candidateCountsPrefixSum.end(), 0);
+    std::size_t n_unique_elements = b.candidateIds.size();
+    for(std::size_t i = 0; i < n_unique_elements; i++)
+        b.fwdSequences[i] = b.readStorage->fetchSequence_ptr(b.candidateIds[i]);
 
     set_number_of_unique_sequences(b, n_unique_elements);
     b.n_unique_candidates = b.fwdSequences.size();
