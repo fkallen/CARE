@@ -441,22 +441,24 @@ struct PileupImage{
 
         result.stats.avg_support /= subjectlength;
 
-        auto isGoodAvgSupport = [&](){
-            return result.stats.avg_support >= avg_support_threshold;
+        auto isGoodAvgSupport = [&](double avgsupport){
+            return avgsupport >= avg_support_threshold;
         };
-        auto isGoodMinSupport = [&](){
-            return result.stats.min_support >= min_support_threshold;
+        auto isGoodMinSupport = [&](double minsupport){
+            return minsupport >= min_support_threshold;
         };
-        auto isGoodMinCoverage = [&](){
-            return result.stats.min_coverage >= min_coverage_threshold;
+        auto isGoodMinCoverage = [&](double mincoverage){
+            return mincoverage >= min_coverage_threshold;
         };
 
         //TODO vary parameters
-        result.stats.isHQ = isGoodAvgSupport() && isGoodMinSupport() && isGoodMinCoverage();
+        result.stats.isHQ = isGoodAvgSupport(result.stats.avg_support)
+                            && isGoodMinSupport(result.stats.min_support)
+                            && isGoodMinCoverage(result.stats.min_coverage);
 
-        result.stats.failedAvgSupport = !isGoodAvgSupport();
-        result.stats.failedMinSupport = !isGoodMinSupport();
-        result.stats.failedMinCoverage = !isGoodMinCoverage();
+        result.stats.failedAvgSupport = !isGoodAvgSupport(result.stats.avg_support);
+        result.stats.failedMinSupport = !isGoodMinSupport(result.stats.min_support);
+        result.stats.failedMinCoverage = !isGoodMinCoverage(result.stats.min_coverage);
 
         if(result.stats.isHQ){
     #if 1
@@ -471,8 +473,9 @@ struct PileupImage{
     #if 1
             //correct anchor
 
-            result.correctedSequence = sequence_to_correct;
 
+#if 1
+            result.correctedSequence = sequence_to_correct;
             bool foundAColumn = false;
             for(int i = 0; i < subjectlength; i++){
                 const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
@@ -481,6 +484,7 @@ struct PileupImage{
                     double avgsupportkregion = 0;
                     int c = 0;
                     bool kregioncoverageisgood = true;
+
                     for(int j = i - correctionSettings.k/2; j <= i + correctionSettings.k/2 && kregioncoverageisgood; j++){
                         if(j != i && j >= 0 && j < subjectlength){
                             avgsupportkregion += h_support[columnProperties.subjectColumnsBegin_incl + j];
@@ -488,6 +492,7 @@ struct PileupImage{
                             c++;
                         }
                     }
+
                     avgsupportkregion /= c;
                     if(kregioncoverageisgood && avgsupportkregion >= 1.0-estimatedErrorrate){
                         result.correctedSequence[i] = h_consensus[globalIndex];
@@ -497,6 +502,86 @@ struct PileupImage{
             }
 
             result.isCorrected = foundAColumn;
+#else
+            result.correctedSequence = sequence_to_correct;
+            const int regionsize = correctionSettings.k;
+            bool foundAColumn = false;
+
+            for(int columnindex = columnProperties.subjectColumnsBegin_incl - regionsize/2;
+                columnindex < columnProperties.subjectColumnsEnd_excl;
+                columnindex += regionsize){
+
+                double supportsum = 0;
+                double minsupport = std::numeric_limits<double>::max();
+                double maxsupport = std::numeric_limits<double>::min();
+
+                int origcoveragesum = 0;
+                int minorigcoverage = std::numeric_limits<int>::max();
+                int maxorigcoverage = std::numeric_limits<int>::min();
+
+                int coveragesum = 0;
+                int mincoverage = std::numeric_limits<int>::max();
+                int maxcoverage = std::numeric_limits<int>::min();
+
+                int c = 0;
+                for(int i = 0; i < regionsize; i++){
+                    const int index = columnindex + i;
+                    if(0 <= index && index < columnProperties.columnsToCheck){
+                        supportsum += h_support[index];
+                        minsupport = std::min(minsupport, h_support[index]);
+                        maxsupport = std::max(maxsupport, h_support[index]);
+
+                        origcoveragesum += h_origCoverage[index];
+                        minorigcoverage = std::min(minorigcoverage, h_origCoverage[index]);
+                        maxorigcoverage = std::max(maxorigcoverage, h_origCoverage[index]);
+
+                        coveragesum += h_coverage[index];
+                        mincoverage = std::min(mincoverage, h_coverage[index]);
+                        maxcoverage = std::max(maxcoverage, h_coverage[index]);
+
+                        c++;
+                    }
+                }
+                const double avgsupport = supportsum / c;
+
+                bool isHQregion = isGoodAvgSupport(avgsupport)
+                                   && isGoodMinSupport(minsupport)
+                                   && isGoodMinCoverage(mincoverage);
+
+               if(isHQregion){
+                   //correct anchor
+                   for(int i = 0; i < regionsize; i++){
+                       const int index = columnindex + i;
+                       if(columnProperties.subjectColumnsBegin_incl <= index && index < columnProperties.subjectColumnsEnd_excl){
+                           const int localindex = index - columnProperties.subjectColumnsBegin_incl;
+                           result.correctedSequence[localindex] = h_consensus[index];
+                       }
+                   }
+                   result.isCorrected = true;
+               }else{
+                   for(int i = 0; i < regionsize; i++){
+                       const int index = columnindex + i;
+                       if(columnProperties.subjectColumnsBegin_incl <= index
+                           && index < columnProperties.subjectColumnsEnd_excl){
+
+                           if(h_support[index] > 0.5
+                               && h_origCoverage[index] < min_coverage_threshold
+                               && isGoodAvgSupport(avgsupport)
+                               && mincoverage >= min_coverage_threshold){
+
+                                   const int localindex = index - columnProperties.subjectColumnsBegin_incl;
+                                   result.correctedSequence[localindex] = h_consensus[index];
+                           }
+                       }
+                   }
+                   result.isCorrected = true;
+               }
+            }
+
+            result.isCorrected = foundAColumn;
+
+#endif
+
 
     #endif
         }
