@@ -116,7 +116,7 @@ cpu_shifted_hamming_distance(const char* subject,
             score += getChar(subject, subjectlength, j + shift) != getChar(query, querylength, j);
         }
 
-        score += totalbases - overlapsize;
+        score += totalbases - 2 * overlapsize;
 
         if(score < bestScore){
             bestScore = score;
@@ -130,7 +130,7 @@ cpu_shifted_hamming_distance(const char* subject,
     const int queryoverlapbegin_incl = std::max(-bestShift, 0);
     const int queryoverlapend_excl = std::min(querylength, subjectlength - bestShift);
     const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-    const int opnr = bestScore - totalbases + overlapsize;
+    const int opnr = bestScore - totalbases + 2*overlapsize;
 
     result.score = bestScore;
     result.subject_begin_incl = std::max(0, bestShift);
@@ -219,10 +219,13 @@ cuda_shifted_hamming_distance_kernel(Result_t* results,
             for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift) && score < max_errors; j++){
                 score += getChar(sharedSubject, subjectbases, j + shift) != getChar(sharedQuery, querybases, j);
             }
+#if 1
             score = (score < max_errors ?
-                    score + totalbases - overlapsize // non-overlapping regions count as mismatches
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
                     : std::numeric_limits<int>::max()); // too many errors, discard
-
+#else
+	    score += totalbases - 2*overlapsize;
+#endif
             if(score < bestScore){
                 bestScore = score;
                 bestShift = shift;
@@ -275,7 +278,7 @@ cuda_shifted_hamming_distance_kernel(Result_t* results,
             const int queryoverlapbegin_incl = max(-bestShift, 0);
             const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
             const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-            const int opnr = bestScore - totalbases + overlapsize;
+            const int opnr = bestScore - totalbases + 2*overlapsize;
 
             result.score = bestScore;
             result.subject_begin_incl = max(0, bestShift);
