@@ -213,12 +213,15 @@ cuda_shifted_hamming_distance_kernel(Result_t* results,
 
         for(int shift = -querybases + minoverlap + threadIdx.x; shift < subjectbases - minoverlap; shift += BLOCKSIZE){
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+            const int max_errors = int(double(overlapsize) * maxErrorRate);
             int score = 0;
 
-            for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift); j++){
+            for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift) && score < max_errors; j++){
                 score += getChar(sharedSubject, subjectbases, j + shift) != getChar(sharedQuery, querybases, j);
             }
-            score += totalbases - overlapsize; // non-overlapping regions count as mismatches
+            score = (score < max_errors ?
+                    score + totalbases - overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
 
             if(score < bestScore){
                 bestScore = score;
