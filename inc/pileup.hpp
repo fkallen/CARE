@@ -61,19 +61,19 @@ struct PileupImage{
     };
 
     //buffers
-    std::unique_ptr<int[]> h_As;
-    std::unique_ptr<int[]> h_Cs;
-    std::unique_ptr<int[]> h_Gs;
-    std::unique_ptr<int[]> h_Ts;
-    std::unique_ptr<double[]> h_Aweights;
-    std::unique_ptr<double[]> h_Cweights;
-    std::unique_ptr<double[]> h_Gweights;
-    std::unique_ptr<double[]> h_Tweights;
-    std::unique_ptr<char[]> h_consensus;
-    std::unique_ptr<double[]> h_support;
-    std::unique_ptr<int[]> h_coverage;
-    std::unique_ptr<double[]> h_origWeights;
-    std::unique_ptr<int[]> h_origCoverage;
+    std::vector<int> h_As;
+    std::vector<int> h_Cs;
+    std::vector<int> h_Gs;
+    std::vector<int> h_Ts;
+    std::vector<double> h_Aweights;
+    std::vector<double> h_Cweights;
+    std::vector<double> h_Gweights;
+    std::vector<double> h_Tweights;
+    std::vector<char> h_consensus;
+    std::vector<double> h_support;
+    std::vector<int> h_coverage;
+    std::vector<double> h_origWeights;
+    std::vector<int> h_origCoverage;
 
     int max_n_columns = 0; //number of elements per buffer
     int n_columns = 0; //number of used elements per buffer
@@ -87,7 +87,7 @@ struct PileupImage{
         correctionSettings.m = m_coverage;
         correctionSettings.k = kmerlength;
     }
-
+/*
     PileupImage(const PileupImage& other){
         *this = other;
     }
@@ -98,19 +98,19 @@ struct PileupImage{
 
     PileupImage& operator=(const PileupImage& other){
         resize(other.max_n_columns);
-        std::memcpy(h_As.get(), other.h_As.get(), sizeof(int) * other.max_n_columns);
-        std::memcpy(h_Cs.get(), other.h_Cs.get(), sizeof(int) * other.max_n_columns);
-        std::memcpy(h_Gs.get(), other.h_Gs.get(), sizeof(int) * other.max_n_columns);
-        std::memcpy(h_Ts.get(), other.h_Ts.get(), sizeof(int) * other.max_n_columns);
-        std::memcpy(h_Aweights.get(), other.h_Aweights.get(), sizeof(double) * other.max_n_columns);
-        std::memcpy(h_Cweights.get(), other.h_Cweights.get(), sizeof(double) * other.max_n_columns);
-        std::memcpy(h_Gweights.get(), other.h_Gweights.get(), sizeof(double) * other.max_n_columns);
-        std::memcpy(h_Tweights.get(), other.h_Tweights.get(), sizeof(double) * other.max_n_columns);
-        std::memcpy(h_consensus.get(), other.h_consensus.get(), sizeof(char) * other.max_n_columns);
-        std::memcpy(h_support.get(), other.h_support.get(), sizeof(double) * other.max_n_columns);
-        std::memcpy(h_coverage.get(), other.h_coverage.get(), sizeof(int) * other.max_n_columns);
-        std::memcpy(h_origWeights.get(), other.h_origWeights.get(), sizeof(double) * other.max_n_columns);
-        std::memcpy(h_origCoverage.get(), other.h_origCoverage.get(), sizeof(int) * other.max_n_columns);
+        std::memcpy(h_As.data(), other.h_As.data(), sizeof(int) * other.max_n_columns);
+        std::memcpy(h_Cs.data(), other.h_Cs.data(), sizeof(int) * other.max_n_columns);
+        std::memcpy(h_Gs.data(), other.h_Gs.data(), sizeof(int) * other.max_n_columns);
+        std::memcpy(h_Ts.data(), other.h_Ts.data(), sizeof(int) * other.max_n_columns);
+        std::memcpy(h_Aweights.data(), other.h_Aweights.data(), sizeof(double) * other.max_n_columns);
+        std::memcpy(h_Cweights.data(), other.h_Cweights.data(), sizeof(double) * other.max_n_columns);
+        std::memcpy(h_Gweights.data(), other.h_Gweights.data(), sizeof(double) * other.max_n_columns);
+        std::memcpy(h_Tweights.data(), other.h_Tweights.data(), sizeof(double) * other.max_n_columns);
+        std::memcpy(h_consensus.data(), other.h_consensus.data(), sizeof(char) * other.max_n_columns);
+        std::memcpy(h_support.data(), other.h_support.data(), sizeof(double) * other.max_n_columns);
+        std::memcpy(h_coverage.data(), other.h_coverage.data(), sizeof(int) * other.max_n_columns);
+        std::memcpy(h_origWeights.data(), other.h_origWeights.data(), sizeof(double) * other.max_n_columns);
+        std::memcpy(h_origCoverage.data(), other.h_origCoverage.data(), sizeof(int) * other.max_n_columns);
 
         n_columns = other.n_columns;
         columnProperties = other.columnProperties;
@@ -118,7 +118,9 @@ struct PileupImage{
 
         return *this;
     }
+*/
 
+/*
     PileupImage& operator=(PileupImage&& other){
         h_As = std::move(other.h_As);
         h_Cs = std::move(other.h_Cs);
@@ -140,54 +142,26 @@ struct PileupImage{
 
         return *this;
     }
-
+*/
 
     void resize(int cols){
 
         if(cols > max_n_columns){
             const int newmaxcols = 1.5 * cols;
 
-            h_consensus.reset();
-            h_support.reset();
-            h_coverage.reset();
-            h_origWeights.reset();
-            h_origCoverage.reset();
-            h_As.reset();
-            h_Cs.reset();
-            h_Gs.reset();
-            h_Ts.reset();
-            h_Aweights.reset();
-            h_Cweights.reset();
-            h_Gweights.reset();
-            h_Tweights.reset();
-
-            h_consensus.reset(new char[newmaxcols]);
-            h_support.reset(new double[newmaxcols]);
-            h_coverage.reset(new int[newmaxcols]);
-            h_origWeights.reset(new double[newmaxcols]);
-            h_origCoverage.reset(new int[newmaxcols]);
-            h_As.reset(new int[newmaxcols]);
-            h_Cs.reset(new int[newmaxcols]);
-            h_Gs.reset(new int[newmaxcols]);
-            h_Ts.reset(new int[newmaxcols]);
-            h_Aweights.reset(new double[newmaxcols]);
-            h_Cweights.reset(new double[newmaxcols]);
-            h_Gweights.reset(new double[newmaxcols]);
-            h_Tweights.reset(new double[newmaxcols]);
-
-            assert(h_consensus.get() != nullptr);
-            assert(h_support.get() != nullptr);
-            assert(h_coverage.get() != nullptr);
-            assert(h_origWeights.get() != nullptr);
-            assert(h_origCoverage.get() != nullptr);
-            assert(h_As.get() != nullptr);
-            assert(h_Cs.get() != nullptr);
-            assert(h_Gs.get() != nullptr);
-            assert(h_Ts.get() != nullptr);
-            assert(h_Aweights.get() != nullptr);
-            assert(h_Cweights.get() != nullptr);
-            assert(h_Gweights.get() != nullptr);
-            assert(h_Tweights.get() != nullptr);
+            h_consensus.resize(newmaxcols);
+            h_support.resize(newmaxcols);
+            h_coverage.resize(newmaxcols);
+            h_origWeights.resize(newmaxcols);
+            h_origCoverage.resize(newmaxcols);
+            h_As.resize(newmaxcols);
+            h_Cs.resize(newmaxcols);
+            h_Gs.resize(newmaxcols);
+            h_Ts.resize(newmaxcols);
+            h_Aweights.resize(newmaxcols);
+            h_Cweights.resize(newmaxcols);
+            h_Gweights.resize(newmaxcols);
+            h_Tweights.resize(newmaxcols);
 
             max_n_columns = newmaxcols;
         }
@@ -196,35 +170,46 @@ struct PileupImage{
     }
 
     void clear(){
-            std::memset(h_consensus.get(), 0, sizeof(char) * n_columns);
-            std::memset(h_support.get(), 0, sizeof(double) * n_columns);
-            std::memset(h_coverage.get(), 0, sizeof(int) * n_columns);
-            std::memset(h_origWeights.get(), 0, sizeof(double) * n_columns);
-            std::memset(h_origCoverage.get(), 0, sizeof(int) * n_columns);
-            std::memset(h_As.get(), 0, sizeof(int) * n_columns);
-            std::memset(h_Cs.get(), 0, sizeof(int) * n_columns);
-            std::memset(h_Gs.get(), 0, sizeof(int) * n_columns);
-            std::memset(h_Ts.get(), 0, sizeof(int) * n_columns);
-            std::memset(h_Aweights.get(), 0, sizeof(double) * n_columns);
-            std::memset(h_Cweights.get(), 0, sizeof(double) * n_columns);
-            std::memset(h_Gweights.get(), 0, sizeof(double) * n_columns);
-            std::memset(h_Tweights.get(), 0, sizeof(double) * n_columns);
+			auto zero = [](auto& vec){
+				std::fill(vec.begin(), vec.end(), 0);
+			};
+			
+			zero(h_support);
+			zero(h_coverage);
+			zero(h_origWeights);
+			zero(h_origCoverage);
+			zero(h_As);
+			zero(h_Cs);
+			zero(h_Gs);
+			zero(h_Ts);
+			zero(h_Aweights);
+			zero(h_Cweights);
+			zero(h_Gweights);
+			zero(h_Tweights);
+
+			std::fill(h_consensus.begin(), h_consensus.end(), '\0');
     }
 
     void destroy(){
-            h_consensus.reset();
-            h_support.reset();
-            h_coverage.reset();
-            h_origWeights.reset();
-            h_origCoverage.reset();
-            h_As.reset();
-            h_Cs.reset();
-            h_Gs.reset();
-            h_Ts.reset();
-            h_Aweights.reset();
-            h_Cweights.reset();
-            h_Gweights.reset();
-            h_Tweights.reset();
+			auto destroyvec = [](auto& vec){
+				vec.clear();
+				vec.shrink_to_fit();
+			};
+		
+			destroyvec(h_support);
+			destroyvec(h_coverage);
+			destroyvec(h_origWeights);
+			destroyvec(h_origCoverage);
+			destroyvec(h_As);
+			destroyvec(h_Cs);
+			destroyvec(h_Gs);
+			destroyvec(h_Ts);
+			destroyvec(h_Aweights);
+			destroyvec(h_Cweights);
+			destroyvec(h_Gweights);
+			destroyvec(h_Tweights);
+
+			destroyvec(h_consensus);
     }
 
 /*
@@ -305,7 +290,7 @@ struct PileupImage{
                 CountIter candidateCountsBegin,
                 CountIter candidateCountsEnd,
                 QualityIter candidateQualitiesBegin,
-                QualityIter candidateQualitiesEnd) const{
+                QualityIter candidateQualitiesEnd){
 
         // add weights for each base in every candidate sequences
 	auto alignmentiter = alignmentsBegin;
@@ -389,7 +374,7 @@ struct PileupImage{
         }
     }
 
-    void cpu_find_consensus_internal() const{
+    void cpu_find_consensus_internal(){
         for(int i = 0; i < columnProperties.columnsToCheck; i++){
             char cons = 'A';
             double consWeight = h_Aweights[i];
@@ -416,7 +401,7 @@ struct PileupImage{
                                         double estimatedErrorrate,
                                         double avg_support_threshold,
                                         double min_support_threshold,
-                                        double min_coverage_threshold) const{
+                                        double min_coverage_threshold){
 
         cpu_find_consensus_internal();
 
@@ -685,7 +670,7 @@ struct PileupImage{
                 double estimatedErrorrate,
                 double estimatedCoverage,
                 bool correctCandidates,
-                int new_columns_to_correct) const{
+                int new_columns_to_correct){
 
         const double avg_support_threshold = 1.0-1.0*estimatedErrorrate;
         const double min_support_threshold = 1.0-3.0*estimatedErrorrate;
