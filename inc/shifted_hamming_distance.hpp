@@ -19,24 +19,24 @@ struct AlignmentResult{
 	bool isNormalized;
 	bool isValid;
 
-    bool operator==(const AlignmentResult& rhs) const;
-    bool operator!=(const AlignmentResult& rhs) const;
-    int get_score() const;
-    int get_subject_begin_incl() const;
-    int get_query_begin_incl() const;
-    int get_overlap() const;
-    int get_shift() const;
-    int get_nOps() const;
-    bool get_isNormalized() const;
-    bool get_isValid() const;
-    int& get_score();
-    int& get_subject_begin_incl();
-    int& get_query_begin_incl();
-    int& get_overlap();
-    int& get_shift();
-    int& get_nOps();
-    bool& get_isNormalized();
-    bool& get_isValid();
+    bool operator==(const AlignmentResult& rhs) const noexcept;
+    bool operator!=(const AlignmentResult& rhs) const noexcept;
+    int get_score() const noexcept;
+    int get_subject_begin_incl() const noexcept;
+    int get_query_begin_incl() const noexcept;
+    int get_overlap() const noexcept;
+    int get_shift() const noexcept;
+    int get_nOps() const noexcept;
+    bool get_isNormalized() const noexcept;
+    bool get_isValid() const noexcept;
+    int& get_score() noexcept;
+    int& get_subject_begin_incl() noexcept;
+    int& get_query_begin_incl() noexcept;
+    int& get_overlap() noexcept;
+    int& get_shift() noexcept;
+    int& get_nOps() noexcept;
+    bool& get_isNormalized() noexcept;
+    bool& get_isValid() noexcept;
 };
 
 using Result_t = AlignmentResult;
@@ -100,7 +100,7 @@ cpu_shifted_hamming_distance(const char* subject,
                             int min_overlap,
                             double maxErrorRate,
                             double min_overlap_ratio,
-                            Accessor getChar){
+                            Accessor getChar)  noexcept{
 
     const int totalbases = subjectlength + querylength;
     const int minoverlap = std::max(min_overlap, int(double(subjectlength) * min_overlap_ratio));
@@ -296,7 +296,7 @@ void call_shd_kernel_async(const SHDdata& shddata,
                       double min_overlap_ratio,
                       int maxSubjectLength,
                       int maxQueryLength,
-                      Accessor accessor){
+                      Accessor accessor) noexcept{
 
       const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
       const int maxShiftsToCheck = maxSubjectLength+1 + maxQueryLength - 2*minoverlap;
@@ -340,7 +340,7 @@ void call_shd_kernel(const SHDdata& shddata,
                       double min_overlap_ratio,
                       int maxSubjectLength,
                       int maxQueryLength,
-                      Accessor accessor){
+                      Accessor accessor) noexcept{
 
     call_shd_kernel_async(shddata,
                         min_overlap,

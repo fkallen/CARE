@@ -24,7 +24,7 @@
 #include <thread>
 #include <future>
 
-//#define DO_PROFILE
+
 
 #ifdef __NVCC__
 #include <cuda_profiler_api.h>
@@ -1162,6 +1162,8 @@ void correct(const MinhashOptions& minhashOptions,
 
         ecthreads[threadId].run();
     }
+
+//#define DO_PROFILE
 
 #ifdef DO_PROFILE
     int sleepiter = 0;

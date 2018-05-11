@@ -4,7 +4,7 @@
 
 namespace shd{
 
-    bool AlignmentResult::operator==(const AlignmentResult& rhs) const{
+    bool AlignmentResult::operator==(const AlignmentResult& rhs) const noexcept{
         return score == rhs.score
             && subject_begin_incl == rhs.subject_begin_incl
             && query_begin_incl == rhs.query_begin_incl
@@ -14,55 +14,55 @@ namespace shd{
             && isNormalized == rhs.isNormalized
             && isValid == rhs.isValid;
     }
-    bool AlignmentResult::operator!=(const AlignmentResult& rhs) const{
+    bool AlignmentResult::operator!=(const AlignmentResult& rhs) const noexcept{
         return !(*this == rhs);
     }
-    int AlignmentResult::get_score() const{
+    int AlignmentResult::get_score() const noexcept{
         return score;
     }
-    int AlignmentResult::get_subject_begin_incl() const{
+    int AlignmentResult::get_subject_begin_incl() const noexcept{
         return subject_begin_incl;
     }
-    int AlignmentResult::get_query_begin_incl() const{
+    int AlignmentResult::get_query_begin_incl() const noexcept{
         return query_begin_incl;
     }
-    int AlignmentResult::get_overlap() const{
+    int AlignmentResult::get_overlap() const noexcept{
         return overlap;
     }
-    int AlignmentResult::get_shift() const{
+    int AlignmentResult::get_shift() const noexcept{
         return shift;
     }
-    int AlignmentResult::get_nOps() const{
+    int AlignmentResult::get_nOps() const noexcept{
         return nOps;
     }
-    bool AlignmentResult::get_isNormalized() const{
+    bool AlignmentResult::get_isNormalized() const noexcept{
         return isNormalized;
     }
-    bool AlignmentResult::get_isValid() const{
+    bool AlignmentResult::get_isValid() const noexcept{
         return isValid;
     }
-    int& AlignmentResult::get_score(){
+    int& AlignmentResult::get_score() noexcept{
         return score;
     }
-    int& AlignmentResult::get_subject_begin_incl(){
+    int& AlignmentResult::get_subject_begin_incl() noexcept{
         return subject_begin_incl;
     }
-    int& AlignmentResult::get_query_begin_incl(){
+    int& AlignmentResult::get_query_begin_incl() noexcept{
         return query_begin_incl;
     }
-    int& AlignmentResult::get_overlap(){
+    int& AlignmentResult::get_overlap() noexcept{
         return overlap;
     }
-    int& AlignmentResult::get_shift(){
+    int& AlignmentResult::get_shift() noexcept{
         return shift;
     }
-    int& AlignmentResult::get_nOps(){
+    int& AlignmentResult::get_nOps() noexcept{
         return nOps;
     }
-    bool& AlignmentResult::get_isNormalized(){
+    bool& AlignmentResult::get_isNormalized() noexcept{
         return isNormalized;
     }
-    bool& AlignmentResult::get_isValid(){
+    bool& AlignmentResult::get_isValid() noexcept{
         return isValid;
     }
 

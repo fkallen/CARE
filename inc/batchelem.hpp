@@ -179,9 +179,12 @@ void findCandidates(BE& b, Func get_candidates){
         b.active = false;
     }else{
         b.findCandidatesTiming.executionBegin();
+#if 0
         //find unique candidate sequences
-        //make_unique_sequences(b);
+        make_unique_sequences(b);
+#else
         fetch_sequences_from_readstorage(b);
+#endif
         b.findCandidatesTiming.executionEnd();
 
         b.findCandidatesTiming.postprocessingBegin();

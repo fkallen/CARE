@@ -64,7 +64,7 @@ namespace care{
 				keyToIndexMap.resize(size, KeyIndexMap::EmptySlot);
 			}
 
-			void insert(Key_t key, Index_t value){
+			void insert(Key_t key, Index_t value) noexcept{
 				std::uint64_t probes = 1;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
 				while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
@@ -75,7 +75,7 @@ namespace care{
 				keyToIndexMap[pos].second = value;
 			}
 
-			Index_t get(Key_t key) const{
+			Index_t get(Key_t key) const noexcept{
 				std::uint64_t probes = 1;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
 				while(keyToIndexMap[pos].first != key){
@@ -85,11 +85,11 @@ namespace care{
 				return keyToIndexMap[pos].second;
 			}
 
-			void clear(){
+			void clear() noexcept{
 				keyToIndexMap.clear();
 			}
 
-			void destroy(){
+			void destroy() noexcept{
 				clear();
 				keyToIndexMap.shrink_to_fit();
 			}
@@ -122,7 +122,7 @@ namespace care{
 				values.resize(size);
 			}
 
-			void clear(){
+			void clear() noexcept{
 				size = 0;
 				nKeys = 0;
 				nValues = 0;
@@ -133,7 +133,7 @@ namespace care{
 				keyIndexMap.clear();
 			}
 
-			void destroy(){
+			void destroy() noexcept{
 				clear();
 				keys.shrink_to_fit();
 				values.shrink_to_fit();
@@ -141,7 +141,7 @@ namespace care{
 				keyIndexMap.shrink_to_fit();
 			}
 
-			bool add(Key_t key, Value_t value, Index_t index){
+			bool add(Key_t key, Value_t value, Index_t index) noexcept{
 				if(index >= size){
 					std::cout << "KeyValueMapFixedSize: want to set index " << index << " but size is " << size << '\n';
 					return false;
@@ -158,7 +158,7 @@ namespace care{
 			}
 
 			//Must call transform() beforehand !!!
-			std::vector<Value_t> get(Key_t key){
+			std::vector<Value_t> get(Key_t key) noexcept{
 				//TIMERSTARTCPU(binarysearch);
 				auto range = std::equal_range(keys.begin(), keys.end(), key);
 				if(range.first == keys.end()) return {};
@@ -388,7 +388,7 @@ struct Minhasher {
 	}
 
 	std::vector<Result_t> getCandidates(const std::string& sequence,
-										std::uint64_t max_number_candidates) const{
+										std::uint64_t max_number_candidates) const noexcept{
 		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
 		// we do not consider reads which are shorter than k
 		if(sequence.size() < unsigned(minparams.k))
@@ -410,6 +410,7 @@ struct Minhasher {
 			if(map == 0){
 				//allUniqueResults.reserve(minparams.maps * entries.size());
 				tmp.reserve(minparams.maps * entries.size());
+                allUniqueResults.reserve(minparams.maps * entries.size());
 			}
 
 			if(!Map_t::resultsAreSorted){
@@ -435,7 +436,7 @@ struct Minhasher {
 
 
 private:
-	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const{
+	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept{
         std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
 
 		std::uint64_t fhVal = 0;
