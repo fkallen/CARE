@@ -118,7 +118,7 @@ namespace args{
             std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(minhashOptions.maps) << std::endl;
         }
 
-        if(minhashOptions.k < 1 || minhashOptions.k > 16){
+        if(minhashOptions.k < 1 || minhashOptions.k > 32){
             valid = false;
             std::cout << "Error: kmer length must be in range [1, 16], is " + std::to_string(minhashOptions.k) << std::endl;
         }
