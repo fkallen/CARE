@@ -52,8 +52,11 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 
     TIMERSTARTCPU(PREPROCESSING);
 	minhasher.transform();
+    std::cout << "hashmaps use " << (minhasher.numBytes() / 1024. / 1024. / 1024.) << " GB." << std::endl;
 	readStorage.transform();
 	TIMERSTOPCPU(PREPROCESSING);
+
+
 
     std::cout << "begin correct" << std::endl;
 
