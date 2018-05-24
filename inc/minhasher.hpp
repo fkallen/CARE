@@ -56,6 +56,10 @@ namespace care{
 			std::vector<std::pair<Key_t, Index_t>> keyToIndexMap;
 			std::uint64_t size;
 
+            std::size_t numBytes() const{
+                return keyToIndexMap.size() * sizeof(std::pair<Key_t, Index_t>);
+            }
+
 			KeyIndexMap() : KeyIndexMap(0){}
 			KeyIndexMap(std::uint64_t size) : size(size){
 				if(size == std::numeric_limits<Index_t>::max())
@@ -113,6 +117,14 @@ namespace care{
 
 			double load = 0.5;
 			KeyIndexMap<Key_t, Index_t> keyIndexMap;
+
+            std::size_t numBytes() const{
+                return keys.size() * sizeof(Key_t)
+                    + keys.size() * sizeof(Key_t)
+                    + values.size() * sizeof(Value_t)
+                    + countsPrefixSum.size() * sizeof(Index_t)
+                    + keyIndexMap.numBytes();
+            }
 
 			KeyValueMapFixedSize() : KeyValueMapFixedSize(0){
 			}
@@ -320,6 +332,10 @@ struct Minhasher {
 	std::vector<std::unique_ptr<Map_t>> minhashTables;
 	MinhashOptions minparams;
 	ReadId_t nReads;
+
+    std::size_t numBytes() const{
+        return minhashTables[0]->numBytes() * minhashTables.size();
+    }
 
 	Minhasher() : Minhasher(MinhashOptions{2,16}){}
 
