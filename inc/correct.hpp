@@ -15,6 +15,8 @@
 #include "tasktiming.hpp"
 #include "concatcontainer.hpp"
 
+#include "featureextractor.hpp"
+
 
 
 #include <cstdint>
@@ -303,6 +305,8 @@ private:
 
 		std::ofstream outputstream(threadOpts.outputfile);
 
+        std::ofstream featurestream(threadOpts.outputfile + "_features");
+
 		auto write_read = [&](const ReadId_t readId, const auto& sequence){
 			auto& stream = outputstream;
 			stream << readId << '\n';
@@ -343,7 +347,8 @@ private:
 		const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
 														+ 2.5 * estimatedDeviationAlignedCandidates;
 
-        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
+        //const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
+        const std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
 
         constexpr bool canUseGpu = true;
 
@@ -496,6 +501,22 @@ private:
 					tpd = std::chrono::system_clock::now();
 					readcorrectionTimeTotal += tpd - tpc;
 
+                    /*
+                        features
+                    */
+                    std::vector<MSAFeature> MSAFeatures =  extractFeatures(pileupImage, b.fwdSequenceString,
+                                                    threadOpts.minhasher->minparams.k, 0.5,
+                                                    correctionOptions.estimatedCoverage);
+
+                    if(MSAFeatures.size() > 0){
+                        for(const auto& msafeature : MSAFeatures){
+                            featurestream << b.readId << '\t' << msafeature.position << '\t' << msafeature.features.size() << '\n';
+                            for(const auto& feature : msafeature.features){
+                                featurestream << feature << '\n';
+                            }
+                        }
+
+                    }
                     auto& correctionResult = res.first;
 
 					avgsupportfail += correctionResult.stats.failedAvgSupport;
