@@ -1,18 +1,18 @@
 #include "../inc/sequence.hpp"
 
 namespace care{
-	Sequence::Sequence() : nBases(0)
+	Sequence::Sequence() noexcept: nBases(0)
 	{
 		data.second = 0;
 	}
 
-	Sequence::Sequence(const std::string& sequence)
+	Sequence::Sequence(const std::string& sequence) noexcept
 		: nBases(sequence.length())
 	{
 		data = encode_2bit(sequence);
 	}
 
-	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_)
+	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_) noexcept
 		: nBases(nBases_)
 	{
 		const int size = SDIV(nBases,4);
@@ -22,17 +22,17 @@ namespace care{
 		std::copy(rawdata, rawdata + size, begin());
 	}
 
-	Sequence::Sequence(Sequence&& other)
+	Sequence::Sequence(Sequence&& other) noexcept
 	{
 		*this = std::move(other);
 	}
 
-	Sequence::Sequence(const Sequence& other)
+	Sequence::Sequence(const Sequence& other) noexcept
 	{
 		*this = other;
 	}
 
-	Sequence& Sequence::operator=(const Sequence& other)
+	Sequence& Sequence::operator=(const Sequence& other) noexcept
 	{
 		nBases = other.nBases;
 
@@ -45,7 +45,7 @@ namespace care{
 		return *this;
 	}
 
-	Sequence& Sequence::operator=(Sequence&& other){
+	Sequence& Sequence::operator=(Sequence&& other) noexcept{
 		if(this != &other){
 			nBases = other.nBases;
 
@@ -57,38 +57,38 @@ namespace care{
 	        return *this;
 	}
 
-	bool Sequence::operator==(const Sequence& rhs) const
+	bool Sequence::operator==(const Sequence& rhs) const noexcept
 	{
 		if(length() != rhs.length()) return false;
 		return (std::memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
 	}
 
-	bool Sequence::operator!=(const Sequence& other) const
+	bool Sequence::operator!=(const Sequence& other) const noexcept
 	{
 		return !(*this == other);
 	}
 
-	bool Sequence::operator==(const std::string& other) const
+	bool Sequence::operator==(const std::string& other) const noexcept
 	{
 		return toString() == other;
 	}
 
-	bool Sequence::operator!=(const std::string& other) const
+	bool Sequence::operator!=(const std::string& other) const noexcept
 	{
 		return !(*this == other);
 	}
 
-	char Sequence::operator[](int i) const
+	char Sequence::operator[](int i) const noexcept
 	{
-        return get((const char*)data.first.get(), i);
+        return get((const char*)data.first.get(), length(), i);
 	}
 
-	std::string Sequence::toString() const
+	std::string Sequence::toString() const noexcept
 	{
 		return decode_2bit(data.first, nBases);
 	}
 
-	bool Sequence::operator<(const Sequence& rhs) const{
+	bool Sequence::operator<(const Sequence& rhs) const noexcept{
 		const int bases = length();
 		const int otherbases = rhs.length();
 		if(bases < otherbases) return true;
@@ -97,35 +97,33 @@ namespace care{
 		return (std::memcmp(begin(), rhs.begin(), getNumBytes()) < 0);
 	}
 
-	Sequence Sequence::reverseComplement() const{
+	Sequence Sequence::reverseComplement() const noexcept{
 		Sequence revcompl;
 		revcompl.nBases = length();
 		revcompl.data.first.reset(new std::uint8_t[getNumBytes()]);
 		revcompl.data.second = getNumBytes();
 
-		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
-		if(!res)
-			throw std::runtime_error("could not get reverse complement of " + toString());
+		encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
         return revcompl;
 	}
 
-	int Sequence::getNumBytes() const{
+	int Sequence::getNumBytes() const noexcept{
 		return data.second;
 	}
 
-	int Sequence::length() const{
+	int Sequence::length() const noexcept{
 		return nBases;
 	}
 
-	bool Sequence::isCompressed() const{
+	bool Sequence::isCompressed() const noexcept{
 		return true;
 	}
 
-	std::uint8_t* Sequence::begin() const{
+	std::uint8_t* Sequence::begin() const noexcept{
 		return data.first.get();
 	}
 
-	std::uint8_t* Sequence::end() const{
+	std::uint8_t* Sequence::end() const noexcept{
 		return data.first.get() + getNumBytes();
 	}
 
@@ -133,27 +131,6 @@ namespace care{
 		stream << seq.toString();
 		return stream;
 	}
-
-    HOSTDEVICEQUALIFIER
-    char Sequence::get(const char* data, int i){
-        const int byte = i / 4;
-        const int basepos = i % 4;
-        switch ((data[byte] >> (3 - basepos) * 2) & 0x03) {
-    		case 0x00: return 'A';
-    		case 0x01: return 'C';
-    		case 0x02: return 'G';
-    		case 0x03: return 'T';
-    		default: return '_';         // cannot happen
-        }
-    }
-
-
-
-
-
-
-
-
 
 
 	SequenceGeneral::SequenceGeneral() : nBases(0), compressed(false)

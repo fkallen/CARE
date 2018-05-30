@@ -6,7 +6,7 @@
 #include "../inc/minhasher.hpp"
 #include "../inc/options.hpp"
 #include "../inc/readstorage.hpp"
-#include "../inc/types.hpp"
+#include "../inc/sequence.hpp"
 
 #include <vector>
 #include <iostream>
@@ -21,46 +21,126 @@ namespace care{
 /*
     Correct fileOptions.inputfile and save result to fileOptions.outputfile
 */
+template<class minhasher_t,
+		 class readStorage_t,
+		 bool indels>
+void correctFile_impl(const MinhashOptions& minhashOptions,
+				  const AlignmentOptions& alignmentOptions,
+				  const GoodAlignmentProperties& goodAlignmentProperties,
+				  const CorrectionOptions& correctionOptions,
+				  const RuntimeOptions& runtimeOptions,
+				  const FileOptions& fileOptions,
+				  std::uint64_t nReads,
+				  std::vector<char>& readIsCorrectedVector,
+				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+				  std::size_t nLocksForProcessedFlags,
+				  const std::vector<int>& deviceIds){
+
+	constexpr bool indelAlignment = indels;
+
+	using Minhasher_t = minhasher_t;
+	using ReadStorage_t = readStorage_t;
+
+    Minhasher_t minhasher(minhashOptions);
+    ReadStorage_t readStorage(correctionOptions.useQualityScores);
+
+    std::cout << "begin build" << std::endl;
+
+	TIMERSTARTCPU(LOAD_FILE);
+    build(fileOptions, runtimeOptions, readStorage, minhasher);
+	TIMERSTOPCPU(LOAD_FILE);
+
+    TIMERSTARTCPU(PREPROCESSING);
+	minhasher.transform();
+    std::cout << "hashmaps use " << (minhasher.numBytes() / 1024. / 1024. / 1024.) << " GB." << std::endl;
+	readStorage.transform();
+	TIMERSTOPCPU(PREPROCESSING);
+
+
+
+    std::cout << "begin correct" << std::endl;
+
+	TIMERSTARTCPU(CORRECT);
+
+    correct<Minhasher_t,
+			ReadStorage_t,
+			indelAlignment>(minhashOptions, alignmentOptions,
+							goodAlignmentProperties, correctionOptions,
+							runtimeOptions, fileOptions,
+							minhasher, readStorage,
+							readIsCorrectedVector, locksForProcessedFlags,
+							nLocksForProcessedFlags, deviceIds);
+
+
+	TIMERSTOPCPU(CORRECT);
+}
+
 void correctFile(const MinhashOptions& minhashOptions,
 				  const AlignmentOptions& alignmentOptions,
 				  const GoodAlignmentProperties& goodAlignmentProperties,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
+				  std::uint64_t nReads,
 				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-				  size_t nLocksForProcessedFlags,
+				  std::size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds){
 
+    using Key_t = std::uint32_t; // asume minhashOptions.k <= 16
+    using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
 
-    Minhasher minhasher(minhashOptions);
-    ReadStorage readStorage;
-    readStorage.setUseQualityScores(correctionOptions.useQualityScores);
+	using NoIndelSequence_t = Sequence;
+	using IndelSequence_t = Sequence;
 
-    std::cout << "begin build" << std::endl;
+    using Minhasher_t = Minhasher<Key_t, ReadId_t>;
+#if 1
+    using NoIndelReadStorage_t = ReadStorage<NoIndelSequence_t, ReadId_t>;
+    using IndelReadStorage_t = ReadStorage<IndelSequence_t, ReadId_t>;
+#else
+    using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+    using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+#endif
 
-	TIMERSTARTCPU(LOAD_FILE);
-    build(fileOptions, readStorage, minhasher, runtimeOptions.nInserterThreads);
-	TIMERSTOPCPU(LOAD_FILE);
+	if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+		constexpr bool indels = false;
 
-    TIMERSTARTCPU(PREPROCESSING);
-	minhasher.transform();
-	readStorage.noMoreInserts();
-	TIMERSTOPCPU(PREPROCESSING);
+		correctFile_impl<Minhasher_t,
+						NoIndelReadStorage_t,
+						indels>
+						(
+							minhashOptions,
+							alignmentOptions,
+							goodAlignmentProperties,
+							correctionOptions,
+							runtimeOptions,
+							fileOptions,
+							nReads,
+							readIsCorrectedVector,
+							locksForProcessedFlags,
+							nLocksForProcessedFlags,
+							deviceIds
+						);
+	}else{
+		constexpr bool indels = true;
 
-    std::cout << "begin correct" << std::endl;
-
-	TIMERSTARTCPU(CORRECT);
-
-    correct(minhashOptions, alignmentOptions,
-        goodAlignmentProperties, correctionOptions,
-        runtimeOptions, fileOptions,
-        minhasher, readStorage,
-        readIsCorrectedVector, locksForProcessedFlags,
-        nLocksForProcessedFlags, deviceIds);
-
-
-	TIMERSTOPCPU(CORRECT);
+		correctFile_impl<Minhasher_t,
+						IndelReadStorage_t,
+						indels>
+						(
+							minhashOptions,
+							alignmentOptions,
+							goodAlignmentProperties,
+							correctionOptions,
+							runtimeOptions,
+							fileOptions,
+							nReads,
+							readIsCorrectedVector,
+							locksForProcessedFlags,
+							nLocksForProcessedFlags,
+							deviceIds
+						);
+	}
 }
 
 void performCorrection(const cxxopts::ParseResult& args) {
@@ -82,13 +162,6 @@ void performCorrection(const cxxopts::ParseResult& args) {
 
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
-    if(props.nReads > std::numeric_limits<ReadId_t>::max()){
-        throw std::runtime_error("Found " + std::to_string(props.nReads)
-                                + " reads, but CARE is compiled for only "
-                                + std::to_string(std::numeric_limits<ReadId_t>::max())
-                                + " reads.");
-    }
-
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "File: " << fileOptions.inputfile << std::endl;
     std::cout << "Reads: " << props.nReads << std::endl;
@@ -97,7 +170,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
     std::cout << "----------------------------------------" << std::endl;
 
 	std::vector<char> readIsCorrectedVector(props.nReads, 0);
-	size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
+	std::size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
 	std::vector<int> deviceIds;
@@ -151,6 +224,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
 		correctFile(minhashOptions, alignmentOptions,
             goodAlignmentProperties, correctionOptions,
             runtimeOptions, iterFileOptions,
+			props.nReads,
             readIsCorrectedVector, locksForProcessedFlags,
             nLocksForProcessedFlags, deviceIds);
 

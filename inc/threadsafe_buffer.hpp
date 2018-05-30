@@ -13,13 +13,14 @@ A thread-safe circular buffer with fixed capacity
 
 template<class T, size_t capacity_>
 struct ThreadsafeBuffer {
+	using Value_t = T;
 
-	const T defaultValue;
+	const Value_t defaultValue;
 	const size_t capacity = capacity_;
 
 	std::int64_t curIndex = 0;
 	size_t nElem = 0;
-	std::array<T, capacity_> buffer;
+	std::array<Value_t, capacity_> buffer;
 
 	std::mutex mutex;
 	std::condition_variable condvar;
@@ -33,7 +34,7 @@ struct ThreadsafeBuffer {
 
 	ThreadsafeBuffer(){}
 
-	void add(T data)
+	void add(Value_t data)
 	{
 		std::unique_lock<std::mutex> lock(mutex);
 		if (nElem >= capacity_) {
@@ -48,7 +49,7 @@ struct ThreadsafeBuffer {
 		condvar.notify_all();
 	}
 
-	T get()
+	Value_t get()
 	{
 		std::unique_lock<std::mutex> lock(mutex);
 		if (nElem == 0 && !noMoreInserts) {
@@ -61,7 +62,7 @@ struct ThreadsafeBuffer {
 			return defaultValue;
 		}else{
 			int index = (curIndex - nElem + capacity_) % capacity_;
-			T retVal = buffer[index];
+			const Value_t& retVal = buffer[index];
 			nElem--;
 			condvar.notify_all();
 			return retVal;

@@ -40,6 +40,7 @@ namespace care{
         double graphx = 1.5;
         int kmerlength = 16;
 		int batchsize = 5;
+        int new_columns_to_correct = 0;
     };
 
 	struct RuntimeOptions{
