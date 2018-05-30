@@ -50,6 +50,9 @@ int main(int argc, const char** argv){
 					cxxopts::value<double>()->default_value("0.6")->implicit_value("0.6"))
         ("indels", "If set, a semi-global alignment is performed which allows for the correction of both substitutions and indels. If not set, the shifted hamming distance is calculated which allows for the correction of substitutions.",
                  cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+        ("extractFeatures", "If set, extract MSA features",
+              cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+
 	;
 
 	auto parseresults = options.parse(argc, argv);

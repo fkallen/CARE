@@ -504,18 +504,21 @@ private:
                     /*
                         features
                     */
-                    std::vector<MSAFeature> MSAFeatures =  extractFeatures(pileupImage, b.fwdSequenceString,
-                                                    threadOpts.minhasher->minparams.k, 0.5,
-                                                    correctionOptions.estimatedCoverage);
 
-                    if(MSAFeatures.size() > 0){
-                        for(const auto& msafeature : MSAFeatures){
-                            featurestream << b.readId << '\t' << msafeature.position << '\t' << msafeature.features.size() << '\n';
-                            for(const auto& feature : msafeature.features){
-                                featurestream << feature << '\n';
+                    if(correctionOptions.extractFeatures){
+                        std::vector<MSAFeature> MSAFeatures =  extractFeatures(pileupImage, b.fwdSequenceString,
+                                                        threadOpts.minhasher->minparams.k, 0.5,
+                                                        correctionOptions.estimatedCoverage);
+
+                        if(MSAFeatures.size() > 0){
+                            for(const auto& msafeature : MSAFeatures){
+                                featurestream << b.readId << '\t' << msafeature.position << '\t' << msafeature.features.size() << '\n';
+                                for(const auto& feature : msafeature.features){
+                                    featurestream << feature << '\n';
+                                }
                             }
-                        }
 
+                        }
                     }
                     auto& correctionResult = res.first;
 

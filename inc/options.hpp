@@ -41,6 +41,7 @@ namespace care{
         int kmerlength = 16;
 		int batchsize = 5;
         int new_columns_to_correct = 0;
+        bool extractFeatures = false;
     };
 
 	struct RuntimeOptions{

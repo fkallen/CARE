@@ -67,7 +67,8 @@ namespace args{
             pr["alpha"].as<double>(),
             pr["base"].as<double>(),
             pr["kmerlength"].as<int>(),
-            pr["batchsize"].as<int>()
+            pr["batchsize"].as<int>(),
+            pr["extractFeatures"].as<bool>(),
         };
 
         return result;
