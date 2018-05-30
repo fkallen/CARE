@@ -15,8 +15,14 @@ threads=16
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 #coverage=255
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
-coverage=31
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR490124.fastq
+#coverage=465
+
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
+#coverage=31
+
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRR543736.fastq
+coverage=58
 
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/D.melanogaster_SRR823377.fastq
 #coverage=52
@@ -26,7 +32,7 @@ errorrate=0.03
 m=0.6
 
 #output path. this is used as temporary storage, too
-outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets2/
+outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets/
 
 #output file
 outputfile="readscorrectednew.fq"

@@ -347,8 +347,8 @@ private:
 		const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
 														+ 2.5 * estimatedDeviationAlignedCandidates;
 
-        //const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
-        const std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
+        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
+        //const std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
 
         constexpr bool canUseGpu = true;
 

@@ -10,6 +10,8 @@
 #include <cmath>
 #include <memory>
 #include <tuple>
+#include <limits>
+#include <iostream>
 
 namespace care{
 
@@ -173,7 +175,7 @@ struct PileupImage{
 			auto zero = [](auto& vec){
 				std::fill(vec.begin(), vec.end(), 0);
 			};
-			
+
 			zero(h_support);
 			zero(h_coverage);
 			zero(h_origWeights);
@@ -195,7 +197,7 @@ struct PileupImage{
 				vec.clear();
 				vec.shrink_to_fit();
 			};
-		
+
 			destroyvec(h_support);
 			destroyvec(h_coverage);
 			destroyvec(h_origWeights);
@@ -306,8 +308,9 @@ struct PileupImage{
             auto& sequenceiter = std::get<1>(t);
             auto& countiter = std::get<2>(t);
             auto& candidateQualityiter = std::get<3>(t);
-#endif
+#else
 	for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++, countiter++){
+#endif
             const double defaultweight = 1.0 - std::sqrt((*alignmentiter)->get_nOps()
                                                         / ((*alignmentiter)->get_overlap()
                                                             * desiredAlignmentMaxErrorRate));
