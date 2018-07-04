@@ -2,7 +2,7 @@
 #define CARE_CORRECTION_WRAPPER_HPP
 
 #include "graph.hpp"
-#include "pileup.hpp"
+#include "multiple_sequence_alignment.hpp"
 #include "tasktiming.hpp"
 
 namespace care{

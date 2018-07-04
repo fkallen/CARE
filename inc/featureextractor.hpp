@@ -1,7 +1,7 @@
 #ifndef CARE_FEATURE_EXTRACTOR
 #define CARE_FEATURE_EXTRACTOR
 
-#include "pileup.hpp"
+#include "multiple_sequence_alignment.hpp"
 
 #include <vector>
 #include <iostream>

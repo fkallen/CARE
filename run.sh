@@ -15,11 +15,14 @@ threads=16
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
 #coverage=255
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR490124.fastq
-#coverage=465
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR490124.fastq
+coverage=465
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
-coverage=31
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_ERA000206.fastq
+#coverage=612
+
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
+#coverage=31
 
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRR543736.fastq
 #coverage=58

@@ -1,5 +1,5 @@
-#ifndef PILEUP_HPP
-#define PILEUP_HPP
+#ifndef CARE_MSA_HPP
+#define CARE_MSA_HPP
 
 #include "qualityscoreweights.hpp"
 

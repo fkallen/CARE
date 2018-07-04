@@ -47,4 +47,4 @@ buildgpu/%.o : src/%.cpp
 
 
 clean:
-	rm $(GPU_VERSION) $(CPU_VERSION) $(OBJECTS_GPU) $(OBJECTS_CPU)
+	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(OBJECTS_GPU) $(OBJECTS_CPU)

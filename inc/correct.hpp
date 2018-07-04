@@ -8,7 +8,7 @@
 
 #include "batchelem.hpp"
 #include "graph.hpp"
-#include "pileup.hpp"
+#include "multiple_sequence_alignment.hpp"
 #include "sequence.hpp"
 #include "sequencefileio.hpp"
 #include "qualityscoreweights.hpp"
