@@ -569,6 +569,8 @@ private:
 
 		} // end batch processing
 
+        featurestream.flush();
+
 	#if 1
 		{
 			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
