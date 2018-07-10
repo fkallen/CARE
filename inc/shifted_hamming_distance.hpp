@@ -43,6 +43,19 @@ using Result_t = AlignmentResult;
 
 struct SHDdata{
 
+    void* hostptr;
+    void* deviceptr;
+    std::size_t allocatedMem;
+
+    /*std::size_t subjectsOffset = 0;
+    std::size_t subjectLenghtsOffset = 0;
+    std::size_t NqueriesPrefixSumOffset = 0;
+    std::size_t queriesOffset = 0;
+    std::size_t queryLengthsOffset = 0;
+    std::size_t resultsOffset = 0;*/
+    std::size_t transfersizeH2D = 0;
+    std::size_t transfersizeD2H = 0;
+
 	Result_t* d_results = nullptr;
 	char* d_subjectsdata = nullptr;
 	char* d_queriesdata = nullptr;
@@ -200,6 +213,9 @@ cuda_shifted_hamming_distance_kernel(Result_t* results,
         for(int threadid = threadIdx.x; threadid < max_sequence_bytes; threadid += BLOCKSIZE){
             sharedQuery[threadid] = queriesdata[queryIndex * sequencepitch + threadid];
         }
+        //if(threadIdx.x == 0 && querybases != 100){
+        //    printf("sid %d, qid %d, s %d, q %d\n", subjectIndex, queryIndex, subjectbases, querybases);
+        //}
 
         __syncthreads();
 

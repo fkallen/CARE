@@ -66,7 +66,7 @@ namespace shd{
         return isValid;
     }
 
-
+#if 0
     void SHDdata::resize(int n_sub, int n_quer){
     #ifdef __NVCC__
         cudaSetDevice(deviceId); CUERR;
@@ -132,6 +132,63 @@ namespace shd{
         n_queries = n_quer;
     }
 
+#else
+
+
+    void SHDdata::resize(int n_sub, int n_quer){
+        constexpr double factor = 1.2; //overprovisioning
+    #ifdef __NVCC__
+        cudaSetDevice(deviceId); CUERR;
+
+        n_subjects = n_sub;
+        n_queries = n_quer;
+
+        const std::size_t memSubjects = n_sub * sequencepitch;
+        const std::size_t memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
+        const std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
+        const std::size_t memQueries = n_quer * sequencepitch;
+        const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
+        const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_sub * n_quer, sequencepitch) * sequencepitch;
+
+        const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum + memQueries + memQueryLengths + memResults;
+
+        if(requiredMem > allocatedMem){
+            cudaFree(deviceptr); CUERR;
+            cudaFreeHost(hostptr); CUERR;
+            cudaMalloc(&deviceptr, std::size_t(requiredMem * factor)); CUERR;
+            cudaMallocHost(&hostptr, std::size_t(requiredMem * factor)); CUERR;
+
+            allocatedMem = requiredMem * factor;
+        }
+
+        transfersizeH2D = 0;
+        transfersizeH2D += memSubjects; // d_subjectsdata
+        transfersizeH2D += memSubjectLengths; // d_subjectlengths
+        transfersizeH2D += memNqueriesPrefixSum; // d_NqueriesPrefixSum
+        transfersizeH2D += memQueries; // d_queriesdata
+        transfersizeH2D += memQueryLengths; // d_querylengths
+
+        transfersizeD2H = sizeof(AlignmentResult) * n_sub * n_quer;
+
+        d_subjectsdata = (char*)deviceptr;
+        d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
+        d_NqueriesPrefixSum = (int*)(((char*)d_subjectlengths) + memSubjectLengths);
+        d_queriesdata = (char*)(((char*)d_NqueriesPrefixSum) + memNqueriesPrefixSum);
+        d_querylengths = (int*)(((char*)d_queriesdata) + memQueries);
+        d_results = (AlignmentResult*)(((char*)d_querylengths) + memQueryLengths);
+
+        h_subjectsdata = (char*)hostptr;
+        h_subjectlengths = (int*)(((char*)h_subjectsdata) + memSubjects);
+        h_NqueriesPrefixSum = (int*)(((char*)h_subjectlengths) + memSubjectLengths);
+        h_queriesdata = (char*)(((char*)h_NqueriesPrefixSum) + memNqueriesPrefixSum);
+        h_querylengths = (int*)(((char*)h_queriesdata) + memQueries);
+        h_results = (AlignmentResult*)(((char*)h_querylengths) + memQueryLengths);
+
+        #endif
+    }
+
+#endif
+
     void cuda_init_SHDdata(SHDdata& data, int deviceId,
                             int max_sequence_length,
                             int max_sequence_bytes,
@@ -146,13 +203,19 @@ namespace shd{
 
         for(int i = 0; i < SHDdata::n_streams; i++)
             cudaStreamCreate(&(data.streams[i])); CUERR;
+
+        void* ptr;
+        std::size_t pitch;
+        cudaMallocPitch(&ptr, &pitch, max_sequence_bytes, 1); CUERR;
+        cudaFree(ptr); CUERR;
+        data.sequencepitch = pitch;
     #endif
     }
 
     void cuda_cleanup_SHDdata(SHDdata& data){
     #ifdef __NVCC__
         cudaSetDevice(data.deviceId); CUERR;
-
+#if 0
         cudaFree(data.d_results); CUERR;
         cudaFree(data.d_subjectsdata); CUERR;
         cudaFree(data.d_queriesdata); CUERR;
@@ -166,7 +229,10 @@ namespace shd{
         cudaFreeHost(data.h_subjectlengths); CUERR;
         cudaFreeHost(data.h_querylengths); CUERR;
         cudaFreeHost(data.h_NqueriesPrefixSum); CUERR;
-
+#else
+        cudaFree(data.deviceptr); CUERR;
+        cudaFreeHost(data.hostptr); CUERR;
+#endif
         for(int i = 0; i < SHDdata::n_streams; i++)
             cudaStreamDestroy(data.streams[i]); CUERR;
     #endif

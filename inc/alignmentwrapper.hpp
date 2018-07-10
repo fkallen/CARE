@@ -195,6 +195,7 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
 
 
         // copy data to gpu
+#if 0
         cudaMemcpyAsync(mybuffers.d_subjectsdata,
                 mybuffers.h_subjectsdata,
                 numberOfSubjects * mybuffers.sequencepitch,
@@ -220,7 +221,14 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
                 (numberOfSubjects+1) * sizeof(int),
                 H2D,
                 mybuffers.streams[0]); CUERR;
+#else
+        cudaMemcpyAsync(mybuffers.deviceptr,
+                        mybuffers.hostptr,
+                        mybuffers.transfersizeH2D,
+                        H2D,
+                        mybuffers.streams[0]); CUERR;
 
+#endif
         call_shd_kernel_async<Sequence_t>(mybuffers,
                                     min_overlap,
                                     maxErrorRate,
@@ -230,12 +238,19 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
 
         shd::Result_t* results = mybuffers.h_results;
         shd::Result_t* d_results = mybuffers.d_results;
-
+#if 0
         cudaMemcpyAsync(results,
             d_results,
             sizeof(shd::Result_t) * numberOfAlignments,
             D2H,
             mybuffers.streams[0]); CUERR;
+#else
+        cudaMemcpyAsync(results,
+            d_results,
+            mybuffers.transfersizeD2H,
+            D2H,
+            mybuffers.streams[0]); CUERR;
+#endif
 
     }else{ // use cpu for alignment
 
