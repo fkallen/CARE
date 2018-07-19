@@ -68,7 +68,7 @@ namespace args{
             pr["base"].as<double>(),
             pr["kmerlength"].as<int>(),
             pr["batchsize"].as<int>(),
-            1, //new_columns_to_correct
+            10, //new_columns_to_correct
             pr["extractFeatures"].as<bool>(),
         };
 

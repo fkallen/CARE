@@ -1,6 +1,7 @@
 #include "../inc/multiple_sequence_alignment.hpp"
 #include <algorithm>
 #include <cstring>
+#include <numeric>
 
 namespace care{
 
@@ -4462,14 +4463,15 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                                         0.5);
 
     for(const auto& feature : features){
-        if(!shouldCorrect(feature.min_support,
+        /*if(shouldCorrect(feature.min_support,
                     feature.min_coverage,
                     feature.max_support,
                     feature.max_coverage,
                     feature.mean_support,
                     feature.mean_coverage,
                     feature.median_support,
-                    feature.median_coverage)){
+                    feature.median_coverage)){*/
+        if(!(feature.min_coverage <= 46.5 || (feature.min_coverage > 46.5 && feature.min_support <= 0.915 && feature.max_support <= 0.854))){
 
             const int globalIndex = columnProperties.subjectColumnsBegin_incl + feature.position;
             result.correctedSequence[feature.position] = h_consensus[globalIndex];
