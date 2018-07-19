@@ -95,8 +95,8 @@ void correctFile(const MinhashOptions& minhashOptions,
 
     using Minhasher_t = Minhasher<Key_t, ReadId_t>;
 #if 1
-    using NoIndelReadStorage_t = ReadStorage<NoIndelSequence_t, ReadId_t>;
-    using IndelReadStorage_t = ReadStorage<IndelSequence_t, ReadId_t>;
+    using NoIndelReadStorage_t = ReadStorageNoPointer<NoIndelSequence_t, ReadId_t>;
+    using IndelReadStorage_t = ReadStorageNoPointer<IndelSequence_t, ReadId_t>;
 #else
     using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
     using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
