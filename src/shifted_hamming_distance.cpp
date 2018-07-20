@@ -148,7 +148,7 @@ namespace shd{
         const std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
         const std::size_t memQueries = n_quer * sequencepitch;
         const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
-        const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_sub * n_quer, sequencepitch) * sequencepitch;
+        const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_quer, sequencepitch) * sequencepitch;
 
         const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum + memQueries + memQueryLengths + memResults;
 
@@ -168,7 +168,7 @@ namespace shd{
         transfersizeH2D += memQueries; // d_queriesdata
         transfersizeH2D += memQueryLengths; // d_querylengths
 
-        transfersizeD2H = sizeof(AlignmentResult) * n_sub * n_quer;
+        transfersizeD2H = sizeof(AlignmentResult) * n_quer;
 
         d_subjectsdata = (char*)deviceptr;
         d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
