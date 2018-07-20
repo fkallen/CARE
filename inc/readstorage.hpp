@@ -1,11 +1,14 @@
 #ifndef READ_STORAGE_HPP
 #define READ_STORAGE_HPP
 
+#include <algorithm>
+#include <limits>
 #include <cassert>
 #include <cstdint>
 #include <string>
 #include <vector>
 #include <omp.h>
+#include <map>
 
 namespace care{
 
