@@ -437,18 +437,20 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
 
         __syncthreads();
 
-        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-            in = ((in >> 2)  & 0x3333u) | ((in & 0x3333u) << 2);
-            in = ((in >> 4)  & 0x0F0Fu) | ((in & 0x0F0Fu) << 4);
-            return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
-        };
 
-        auto make_reverse_complement = [](char* reverseComplement, const char* sequence, int sequencelength){
+
+        auto make_reverse_complement = [](std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
+            auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                in = ((in >> 2)  & 0x3333u) | ((in & 0x3333u) << 2);
+                in = ((in >> 4)  & 0x0F0Fu) | ((in & 0x0F0Fu) << 4);
+                return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+            };
+
             const int bytes = (sequencelength + 3) / 4;
             const int unusedPositions = bytes * 4 - sequencelength;
 
             for(int i = 0; i < bytes; i++){
-                reverseComplement[i] = static_cast<char>(make_reverse_complement_byte(sequence[bytes - 1 - i]));;
+                reverseComplement[i] = make_reverse_complement_byte(sequence[bytes - 1 - i]);
             }
 
             if(unusedPositions > 0){
@@ -461,7 +463,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         };
 
         if(threadIdx.x == 0){
-            make_reverse_complement(sharedQueryRevcompl, sharedQuery, querybases);
+            make_reverse_complement((std::uint8_t*)sharedQueryRevcompl, (const std::uint8_t*)sharedQuery, querybases);
         }
         __syncthreads();
 /*
@@ -596,9 +598,9 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
       const int maxShiftsToCheck = maxSubjectLength+1 + maxQueryLength - 2*minoverlap;
       dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
-      dim3 grid(shddata.n_queries, 1, 1);
+      dim3 grid(shddata.n_queries * 2, 1, 1); // one block per query and its reverse complement
 
-      const std::size_t smem = sizeof(char) * 2 * shddata.max_sequence_bytes;
+      const std::size_t smem = sizeof(char) * 3 * shddata.max_sequence_bytes;
 
       #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)> \
                                   <<<grid, block, smem, shddata.streams[0]>>>( \

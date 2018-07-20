@@ -407,6 +407,7 @@ private:
 
                     auto subjectsBegin = &b.fwdSequence;
                     auto subjectsEnd = subjectsBegin + 1;
+                    #if 0
                     auto queries = make_concat_container(b.fwdSequences.cbegin(), b.fwdSequences.cend(),
                                                       b.revcomplSequences.cbegin(), b.revcomplSequences.cend());
 
@@ -425,6 +426,25 @@ private:
                                                                     goodAlignmentProperties.maxErrorRate,
                                                                     goodAlignmentProperties.min_overlap_ratio,
                                                                     canUseGpu);
+                    #else
+
+                    auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                        b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+
+                    AlignmentDevice device = shifted_hamming_distance_with_revcompl_async<Sequence_t>(shdhandles[batchindex],
+                                                                    subjectsBegin,
+                                                                    subjectsEnd,
+                                                                    b.fwdSequences.cbegin(),
+                                                                    b.fwdSequences.cend(),
+                                                                    alignments.begin(),
+                                                                    alignments.end(),
+                                                                    {int(b.fwdSequences.size())},
+                                                                    goodAlignmentProperties.min_overlap,
+                                                                    goodAlignmentProperties.maxErrorRate,
+                                                                    goodAlignmentProperties.min_overlap_ratio,
+                                                                    canUseGpu);
+
+                    #endif
 
 					if(device == AlignmentDevice::CPU)
 						cpuAlignments++;
@@ -439,7 +459,7 @@ private:
 				if(b.active){
                     auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
                                                         b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-                    shifted_hamming_distance_get_results(shdhandles[batchindex],
+                    shifted_hamming_distance_with_revcompl_get_results(shdhandles[batchindex],
                                                     alignments.begin(),
                                                     alignments.end(),
                                                     canUseGpu);
@@ -1190,7 +1210,7 @@ void correct(const MinhashOptions& minhashOptions,
     }
 
 //#define DO_PROFILE
-
+#if 1
 #ifdef DO_PROFILE
     int sleepiter = 0;
 #endif
@@ -1238,9 +1258,11 @@ void correct(const MinhashOptions& minhashOptions,
         #endif
 #endif
     }
-
+#endif
     for (auto& thread : ecthreads)
         thread.join();
+
+        std::cout << "threads done" << std::endl;
 
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);

@@ -568,7 +568,7 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_async(SHDhandle& handle,
                         mybuffers.streams[0]); CUERR;
 
 #endif
-        call_shd_kernel_async<Sequence_t>(mybuffers,
+        call_shd_with_revcompl_kernel<Sequence_t>(mybuffers,
                                     min_overlap,
                                     maxErrorRate,
                                     min_overlap_ratio,
@@ -595,7 +595,7 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_async(SHDhandle& handle,
 
 #endif
         assert(false && "shd revcompl not available on cpu");
-        
+
         device = AlignmentDevice::CPU;
 
         timings.executionBegin();

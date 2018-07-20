@@ -12,11 +12,11 @@ threads=16
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
 #coverage=21
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
-#coverage=255
+inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+coverage=255
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR490124.fastq
-coverage=465
+#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR490124.fastq
+#coverage=465
 
 #inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_ERA000206.fastq
 #coverage=612
@@ -52,7 +52,7 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=true
+candidateCorrection=--candidateCorrection=false
 
 #if indels should be corrected, too
 indels=--indels=false
@@ -73,7 +73,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=4
+batchsize=2
 
 #properties of good alignment
 maxmismatchratio=0.20
