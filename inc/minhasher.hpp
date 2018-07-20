@@ -334,7 +334,11 @@ struct Minhasher {
 	ReadId_t nReads;
 
     std::size_t numBytes() const{
-        return minhashTables[0]->numBytes() * minhashTables.size();
+        //return minhashTables[0]->numBytes() * minhashTables.size();
+        std::size_t result = 0;
+        for(const auto& m : minhashTables)
+            result += m->numBytes();
+        return result;
     }
 
 	Minhasher() : Minhasher(MinhashOptions{2,16}){}
