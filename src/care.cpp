@@ -53,10 +53,23 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     TIMERSTARTCPU(PREPROCESSING);
 	minhasher.transform();
     std::cout << "hashmaps use " << (minhasher.numBytes() / 1024. / 1024. / 1024.) << " GB." << std::endl;
+    std::cout << "readStorage uses " << (readStorage.size() / 1024. / 1024. / 1024.) << " GB. "
+                << (readStorage.sizereal() / 1024. / 1024. / 1024.) << " GB." << std::endl;
 	readStorage.transform();
+    std::cout << "readStorage uses " << (readStorage.size() / 1024. / 1024. / 1024.) << " GB. "
+                << (readStorage.sizereal() / 1024. / 1024. / 1024.) << " GB." << std::endl;
 	TIMERSTOPCPU(PREPROCESSING);
 
+    #if 1
 
+        std::cout << "sequences size: " << readStorage.sequences.size() << std::endl;
+        std::cout << "sequences capacity: " << readStorage.sequences.capacity() << std::endl;
+        std::cout << "sequenceIndices size: " << readStorage.sequenceIndices.size() << std::endl;
+        std::cout << "sequenceIndices capacity: " << readStorage.sequenceIndices.capacity() << std::endl;
+        std::cout << "reverseComplSequenceIndices size: " << readStorage.reverseComplSequenceIndices.size() << std::endl;
+        std::cout << "reverseComplSequenceIndices capacity: " << readStorage.reverseComplSequenceIndices.capacity() << std::endl;
+
+    #endif
 
     std::cout << "begin correct" << std::endl;
 

@@ -136,19 +136,24 @@ namespace shd{
 
 
     void SHDdata::resize(int n_sub, int n_quer){
+        resize(n_sub, n_quer, n_quer);
+    }
+
+    void SHDdata::resize(int n_sub, int n_quer, int n_res){
         constexpr double factor = 1.2; //overprovisioning
     #ifdef __NVCC__
         cudaSetDevice(deviceId); CUERR;
 
         n_subjects = n_sub;
         n_queries = n_quer;
+        n_results = n_res;
 
         const std::size_t memSubjects = n_sub * sequencepitch;
         const std::size_t memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
         const std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
         const std::size_t memQueries = n_quer * sequencepitch;
         const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
-        const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_quer, sequencepitch) * sequencepitch;
+        const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_results, sequencepitch) * sequencepitch;
 
         const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum + memQueries + memQueryLengths + memResults;
 
@@ -168,7 +173,7 @@ namespace shd{
         transfersizeH2D += memQueries; // d_queriesdata
         transfersizeH2D += memQueryLengths; // d_querylengths
 
-        transfersizeD2H = sizeof(AlignmentResult) * n_quer;
+        transfersizeD2H = sizeof(AlignmentResult) * n_results;
 
         d_subjectsdata = (char*)deviceptr;
         d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
