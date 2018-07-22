@@ -598,7 +598,7 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
       const int maxShiftsToCheck = maxSubjectLength+1 + maxQueryLength - 2*minoverlap;
       dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
-      dim3 grid(shddata.n_queries * 2, 1, 1); // one block per query and its reverse complement
+      dim3 grid(shddata.n_queries, 1, 1); // one block per (query and its reverse complement)
 
       const std::size_t smem = sizeof(char) * 3 * shddata.max_sequence_bytes;
 

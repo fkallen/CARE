@@ -84,9 +84,103 @@ struct BatchElem{
                     goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
                     mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
                     correctionOptions(CO){
-
-
     }
+    
+    BatchElem(const BatchElem& other)
+        :canUseQualityScores(other.canUseQualityScores),
+        active(other.active),
+        corrected(other.corrected),
+        readId(other.readId),
+        fwdSequence(other.fwdSequence),
+        fwdSequenceString(other.fwdSequenceString),
+        fwdQuality(other.fwdQuality),
+        correctedSequence(other.correctedSequence),
+        n_unique_candidates(other.n_unique_candidates),
+        n_candidates(other.n_candidates),
+        candidateIds(other.candidateIds),
+        candidateCountsPrefixSum(other.candidateCountsPrefixSum),
+        candidateCounts(other.candidateCounts),
+        activeCandidates(other.activeCandidates),
+        fwdSequences(other.fwdSequences),
+        revcomplSequences(other.revcomplSequences),
+        fwdAlignments(other.fwdAlignments),
+        revcomplAlignments(other.revcomplAlignments),
+        bestAlignments(other.bestAlignments),
+        bestSequences(other.bestSequences),
+        bestSequenceStrings(other.bestSequenceStrings),
+        bestQualities(other.bestQualities),
+        bestIsForward(other.bestIsForward),
+        reverseComplements(other.reverseComplements),
+        reverseComplementQualities(other.reverseComplementQualities),
+        mismatchratioThreshold(other.mismatchratioThreshold),
+        readStorage(other.readStorage),
+        goodAlignmentsCountThreshold(other.goodAlignmentsCountThreshold),
+        mismatchratioBaseFactor(other.mismatchratioBaseFactor),
+        correctionOptions(other.correctionOptions),
+        findCandidatesTiming(other.findCandidatesTiming),
+        make_unique_sequences_numseqpairs(other.make_unique_sequences_numseqpairs){
+
+        counts[0] = other.counts[0];
+        counts[1] = other.counts[1];
+        counts[2] = other.counts[2];
+    }
+
+    BatchElem(BatchElem&& other){
+        operator=(other);
+    }
+
+    BatchElem& operator=(const BatchElem& other){
+    //BatchElem& operator=(BatchElem other){
+        BatchElem tmp(other);
+        swap(*this, tmp);
+        //swap(*this, other);
+        return *this;
+    }
+
+    BatchElem& operator=(BatchElem&& other){
+        swap(*this, other);
+        return *this;
+    }
+
+public:
+    friend void swap(BatchElem& l, BatchElem& r) noexcept{
+        using std::swap;
+
+        swap(l.canUseQualityScores, r.canUseQualityScores);
+        swap(l.active, r.active);
+        swap(l.corrected, r.corrected);
+        swap(l.readId, r.readId);
+        swap(l.fwdSequence, r.fwdSequence);
+        swap(l.fwdSequenceString, r.fwdSequenceString);
+        swap(l.fwdQuality, r.fwdQuality);
+        swap(l.correctedSequence, r.correctedSequence);
+        swap(l.n_unique_candidates, r.n_unique_candidates);
+        swap(l.n_candidates, r.n_candidates);
+        swap(l.candidateIds, r.candidateIds);
+        swap(l.candidateCountsPrefixSum, r.candidateCountsPrefixSum);
+        swap(l.candidateCounts, r.candidateCounts);
+        swap(l.activeCandidates, r.activeCandidates);
+        swap(l.fwdSequences, r.fwdSequences);
+        swap(l.revcomplSequences, r.revcomplSequences);
+        swap(l.fwdAlignments, r.fwdAlignments);
+        swap(l.revcomplAlignments, r.revcomplAlignments);
+        swap(l.bestAlignments, r.bestAlignments);
+        swap(l.bestSequences, r.bestSequences);
+        swap(l.bestSequenceStrings, r.bestSequenceStrings);
+        swap(l.bestQualities, r.bestQualities);
+        swap(l.bestIsForward, r.bestIsForward);
+        swap(l.reverseComplements, r.reverseComplements);
+        swap(l.reverseComplementQualities, r.reverseComplementQualities);
+        swap(l.mismatchratioThreshold, r.mismatchratioThreshold);
+        swap(l.readStorage, r.readStorage);
+        swap(l.goodAlignmentsCountThreshold, r.goodAlignmentsCountThreshold);
+        swap(l.mismatchratioBaseFactor, r.mismatchratioBaseFactor);
+        swap(l.correctionOptions, r.correctionOptions);
+        swap(l.findCandidatesTiming, r.findCandidatesTiming);
+        swap(l.make_unique_sequences_numseqpairs, r.make_unique_sequences_numseqpairs);
+        swap(l.counts, r.counts);
+    }
+
 };
 
 

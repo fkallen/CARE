@@ -377,6 +377,7 @@ private:
 				unlock(b.readId);
 			}
 
+#if 0			
 			std::partition(batchElems.begin(), batchElems.end(), [](const auto& b){return b.active;});
 
 
@@ -467,6 +468,97 @@ private:
 			}
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
+			
+#else
+			
+			tpa = std::chrono::system_clock::now();
+			
+			for(auto& b : batchElems){
+                
+
+	             // get query data, determine candidates via minhashing, get candidate data
+				if(b.active){
+                    findCandidates(b, [&, this](const std::string& sequencestring){
+                        return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
+                    });
+
+                    //don't correct candidates with more than estimatedAlignmentCountThreshold alignments
+                    if(b.n_unique_candidates > estimatedAlignmentCountThreshold)
+    					b.active = false;
+				}
+            }
+            
+            tpb = std::chrono::system_clock::now();
+			mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
+			
+			tpa = std::chrono::system_clock::now();
+			
+			batchElems.erase(std::remove_if(batchElems.begin(), 
+											batchElems.end(), 
+											[](const auto& b){return !b.active;}),
+							batchElems.end());
+
+            if(batchElems.size() > 0){
+
+                std::vector<const Sequence_t**> subjectsbegin;
+                std::vector<const Sequence_t**> subjectsend;
+                std::vector<typename std::vector<const Sequence_t*>::iterator> queriesbegin;
+                std::vector<typename std::vector<const Sequence_t*>::iterator> queriesend;
+                std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsbegin;
+                std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsend;
+                std::vector<int> queriesPerSubject;
+
+                subjectsbegin.reserve(batchElems.size());
+                subjectsend.reserve(batchElems.size());
+                queriesbegin.reserve(batchElems.size());
+                queriesend.reserve(batchElems.size());
+                alignmentsbegin.reserve(batchElems.size());
+                alignmentsend.reserve(batchElems.size());
+                queriesPerSubject.reserve(batchElems.size());
+
+                for(auto& b : batchElems){
+					auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+															b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+					
+                    subjectsbegin.emplace_back(&b.fwdSequence);
+                    subjectsend.emplace_back(&b.fwdSequence + 1);
+                    queriesbegin.emplace_back(b.fwdSequences.begin());
+                    queriesend.emplace_back(b.fwdSequences.end());
+                    alignmentsbegin.emplace_back(alignments.begin());
+                    alignmentsend.emplace_back(alignments.end());
+                    queriesPerSubject.emplace_back(b.fwdSequences.size());
+                }
+
+                AlignmentDevice device = shifted_hamming_distance_with_revcompl_bulk_async<Sequence_t>(shdhandles[0],
+                                                                subjectsbegin,
+                                                                subjectsend,
+                                                                queriesbegin,
+                                                                queriesend,
+                                                                alignmentsbegin,
+                                                                alignmentsend,
+                                                                queriesPerSubject,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.maxErrorRate,
+                                                                goodAlignmentProperties.min_overlap_ratio,
+                                                                canUseGpu);
+
+				if(device == AlignmentDevice::CPU)
+					cpuAlignments++;
+				else if (device == AlignmentDevice::GPU)
+					gpuAlignments++;
+				
+
+                shifted_hamming_distance_with_revcompl_get_results_bulk(shdhandles[0],
+																		alignmentsbegin,
+																		alignmentsend,
+																		canUseGpu);
+            }
+            
+            tpb = std::chrono::system_clock::now();
+			getAlignmentsTimeTotal += tpb - tpa;
+			
+			
+#endif			
 
 			//check quality of alignments
 			tpc = std::chrono::system_clock::now();
@@ -1147,8 +1239,12 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
+#if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
+#else
+	const int nCorrectorThreads = 1;
+#endif
 
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < nCorrectorThreads; i++){

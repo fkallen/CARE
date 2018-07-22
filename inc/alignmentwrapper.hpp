@@ -389,6 +389,23 @@ AlignmentDevice shifted_hamming_distance(SHDhandle& handle,
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /*
 
     ########### SHIFTED HAMMING DISTANCE WITH REVERSE COMPLEMENT
@@ -726,11 +743,305 @@ AlignmentDevice shifted_hamming_distance_with_revcompl(SHDhandle& handle,
 
 
 
+/*
+
+	########## SHIFTED HAMMING DISTANCE WITH REVERSE COMPLEMENT BULK
+*/
 
 
 
 
 
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
+AlignmentDevice shifted_hamming_distance_with_revcompl_bulk_async(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+
+    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+
+    auto& mybuffers = handle.buffers;
+    auto& timings = handle.timings;
+
+    AlignmentDevice device = AlignmentDevice::None;
+
+    int numberOfAlignments = 0;
+    int numberOfQueries = 0;
+    int numberOfSubjects = 0;
+
+    assert(subjectsbegin.size() == subjectsend.size());
+    assert(subjectsbegin.size() == queriesbegin.size());
+    assert(subjectsbegin.size() == queriesend.size());
+    assert(subjectsbegin.size() == alignmentsbegin.size());
+    assert(subjectsbegin.size() == alignmentsend.size());
+
+    for(std::size_t i = 0; i < alignmentsbegin.size(); i++){
+        numberOfAlignments += std::distance(alignmentsbegin[i], alignmentsend[i]);
+    }
+    for(std::size_t i = 0; i < queriesbegin.size(); i++){
+        numberOfQueries += std::distance(queriesbegin[i], queriesend[i]);
+    }
+    assert(numberOfAlignments == numberOfQueries * 2);
+
+    for(std::size_t i = 0; i < subjectsbegin.size(); i++){
+        numberOfSubjects += std::distance(subjectsbegin[i], subjectsend[i]);
+    }
+    assert(numberOfSubjects == (int)queriesPerSubject.size());
+
+    //nothing to do here
+    if(numberOfAlignments == 0)
+        return device;
+#ifdef __NVCC__
+
+    if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
+        device = AlignmentDevice::GPU;
+
+        timings.preprocessingBegin();
+
+        cudaSetDevice(mybuffers.deviceId); CUERR;
+
+        mybuffers.resize(numberOfSubjects, numberOfQueries, numberOfAlignments);
+
+        mybuffers.n_subjects = numberOfSubjects;
+        mybuffers.n_queries = numberOfQueries;
+		mybuffers.n_results = numberOfAlignments;
+
+        int maxSubjectLength = 0;
+
+        for(std::size_t i = 0, count = 0; i < subjectsbegin.size(); i++){
+
+            for(auto it = subjectsbegin[i]; it != subjectsend[i]; ++it, ++count){
+
+                assert((*it)->length() <= mybuffers.max_sequence_length);
+                assert((*it)->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                std::memcpy(mybuffers.h_subjectsdata + count * mybuffers.sequencepitch,
+                            (*it)->begin(),
+                            (*it)->getNumBytes());
+
+                mybuffers.h_subjectlengths[count] = (*it)->length();
+                maxSubjectLength = std::max(int((*it)->length()), maxSubjectLength);
+            }
+
+        }
+
+        int maxQueryLength = 0;
+
+        for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
+
+            for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
+
+                assert((*it)->length() <= mybuffers.max_sequence_length);
+                assert((*it)->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                std::memcpy(mybuffers.h_queriesdata + count * mybuffers.sequencepitch,
+                            (*it)->begin(),
+                            (*it)->getNumBytes());
+
+                mybuffers.h_querylengths[count] = (*it)->length();
+                maxQueryLength = std::max(int((*it)->length()), maxQueryLength);
+            }
+
+        }
+
+        mybuffers.h_NqueriesPrefixSum[0] = 0;
+        for(std::size_t i = 0; i < queriesPerSubject.size(); i++)
+            mybuffers.h_NqueriesPrefixSum[i+1] = mybuffers.h_NqueriesPrefixSum[i] + queriesPerSubject[i];
+
+        assert(numberOfAlignments == mybuffers.h_NqueriesPrefixSum[queriesPerSubject.size()] * 2);
+
+        timings.preprocessingEnd();
+
+        timings.executionBegin();
+
+
+        // copy data to gpu
+
+        cudaMemcpyAsync(mybuffers.deviceptr,
+                        mybuffers.hostptr,
+                        mybuffers.transfersizeH2D,
+                        H2D,
+                        mybuffers.streams[0]); CUERR;
+
+
+        call_shd_with_revcompl_kernel_async<Sequence_t>(mybuffers,
+                                    min_overlap,
+                                    maxErrorRate,
+                                    min_overlap_ratio,
+                                    maxSubjectLength,
+                                    maxQueryLength); CUERR;
+
+        shd::Result_t* results = mybuffers.h_results;
+        shd::Result_t* d_results = mybuffers.d_results;
+
+        cudaMemcpyAsync(results,
+            d_results,
+            mybuffers.transfersizeD2H,
+            D2H,
+            mybuffers.streams[0]); CUERR;
+
+    }else{ // use cpu for alignment
+
+#endif
+        device = AlignmentDevice::CPU;
+
+        timings.executionBegin();
+
+        for(std::size_t i = 0, subjectcount = 0; i < subjectsbegin.size(); i++){
+
+            auto queryIt = queriesbegin[i];
+            auto alignmentsIt = alignmentsbegin[i];
+
+            for(auto subjectIt = subjectsbegin[i]; subjectIt != subjectsend[i]; ++subjectIt, ++subjectcount){
+
+                assert((*subjectIt)->length() <= mybuffers.max_sequence_length);
+                assert((*subjectIt)->getNumBytes() <= mybuffers.max_sequence_bytes);
+
+                const char* const subject = (const char*)(*subjectIt)->begin();
+                const int subjectLength = (*subjectIt)->length();
+
+                const int nQueries = queriesPerSubject[subjectcount];
+
+                for(int i = 0; i < nQueries; i++){
+                    const char* query =  (const char*)(*queryIt)->begin();
+                    const int queryLength = (*queryIt)->length();
+
+                    *alignmentsIt = cpu_shifted_hamming_distance<Sequence_t>(subject, subjectLength, query, queryLength,
+                                                                            min_overlap,
+                                                                            maxErrorRate,
+                                                                            min_overlap_ratio);
+
+                    queryIt++;
+                    alignmentsIt++;
+                }
+            }
+        }
+
+        timings.executionEnd();
+
+#ifdef __NVCC__
+    }
+#endif
+
+    return device;
+}
+
+
+/*
+Ensures that all alignment results from the preceding call to shifted_hamming_distance_async
+have been stored in the range [alignmentsbegin, alignmentsend[
+
+must be called with the same mybuffers, alignmentsbegin, alignmentsend, canUseGpu
+as the call to shifted_hamming_distance_async
+*/
+
+template<class AlignmentIter>
+void shifted_hamming_distance_with_revcompl_get_results_bulk(SHDhandle& handle,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                bool canUseGpu){
+
+    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignement type");
+
+    assert(alignmentsbegin.size() == alignmentsend.size());
+
+    int numberOfAlignments = 0;
+
+    for(std::size_t i = 0; i < alignmentsbegin.size(); i++){
+        numberOfAlignments += std::distance(alignmentsbegin[i], alignmentsend[i]);
+    }
+
+    //nothing to do here
+    if(numberOfAlignments == 0)
+        return;
+#ifdef __NVCC__
+
+    auto& mybuffers = handle.buffers;
+    auto& timings = handle.timings;
+
+    if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
+        cudaSetDevice(mybuffers.deviceId); CUERR;
+
+        shd::Result_t* results = mybuffers.h_results;
+
+        cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
+
+        timings.executionEnd();
+
+        timings.postprocessingBegin();
+
+		/*
+		  All reverse complement alignments are in the second half of the result vector. First, copy all forward alignments for each range
+		*/ 
+		std::size_t count = 0;
+		
+		for(std::size_t i = 0; i < alignmentsbegin.size(); ++i){
+			std::size_t dist = std::distance(alignmentsbegin[i], alignmentsend[i]);
+			auto fwdEnd = alignmentsbegin[i];
+			std::advance(fwdEnd, dist/2);
+			for(auto it = alignmentsbegin[i]; it != fwdEnd; ++it, ++count){
+                *it = results[count];
+            }
+		}
+		
+		for(std::size_t i = 0; i < alignmentsbegin.size(); ++i){
+			std::size_t dist = std::distance(alignmentsbegin[i], alignmentsend[i]);
+			auto revcomplBegin = alignmentsbegin[i];
+			std::advance(revcomplBegin, dist/2);
+			for(auto it = revcomplBegin; it != alignmentsend[i]; ++it, ++count){
+                *it = results[count];
+            }
+		}
+
+        timings.postprocessingEnd();
+
+
+    }else{ // cpu already done
+
+#endif
+
+#ifdef __NVCC__
+    }
+#endif
+
+    return;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
+AlignmentDevice shifted_hamming_distance_with_revcompl_bulk(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter> alignmentsbegin,
+                                std::vector<AlignmentIter> alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+
+    AlignmentDevice device = shifted_hamming_distance_with_revcompl_bulk_async(handle, subjectsbegin, subjectsend,
+                                    queriesbegin, queriesend,
+                                    alignmentsbegin, alignmentsend,
+                                    queriesPerSubject, min_overlap,
+                                    maxErrorRate, min_overlap_ratio, canUseGpu);
+
+    shifted_hamming_distance_with_revcompl_get_results_bulk(handle,
+                                    alignmentsbegin,
+                                    alignmentsend,
+                                    canUseGpu);
+
+    return device;
+}
 
 
 
