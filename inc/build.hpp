@@ -13,7 +13,7 @@
 #include <thread>
 
 namespace care{
-	
+
 	namespace builddetail{
 		template<class Minhasher_t,
 				 class ReadStorage_t,
@@ -73,12 +73,12 @@ namespace care{
 					progress += 1;
 				}
 			}
-		};		
+		};
 	}
 
 	template<class Minhasher_t,
 			class ReadStorage_t>
-    void build(const FileOptions& fileOptions, 
+    void build(const FileOptions& fileOptions,
 			   const RuntimeOptions& runtimeOptions,
 			   ReadStorage_t& readStorage,
 			   Minhasher_t& minhasher){
@@ -87,7 +87,12 @@ namespace care{
         minhasher.init(props.nReads);
         readStorage.init(props.nReads);
 
+        //std::string stmp;
+        //std::cout << "build init done." << std::endl;
+        //std::cin >> stmp;
+
         int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
+        //int nThreads = 1;
 
         //single-threaded insertion
         if(nThreads == 1){
