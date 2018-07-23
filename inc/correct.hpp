@@ -325,9 +325,9 @@ private:
 		};
 
 		constexpr int nStreams = 2;
-		
+
 		std::vector<SHDhandle> shdhandles(nStreams);
-		
+
 		for(auto& handle : shdhandles){
 			init_SHDhandle(handle,
 							threadOpts.deviceId,
@@ -351,8 +351,11 @@ private:
 		const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
 														+ 2.5 * estimatedDeviationAlignedCandidates;
 
-        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold * correctionOptions.estimatedCoverage;
+        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold;// * correctionOptions.estimatedCoverage;
         //const std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
+
+        if(threadOpts.threadId == 0)
+            std::cout << "max_candidates " << max_candidates << std::endl;
 
         constexpr bool canUseGpu = true;
 
@@ -363,7 +366,7 @@ private:
 				if (batchElems[streamIndex].size() != readIds.size()) {
 					batchElems[streamIndex].resize(readIds.size(),
 									BatchElem_t(*threadOpts.readStorage,
-												correctionOptions));
+												correctionOptions, max_candidates));
 				}
 
 				for(std::size_t i = 0; i < readIds.size(); i++){
@@ -382,7 +385,7 @@ private:
 					unlock(b.readId);
 				}
 
-#if 0			
+#if 0
 			std::partition(batchElems.begin(), batchElems.end(), [](const auto& b){return b.active;});
 
 
@@ -473,13 +476,13 @@ private:
 			}
 			tpb = std::chrono::system_clock::now();
 			getAlignmentsTimeTotal += tpb - tpa;
-			
+
 #else
-			
+
 				tpa = std::chrono::system_clock::now();
-				
+
 				for(auto& b : batchElems[streamIndex]){
-					
+
 
 					// get query data, determine candidates via minhashing, get candidate data
 					if(b.active){
@@ -492,16 +495,16 @@ private:
 							b.active = false;
 					}
 				}
-				
+
 				tpb = std::chrono::system_clock::now();
 				mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
-				
+
 				tpa = std::chrono::system_clock::now();
-				
+
 				auto activeBatchElemensEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
-				
-				/*batchElems[streamIndex].erase(std::remove_if(batchElems[streamIndex].begin(), 
-												batchElems[streamIndex].end(), 
+
+				/*batchElems[streamIndex].erase(std::remove_if(batchElems[streamIndex].begin(),
+												batchElems[streamIndex].end(),
 												[](const auto& b){return !b.active;}),
 								batchElems[streamIndex].end());*/
 
@@ -528,7 +531,7 @@ private:
 						auto& b = *it;
 						auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
 																b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-						
+
 						subjectsbegin.emplace_back(&b.fwdSequence);
 						subjectsend.emplace_back(&b.fwdSequence + 1);
 						queriesbegin.emplace_back(b.fwdSequences.begin());
@@ -555,34 +558,34 @@ private:
 						cpuAlignments++;
 					else if (device == AlignmentDevice::GPU)
 						gpuAlignments++;
-					
+
 
 					//shifted_hamming_distance_with_revcompl_get_results_bulk(shdhandles[streamIndex],
 					//														alignmentsbegin,
 					//														alignmentsend,
 					//														canUseGpu);
 				}
-				
+
 				nProcessedReads += readIds.size();
 				readIds = threadOpts.batchGen->getNextReadIds();
-				
+
 				//tpb = std::chrono::system_clock::now();
 				//getAlignmentsTimeTotal += tpb - tpa;
 			}
-			
-#endif			
 
-#if 1			
+#endif
+
+#if 1
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
-				
+
 				std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsbegin;
 				std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsend;
 				alignmentsbegin.reserve(batchElems[streamIndex].size());
 				alignmentsend.reserve(batchElems[streamIndex].size());
-				
+
 				auto activeBatchElemensEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
-				
+
 				//for(auto& b : batchElems[streamIndex]){
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
 					auto& b = *it;
@@ -590,14 +593,14 @@ private:
 															b.revcomplAlignments.begin(), b.revcomplAlignments.end());
 					alignmentsbegin.emplace_back(alignments.begin());
 					alignmentsend.emplace_back(alignments.end());
-					
+
 				}
-				
+
 				shifted_hamming_distance_with_revcompl_get_results_bulk(shdhandles[streamIndex],
 																			alignmentsbegin,
 																			alignmentsend,
 																			canUseGpu);
-																		
+	#if 1
 				//check quality of alignments
 				tpc = std::chrono::system_clock::now();
 				//for(auto& b : batchElems[streamIndex]){
@@ -717,6 +720,8 @@ private:
 						}
 					}
 				}
+
+#endif
 			}
 #endif
 			// update local progress
@@ -1290,7 +1295,7 @@ void correct(const MinhashOptions& minhashOptions,
 #else
 	const int nCorrectorThreads = 1;
 #endif
-	
+
 	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
     std::vector<std::string> tmpfiles;
@@ -1484,7 +1489,7 @@ void correct(const MinhashOptions& minhashOptions,
         thread.join();
 
         std::cout << "threads done" << std::endl;
-	
+
 #ifndef DO_PROFILE
     showProgress = false;
     progressThread.join();
