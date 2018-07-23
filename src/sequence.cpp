@@ -1,15 +1,22 @@
 #include "../inc/sequence.hpp"
+#include <iostream>
 
 namespace care{
 	Sequence::Sequence() noexcept: nBases(0)
 	{
 		data.second = 0;
+        //std::cout << "Sequence::Sequence()" << std::endl;
 	}
+
+    Sequence::~Sequence() noexcept{
+        //std::cout << "Sequence::~Sequence()" << std::endl;
+    }
 
 	Sequence::Sequence(const std::string& sequence) noexcept
 		: nBases(sequence.length())
 	{
 		data = encode_2bit(sequence);
+        //std::cout << "Sequence::Sequence(const std::string& sequence)" << std::endl;
 	}
 
 	Sequence::Sequence(const std::uint8_t* rawdata, int nBases_) noexcept
@@ -20,16 +27,19 @@ namespace care{
 		data.second = size;
 
 		std::copy(rawdata, rawdata + size, begin());
+        //std::cout << "Sequence::Sequence(const std::uint8_t* rawdata, int nBases_)" << std::endl;
 	}
 
 	Sequence::Sequence(Sequence&& other) noexcept
 	{
 		*this = std::move(other);
+        //std::cout << "Sequence::Sequence(Sequence&& other) noexcept" << std::endl;
 	}
 
 	Sequence::Sequence(const Sequence& other) noexcept
 	{
 		*this = other;
+        //std::cout << "Sequence::Sequence(const Sequence& other)" << std::endl;
 	}
 
 	Sequence& Sequence::operator=(const Sequence& other) noexcept
@@ -41,7 +51,7 @@ namespace care{
 		data.second = size;
 
 		std::copy(other.begin(), other.end(), begin());
-
+        //std::cout << "Sequence::operator=(const Sequence& other)" << std::endl;
 		return *this;
 	}
 
@@ -54,6 +64,7 @@ namespace care{
 			other.nBases = 0;
 			other.data.second = 0;
 		}
+        //std::cout << "Sequence::operator=(Sequence&& other)" << std::endl;
 	        return *this;
 	}
 

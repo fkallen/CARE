@@ -188,6 +188,7 @@ struct FixedSizeSequence{
 struct Sequence {
 
 	Sequence() noexcept;
+    ~Sequence() noexcept;
 	Sequence(const std::string& sequence) noexcept;
 	Sequence(const std::uint8_t* rawdata, int nBases_) noexcept;
 	Sequence(Sequence&& other) noexcept;
