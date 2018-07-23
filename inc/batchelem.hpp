@@ -75,17 +75,43 @@ struct BatchElem{
 
     int counts[3] { 0, 0, 0 }; //count number of cases of mismatchratio < 2*errorrate, 3*errorrate, 4*errorrate
 
-    BatchElem(){}
+    BatchElem(){
+        //std::cout << "BatchElem()" << std::endl;
+    }
 
     BatchElem(const ReadStorage_t& rs,
                 const CorrectionOptions& CO)
+                :   BatchElem(rs, CO, 10){
+
+                        //std::cout << "BatchElem(const ReadStorage_t& rs, const CorrectionOptions& CO)" << std::endl;
+    }
+
+    BatchElem(const ReadStorage_t& rs,
+                const CorrectionOptions& CO, std::uint64_t approxMaxCandidates)
                 :   canUseQualityScores(CO.useQualityScores),
                     readStorage(&rs),
                     goodAlignmentsCountThreshold(CO.estimatedCoverage * CO.m_coverage),
                     mismatchratioBaseFactor(CO.estimatedErrorrate*1.0),
                     correctionOptions(CO){
+
+            bestQualities.reserve(approxMaxCandidates);
+            candidateCounts.reserve(approxMaxCandidates);
+            candidateCountsPrefixSum.reserve(approxMaxCandidates+1);
+            activeCandidates.reserve(approxMaxCandidates);
+            fwdSequences.reserve(approxMaxCandidates);
+            revcomplSequences.reserve(approxMaxCandidates);
+            fwdAlignments.reserve(approxMaxCandidates);
+            revcomplAlignments.reserve(approxMaxCandidates);
+            bestAlignments.reserve(approxMaxCandidates);
+            bestSequences.reserve(approxMaxCandidates);
+            bestSequenceStrings.reserve(approxMaxCandidates);
+            bestIsForward.reserve(approxMaxCandidates);
+
+            if(!ReadStorage_t::has_reverse_complement){
+                reverseComplements.reserve(approxMaxCandidates);
+            }
     }
-    
+
     BatchElem(const BatchElem& other)
         :canUseQualityScores(other.canUseQualityScores),
         active(other.active),
@@ -120,16 +146,20 @@ struct BatchElem{
         findCandidatesTiming(other.findCandidatesTiming),
         make_unique_sequences_numseqpairs(other.make_unique_sequences_numseqpairs){
 
+            //std::cout << "BatchElem(const BatchElem& other)" << std::endl;
+
         counts[0] = other.counts[0];
         counts[1] = other.counts[1];
         counts[2] = other.counts[2];
     }
 
     BatchElem(BatchElem&& other){
+        //std::cout << "BatchElem(BatchElem&& other)" << std::endl;
         operator=(other);
     }
 
     BatchElem& operator=(const BatchElem& other){
+        //std::cout << "operator=(const BatchElem& other)" << std::endl;
     //BatchElem& operator=(BatchElem other){
         BatchElem tmp(other);
         swap(*this, tmp);
@@ -138,6 +168,7 @@ struct BatchElem{
     }
 
     BatchElem& operator=(BatchElem&& other){
+        //std::cout << "operator=(BatchElem&& other)" << std::endl;
         swap(*this, other);
         return *this;
     }
@@ -145,6 +176,7 @@ struct BatchElem{
 public:
     friend void swap(BatchElem& l, BatchElem& r) noexcept{
         using std::swap;
+        //std::cout << "swap(BatchElem& l, BatchElem& r)" << std::endl;
 
         swap(l.canUseQualityScores, r.canUseQualityScores);
         swap(l.active, r.active);
@@ -252,6 +284,7 @@ void set_read_id(BE& b, typename BE::ReadId_t id){
 template<class BE, class Func>
 void findCandidates(BE& b, Func get_candidates){
     //get data of sequence which should be corrected
+
     fetch_query_data_from_readstorage(b);
 
     b.findCandidatesTiming.preprocessingBegin();
@@ -266,7 +299,7 @@ void findCandidates(BE& b, Func get_candidates){
 
     for(std::size_t k = 0; k < b.activeCandidates.size(); k++)
         b.activeCandidates[k] = false;
-
+#if 1
     b.findCandidatesTiming.preprocessingEnd();
     if(b.candidateIds.size() == 0){
         //no need for further processing without candidates
@@ -286,6 +319,7 @@ void findCandidates(BE& b, Func get_candidates){
         fetch_revcompl_sequences_from_readstorage(b);
         b.findCandidatesTiming.postprocessingEnd();
     }
+#endif
 }
 
 template<class BE>
@@ -470,7 +504,7 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                                 const ReadId_t id = b.candidateIds[begin + j];
                                 std::string qualitystring = *(b.readStorage->fetchQuality_ptr(id));
                                 std::reverse(qualitystring.begin(), qualitystring.end());
-                                b.reverseComplementQualities.push_back(std::move(qualitystring));
+                                b.reverseComplementQualities.emplace_back(std::move(qualitystring));
                                 b.bestQualities[begin + j] = &b.reverseComplementQualities.back();
                             }
                         }
