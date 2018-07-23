@@ -44,12 +44,16 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     Minhasher_t minhasher(minhashOptions);
     ReadStorage_t readStorage(correctionOptions.useQualityScores);
 
+    std::string stmp;
+
     std::cout << "begin build" << std::endl;
 
+    //std::cin >> stmp;
 	TIMERSTARTCPU(LOAD_FILE);
     build(fileOptions, runtimeOptions, readStorage, minhasher);
 	TIMERSTOPCPU(LOAD_FILE);
 
+    //std::cin >> stmp;
     TIMERSTARTCPU(PREPROCESSING);
 	minhasher.transform();
     std::cout << "hashmaps use " << (minhasher.numBytes() / 1024. / 1024. / 1024.) << " GB." << std::endl;
@@ -60,7 +64,7 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
                 << (readStorage.sizereal() / 1024. / 1024. / 1024.) << " GB." << std::endl;
 	TIMERSTOPCPU(PREPROCESSING);
 
-    #if 1
+    #if 0
 
         std::cout << "sequences size: " << readStorage.sequences.size() << std::endl;
         std::cout << "sequences capacity: " << readStorage.sequences.capacity() << std::endl;
@@ -107,7 +111,7 @@ void correctFile(const MinhashOptions& minhashOptions,
 	using IndelSequence_t = Sequence;
 
     using Minhasher_t = Minhasher<Key_t, ReadId_t>;
-#if 1
+#if 0
     using NoIndelReadStorage_t = ReadStorageNoPointer<NoIndelSequence_t, ReadId_t>;
     using IndelReadStorage_t = ReadStorageNoPointer<IndelSequence_t, ReadId_t>;
 #else
