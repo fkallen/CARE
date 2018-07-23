@@ -475,20 +475,82 @@ struct ReadStorageMinMemory{
     static constexpr bool has_reverse_complement = false;
 
 	bool useQualityScores = false;
-    bool isReadOnly = false;
 
     std::vector<std::string> qualityscores;
     std::vector<Sequence_t> sequences;
-    std::vector<Sequence_t*> sequencepointers;
 
     ReadStorageMinMemory() : ReadStorageMinMemory(false){}
     ReadStorageMinMemory(bool b) : useQualityScores(b){}
 
+    ReadStorageMinMemory(const ReadStorageMinMemory& other)
+        : useQualityScores(other.useQualityScores),
+        qualityscores(other.qualityscores),
+        sequences(sequences){
+
+    }
+
+    ReadStorageMinMemory(ReadStorageMinMemory&& other)
+        : useQualityScores(other.useQualityScores),
+        qualityscores(std::move(other.qualityscores)),
+        sequences(std::move(other.sequences)){
+
+    }
+
+    ReadStorageMinMemory& operator=(const ReadStorageMinMemory& other){
+        useQualityScores = other.useQualityScores;
+        qualityscores = other.qualityscores;
+        sequences = sequences;
+        return *this;
+    }
+
+    ReadStorageMinMemory& operator=(ReadStorageMinMemory&& other){
+        useQualityScores = std::move(other.useQualityScores);
+        qualityscores = std::move(other.qualityscores);
+        sequences = std::move(sequences);
+        return *this;
+    }
+
+    std::size_t size() const{
+        std::size_t result = 0;
+
+        for(const auto& s : qualityscores){
+            result += sizeof(std::string) + s.capacity();
+        }
+
+        for(const auto& s : sequences){
+            result += sizeof(Sequence_t) + s.getNumBytes();
+        }
+
+        return result;
+    }
+
+    std::size_t sizereal() const{
+        std::size_t result = 0;
+
+        for(std::size_t i = 0; i < qualityscores.capacity(); i++){
+            result += sizeof(std::string) + qualityscores[i].capacity();
+        }
+
+        for(std::size_t i = 0; i < sequences.capacity(); i++){
+            result += sizeof(Sequence_t) + sequences[i].getNumBytes();
+        }
+
+        return result;
+    }
+
 	void init(ReadId_t nReads){
 		clear();
 
+        //std::string stmp;
+        //std::cout << "resize sequences" << std::endl;
+        //std::cin >> stmp;
+
 		sequences.resize(nReads);
         if(useQualityScores){
+
+            //std::cout << "resize qualityscores" << std::endl;
+            //std::cin >> stmp;
+
             qualityscores.resize(nReads);
         }
 	}
@@ -496,15 +558,12 @@ struct ReadStorageMinMemory{
 	void clear(){
 		qualityscores.clear();
 		sequences.clear();
-		sequencepointers.clear();
-
-		isReadOnly = false;
 	}
 
 	void destroy(){
 		clear();
 		qualityscores.shrink_to_fit();
-		sequencepointers.shrink_to_fit();
+		sequences.shrink_to_fit();
 	}
 
     void insertRead(ReadId_t readNumber, const std::string& sequence){
@@ -512,19 +571,23 @@ struct ReadStorageMinMemory{
 			insertRead(readNumber, sequence, std::string(sequence.length(), 'A'));
 		}else{
 			Sequence_t seq(sequence);
-			sequences[readNumber] = std::move(seq);
+			//sequences[readNumber] = std::move(seq);
+            sequences.at(readNumber) = std::move(seq);
 		}
 	}
 
     void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
-		if(isReadOnly) throw std::runtime_error("cannot insert read into ReadStorage after calling transform()");
-
 		Sequence_t seq(sequence);
 
-		sequences[readNumber] = std::move(seq);
+		//sequences[readNumber] = std::move(seq);
+        sequences.at(readNumber) = std::move(seq);
 		if(useQualityScores){
-			qualityscores[readNumber] = std::move(quality);
+			//qualityscores[readNumber] = std::move(quality);
+            qualityscores.at(readNumber) = std::move(quality);
 		}
+        //std::string stmp;
+        //std::cout << "inserted sequence" << std::endl;
+        //std::cin >> stmp;
 	}
 
 	const std::string* fetchQuality_ptr(ReadId_t readNumber) const{
@@ -535,9 +598,8 @@ struct ReadStorageMinMemory{
 		}
 	}
 
-	//Must call transform() beforehand
 	const Sequence_t* fetchSequence_ptr(ReadId_t readNumber) const{
-		return sequencepointers[readNumber];
+		return &sequences[readNumber];
 	}
 
    //not supported
@@ -550,74 +612,7 @@ struct ReadStorageMinMemory{
        throw std::runtime_error("not supported");
    }
 
-	void transform(){
-        if(isReadOnly)
-            return;
-
-		isReadOnly = true;
-
-		std::size_t nSequences = sequences.size();
-
-		if(nSequences == 0) return;
-
-        std::vector<Sequence_t> tmp(sequences);
-        sequences.reserve(2*nSequences);
-
-//TIMERSTARTCPU(READ_STORAGE_SORT);
-        std::sort(sequences.begin(), sequences.end());
-        sequences.erase(std::unique(sequences.begin(), sequences.end()), sequences.end());
-//TIMERSTOPCPU(READ_STORAGE_SORT);
-
-        std::map<const Sequence_t, int> seqToSortedIndex;
-		std::vector<std::map<const Sequence_t, int>> seqToSortedIndextmpvec;
-
-//TIMERSTARTCPU(READ_STORAGE_MAKE_MAP);
-        #pragma omp parallel
-        {
-            int threadId = omp_get_thread_num();
-            #pragma omp single
-            seqToSortedIndextmpvec.resize(omp_get_num_threads()-1);
-
-            #pragma omp barrier
-
-            auto& mymap = threadId == 0 ? seqToSortedIndex : seqToSortedIndextmpvec[threadId-1];
-            #pragma omp for
-            for(std::size_t i = 0; i < sequences.size(); i++){
-                const auto& sequence = sequences[i];
-                mymap[sequence] = &sequence - sequences.data();
-            }
-        }
-
-        for(auto& tmpmap : seqToSortedIndextmpvec){
-            seqToSortedIndex.insert(tmpmap.begin(), tmpmap.end());
-            tmpmap.clear();
-        }
-        seqToSortedIndextmpvec.clear();
-
-//TIMERSTOPCPU(READ_STORAGE_MAKE_MAP);
-
-        assert(sequences.size() == seqToSortedIndex.size());
-
-//TIMERSTARTCPU(READ_STORAGE_MAKE_FWD_POINTERS);
-		sequencepointers.resize(nSequences);
-        #pragma omp parallel for
-		for(size_t i = 0; i < nSequences; i++)
-            sequencepointers[i] = &sequences[seqToSortedIndex[tmp[i]]];
-//TIMERSTOPCPU(READ_STORAGE_MAKE_FWD_POINTERS);
-
-		seqToSortedIndex.clear();
-
-#if 1
-//TIMERSTARTCPU(READ_STORAGE_CHECK);
-		//check
-		#pragma omp parallel for
-		for(size_t i = 0; i < nSequences; i++){
-			assert(*sequencepointers[i] == tmp[i] && "readstorage wrong sequence after dedup");
-		}
-//TIMERSTOPCPU(READ_STORAGE_CHECK);
-#endif
-
-	}
+   void transform(){}
 
 };
 
