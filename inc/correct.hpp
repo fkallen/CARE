@@ -1431,7 +1431,7 @@ void correct(const MinhashOptions& minhashOptions,
 
             progress = correctorProgress;
 
-            printf("Progress: %3.2f %% %10u %10u (Runtime: %03d:%02d:%02d)\r",
+            printf("Progress: %3.2f %% %10lu %10lu (Runtime: %03d:%02d:%02d)\r",
                     ((progress * 1.0 / props.nReads) * 100.0),
                     correctorProgress, props.nReads,
                     int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
