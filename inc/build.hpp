@@ -57,9 +57,12 @@ namespace care{
 					Read& read = pair.first;
 					const auto readnum = pair.second;
 
-					//replace 'N' with "random" base
 					for(auto& c : read.sequence){
-						if(c == 'N'){
+                        if(c == 'a') c = 'A';
+                        if(c == 'c') c = 'C';
+                        if(c == 'g') c = 'G';
+                        if(c == 't') c = 'T';
+						if(c == 'N' || c == 'n'){
 							c = bases[Ncount];
 							Ncount = (Ncount + 1) % 4;
 						}
@@ -91,8 +94,8 @@ namespace care{
         //std::cout << "build init done." << std::endl;
         //std::cin >> stmp;
 
-        int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
-        //int nThreads = 1;
+        //int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
+        int nThreads = 1;
 
         //single-threaded insertion
         if(nThreads == 1){
@@ -111,9 +114,12 @@ namespace care{
         	while (reader->getNextRead(&read)) {
                 std::uint64_t readIndex = reader->getReadnum() - 1;
 
-        		//replace 'N' with 'A'
                 for(auto& c : read.sequence){
-                    if(c == 'N'){
+                    if(c == 'a') c = 'A';
+                    if(c == 'c') c = 'C';
+                    if(c == 'g') c = 'G';
+                    if(c == 't') c = 'T';
+                    if(c == 'N' || c == 'n'){
                         c = bases[Ncount];
                         Ncount = (Ncount + 1) % 4;
                     }
