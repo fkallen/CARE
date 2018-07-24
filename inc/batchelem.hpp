@@ -8,6 +8,8 @@
 #include <vector>
 #include <string>
 
+//#define CALCULATE_EVERY_REVERSE_COMPLEMENT
+
 namespace care{
 
     enum class BestAlignment_t {Forward, ReverseComplement, None};
@@ -316,7 +318,9 @@ void findCandidates(BE& b, Func get_candidates){
 
         b.findCandidatesTiming.postprocessingBegin();
         //get reverse complements of unique candidate sequences
+#ifdef CALCULATE_EVERY_REVERSE_COMPLEMENT
         fetch_revcompl_sequences_from_readstorage(b);
+#endif
         b.findCandidatesTiming.postprocessingEnd();
     }
 #endif
@@ -404,6 +408,7 @@ void fetch_sequences_from_readstorage(BE& b){
     assert(b.candidateCountsPrefixSum.back() == int(b.candidateIds.size()));
 }
 
+
 template<class BE>
 void fetch_revcompl_sequences_from_readstorage(BE& b){
     if(BE::ReadStorage_t::has_reverse_complement){
@@ -418,6 +423,7 @@ void fetch_revcompl_sequences_from_readstorage(BE& b){
         }
     }
 }
+
 
 template<class BE, class Func>
 void determine_good_alignments(BE& b, Func get_best_alignment){
@@ -490,7 +496,14 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     }
                 }else{
                     b.bestIsForward[i] = false;
+
+                    #ifdef CALCULATE_EVERY_REVERSE_COMPLEMENT
                     b.bestSequences[i] = b.revcomplSequences[i];
+                    #else
+                    b.reverseComplements[i] = std::move(b.fwdSequences[i]->reverseComplement());
+                    b.bestSequences[i] = &b.reverseComplements[i];
+                    #endif
+
                     b.bestAlignments[i] = &b.revcomplAlignments[i];
 
                     if(b.canUseQualityScores){
