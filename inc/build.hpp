@@ -94,8 +94,8 @@ namespace care{
         //std::cout << "build init done." << std::endl;
         //std::cin >> stmp;
 
-        //int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
-        int nThreads = 1;
+        int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
+        //int nThreads = 1;
 
         //single-threaded insertion
         if(nThreads == 1){
