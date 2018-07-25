@@ -1099,6 +1099,8 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                               maxErrorRate);
     };
 
+    shd::call_shd_with_revcompl_kernel_async(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor);
+/*
     shd::call_shd_canonical_kernel_async(shddata,
                                             min_overlap,
                                             maxErrorRate,
@@ -1107,6 +1109,17 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                                             maxQueryLength,
                                             accessor,
                                             comp);
+*/
+
+    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
+                              shddata.d_bestAlignmentFlags,
+                              shddata.d_subjectlengths,
+                              shddata.d_querylengths,
+                              shddata.d_NqueriesPrefixSum,
+                              shddata.n_subjects,
+                              comp,
+                              shddata.n_queries,
+                              shddata.streams[0]);
 }
 
 template<class Sequence_t>
@@ -1133,7 +1146,7 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
                               min_overlap,
                               maxErrorRate);
     };
-
+/*
     shd::call_shd_canonical_kernel(shddata,
                                             min_overlap,
                                             maxErrorRate,
@@ -1142,6 +1155,19 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
                                             maxQueryLength,
                                             accessor,
                                             comp);
+*/
+
+    shd::call_shd_with_revcompl_kernel(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor);
+
+    call_cuda_find_best_alignment_kernel(shddata.d_results,
+                              shddata.d_bestAlignmentFlags,
+                              shddata.d_subjectlengths,
+                              shddata.d_querylengths,
+                              shddata.d_NqueriesPrefixSum,
+                              shddata.n_subjects,
+                              comp,
+                              shddata.n_queries,
+                              shddata.streams[0]);
 }
 
 #endif
@@ -1215,7 +1241,7 @@ AlignmentDevice shifted_hamming_distance_canonical_bulk_async(SHDhandle& handle,
 
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
-        mybuffers.resize(numberOfSubjects, numberOfQueries, numberOfAlignments);
+        mybuffers.resize(numberOfSubjects, numberOfQueries, 2*numberOfAlignments);
 
         mybuffers.n_subjects = numberOfSubjects;
         mybuffers.n_queries = numberOfQueries;
