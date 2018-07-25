@@ -1568,6 +1568,13 @@ void correct(const MinhashOptions& minhashOptions,
     mergeResultFiles(props.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
     deleteFiles(tmpfiles);
 
+    if(!correctionOptions.extractFeatures){
+        std::vector<std::string> featureFiles(tmpfiles);
+        for(auto& s : featureFiles)
+            s = s + "_features";
+        deleteFiles(featureFiles);
+    }
+
     std::cout << "end merge" << std::endl;
 
 }
