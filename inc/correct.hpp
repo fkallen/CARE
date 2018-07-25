@@ -1240,7 +1240,7 @@ private:
 
 		for(auto& handle : sgahandles)
 		      destroy_SGAhandle(handle);
-#endif              
+#endif
 	}
 };
 
@@ -1357,7 +1357,7 @@ void correct(const MinhashOptions& minhashOptions,
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else
-	const int nCorrectorThreads = 1;
+	const int nCorrectorThreads = 8;
 #endif
 
 	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
