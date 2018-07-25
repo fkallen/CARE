@@ -69,6 +69,97 @@ BestAlignment_t choose_best_alignment(const Alignment& fwdAlignment,
 
 
 
+#ifdef __NVCC__
+
+/*
+    2*N results. compare alignment[i] with alignment[i + N].
+    store the best alignment at alignment[i] and the flag at flags[i]
+*/
+template<class Alignment, class AlignmentComp>
+__global__
+void cuda_find_best_alignment_kernel(Alignment* results,
+                              BestAlignment_t* bestAlignmentFlags,
+                              const int* subjectlengths,
+                              const int* querylengths,
+                              const int* NqueriesPrefixSum,
+                              int Nsubjects,
+                              AlignmentComp comp){
+
+    const int N = NqueriesPrefixSum[Nsubjects];
+
+    for(unsigned resultIndex = threadIdx.x + blockDim.x * blockIdx.x; resultIndex < N; resultIndex += gridDim.x * blockDim.x){
+        const Alignment fwd = results[resultIndex];
+        const Alignment revcompl = results[resultIndex + N];
+        const int querybases = querylengths[resultIndex];
+        //find subjectindex
+        int subjectIndex = 0;
+        for(; subjectIndex < Nsubjects; subjectIndex++){
+            if(resultIndex < NqueriesPrefixSum[subjectIndex+1])
+                break;
+        }
+        const int subjectbases = subjectlengths[subjectIndex];
+
+
+        const BestAlignment_t flag = comp(fwd, revcompl, subjectbases, querybases);
+        bestAlignmentFlags[resultIndex] = flag;
+        results[resultIndex] = flag == BestAlignment_t::Forward ? fwd : revcompl;
+    }
+}
+
+template<class Alignment, class AlignmentComp>
+void call_cuda_find_best_alignment_kernel_async(Alignment* d_results,
+                              BestAlignment_t* d_bestAlignmentFlags,
+                              const int* d_subjectlengths,
+                              const int* d_querylengths,
+                              const int* d_NqueriesPrefixSum,
+                              int Nsubjects,
+                              AlignmentComp d_comp,
+                              int Nqueries,
+                              cudaStream_t stream){
+
+    dim3 block(128,1,1);
+    dim3 grid(SDIV(Nqueries, block.x), 1, 1);
+
+    cuda_find_best_alignment_kernel<<<grid, block, 0, stream>>>(d_results,
+                                                    d_bestAlignmentFlags,
+                                                    d_subjectlengths,
+                                                    d_querylengths,
+                                                    d_NqueriesPrefixSum,
+                                                    Nsubjects,
+                                                    d_comp); CUERR;
+
+}
+
+template<class Alignment, class AlignmentComp>
+void call_cuda_find_best_alignment_kernel(Alignment* d_results,
+                              BestAlignment_t* d_bestAlignmentFlags,
+                              const int* d_subjectlengths,
+                              const int* d_querylengths,
+                              const int* d_NqueriesPrefixSum,
+                              int Nsubjects,
+                              AlignmentComp d_comp,
+                              int Nqueries,
+                              cudaStream_t stream){
+
+    call_cuda_find_best_alignment_kernel_async(d_results,
+                                                d_bestAlignmentFlags,
+                                                d_subjectlengths,
+                                                d_querylengths,
+                                                d_NqueriesPrefixSum,
+                                                Nsubjects,
+                                                d_comp,
+                                                Nqueries,
+                                                stream);
+
+    cudaStreamSynchronize(stream);
+
+}
+
+
+
+
+#endif
+
 
 
 
