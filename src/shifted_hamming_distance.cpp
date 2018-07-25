@@ -140,8 +140,10 @@ namespace shd{
     }
 
     void SHDdata::resize(int n_sub, int n_quer, int n_res){
-        constexpr double factor = 1.2; //overprovisioning
+
     #ifdef __NVCC__
+        constexpr double factor = 1.2; //overprovisioning
+        
         cudaSetDevice(deviceId); CUERR;
 
         n_subjects = n_sub;
@@ -154,8 +156,11 @@ namespace shd{
         const std::size_t memQueries = n_quer * sequencepitch;
         const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
         const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_results, sequencepitch) * sequencepitch;
+        const std::size_t memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
 
-        const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum + memQueries + memQueryLengths + memResults;
+        const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
+                                        + memQueries + memQueryLengths + memResults
+                                        + memBestAlignmentFlags;
 
         if(requiredMem > allocatedMem){
             cudaFree(deviceptr); CUERR;
@@ -166,14 +171,14 @@ namespace shd{
             allocatedMem = requiredMem * factor;
         }
 
-        transfersizeH2D = 0;
-        transfersizeH2D += memSubjects; // d_subjectsdata
+        transfersizeH2D = memSubjects; // d_subjectsdata
         transfersizeH2D += memSubjectLengths; // d_subjectlengths
         transfersizeH2D += memNqueriesPrefixSum; // d_NqueriesPrefixSum
         transfersizeH2D += memQueries; // d_queriesdata
         transfersizeH2D += memQueryLengths; // d_querylengths
 
-        transfersizeD2H = sizeof(AlignmentResult) * n_results;
+        transfersizeD2H = memResults; //d_results
+        transfersizeD2H += sizeof(BestAlignment_t) * n_results; // d_bestAlignmentFlags
 
         d_subjectsdata = (char*)deviceptr;
         d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
@@ -181,6 +186,7 @@ namespace shd{
         d_queriesdata = (char*)(((char*)d_NqueriesPrefixSum) + memNqueriesPrefixSum);
         d_querylengths = (int*)(((char*)d_queriesdata) + memQueries);
         d_results = (AlignmentResult*)(((char*)d_querylengths) + memQueryLengths);
+        d_bestAlignmentFlags = (BestAlignment_t*)(((char*)d_results) + memResults);
 
         h_subjectsdata = (char*)hostptr;
         h_subjectlengths = (int*)(((char*)h_subjectsdata) + memSubjects);
@@ -188,6 +194,7 @@ namespace shd{
         h_queriesdata = (char*)(((char*)h_NqueriesPrefixSum) + memNqueriesPrefixSum);
         h_querylengths = (int*)(((char*)h_queriesdata) + memQueries);
         h_results = (AlignmentResult*)(((char*)h_querylengths) + memQueryLengths);
+        h_bestAlignmentFlags = (BestAlignment_t*)(((char*)h_results) + memResults);
 
         #endif
     }

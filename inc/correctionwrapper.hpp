@@ -40,8 +40,8 @@ namespace care{
                                     desiredAlignmentMaxErrorRate,
                                     b.bestSequenceStrings.begin(),
                                     b.bestSequenceStrings.end(),
-                                    b.candidateCounts.begin(),
-                                    b.candidateCounts.end(),
+                                    //b.candidateCounts.begin(),
+                                    //b.candidateCounts.end(),
                                     b.bestQualities.begin(),
                                     b.bestQualities.end());
 

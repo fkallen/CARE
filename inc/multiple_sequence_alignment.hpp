@@ -206,22 +206,22 @@ struct PileupImage{
         CountIter: Iterator to int
         QualityIter: Iter to pointer to std::string
     */
-    template<class AlignmentIter, class SequenceIter, class CountIter, class QualityIter>
+    template<class AlignmentIter, class SequenceIter, /*class CountIter,*/ class QualityIter>
     void cpu_add_candidates(const std::string& sequence_to_correct,
                 AlignmentIter alignmentsBegin,
                 AlignmentIter alignmentsEnd,
                 double desiredAlignmentMaxErrorRate,
                 SequenceIter candidateSequencesBegin,
                 SequenceIter candidateSequencesEnd,
-                CountIter candidateCountsBegin,
-                CountIter candidateCountsEnd,
+                //CountIter candidateCountsBegin,
+                //CountIter candidateCountsEnd,
                 QualityIter candidateQualitiesBegin,
                 QualityIter candidateQualitiesEnd){
 
         // add weights for each base in every candidate sequences
 	auto alignmentiter = alignmentsBegin;
 	auto sequenceiter = candidateSequencesBegin;
-	auto countiter = candidateCountsBegin;
+	//auto countiter = candidateCountsBegin;
 	auto candidateQualityiter = candidateQualitiesBegin;
 #if 0
         for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, candidateCountsBegin, candidateQualitiesBegin);
@@ -233,13 +233,14 @@ struct PileupImage{
             auto& countiter = std::get<2>(t);
             auto& candidateQualityiter = std::get<3>(t);
 #else
-	for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++, countiter++){
+	//for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++, countiter++){
+    for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++){
 #endif
             const double defaultweight = 1.0 - std::sqrt((*alignmentiter)->get_nOps()
                                                         / ((*alignmentiter)->get_overlap()
                                                             * desiredAlignmentMaxErrorRate));
             const int len = sequenceiter->length();
-            const int freq = *countiter;
+            const int freq = 1;//*countiter;
             const int defaultcolumnoffset = columnProperties.subjectColumnsBegin_incl + (*alignmentiter)->get_shift();
 
             //use h_support as temporary storage to accumulate the quality factors for position j

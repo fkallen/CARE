@@ -16,7 +16,7 @@
 #include "concatcontainer.hpp"
 
 #include "featureextractor.hpp"
-
+#include "bestalignment.hpp"
 
 
 #include <array>
@@ -491,7 +491,7 @@ private:
 						});
 
 						//don't correct candidates with more than estimatedAlignmentCountThreshold alignments
-						if(b.n_unique_candidates > estimatedAlignmentCountThreshold)
+						if(b.n_candidates > estimatedAlignmentCountThreshold)
 							b.active = false;
 					}
 				}
@@ -514,8 +514,15 @@ private:
 					std::vector<const Sequence_t**> subjectsend;
 					std::vector<typename std::vector<const Sequence_t*>::iterator> queriesbegin;
 					std::vector<typename std::vector<const Sequence_t*>::iterator> queriesend;
+                    std::vector<typename std::vector<BestAlignment_t>::iterator> flagsbegin;
+                    std::vector<typename std::vector<BestAlignment_t>::iterator> flagsend;
+#if 0
 					std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsbegin;
 					std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsend;
+#else
+                    std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsbegin;
+                    std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsend;
+#endif
 					std::vector<int> queriesPerSubject;
 
 					subjectsbegin.reserve(batchElems[streamIndex].size());
@@ -524,23 +531,31 @@ private:
 					queriesend.reserve(batchElems[streamIndex].size());
 					alignmentsbegin.reserve(batchElems[streamIndex].size());
 					alignmentsend.reserve(batchElems[streamIndex].size());
+                    flagsbegin.reserve(batchElems[streamIndex].size());
+					flagsend.reserve(batchElems[streamIndex].size());
 					queriesPerSubject.reserve(batchElems[streamIndex].size());
 
 					//for(auto& b : batchElems[streamIndex]){
 					for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
 						auto& b = *it;
+                        auto& flags = b.bestAlignmentFlags;
+#if 0
 						auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
 																b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-
+#else
+                        auto& alignments = b.alignments;
+#endif
 						subjectsbegin.emplace_back(&b.fwdSequence);
 						subjectsend.emplace_back(&b.fwdSequence + 1);
 						queriesbegin.emplace_back(b.fwdSequences.begin());
 						queriesend.emplace_back(b.fwdSequences.end());
 						alignmentsbegin.emplace_back(alignments.begin());
 						alignmentsend.emplace_back(alignments.end());
+                        flagsbegin.emplace_back(flags.begin());
+						flagsend.emplace_back(flags.end());
 						queriesPerSubject.emplace_back(b.fwdSequences.size());
 					}
-
+#if 0
 					AlignmentDevice device = shifted_hamming_distance_with_revcompl_bulk_async<Sequence_t>(shdhandles[streamIndex],
 																	subjectsbegin,
 																	subjectsend,
@@ -553,6 +568,23 @@ private:
 																	goodAlignmentProperties.maxErrorRate,
 																	goodAlignmentProperties.min_overlap_ratio,
 																	canUseGpu);
+#else
+                    AlignmentDevice device = shifted_hamming_distance_canonical_bulk_async<Sequence_t>(shdhandles[streamIndex],
+                                                subjectsbegin,
+                                                subjectsend,
+                                                queriesbegin,
+                                                queriesend,
+                                                alignmentsbegin,
+                                                alignmentsend,
+                                                flagsbegin,
+                                                flagsend,
+                                                queriesPerSubject,
+                                                goodAlignmentProperties.min_overlap,
+                                                goodAlignmentProperties.maxErrorRate,
+                                                goodAlignmentProperties.min_overlap_ratio,
+                                                canUseGpu);
+
+#endif
 
 					if(device == AlignmentDevice::CPU)
 						cpuAlignments++;
@@ -579,27 +611,55 @@ private:
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
 
-				std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsbegin;
-				std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsend;
+                std::vector<typename std::vector<BestAlignment_t>::iterator> flagsbegin;
+                std::vector<typename std::vector<BestAlignment_t>::iterator> flagsend;
+#if 0
+                std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsbegin;
+                std::vector<typename ConcatContainer<std::vector<AlignmentResult_t>::iterator, 2>::iterator> alignmentsend;
+#else
+                std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsbegin;
+                std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsend;
+#endif
+
 				alignmentsbegin.reserve(batchElems[streamIndex].size());
 				alignmentsend.reserve(batchElems[streamIndex].size());
+                flagsbegin.reserve(batchElems[streamIndex].size());
+                flagsend.reserve(batchElems[streamIndex].size());
 
 				auto activeBatchElemensEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
 				//for(auto& b : batchElems[streamIndex]){
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
 					auto& b = *it;
-					auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
-															b.revcomplAlignments.begin(), b.revcomplAlignments.end());
-					alignmentsbegin.emplace_back(alignments.begin());
-					alignmentsend.emplace_back(alignments.end());
+                    auto& flags = b.bestAlignmentFlags;
+#if 0
+                    auto alignments = make_concat_container(b.fwdAlignments.begin(), b.fwdAlignments.end(),
+                                                            b.revcomplAlignments.begin(), b.revcomplAlignments.end());
+#else
+                    auto& alignments = b.alignments;
+#endif
+                    alignmentsbegin.emplace_back(alignments.begin());
+                    alignmentsend.emplace_back(alignments.end());
+                    flagsbegin.emplace_back(flags.begin());
+                    flagsend.emplace_back(flags.end());
 
 				}
-
+#if 0
 				shifted_hamming_distance_with_revcompl_get_results_bulk(shdhandles[streamIndex],
 																			alignmentsbegin,
 																			alignmentsend,
 																			canUseGpu);
+#else
+
+
+				shifted_hamming_distance_canonical_get_results_bulk(shdhandles[streamIndex],
+																			alignmentsbegin,
+																			alignmentsend,
+                                                                            flagsbegin,
+                                                                            flagsend,
+																			canUseGpu);
+
+#endif
 	#if 1
 				//check quality of alignments
 				tpc = std::chrono::system_clock::now();
@@ -694,9 +754,10 @@ private:
 						}
 
 						for(const auto& correctedCandidate : correctionResult.correctedCandidates){
-							const int count = b.candidateCounts[correctedCandidate.index];
+							const int count = 1;//b.candidateCounts[correctedCandidate.index];
 							for(int f = 0; f < count; f++){
-								ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
+								//ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
+                                ReadId_t candidateId = b.candidateIds[correctedCandidate.index];
 								bool savingIsOk = false;
 								if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
 									lock(candidateId);
@@ -708,7 +769,8 @@ private:
 									unlock(candidateId);
 								}
 								if (savingIsOk) {
-									if (b.bestIsForward[correctedCandidate.index])
+									//if (b.bestIsForward[correctedCandidate.index])
+                                    if(b.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward)
 										write_read(candidateId, correctedCandidate.sequence);
 									else {
 										//correctedCandidate.sequence is reverse complement, make reverse complement again
@@ -893,8 +955,9 @@ struct ErrorCorrectionThread<minhasher_t, readStorage_t, true>{
 private:
 
 	void execute() {
-		isRunning = true;
 
+		isRunning = true;
+#if 0
 		std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
 		std::ofstream outputstream(threadOpts.outputfile);
@@ -1177,6 +1240,7 @@ private:
 
 		for(auto& handle : sgahandles)
 		      destroy_SGAhandle(handle);
+#endif              
 	}
 };
 
@@ -1431,7 +1495,7 @@ void correct(const MinhashOptions& minhashOptions,
 
             progress = correctorProgress;
 
-            printf("Progress: %3.2f %% %10lu %10lu (Runtime: %03d:%02d:%02d)\r",
+            printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
                     ((progress * 1.0 / props.nReads) * 100.0),
                     correctorProgress, props.nReads,
                     int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
@@ -1488,7 +1552,7 @@ void correct(const MinhashOptions& minhashOptions,
     for (auto& thread : ecthreads)
         thread.join();
 
-        std::cout << "threads done" << std::endl;
+    std::cout << "threads done" << std::endl;
 
 #ifndef DO_PROFILE
     showProgress = false;
