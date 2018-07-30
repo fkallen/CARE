@@ -8,6 +8,7 @@
 #include <cassert>
 #include <vector>
 #include <string>
+#include <numeric>
 
 //#define CALCULATE_EVERY_REVERSE_COMPLEMENT
 
@@ -1139,7 +1140,6 @@ void prepare_good_candidates(BE& b){
         return;
     }
 
-    std::size_t activeposition_unique = 0;
     std::size_t activeposition = 0;
 
     //stable_partition on struct of arrays with condition (activeCandidates[i] && notremoved) ?
@@ -1148,16 +1148,17 @@ void prepare_good_candidates(BE& b){
             const double mismatchratio = double(b.bestAlignments[i]->get_nOps()) / double(b.bestAlignments[i]->get_overlap());
             const bool notremoved = mismatchratio < b.mismatchratioThreshold;
             if(notremoved){
-                b.fwdSequences[activeposition_unique] = b.fwdSequences[i];
-                b.bestAlignments[activeposition_unique] = b.bestAlignments[i];
-                b.bestSequences[activeposition_unique] = b.bestSequences[i];
-                b.bestSequenceStrings[activeposition_unique] = b.bestSequences[i]->toString();
-                b.bestAlignmentFlags[activeposition_unique] = b.bestAlignmentFlags[i];
+                b.fwdSequences[activeposition] = b.fwdSequences[i];
+                b.bestAlignments[activeposition] = b.bestAlignments[i];
+                b.bestSequences[activeposition] = b.bestSequences[i];
+                b.bestSequenceStrings[activeposition] = b.bestSequences[i]->toString();
+                b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
+                b.candidateIds[activeposition] = b.candidateIds[i];
 
                 if(b.canUseQualityScores){
-                    b.bestQualities[activeposition_unique] = b.bestQualities[i];
+                    b.bestQualities[activeposition] = b.bestQualities[i];
                 }
-                activeposition_unique++;
+                activeposition++;
             }
         }
     }
@@ -1166,11 +1167,11 @@ void prepare_good_candidates(BE& b){
 
     b.candidateIds.resize(activeposition);
     b.bestQualities.resize(activeposition);
-    b.fwdSequences.resize(activeposition_unique);
-    b.bestAlignments.resize(activeposition_unique);
-    b.bestSequences.resize(activeposition_unique);
-    b.bestSequenceStrings.resize(activeposition_unique);
-    b.bestAlignmentFlags.resize(activeposition_unique);
+    b.fwdSequences.resize(activeposition);
+    b.bestAlignments.resize(activeposition);
+    b.bestSequences.resize(activeposition);
+    b.bestSequenceStrings.resize(activeposition);
+    b.bestAlignmentFlags.resize(activeposition);
 
     b.n_candidates = activeposition;
 }
