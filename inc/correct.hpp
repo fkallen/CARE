@@ -726,7 +726,7 @@ private:
 
 						if(correctionOptions.extractFeatures){
 							std::vector<MSAFeature> MSAFeatures =  extractFeatures(pileupImage, b.fwdSequenceString,
-															threadOpts.minhasher->minparams.k, 0.5,
+															threadOpts.minhasher->minparams.k, 0.0,
 															correctionOptions.estimatedCoverage);
 
 							if(MSAFeatures.size() > 0){
@@ -1364,7 +1364,7 @@ void correct(const MinhashOptions& minhashOptions,
 
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < nCorrectorThreads; i++){
-        tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(i));
+        tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
     }
 
     std::vector<BatchGenerator<ReadId_t>> generators(nCorrectorThreads);
@@ -1563,6 +1563,11 @@ void correct(const MinhashOptions& minhashOptions,
 
     minhasher.clear();
 	readStorage.destroy();
+
+    generators.clear();
+    ecthreads.clear();
+    readIsProcessedVector.clear();
+    readIsProcessedVector.shrink_to_fit();
 
     std::cout << "begin merge" << std::endl;
     mergeResultFiles(props.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
