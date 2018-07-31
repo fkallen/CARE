@@ -1,6 +1,8 @@
 #ifndef C_ELEGANS_SRX218989_HPP
 #define C_ELEGANS_SRX218989_HPP
 
+#include <utility>
+
 namespace celegans_srx218989{
     //coverage is normalized to number of reads in msa
     bool shouldCorrect(double min_col_support, double min_col_coverage,

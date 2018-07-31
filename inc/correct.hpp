@@ -1353,7 +1353,7 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
-#if 1
+#if 0
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else
@@ -1423,55 +1423,6 @@ void correct(const MinhashOptions& minhashOptions,
 
 //#define DO_PROFILE
 
-#if 0
-#ifdef DO_PROFILE
-    int sleepiter = 0;
-#endif
-
-    std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
-    std::chrono::duration<double> runtime = std::chrono::seconds(0);
-    std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
-    ReadId_t progress = 0;
-    while(progress < props.nReads){
-        progress = 0;
-
-        for (const auto& thread : ecthreads)
-            progress += thread.nProcessedReads;
-
-        if(runtimeOptions.showProgress){
-            printf("Progress: %3.2f %% (Runtime: %03d:%02d:%02d)\r",
-                    ((progress * 1.0 / props.nReads) * 100.0),
-                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                    int(runtime.count()) % 60);
-            std::cout << std::flush;
-        }
-        if(progress < props.nReads){
-              std::this_thread::sleep_for(sleepinterval);
-              runtime = std::chrono::system_clock::now() - timepoint_begin;
-        }
-#ifdef DO_PROFILE
-        sleepiter++;
-
-        #ifdef __NVCC__
-            if(sleepiter == 5)
-                cudaProfilerStart(); CUERR;
-        #endif
-
-
-        #ifdef __NVCC__
-        if(sleepiter == 6){
-            cudaProfilerStop(); CUERR;
-            for(auto& t : ecthreads){
-                t.stopAndAbort = true;
-                t.join();
-            }
-            std::exit(0);
-        }
-        #endif
-#endif
-    }
-#endif
 
 #ifndef DO_PROFILE
 
@@ -1561,7 +1512,7 @@ void correct(const MinhashOptions& minhashOptions,
         printf("Progress: %3.2f %%\n", 100.00);
 #endif
 
-    minhasher.clear();
+    minhasher.destroy();
 	readStorage.destroy();
 
     generators.clear();
@@ -1570,7 +1521,12 @@ void correct(const MinhashOptions& minhashOptions,
     readIsProcessedVector.shrink_to_fit();
 
     std::cout << "begin merge" << std::endl;
+    TIMERSTARTCPU(merge);
+
     mergeResultFiles(props.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+
+    TIMERSTOPCPU(merge);
+
     deleteFiles(tmpfiles);
 
     if(!correctionOptions.extractFeatures){

@@ -3,6 +3,7 @@
 
 #include "options.hpp"
 #include "hpc_helpers.cuh"
+#include "util.hpp"
 
 #include "ntHash/nthash.hpp"
 
@@ -15,6 +16,10 @@
 #include <type_traits>
 #include <limits>
 #include <numeric>
+#include <algorithm>
+#include <set>
+#include <unordered_set>
+#include <array>
 
 #ifdef __NVCC__
 #include <thrust/host_vector.h>
@@ -420,10 +425,12 @@ struct Minhasher {
 		//TIMERSTARTCPU(minhashfunc);
 		minhashfunc(sequence, hashValues, isForwardStrand);
 		//TIMERSTOPCPU(minhashfunc);
+
+#if 1
 		std::vector<Value_t> allUniqueResults;
 		std::vector<Value_t> tmp;
 		//TIMERSTARTCPU(getcandrest);
-		for(int map = 0; map < minparams.maps && allUniqueResults.size() <= max_number_candidates; ++map) {
+		for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
 			Key_t key = hashValues[map] & key_mask;
 
 			std::vector<Value_t> entries = minhashTables[map]->get(key);
@@ -443,9 +450,237 @@ struct Minhasher {
 			auto uniqueEnd = std::unique(allUniqueResults.begin(), allUniqueResults.end());
 			allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd));
 		}
+
+        allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
+
 		//TIMERSTOPCPU(getcandrest);
 		return allUniqueResults;
+#else
+
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            std::vector<Value_t> entries = minhashTables[map]->get(key);
+            if(map == 0){
+                //allUniqueResults.reserve(minparams.maps * entries.size());
+                tmp.reserve(minparams.maps * entries.size());
+                allUniqueResults.reserve(minparams.maps * entries.size());
+            }
+
+            if(!Map_t::resultsAreSorted){
+                std::sort(entries.begin(), entries.end());
+            }
+
+            tmp.resize(allUniqueResults.size() + entries.size());
+
+            auto enditer = set_union_n(entries.begin(),
+                                        entries.end(),
+                                        allUniqueResults.begin(),
+                                        allUniqueResults.end(),
+                                        max_number_candidates,
+                                        tmp.begin());
+
+            tmp.resize(std::distance(tmp.begin(), enditer));
+            std::swap(tmp, allUniqueResults);
+        }
+
+        allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
+
+        //TIMERSTOPCPU(getcandrest);
+        return allUniqueResults;
+#endif
+      
 	}
+
+    std::tuple<std::vector<Result_t>,
+        std::chrono::duration<double>,
+        std::chrono::duration<double>,
+        std::chrono::duration<double>,
+        std::chrono::duration<double>,
+        std::chrono::duration<double>,
+        std::chrono::duration<double>> getCandidatesTimed(const std::string& sequence,
+										std::uint64_t max_number_candidates) const noexcept{
+		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+		// we do not consider reads which are shorter than k
+		if(sequence.size() < unsigned(minparams.k))
+			return {};
+
+        std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
+        std::chrono::duration<double> getTime{0};
+        std::chrono::duration<double> mergeTime{0};
+        std::chrono::duration<double> uniqueTime{0};
+        std::chrono::duration<double> hashTime{0};
+        std::chrono::duration<double> resizeTime{0};
+        std::chrono::duration<double> totalTime{0};
+
+        tpc = std::chrono::system_clock::now();
+
+		std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+		bool isForwardStrand[maximum_number_of_maps]{0};
+		//TIMERSTARTCPU(minhashfunc);
+        tpa = std::chrono::system_clock::now();
+		minhashfunc(sequence, hashValues, isForwardStrand);
+        tpb = std::chrono::system_clock::now();
+        hashTime += tpb - tpa;
+
+		//TIMERSTOPCPU(minhashfunc);
+		std::vector<Value_t> allUniqueResults;
+		std::vector<Value_t> tmp;
+		//TIMERSTARTCPU(getcandrest);
+		for(int map = 0; map < minparams.maps && allUniqueResults.size() <= max_number_candidates; ++map) {
+			Key_t key = hashValues[map] & key_mask;
+
+            tpa = std::chrono::system_clock::now();
+			std::vector<Value_t> entries = minhashTables[map]->get(key);
+            tpb = std::chrono::system_clock::now();
+            getTime += tpb - tpa;
+			if(map == 0){
+				//allUniqueResults.reserve(minparams.maps * entries.size());
+				tmp.reserve(minparams.maps * entries.size());
+                allUniqueResults.reserve(minparams.maps * entries.size());
+			}
+
+			if(!Map_t::resultsAreSorted){
+				std::sort(entries.begin(), entries.end());
+			}
+
+            tpa = std::chrono::system_clock::now();
+
+			tmp.resize(allUniqueResults.size() + entries.size());
+
+            tpb = std::chrono::system_clock::now();
+            resizeTime += tpb - tpa;
+
+            tpa = std::chrono::system_clock::now();
+
+			std::merge(entries.begin(), entries.end(), allUniqueResults.begin(), allUniqueResults.end(), tmp.begin());
+
+            tpb = std::chrono::system_clock::now();
+            mergeTime += tpb - tpa;
+
+			std::swap(tmp, allUniqueResults);
+
+            tpa = std::chrono::system_clock::now();
+
+			auto uniqueEnd = std::unique(allUniqueResults.begin(), allUniqueResults.end());
+
+            tpb = std::chrono::system_clock::now();
+            uniqueTime += tpb - tpa;
+
+            tpa = std::chrono::system_clock::now();
+
+			allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd));
+
+            tpb = std::chrono::system_clock::now();
+            resizeTime += tpb - tpa;
+		}
+        tpd = std::chrono::system_clock::now();
+        totalTime += tpd - tpc;
+		//TIMERSTOPCPU(getcandrest);
+		return {allUniqueResults, hashTime, getTime, mergeTime, uniqueTime, resizeTime, totalTime};
+	}
+
+    std::vector<Result_t> getCandidatesMergeUnique(const std::string& sequence,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
+
+        std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+        bool isForwardStrand[maximum_number_of_maps]{0};
+        //TIMERSTARTCPU(minhashfunc);
+        minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
+
+#if 0
+        std::array<std::vector<Value_t>, maximum_number_of_maps> hashmapResults;
+        std::size_t totalSumResults = 0;
+
+
+        for(int map = 0; map < minparams.maps; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            hashmapResults[map] = minhashTables[map]->get(key);
+            totalSumResults += hashmapResults[map].size();
+
+            if(!Map_t::resultsAreSorted){
+                std::sort(hashmapResults[map].begin(), hashmapResults[map].end());
+            }
+        }
+
+        std::sort(hashmapResults.begin(),
+                hashmapResults.begin() + minparams.maps,
+                [](const auto& l, const auto& r){
+                    return l.size() > r.size();
+                });
+
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+
+        tmp.reserve(std::min(hashmapResults[0].size() * minparams.maps, max_number_candidates));
+        allUniqueResults.reserve(std::min(hashmapResults[0].size() * minparams.maps, max_number_candidates));
+
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map){
+            const auto& entries = hashmapResults[map];
+
+            tmp.resize(allUniqueResults.size() + entries.size());
+            auto enditer = set_union_n(entries.begin(),
+                                        entries.end(),
+                                        allUniqueResults.begin(),
+                                        allUniqueResults.end(),
+                                        max_number_candidates,
+                                        tmp.begin());
+
+            tmp.resize(std::distance(tmp.begin(), enditer));
+            std::swap(tmp, allUniqueResults);
+        }
+
+#else
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            std::vector<Value_t> entries = minhashTables[map]->get(key);
+            if(map == 0){
+                //allUniqueResults.reserve(minparams.maps * entries.size());
+                tmp.reserve(minparams.maps * entries.size());
+                allUniqueResults.reserve(minparams.maps * entries.size());
+            }
+
+            if(!Map_t::resultsAreSorted){
+                std::sort(entries.begin(), entries.end());
+            }
+
+            tmp.resize(allUniqueResults.size() + entries.size());
+
+            auto enditer = set_union_n(entries.begin(),
+                                        entries.end(),
+                                        allUniqueResults.begin(),
+                                        allUniqueResults.end(),
+                                        max_number_candidates,
+                                        tmp.begin());
+
+            tmp.resize(std::distance(tmp.begin(), enditer));
+            std::swap(tmp, allUniqueResults);
+        }
+#endif
+        allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
+
+        //TIMERSTOPCPU(getcandrest);
+        return allUniqueResults;
+    }
+
+
+
+
 
 	void transform(){
 		for (auto& table : minhashTables) {

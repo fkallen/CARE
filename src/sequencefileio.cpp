@@ -1,4 +1,5 @@
 #include "../inc/sequencefileio.hpp"
+#include "../inc/hpc_helpers.cuh"
 
 #include <iostream>
 #include <limits>
@@ -6,6 +7,8 @@
 #include <string>
 #include <sstream>
 #include <stdexcept>
+#include <cstdint>
+#include <algorithm>
 
 namespace care{
 
@@ -116,6 +119,7 @@ namespace care{
         sequence
         ...
     */
+#if 0
     void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                           FileFormat originalFormat,
                           const std::vector<std::string>& filesToMerge, const std::string& outputfile){
@@ -144,13 +148,7 @@ namespace care{
                 reads[readnum].sequence = std::move(seq);
             }
         }
-#if 0
-        if (nreads != expectedNumReads){
-    		std::cout << "WARNING. Expected " << expectedNumReads
-                      << " reads in results, but found only "
-                      << nreads << " reads. Results may not be correct!" << std::endl;
-    	}
-#endif
+
         std::unique_ptr<SequenceFileReader> reader;
     	switch (originalFormat) {
     	case FileFormat::FASTQ:
@@ -183,4 +181,145 @@ namespace care{
     	outputstream.flush();
     	outputstream.close();
     }
+
+#else
+
+std::uint64_t linecount(const std::string& filename){
+	std::uint64_t count = 0;
+	std::ifstream is(filename);
+	if(is){
+		std::string s;
+		while(std::getline(is, s)){
+			++count;
+		}
+	}
+	return count;
+}
+
+void sortResultFileUsingDisk(const std::string& filename, std::uint32_t chunksize){
+    const std::uint64_t resultsInFile = linecount(filename) / 2;
+
+    for(std::uint64_t i = 0; i < SDIV(resultsInFile, chunksize); ++i){
+        const std::uint64_t readNumBegin = i * chunksize;
+        const std::uint64_t readNumEnd = std::min((i+1) * chunksize, resultsInFile);
+
+        std::ofstream os("resultsortedtmp" + std::to_string(i));
+
+        std::vector<std::pair<std::uint64_t, std::string>> tmpvec(readNumEnd - readNumBegin);
+
+        std::ifstream is(filename);
+        if(!is)
+            throw std::runtime_error("could not open tmp file: " + filename);
+
+        std::string num;
+        std::string seq;
+
+        while(true){
+            std::getline(is, num);
+            if (!is.good())
+                break;
+            std::getline(is, seq);
+            if (!is.good())
+                break;
+
+            auto readnum = std::stoull(num);
+            if(readNumBegin <= readnum && readnum < readNumEnd){
+                tmpvec[readnum - readNumBegin] = {readnum, std::move(seq)};
+                //std::cout << i << " " << readnum << std::endl;
+            }
+        }
+
+        std::sort(tmpvec.begin(), tmpvec.end(), [](const auto& l, const auto& r){return l.first < r.first;});
+
+        for(const auto& p : tmpvec){
+            os << p.first << '\n';
+            os << p.second << '\n';
+        }
+    }
+
+    // now merge all the sorted file chunks into one file
+
+}
+
+
+void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                      FileFormat originalFormat,
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile){
+
+    constexpr std::uint32_t chunksize = 5000000;
+
+    std::vector<Read> reads;
+    reads.reserve(chunksize);
+
+    Read read;
+
+    std::unique_ptr<SequenceFileReader> reader;
+    switch (originalFormat) {
+    case FileFormat::FASTQ:
+        reader.reset(new FastqReader(originalReadFile));
+        break;
+    default:
+        throw std::runtime_error("Merging: Invalid file format.");
+    }
+
+    std::ofstream outputstream(outputfile);
+
+    for(std::uint32_t i = 0; i < SDIV(expectedNumReads, chunksize); ++i){
+        const std::uint32_t readNumBegin = i * chunksize;
+        const std::uint32_t readNumEnd = std::min((i+1) * chunksize, expectedNumReads);
+        reads.resize(readNumEnd - readNumBegin);
+
+        for(const auto& filename : filesToMerge){
+            std::ifstream is(filename);
+            if(!is)
+                throw std::runtime_error("could not open tmp file: " + filename);
+
+            std::string num;
+            std::string seq;
+
+            while(true){
+                std::getline(is, num);
+                if (!is.good())
+                    break;
+                std::getline(is, seq);
+                if (!is.good())
+                    break;
+
+                auto readnum = std::stoull(num);
+                if(readNumBegin <= readnum && readnum < readNumEnd){
+                    reads[readnum - readNumBegin].sequence = std::move(seq);
+                    //std::cout << i << " " << readnum << std::endl;
+                }
+            }
+        }
+
+        while (reader->getNextRead(&read)) {
+            std::uint64_t readnum = reader->getReadnum() - 1;
+            if(readNumBegin <= readnum && readnum < readNumEnd){
+                reads[readnum - readNumBegin].header = std::move(read.header);
+                reads[readnum - readNumBegin].quality = std::move(read.quality);
+                if(reads[readnum - readNumBegin].sequence == ""){
+                    reads[readnum - readNumBegin].sequence = std::move(read.sequence);
+                }
+            }
+            if(readnum == readNumEnd - 1)
+                break;
+        }
+
+        for (const auto& read : reads) {
+            outputstream << read.header << '\n' << read.sequence << '\n';
+
+            if (originalFormat == FileFormat::FASTQ)
+                outputstream << '+' << '\n' << read.quality << '\n';
+        }
+
+        reads.clear();
+    }
+
+    outputstream.flush();
+    outputstream.close();
+}
+
+
+#endif
 }

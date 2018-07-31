@@ -1120,6 +1120,8 @@ bool hasEnoughGoodCandidates(const BE& b){
     return false;
 }
 
+#if 0
+//new
 template<class BE>
 void prepare_good_candidates(BE& b){
     DetermineGoodAlignmentStats stats;
@@ -1175,6 +1177,71 @@ void prepare_good_candidates(BE& b){
 
     b.n_candidates = activeposition;
 }
+
+#else
+//old
+
+template<class BE>
+void prepare_good_candidates(BE& b){
+    DetermineGoodAlignmentStats stats;
+
+    b.mismatchratioThreshold = 0;
+    if (b.counts[0] >= b.goodAlignmentsCountThreshold) {
+        b.mismatchratioThreshold = 2 * b.mismatchratioBaseFactor;
+        stats.correctionCases[0]++;
+    } else if (b.counts[1] >= b.goodAlignmentsCountThreshold) {
+        b.mismatchratioThreshold = 3 * b.mismatchratioBaseFactor;
+        stats.correctionCases[1]++;
+    } else if (b.counts[2] >= b.goodAlignmentsCountThreshold) {
+        b.mismatchratioThreshold = 4 * b.mismatchratioBaseFactor;
+        stats.correctionCases[2]++;
+    } else { //no correction possible
+        stats.correctionCases[3]++;
+        b.active = false;
+        return;
+    }
+
+    std::size_t activeposition_unique = 0;
+    std::size_t activeposition = 0;
+
+    //stable_partition on struct of arrays with condition (activeCandidates[i] && notremoved) ?
+    for(std::size_t i = 0; i < b.activeCandidates.size(); i++){
+        if(b.activeCandidates[i]){
+            const double mismatchratio = double(b.bestAlignments[i]->get_nOps()) / double(b.bestAlignments[i]->get_overlap());
+            const bool notremoved = mismatchratio < b.mismatchratioThreshold;
+            if(notremoved){
+                b.fwdSequences[activeposition_unique] = b.fwdSequences[i];
+                b.bestAlignments[activeposition_unique] = b.bestAlignments[i];
+                b.bestSequences[activeposition_unique] = b.bestSequences[i];
+                b.bestSequenceStrings[activeposition_unique] = b.bestSequences[i]->toString();
+                b.bestAlignmentFlags[activeposition_unique] = b.bestAlignmentFlags[i];
+                b.candidateIds[activeposition_unique] = b.candidateIds[i];
+
+                if(b.canUseQualityScores){
+                    b.bestQualities[activeposition_unique] = b.bestQualities[i];
+                }
+                activeposition_unique++;
+            }
+        }
+    }
+
+    b.activeCandidates.clear(); //no longer need this, all remaining candidates are active
+
+    b.candidateIds.resize(activeposition_unique);
+    b.bestQualities.resize(activeposition_unique);
+    b.fwdSequences.resize(activeposition_unique);
+    b.bestAlignments.resize(activeposition_unique);
+    b.bestSequences.resize(activeposition_unique);
+    b.bestSequenceStrings.resize(activeposition_unique);
+    b.bestAlignmentFlags.resize(activeposition_unique);
+
+    b.n_candidates = activeposition;
+}
+
+
+#endif
+
+
 #endif
 
 

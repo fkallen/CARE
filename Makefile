@@ -3,7 +3,7 @@ CUDACC=nvcc
 HOSTLINKER=g++
 
 CXXFLAGS = -std=c++14
-CFLAGS = -Wall -fopenmp -g -O3
+CFLAGS = -Wall -fopenmp -g -O3 
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX)
 
 #TODO CUDA_PATH =
@@ -23,6 +23,7 @@ INC_CORRECTOR=$(PATH_CORRECTOR)/inc
 
 GPU_VERSION = errorcorrector_gpu
 CPU_VERSION = errorcorrector_cpu
+
 
 all: cpu
 
@@ -45,6 +46,14 @@ buildgpu/%.o : src/%.cpp
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
+minhashertest: 
+	@echo Building minhashertest
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" tests/minhashertest/main.cpp src/sequencefileio.cpp $(LDFLAGSGPU) -o tests/minhashertest/main
+
 
 clean:
 	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(OBJECTS_GPU) $(OBJECTS_CPU)
+
+.PHONY: minhashertest
+
+
