@@ -49,7 +49,7 @@ outfile="--outfile=$outputfile"
 fileformat=fastq
 
 #only valid for fastq fileformat
-useQualityScores=--useQualityScores=false
+useQualityScores=--useQualityScores=true
 #useQualityScores=
 
 candidateCorrection=--candidateCorrection=true
