@@ -1353,7 +1353,7 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
-#if 0
+#if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else

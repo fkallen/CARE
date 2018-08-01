@@ -451,7 +451,7 @@ struct Minhasher {
 			allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd));
 		}
 
-        allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
+        //allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
 
 		//TIMERSTOPCPU(getcandrest);
 		return allUniqueResults;
@@ -487,7 +487,7 @@ struct Minhasher {
             std::swap(tmp, allUniqueResults);
         }
 
-        allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
+        //allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
 
         //TIMERSTOPCPU(getcandrest);
         return allUniqueResults;

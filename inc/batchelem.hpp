@@ -987,7 +987,9 @@ void findCandidates(BE& b, Func get_candidates){
     b.candidateIds = get_candidates(b.fwdSequenceString);
 
     //remove self from candidates
-    b.candidateIds.erase(std::find(b.candidateIds.begin(), b.candidateIds.end(), b.readId));
+	auto readIdPos = std::find(b.candidateIds.begin(), b.candidateIds.end(), b.readId);
+	if(readIdPos != b.candidateIds.end())
+		b.candidateIds.erase(readIdPos);
 
     set_number_of_candidates(b, b.candidateIds.size());
 
