@@ -436,22 +436,50 @@ struct Minhasher {
 			std::vector<Value_t> entries = minhashTables[map]->get(key);
 			if(map == 0){
 				//allUniqueResults.reserve(minparams.maps * entries.size());
-				tmp.reserve(minparams.maps * entries.size());
-                allUniqueResults.reserve(minparams.maps * entries.size());
+				tmp.reserve(std::min(max_number_candidates, minparams.maps * entries.size()));
+                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * entries.size()));
 			}
 
 			if(!Map_t::resultsAreSorted){
 				std::sort(entries.begin(), entries.end());
 			}
-
+#if 0
 			tmp.resize(allUniqueResults.size() + entries.size());
 			std::merge(entries.begin(), entries.end(), allUniqueResults.begin(), allUniqueResults.end(), tmp.begin());
 			std::swap(tmp, allUniqueResults);
 			auto uniqueEnd = std::unique(allUniqueResults.begin(), allUniqueResults.end());
 			allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd));
+#endif
+
+#if 0
+            tmp.resize(allUniqueResults.size() + entries.size());
+            auto union_end = std::set_union(entries.begin(), entries.end(), allUniqueResults.begin(), allUniqueResults.end(), tmp.begin());
+            tmp.resize(std::distance(tmp.begin(), union_end));
+            std::swap(tmp, allUniqueResults);
+#endif
+
+#if 1
+            tmp.resize(allUniqueResults.size() + entries.size());
+            auto union_end = set_union_n_or_empty(entries.begin(),
+                                                entries.end(),
+                                                allUniqueResults.begin(),
+                                                allUniqueResults.end(),
+                                                max_number_candidates,
+                                                tmp.begin());
+            if(tmp.begin() == union_end){
+                return {};
+            }else{
+                tmp.resize(std::distance(tmp.begin(), union_end));
+                std::swap(tmp, allUniqueResults);
+            }
+#endif
 		}
 
+        //auto before = allUniqueResults.size();
         //allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
+        //auto after = allUniqueResults.size();
+        //if(max_number_candidates != std::numeric_limits<std::uint64_t>::max())
+        //    std::cout << "resize from " << before << " to " << after << std::endl;
 
 		//TIMERSTOPCPU(getcandrest);
 		return allUniqueResults;
@@ -492,7 +520,7 @@ struct Minhasher {
         //TIMERSTOPCPU(getcandrest);
         return allUniqueResults;
 #endif
-      
+
 	}
 
     std::tuple<std::vector<Result_t>,
