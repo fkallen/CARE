@@ -8,34 +8,36 @@ executable=./errorcorrector_gpu
 #max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
 threads=16
 
+datapath=/home/fekallen/arbeit/evaluationtool
+
 #input file
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655_1M.fastq
+#inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
 #coverage=21
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR1191655.fastq
+#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
 #coverage=255
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_SRR490124.fastq
+#inputfile=$datapath/datasets/E.coli_SRR490124.fastq
 #coverage=465
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/E.coli_ERA000206.fastq
+#inputfile=$datapath/datasets/E.coli_ERA000206.fastq
 #coverage=612
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRX218989.fastq
-#coverage=31
+inputfile=$datapath/datasets/C.elegans_SRX218989.fastq
+coverage=31
 
-#inputfile=/home/fekallen/arbeit/evaluationtool/datasets/C.elegans_SRR543736.fastq
+#inputfile=$datapath/datasets/C.elegans_SRR543736.fastq
 #coverage=58
 
-inputfile=/home/fekallen/arbeit/evaluationtool/datasets/D.melanogaster_SRR823377.fastq
-coverage=52
+#inputfile=$datapath/datasets/D.melanogaster_SRR823377.fastq
+#coverage=52
 
 #estimated error rate
 errorrate=0.03
 m=0.6
 
 #output path. this is used as temporary storage, too
-outdir=/home/fekallen/arbeit/evaluationtool/correcteddatasets/
+outdir=$datapath/correcteddatasets/
 
 #output file
 outputfile="readscorrectednew.fq"
