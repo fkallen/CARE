@@ -112,7 +112,8 @@ struct SHDdata{
     int gpuThreshold = 0;
 
 	void resize(int n_sub, int n_quer);
-    void resize(int n_sub, int n_quer, int n_results);
+    void resize(int n_sub, int n_quer, int n_results, double factor = 1.2);
+
 };
 
 //init buffers
