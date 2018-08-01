@@ -146,14 +146,20 @@ cpu_shifted_hamming_distance(const char* subject,
 
     for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap; shift++){
         const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
-
+        const int max_errors = int(double(overlapsize) * maxErrorRate);
         int score = 0;
 
-        for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift); j++){
+        for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift) && score < max_errors; j++){
             score += getChar(subject, subjectlength, j + shift) != getChar(query, querylength, j);
         }
 
-        score += totalbases - 2 * overlapsize;
+        #if 1
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+        #else
+        	score += totalbases - 2*overlapsize;
+        #endif
 
         if(score < bestScore){
             bestScore = score;
