@@ -93,6 +93,48 @@ namespace care{
 
 			return distribution;
 		}
+
+        template<class minhasher_t, class readStorage_t>
+        std::map<std::int64_t, std::int64_t> getCandidateCountHistogram(const minhasher_t& minhasher,
+                                                                        const readStorage_t& readStorage,
+                                                                        std::uint64_t candidatesToCheck,
+                                                                        int threads){
+
+        	using Minhasher_t = minhasher_t;
+        	using ReadStorage_t = readStorage_t;
+        	using Sequence_t = typename ReadStorage_t::Sequence_t;
+        	using ReadId_t = typename ReadStorage_t::ReadId_t;
+
+            std::vector<std::future<std::map<std::int64_t, std::int64_t>>> candidateCounterFutures;
+            const ReadId_t sampleCount = candidatesToCheck;
+            for(int i = 0; i < threads; i++){
+                candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
+                    std::map<std::int64_t, std::int64_t> candidateMap;
+                    std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
+
+                    for(ReadId_t readId = i; readId < sampleCount; readId += threads){
+                        std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
+                        auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
+                        std::int64_t count = std::int64_t(candidateList.size()) - 1;
+                        candidateMap[count]++;
+                    }
+
+                    return candidateMap;
+                }));
+            }
+
+            std::map<std::int64_t, std::int64_t> allncandidates;
+
+            for(auto& future : candidateCounterFutures){
+                const auto& tmpresult = future.get();
+                for(const auto& pair : tmpresult){
+                    allncandidates[pair.first] += pair.second;
+                }
+            }
+
+            return allncandidates;
+        }
+
     }
 
 /*
@@ -1166,68 +1208,32 @@ void correct(const MinhashOptions& minhashOptions,
     /*
         Make candidate statistics
     */
+    correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
 
-    TIMERSTARTCPU(candidateestimation);
-    std::vector<std::future<std::map<std::int64_t, std::int64_t>>> candidateCounterFutures;
-    const ReadId_t sampleCount = props.nReads / 10;
-    for(int i = 0; i < runtimeOptions.threads; i++){
-        candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
-            std::map<std::int64_t, std::int64_t> candidateMap;
-            std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
-#if 0
-            for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
-                std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
-                auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
-                candidateList.erase(std::find(candidateList.begin(), candidateList.end(), readId));
+    {
+        TIMERSTARTCPU(candidateestimation);
+        std::map<std::int64_t, std::int64_t> candidateHistogram
+                = correctiondetail::getCandidateCountHistogram(minhasher,
+                                            readStorage,
+                                            props.nReads / 10,
+                                            runtimeOptions.threads);
 
-                numseqpairs.clear();
-                numseqpairs.reserve(candidateList.size());
+        TIMERSTOPCPU(candidateestimation);
 
-                for(const auto id : candidateList){
-                    numseqpairs.emplace_back(id, readStorage.fetchSequence_ptr(id));
-                }
+        candidateDistribution = correctiondetail::estimateDist(candidateHistogram);
 
-                std::sort(numseqpairs.begin(), numseqpairs.end(), [](auto l, auto r){return l.second < r.second;});
-                auto uniqueend = std::unique(numseqpairs.begin(), numseqpairs.end(), [](auto l, auto r){return l.second == r.second;});
-                std::size_t numunique = std::distance(numseqpairs.begin(), uniqueend);
-                candidateMap[numunique]++;
-            }
-#else
-            for(ReadId_t readId = i; readId < sampleCount; readId += runtimeOptions.threads){
-                std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
-                auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
-                std::int64_t count = std::int64_t(candidateList.size()) - 1;
-                candidateMap[count]++;
-            }
-#endif
-            return candidateMap;
-        }));
+        std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
+        std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
+
+        std::ofstream of("ncandidates.txt");
+        for(const auto& p : vec)
+            of << p.first << " " << p.second << '\n';
+        of.flush();
     }
-
-    std::map<std::int64_t, std::int64_t> allncandidates;
-
-    for(auto& future : candidateCounterFutures){
-        const auto& tmpresult = future.get();
-        for(const auto& pair : tmpresult){
-            allncandidates[pair.first] += pair.second;
-        }
-    }
-
-    auto candidateDistribution = correctiondetail::estimateDist(allncandidates);
-
-    TIMERSTOPCPU(candidateestimation);
 
     std::cout << "candidates.max " << candidateDistribution.max << std::endl;
-	std::cout << "candidates.average " << candidateDistribution.average << std::endl;
-	std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
-
-    std::vector<std::pair<std::int64_t, std::int64_t>> vec(allncandidates.begin(), allncandidates.end());
-    std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
-
-    std::ofstream of("ncandidates.txt");
-    for(const auto& p : vec)
-        of << p.first << " " << p.second << '\n';
-    of.flush();
+    std::cout << "candidates.average " << candidateDistribution.average << std::endl;
+    std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
 
     /*
         Spawn correction threads
