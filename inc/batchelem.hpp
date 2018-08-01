@@ -993,8 +993,8 @@ void findCandidates(BE& b, Func get_candidates){
 
     set_number_of_candidates(b, b.candidateIds.size());
 
-    for(std::size_t k = 0; k < b.activeCandidates.size(); k++)
-        b.activeCandidates[k] = false;
+    //for(std::size_t k = 0; k < b.activeCandidates.size(); k++)
+    //    b.activeCandidates[k] = false;
 
     b.findCandidatesTiming.preprocessingEnd();
     if(b.candidateIds.size() == 0){
@@ -1203,39 +1203,37 @@ void prepare_good_candidates(BE& b){
         return;
     }
 
-    std::size_t activeposition_unique = 0;
     std::size_t activeposition = 0;
 
-    //stable_partition on struct of arrays with condition (activeCandidates[i] && notremoved) ?
     for(std::size_t i = 0; i < b.activeCandidates.size(); i++){
         if(b.activeCandidates[i]){
             const double mismatchratio = double(b.bestAlignments[i]->get_nOps()) / double(b.bestAlignments[i]->get_overlap());
             const bool notremoved = mismatchratio < b.mismatchratioThreshold;
             if(notremoved){
-                b.fwdSequences[activeposition_unique] = b.fwdSequences[i];
-                b.bestAlignments[activeposition_unique] = b.bestAlignments[i];
-                b.bestSequences[activeposition_unique] = b.bestSequences[i];
-                b.bestSequenceStrings[activeposition_unique] = b.bestSequences[i]->toString();
-                b.bestAlignmentFlags[activeposition_unique] = b.bestAlignmentFlags[i];
-                b.candidateIds[activeposition_unique] = b.candidateIds[i];
+                b.fwdSequences[activeposition] = b.fwdSequences[i];
+                b.bestAlignments[activeposition] = b.bestAlignments[i];
+                b.bestSequences[activeposition] = b.bestSequences[i];
+                b.bestSequenceStrings[activeposition] = b.bestSequences[i]->toString();
+                b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
+                b.candidateIds[activeposition] = b.candidateIds[i];
 
                 if(b.canUseQualityScores){
-                    b.bestQualities[activeposition_unique] = b.bestQualities[i];
+                    b.bestQualities[activeposition] = b.bestQualities[i];
                 }
-                activeposition_unique++;
+                activeposition++;
             }
         }
     }
 
     b.activeCandidates.clear(); //no longer need this, all remaining candidates are active
 
-    b.candidateIds.resize(activeposition_unique);
-    b.bestQualities.resize(activeposition_unique);
-    b.fwdSequences.resize(activeposition_unique);
-    b.bestAlignments.resize(activeposition_unique);
-    b.bestSequences.resize(activeposition_unique);
-    b.bestSequenceStrings.resize(activeposition_unique);
-    b.bestAlignmentFlags.resize(activeposition_unique);
+    b.candidateIds.resize(activeposition);
+    b.bestQualities.resize(activeposition);
+    b.fwdSequences.resize(activeposition);
+    b.bestAlignments.resize(activeposition);
+    b.bestSequences.resize(activeposition);
+    b.bestSequenceStrings.resize(activeposition);
+    b.bestAlignmentFlags.resize(activeposition);
 
     b.n_candidates = activeposition;
 }
