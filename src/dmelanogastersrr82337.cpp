@@ -2,6 +2,1286 @@
 
 namespace dmelanogaster_srr82337{
 
+    bool shouldCorrect(double min_col_support, 
+                        double min_col_coverage,
+                        double max_col_support,
+                        double max_col_coverage,
+                        double mean_col_support,
+                        double mean_col_coverage,
+                        double median_col_support,
+                        double median_col_coverage,
+                        double maxgini) {
+      if ( min_col_support <= 0.807500004768 ) {
+        if ( median_col_support <= 0.979499995708 ) {
+          if ( mean_col_coverage <= 0.62389421463 ) {
+            if ( median_col_support <= 0.644500017166 ) {
+              if ( min_col_coverage <= 0.24355494976 ) {
+                if ( median_col_coverage <= 0.205987468362 ) {
+                  if ( mean_col_coverage <= 0.208616554737 ) {
+                    if ( median_col_support <= 0.584499955177 ) {
+                      return 0.14039483652 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.584499955177
+                      return 0.115327660634 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_coverage > 0.208616554737
+                    if ( mean_col_support <= 0.74950003624 ) {
+                      return 0.281218917998 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.74950003624
+                      return 0.165258971252 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_coverage > 0.205987468362
+                  if ( median_col_support <= 0.558500051498 ) {
+                    if ( min_col_support <= 0.493499994278 ) {
+                      return 0.26208165049 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.493499994278
+                      return 0.40140842124 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.558500051498
+                    if ( min_col_support <= 0.499500006437 ) {
+                      return 0.133550396923 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.499500006437
+                      return 0.251753730846 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_coverage > 0.24355494976
+                if ( median_col_support <= 0.576499998569 ) {
+                  if ( min_col_support <= 0.499500006437 ) {
+                    if ( median_col_support <= 0.529500007629 ) {
+                      return 0.452722050233 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.529500007629
+                      return 0.309555708046 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.499500006437
+                    if ( median_col_coverage <= 0.372046530247 ) {
+                      return 0.473170350452 < maxgini;
+                    }
+                    else {  // if median_col_coverage > 0.372046530247
+                      return 0.499999614091 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.576499998569
+                  if ( min_col_support <= 0.539499998093 ) {
+                    if ( mean_col_support <= 0.891088247299 ) {
+                      return 0.253093944864 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.891088247299
+                      return 0.480315162502 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.539499998093
+                    if ( min_col_coverage <= 0.361620306969 ) {
+                      return 0.397116062015 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.361620306969
+                      return 0.48511801897 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if median_col_support > 0.644500017166
+              if ( max_col_coverage <= 0.545583724976 ) {
+                if ( median_col_support <= 0.74849998951 ) {
+                  if ( min_col_coverage <= 0.264740645885 ) {
+                    if ( mean_col_coverage <= 0.27513563633 ) {
+                      return 0.111409219024 < maxgini;
+                    }
+                    else {  // if mean_col_coverage > 0.27513563633
+                      return 0.139494429529 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_coverage > 0.264740645885
+                    if ( min_col_support <= 0.578500032425 ) {
+                      return 0.1335754742 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.578500032425
+                      return 0.26193320415 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.74849998951
+                  if ( min_col_support <= 0.598500013351 ) {
+                    if ( median_col_support <= 0.949499964714 ) {
+                      return 0.100149749732 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.949499964714
+                      return 0.238916152961 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.598500013351
+                    if ( median_col_support <= 0.84350001812 ) {
+                      return 0.0962258579982 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.84350001812
+                      return 0.0641952668807 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if max_col_coverage > 0.545583724976
+                if ( min_col_support <= 0.685500025749 ) {
+                  if ( median_col_support <= 0.953500032425 ) {
+                    if ( median_col_support <= 0.713500022888 ) {
+                      return 0.284575613313 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.713500022888
+                      return 0.140035879058 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.953500032425
+                    if ( mean_col_support <= 0.949382424355 ) {
+                      return 0.418904769027 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.949382424355
+                      return 0.297477022193 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.685500025749
+                  if ( median_col_support <= 0.793500006199 ) {
+                    if ( min_col_coverage <= 0.395435631275 ) {
+                      return 0.174057759505 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.395435631275
+                      return 0.329373926666 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.793500006199
+                    if ( median_col_support <= 0.962499976158 ) {
+                      return 0.0812464605135 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.962499976158
+                      return 0.13439777569 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          else {  // if mean_col_coverage > 0.62389421463
+            if ( min_col_support <= 0.664499998093 ) {
+              if ( median_col_support <= 0.943500041962 ) {
+                if ( median_col_support <= 0.682500004768 ) {
+                  if ( max_col_support <= 0.996500015259 ) {
+                    if ( max_col_coverage <= 0.67708337307 ) {
+                      return false;
+                    }
+                    else {  // if max_col_coverage > 0.67708337307
+                      return 0.0217957182645 < maxgini;
+                    }
+                  }
+                  else {  // if max_col_support > 0.996500015259
+                    if ( median_col_coverage <= 0.96891105175 ) {
+                      return 0.469163809996 < maxgini;
+                    }
+                    else {  // if median_col_coverage > 0.96891105175
+                      return 0.211542540824 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.682500004768
+                  if ( max_col_coverage <= 0.86229711771 ) {
+                    if ( median_col_support <= 0.919499993324 ) {
+                      return 0.194709587976 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.919499993324
+                      return 0.301539722542 < maxgini;
+                    }
+                  }
+                  else {  // if max_col_coverage > 0.86229711771
+                    if ( mean_col_support <= 0.889029443264 ) {
+                      return 0.197231630544 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.889029443264
+                      return 0.371019064122 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if median_col_support > 0.943500041962
+                if ( min_col_support <= 0.596500039101 ) {
+                  if ( min_col_coverage <= 0.628619074821 ) {
+                    if ( mean_col_support <= 0.944029450417 ) {
+                      return 0.449976493409 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.944029450417
+                      return 0.395936496427 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_coverage > 0.628619074821
+                    if ( median_col_coverage <= 0.98944580555 ) {
+                      return 0.464475294294 < maxgini;
+                    }
+                    else {  // if median_col_coverage > 0.98944580555
+                      return 0.355851164461 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.596500039101
+                  if ( min_col_coverage <= 0.659629106522 ) {
+                    if ( median_col_support <= 0.969500005245 ) {
+                      return 0.303774470469 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.969500005245
+                      return 0.390175140321 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_coverage > 0.659629106522
+                    if ( mean_col_support <= 0.954676508904 ) {
+                      return 0.450050815051 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.954676508904
+                      return 0.399594180286 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if min_col_support > 0.664499998093
+              if ( median_col_support <= 0.769500017166 ) {
+                if ( median_col_support <= 0.743499994278 ) {
+                  if ( median_col_coverage <= 0.844636023045 ) {
+                    if ( min_col_coverage <= 0.424499988556 ) {
+                      return 0.0454299621417 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.424499988556
+                      return 0.479255361425 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_coverage > 0.844636023045
+                    if ( mean_col_support <= 0.883441150188 ) {
+                      return 0.285824659772 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.883441150188
+                      return 0.433835602474 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.743499994278
+                  if ( min_col_support <= 0.6875 ) {
+                    if ( mean_col_support <= 0.929558813572 ) {
+                      return 0.244897959184 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.929558813572
+                      return 0.476009070295 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.6875
+                    if ( min_col_coverage <= 0.480740725994 ) {
+                      return 0.193761814745 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.480740725994
+                      return 0.427963730875 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if median_col_support > 0.769500017166
+                if ( min_col_coverage <= 0.764807105064 ) {
+                  if ( median_col_support <= 0.96850001812 ) {
+                    if ( median_col_support <= 0.815500020981 ) {
+                      return 0.284926658621 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.815500020981
+                      return 0.133917609801 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.96850001812
+                    if ( min_col_support <= 0.733500003815 ) {
+                      return 0.328942684229 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.733500003815
+                      return 0.203515683952 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_coverage > 0.764807105064
+                  if ( min_col_support <= 0.752499997616 ) {
+                    if ( median_col_support <= 0.955500006676 ) {
+                      return 0.310437295812 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.955500006676
+                      return 0.389826132776 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.752499997616
+                    if ( median_col_support <= 0.808500051498 ) {
+                      return 0.437677881379 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.808500051498
+                      return 0.264400936293 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        else {  // if median_col_support > 0.979499995708
+          if ( mean_col_coverage <= 0.372110396624 ) {
+            if ( max_col_coverage <= 0.363977611065 ) {
+              if ( min_col_coverage <= 0.15157687664 ) {
+                if ( min_col_support <= 0.550500035286 ) {
+                  if ( mean_col_coverage <= 0.186580955982 ) {
+                    if ( max_col_coverage <= 0.303509861231 ) {
+                      return 0.10850216249 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.303509861231
+                      return 0.197138365766 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_coverage > 0.186580955982
+                    if ( mean_col_support <= 0.970264673233 ) {
+                      return 0.239859639994 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.970264673233
+                      return 0.483379628216 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.550500035286
+                  if ( min_col_support <= 0.708500027657 ) {
+                    if ( min_col_coverage <= 0.0911151617765 ) {
+                      return 0.0623400229002 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.0911151617765
+                      return 0.138738616998 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.708500027657
+                    if ( median_col_support <= 0.99849998951 ) {
+                      return 0.0916268122981 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.99849998951
+                      return 0.0344386323311 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_coverage > 0.15157687664
+                if ( min_col_support <= 0.689499974251 ) {
+                  if ( mean_col_support <= 0.933029413223 ) {
+                    if ( median_col_coverage <= 0.204216256738 ) {
+                      return 0.403989395278 < maxgini;
+                    }
+                    else {  // if median_col_coverage > 0.204216256738
+                      return 0.497873345936 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.933029413223
+                    if ( mean_col_support <= 0.971205949783 ) {
+                      return 0.266009618212 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.971205949783
+                      return 0.354491163182 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.689499974251
+                  if ( median_col_support <= 0.99950003624 ) {
+                    if ( mean_col_support <= 0.970382332802 ) {
+                      return 0.362958477509 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.970382332802
+                      return 0.173726778375 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.99950003624
+                    if ( min_col_support <= 0.74849998951 ) {
+                      return 0.137148248991 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.74849998951
+                      return 0.067500903584 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if max_col_coverage > 0.363977611065
+              if ( min_col_support <= 0.709499955177 ) {
+                if ( max_col_coverage <= 0.612095117569 ) {
+                  if ( min_col_support <= 0.606500029564 ) {
+                    if ( min_col_coverage <= 0.0305277444422 ) {
+                      return 0.273331920863 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.0305277444422
+                      return 0.389384845368 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.606500029564
+                    if ( mean_col_support <= 0.977323532104 ) {
+                      return 0.267343141053 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.977323532104
+                      return 0.398456491509 < maxgini;
+                    }
+                  }
+                }
+                else {  // if max_col_coverage > 0.612095117569
+                  if ( min_col_coverage <= 0.0318304635584 ) {
+                    if ( min_col_coverage <= 0.0150187965482 ) {
+                      return 0.257205540166 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.0150187965482
+                      return 0.429640850474 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_coverage > 0.0318304635584
+                    if ( median_col_coverage <= 0.143942445517 ) {
+                      return false;
+                    }
+                    else {  // if median_col_coverage > 0.143942445517
+                      return 0.408977777778 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_support > 0.709499955177
+                if ( mean_col_support <= 0.98291182518 ) {
+                  if ( median_col_support <= 0.99849998951 ) {
+                    if ( median_col_support <= 0.986500024796 ) {
+                      return 0.144466561203 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.986500024796
+                      return 0.293589115265 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.99849998951
+                    if ( max_col_coverage <= 0.565719246864 ) {
+                      return 0.0953418594425 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.565719246864
+                      return 0.275589487458 < maxgini;
+                    }
+                  }
+                }
+                else {  // if mean_col_support > 0.98291182518
+                  if ( min_col_support <= 0.761500000954 ) {
+                    if ( mean_col_coverage <= 0.288707882166 ) {
+                      return 0.203341855369 < maxgini;
+                    }
+                    else {  // if mean_col_coverage > 0.288707882166
+                      return 0.406809757612 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.761500000954
+                    if ( min_col_coverage <= 0.188057154417 ) {
+                      return 0.102890891343 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.188057154417
+                      return 0.21844992 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          else {  // if mean_col_coverage > 0.372110396624
+            if ( median_col_support <= 0.99950003624 ) {
+              if ( min_col_support <= 0.676499962807 ) {
+                if ( min_col_coverage <= 0.566005110741 ) {
+                  if ( median_col_coverage <= 0.198841243982 ) {
+                    if ( min_col_coverage <= 0.0262013729662 ) {
+                      return 0.195718319125 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.0262013729662
+                      return false;
+                    }
+                  }
+                  else {  // if median_col_coverage > 0.198841243982
+                    if ( min_col_support <= 0.62349998951 ) {
+                      return 0.438116101834 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.62349998951
+                      return 0.403580764102 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_coverage > 0.566005110741
+                  if ( min_col_support <= 0.62349998951 ) {
+                    if ( mean_col_support <= 0.964852929115 ) {
+                      return 0.463428775835 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.964852929115
+                      return 0.475962290951 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.62349998951
+                    if ( mean_col_support <= 0.974794149399 ) {
+                      return 0.434588969765 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.974794149399
+                      return 0.458583473322 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_support > 0.676499962807
+                if ( median_col_support <= 0.988499999046 ) {
+                  if ( mean_col_coverage <= 0.777304410934 ) {
+                    if ( min_col_support <= 0.736500024796 ) {
+                      return 0.321990043907 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.736500024796
+                      return 0.199228007408 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_coverage > 0.777304410934
+                    if ( min_col_support <= 0.747500002384 ) {
+                      return 0.41822338762 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.747500002384
+                      return 0.323647104505 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.988499999046
+                  if ( median_col_coverage <= 0.644220650196 ) {
+                    if ( min_col_support <= 0.730499982834 ) {
+                      return 0.388151678085 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.730499982834
+                      return 0.339887222823 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_coverage > 0.644220650196
+                    if ( min_col_support <= 0.78149998188 ) {
+                      return 0.418482454088 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.78149998188
+                      return 0.364446349071 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if median_col_support > 0.99950003624
+              if ( median_col_coverage <= 0.48810467124 ) {
+                if ( min_col_support <= 0.722499966621 ) {
+                  if ( mean_col_coverage <= 0.455934852362 ) {
+                    if ( min_col_support <= 0.649500012398 ) {
+                      return 0.44932695749 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.649500012398
+                      return 0.403414018306 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_coverage > 0.455934852362
+                    if ( max_col_coverage <= 0.993484735489 ) {
+                      return 0.463093279518 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.993484735489
+                      return false;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.722499966621
+                  if ( mean_col_support <= 0.983676433563 ) {
+                    if ( min_col_support <= 0.760499954224 ) {
+                      return 0.318572471025 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.760499954224
+                      return 0.210614645557 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.983676433563
+                    if ( min_col_support <= 0.775499999523 ) {
+                      return 0.462541900164 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.775499999523
+                      return 0.368347324775 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if median_col_coverage > 0.48810467124
+                if ( min_col_support <= 0.762500047684 ) {
+                  if ( min_col_coverage <= 0.950172007084 ) {
+                    if ( mean_col_support <= 0.976382374763 ) {
+                      return 0.478002883662 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.976382374763
+                      return 0.48478002744 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_coverage > 0.950172007084
+                    if ( min_col_coverage <= 0.97574287653 ) {
+                      return 0.464281936771 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.97574287653
+                      return 0.430373862363 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.762500047684
+                  if ( mean_col_support <= 0.985264718533 ) {
+                    if ( mean_col_support <= 0.97779417038 ) {
+                      return 0.460885842001 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.97779417038
+                      return 0.349787011674 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.985264718533
+                    if ( min_col_support <= 0.792500019073 ) {
+                      return 0.483020708941 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.792500019073
+                      return 0.464685724152 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      else {  // if min_col_support > 0.807500004768
+        if ( min_col_support <= 0.883499979973 ) {
+          if ( min_col_coverage <= 0.636483967304 ) {
+            if ( mean_col_support <= 0.988104224205 ) {
+              if ( median_col_support <= 0.987499952316 ) {
+                if ( median_col_support <= 0.904500007629 ) {
+                  if ( median_col_coverage <= 0.425511062145 ) {
+                    if ( mean_col_support <= 0.951355218887 ) {
+                      return 0.0894513890678 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.951355218887
+                      return 0.0684129527443 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_coverage > 0.425511062145
+                    if ( median_col_support <= 0.867499947548 ) {
+                      return 0.130273638293 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.867499947548
+                      return 0.0915877038902 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.904500007629
+                  if ( median_col_coverage <= 0.00727282371372 ) {
+                    if ( mean_col_support <= 0.977441191673 ) {
+                      return 0.1712652799 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.977441191673
+                      return 0.251678553231 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_coverage > 0.00727282371372
+                    if ( mean_col_support <= 0.956895828247 ) {
+                      return 0.0802771602116 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.956895828247
+                      return 0.044286140966 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if median_col_support > 0.987499952316
+                if ( mean_col_coverage <= 0.507168531418 ) {
+                  if ( median_col_support <= 0.99950003624 ) {
+                    if ( median_col_support <= 0.992499947548 ) {
+                      return 0.134326864042 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.992499947548
+                      return 0.232470462417 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.99950003624
+                    if ( mean_col_coverage <= 0.401736915112 ) {
+                      return 0.0346552818231 < maxgini;
+                    }
+                    else {  // if mean_col_coverage > 0.401736915112
+                      return 0.078754313272 < maxgini;
+                    }
+                  }
+                }
+                else {  // if mean_col_coverage > 0.507168531418
+                  if ( min_col_support <= 0.831499993801 ) {
+                    if ( mean_col_support <= 0.986617684364 ) {
+                      return 0.24750867471 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.986617684364
+                      return 0.335518807507 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.831499993801
+                    if ( min_col_support <= 0.852499961853 ) {
+                      return 0.186773476828 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.852499961853
+                      return 0.116542254189 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if mean_col_support > 0.988104224205
+              if ( mean_col_coverage <= 0.519362568855 ) {
+                if ( mean_col_coverage <= 0.406477570534 ) {
+                  if ( mean_col_coverage <= 0.311227798462 ) {
+                    if ( max_col_coverage <= 0.571973800659 ) {
+                      return 0.026112374864 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.571973800659
+                      return 0.159574785751 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_coverage > 0.311227798462
+                    if ( min_col_support <= 0.84350001812 ) {
+                      return 0.193214135766 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.84350001812
+                      return 0.0512764809741 < maxgini;
+                    }
+                  }
+                }
+                else {  // if mean_col_coverage > 0.406477570534
+                  if ( min_col_support <= 0.846500039101 ) {
+                    if ( min_col_support <= 0.816499948502 ) {
+                      return 0.422563561835 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.816499948502
+                      return 0.294974700033 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.846500039101
+                    if ( mean_col_support <= 0.990794122219 ) {
+                      return 0.0754899845626 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.990794122219
+                      return 0.156777537218 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if mean_col_coverage > 0.519362568855
+                if ( min_col_support <= 0.848500013351 ) {
+                  if ( mean_col_support <= 0.988676428795 ) {
+                    if ( min_col_support <= 0.831499993801 ) {
+                      return 0.354123549131 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.831499993801
+                      return 0.225117903004 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.988676428795
+                    if ( min_col_support <= 0.827499985695 ) {
+                      return 0.467273015267 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.827499985695
+                      return 0.39813678154 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.848500013351
+                  if ( mean_col_support <= 0.991088271141 ) {
+                    if ( min_col_support <= 0.867499947548 ) {
+                      return 0.207059407349 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.867499947548
+                      return 0.105188423077 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.991088271141
+                    if ( min_col_support <= 0.865499973297 ) {
+                      return 0.388762917071 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.865499973297
+                      return 0.259127631236 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          else {  // if min_col_coverage > 0.636483967304
+            if ( median_col_support <= 0.993499994278 ) {
+              if ( min_col_coverage <= 0.853764295578 ) {
+                if ( median_col_support <= 0.990499973297 ) {
+                  if ( min_col_support <= 0.838500022888 ) {
+                    if ( mean_col_support <= 0.984676480293 ) {
+                      return 0.131556374584 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.984676480293
+                      return 0.258294147419 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.838500022888
+                    if ( median_col_support <= 0.883499979973 ) {
+                      return 0.226928675658 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.883499979973
+                      return 0.0837890921215 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.990499973297
+                  if ( min_col_support <= 0.855499982834 ) {
+                    if ( mean_col_support <= 0.973382353783 ) {
+                      return 0.491111111111 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.973382353783
+                      return 0.282426579261 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.855499982834
+                    if ( mean_col_support <= 0.980205774307 ) {
+                      return 0.349369664763 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.980205774307
+                      return 0.14328514179 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_coverage > 0.853764295578
+                if ( min_col_support <= 0.851500034332 ) {
+                  if ( median_col_coverage <= 0.997871756554 ) {
+                    if ( mean_col_support <= 0.985911726952 ) {
+                      return 0.270770155069 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.985911726952
+                      return 0.335765283007 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_coverage > 0.997871756554
+                    if ( median_col_support <= 0.815999984741 ) {
+                      return false;
+                    }
+                    else {  // if median_col_support > 0.815999984741
+                      return 0.146807673091 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.851500034332
+                  if ( max_col_coverage <= 0.99876844883 ) {
+                    if ( max_col_coverage <= 0.994715988636 ) {
+                      return 0.205942602768 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.994715988636
+                      return 0.342476586889 < maxgini;
+                    }
+                  }
+                  else {  // if max_col_coverage > 0.99876844883
+                    if ( mean_col_support <= 0.987852931023 ) {
+                      return 0.132612581108 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.987852931023
+                      return 0.199898876027 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if median_col_support > 0.993499994278
+              if ( min_col_support <= 0.855499982834 ) {
+                if ( mean_col_support <= 0.988676428795 ) {
+                  if ( min_col_support <= 0.828500032425 ) {
+                    if ( mean_col_support <= 0.987441182137 ) {
+                      return 0.352952033274 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.987441182137
+                      return 0.431491872482 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.828500032425
+                    if ( mean_col_support <= 0.983205854893 ) {
+                      return 0.383552255438 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.983205854893
+                      return 0.266055758139 < maxgini;
+                    }
+                  }
+                }
+                else {  // if mean_col_support > 0.988676428795
+                  if ( median_col_support <= 0.99950003624 ) {
+                    if ( median_col_support <= 0.997500002384 ) {
+                      return 0.321191641514 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.997500002384
+                      return 0.363125778155 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.99950003624
+                    if ( min_col_support <= 0.837499976158 ) {
+                      return 0.473684574278 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.837499976158
+                      return 0.436125800118 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_support > 0.855499982834
+                if ( mean_col_support <= 0.991382360458 ) {
+                  if ( mean_col_support <= 0.990558803082 ) {
+                    if ( median_col_support <= 0.99950003624 ) {
+                      return 0.287046040821 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.99950003624
+                      return 0.202297726723 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.990558803082
+                    if ( min_col_support <= 0.869500041008 ) {
+                      return 0.37378761374 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.869500041008
+                      return 0.235321300564 < maxgini;
+                    }
+                  }
+                }
+                else {  // if mean_col_support > 0.991382360458
+                  if ( median_col_support <= 0.99950003624 ) {
+                    if ( min_col_support <= 0.866500020027 ) {
+                      return 0.359122661216 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.866500020027
+                      return 0.281862210313 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.99950003624
+                    if ( min_col_support <= 0.870499968529 ) {
+                      return 0.449384865476 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.870499968529
+                      return 0.387136548923 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        else {  // if min_col_support > 0.883499979973
+          if ( min_col_support <= 0.925500035286 ) {
+            if ( min_col_coverage <= 0.736915051937 ) {
+              if ( median_col_coverage <= 0.622273385525 ) {
+                if ( median_col_support <= 0.935500025749 ) {
+                  if ( mean_col_support <= 0.965676486492 ) {
+                    if ( max_col_coverage <= 0.42442625761 ) {
+                      return 0.154930135272 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.42442625761
+                      return 0.0857067313551 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.965676486492
+                    if ( median_col_support <= 0.912500023842 ) {
+                      return 0.0766390584869 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.912500023842
+                      return 0.0549899385209 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.935500025749
+                  if ( min_col_support <= 0.903499960899 ) {
+                    if ( mean_col_support <= 0.991739451885 ) {
+                      return 0.034470689516 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.991739451885
+                      return 0.0753447821497 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.903499960899
+                    if ( median_col_support <= 0.952499985695 ) {
+                      return 0.0401916372147 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.952499985695
+                      return 0.0262002588665 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if median_col_coverage > 0.622273385525
+                if ( median_col_support <= 0.992499947548 ) {
+                  if ( median_col_support <= 0.927500009537 ) {
+                    if ( min_col_coverage <= 0.129103809595 ) {
+                      return false;
+                    }
+                    else {  // if min_col_coverage > 0.129103809595
+                      return 0.0860897766678 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.927500009537
+                    if ( min_col_support <= 0.903499960899 ) {
+                      return 0.0401279942622 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.903499960899
+                      return 0.0271946352316 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_support > 0.992499947548
+                  if ( min_col_support <= 0.904500007629 ) {
+                    if ( mean_col_support <= 0.993088126183 ) {
+                      return 0.118513168993 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.993088126183
+                      return 0.259174539487 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.904500007629
+                    if ( median_col_support <= 0.99950003624 ) {
+                      return 0.158445890065 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.99950003624
+                      return 0.0566763608784 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if min_col_coverage > 0.736915051937
+              if ( median_col_support <= 0.993499994278 ) {
+                if ( min_col_coverage <= 0.918943762779 ) {
+                  if ( min_col_support <= 0.90750002861 ) {
+                    if ( median_col_support <= 0.991500020027 ) {
+                      return 0.061457857598 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.991500020027
+                      return 0.106897299983 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.90750002861
+                    if ( mean_col_support <= 0.960529386997 ) {
+                      return 0.46875 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.960529386997
+                      return 0.0338437832548 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_coverage > 0.918943762779
+                  if ( max_col_coverage <= 0.998828291893 ) {
+                    if ( max_col_coverage <= 0.995910048485 ) {
+                      return 0.169937798687 < maxgini;
+                    }
+                    else {  // if max_col_coverage > 0.995910048485
+                      return 0.400321346387 < maxgini;
+                    }
+                  }
+                  else {  // if max_col_coverage > 0.998828291893
+                    if ( median_col_support <= 0.916499972343 ) {
+                      return 0.323461457677 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.916499972343
+                      return 0.0894595515128 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if median_col_support > 0.993499994278
+                if ( min_col_support <= 0.904500007629 ) {
+                  if ( mean_col_support <= 0.992676496506 ) {
+                    if ( median_col_support <= 0.99950003624 ) {
+                      return 0.247443149198 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.99950003624
+                      return 0.153459907437 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.992676496506
+                    if ( min_col_support <= 0.895500004292 ) {
+                      return 0.355883468456 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.895500004292
+                      return 0.273492165052 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_support > 0.904500007629
+                  if ( median_col_support <= 0.99950003624 ) {
+                    if ( median_col_support <= 0.997500002384 ) {
+                      return 0.148007050802 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.997500002384
+                      return 0.233998865813 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.99950003624
+                    if ( mean_col_support <= 0.993676543236 ) {
+                      return 0.0607975970745 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.993676543236
+                      return 0.149241260068 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          else {  // if min_col_support > 0.925500035286
+            if ( median_col_support <= 0.96749997139 ) {
+              if ( mean_col_support <= 0.976970613003 ) {
+                if ( min_col_coverage <= 0.450490176678 ) {
+                  if ( mean_col_coverage <= 0.823640346527 ) {
+                    if ( median_col_support <= 0.950500011444 ) {
+                      return 0.145524729756 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.950500011444
+                      return 0.0555102040816 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_coverage > 0.823640346527
+                    return false;
+                  }
+                }
+                else {  // if min_col_coverage > 0.450490176678
+                  if ( min_col_coverage <= 0.520866811275 ) {
+                    if ( median_col_coverage <= 0.485281407833 ) {
+                      return 0.0335098140496 < maxgini;
+                    }
+                    else {  // if median_col_coverage > 0.485281407833
+                      return 0.106317194562 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_coverage > 0.520866811275
+                    if ( median_col_support <= 0.927500009537 ) {
+                      return 0.265927977839 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.927500009537
+                      return 0.0464157006286 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if mean_col_support > 0.976970613003
+                if ( min_col_coverage <= 0.355720251799 ) {
+                  if ( min_col_coverage <= 0.00154690234922 ) {
+                    return false;
+                  }
+                  else {  // if min_col_coverage > 0.00154690234922
+                    if ( min_col_support <= 0.941499948502 ) {
+                      return 0.0461728890348 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.941499948502
+                      return 0.0643803922117 < maxgini;
+                    }
+                  }
+                }
+                else {  // if min_col_coverage > 0.355720251799
+                  if ( median_col_support <= 0.959499955177 ) {
+                    if ( min_col_support <= 0.950500011444 ) {
+                      return 0.0376962695779 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.950500011444
+                      return 0.0612339421516 < maxgini;
+                    }
+                  }
+                  else {  // if median_col_support > 0.959499955177
+                    if ( min_col_support <= 0.957499980927 ) {
+                      return 0.0234348948835 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.957499980927
+                      return 0.0404561726579 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+            else {  // if median_col_support > 0.96749997139
+              if ( min_col_support <= 0.946500003338 ) {
+                if ( median_col_coverage <= 0.861462950706 ) {
+                  if ( min_col_support <= 0.934499979019 ) {
+                    if ( mean_col_coverage <= 0.724692583084 ) {
+                      return 0.0196578004215 < maxgini;
+                    }
+                    else {  // if mean_col_coverage > 0.724692583084
+                      return 0.031264151253 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.934499979019
+                    if ( min_col_coverage <= 0.00148842483759 ) {
+                      return 0.444444444444 < maxgini;
+                    }
+                    else {  // if min_col_coverage > 0.00148842483759
+                      return 0.0159253213395 < maxgini;
+                    }
+                  }
+                }
+                else {  // if median_col_coverage > 0.861462950706
+                  if ( min_col_support <= 0.935500025749 ) {
+                    if ( mean_col_support <= 0.994382381439 ) {
+                      return 0.0371794610617 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.994382381439
+                      return 0.0900470564308 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.935500025749
+                    if ( mean_col_support <= 0.99532353878 ) {
+                      return 0.0236139126027 < maxgini;
+                    }
+                    else {  // if mean_col_support > 0.99532353878
+                      return 0.0376243201482 < maxgini;
+                    }
+                  }
+                }
+              }
+              else {  // if min_col_support > 0.946500003338
+                if ( median_col_coverage <= 0.441125899553 ) {
+                  if ( mean_col_support <= 0.995656967163 ) {
+                    if ( min_col_support <= 0.96749997139 ) {
+                      return 0.0187682701537 < maxgini;
+                    }
+                    else {  // if min_col_support > 0.96749997139
+                      return 0.0312390230463 < maxgini;
+                    }
+                  }
+                  else {  // if mean_col_support > 0.995656967163
+                    if ( mean_col_coverage <= 0.788880586624 ) {
+                      return 0.00957599111695 < maxgini;
+                    }
+                    else {  // if mean_col_coverage > 0.788880586624
+                      return false;
+                    }
+                  }
+                }
+                else {  // if median_col_coverage > 0.441125899553
+                  if ( min_col_support <= 0.957499980927 ) {
+                    if ( min_col_coverage <= 0.0108901523054 ) {
+                      return false;
+                    }
+                    else {  // if min_col_coverage > 0.0108901523054
+                      return 0.0114955222462 < maxgini;
+                    }
+                  }
+                  else {  // if min_col_support > 0.957499980927
+                    if ( median_col_support <= 0.977499961853 ) {
+                      return 0.0174375261333 < maxgini;
+                    }
+                    else {  // if median_col_support > 0.977499961853
+                      return 0.00726543942787 < maxgini;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+
+
+
     bool shouldCorrect0(double min_col_support, double min_col_coverage, double max_col_support, double max_col_coverage, double mean_col_support, double mean_col_coverage, double median_col_support, double median_col_coverage, double maxgini) {
       if ( mean_col_support <= 0.988468527794 ) {
         if ( median_col_coverage <= 0.606097817421 ) {
