@@ -260,7 +260,7 @@ std::string decode_2bit_hilo(const std::uint8_t* encoded, int bases){
     const std::uint8_t* hi = encoded;
     const std::uint8_t* lo = hi + bytes/2;
 
-    for(std::size_t i = 0; i < bases; i++){
+    for(int i = 0; i < bases; i++){
         const int byteIndex = i / 8;
         const int pos = i % 8;
         const std::uint8_t hibit = (hi[byteIndex] >> (7-pos)) & std::uint8_t(1);
