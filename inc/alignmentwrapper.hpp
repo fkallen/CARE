@@ -781,6 +781,11 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
         return Sequence_t::get(data, length, index);
     };
 
+
+    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
+        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
+    };
+
     auto comp = [=] __device__ (const SHDResult& fwdAlignment,
                                const SHDResult& revcmplAlignment,
                                int subjectlength,
@@ -794,7 +799,7 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                               maxErrorRate);
     };
 
-    shd::call_shd_with_revcompl_kernel_async(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor);
+    shd::call_shd_with_revcompl_kernel_async(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
 
     call_cuda_find_best_alignment_kernel_async(shddata.d_results,
                               shddata.d_bestAlignmentFlags,
@@ -819,6 +824,10 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
         return Sequence_t::get(data, length, index);
     };
 
+    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
+        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
+    };
+
     auto comp = [=] __device__ (const SHDResult& fwdAlignment,
                                const SHDResult& revcmplAlignment,
                                int subjectlength,
@@ -832,7 +841,7 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
                               maxErrorRate);
     };
 
-    shd::call_shd_with_revcompl_kernel(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor);
+    shd::call_shd_with_revcompl_kernel(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
 
     call_cuda_find_best_alignment_kernel(shddata.d_results,
                               shddata.d_bestAlignmentFlags,

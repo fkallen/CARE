@@ -1,6 +1,8 @@
 #ifndef BINARY_SEQUENCE_HELPERS_HPP
 #define BINARY_SEQUENCE_HELPERS_HPP
 
+#include "../inc/hpc_helpers.cuh"
+
 #include <cstring>
 #include <cstdint>
 
@@ -37,7 +39,8 @@ std::pair<std::unique_ptr<std::uint8_t[]>, int> encode_2bit_hilo(const char* seq
 std::pair<std::unique_ptr<std::uint8_t[]>, int> encode_2bit_hilo(const std::string& sequence);
 std::string decode_2bit_hilo(const std::uint8_t* encoded, int bases);
 std::string decode_2bit_hilo(const std::unique_ptr<std::uint8_t[]>& encoded, int bases);
-void reverse_complement_2bit_hilo(const uint8_t* encoded, int bases, uint8_t* rcencoded);
+
+void reverse_complement_2bit_hilo(const std::uint8_t* encoded, int bases, std::uint8_t* rcencoded);
 std::pair<std::unique_ptr<std::uint8_t[]>, int> reverse_complement_2bit_hilo(const uint8_t* encoded, int bases);
 
 
