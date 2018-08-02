@@ -346,7 +346,7 @@ struct SequenceStringImpl{
     }
 
     static std::string toString(const std::uint8_t* data, int nBases){
-        return std::string((const char*)data);
+        return std::string((const char*)data, nBases);
     }
 
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> reverseComplement(const std::uint8_t* data, int nBases){
