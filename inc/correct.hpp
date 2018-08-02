@@ -1239,6 +1239,8 @@ void correct(const MinhashOptions& minhashOptions,
         Spawn correction threads
     */
 
+//#define DO_PROFILE
+
 #if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
@@ -1307,7 +1309,7 @@ void correct(const MinhashOptions& minhashOptions,
         ecthreads[threadId].run();
     }
 
-//#define DO_PROFILE
+
 
 
 #ifndef DO_PROFILE
