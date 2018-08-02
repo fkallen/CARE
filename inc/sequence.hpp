@@ -38,6 +38,11 @@ struct FixedSizeSequence{
 		return length_;
 	}
 
+    HOSTDEVICEQUALIFIER
+	int& length(){
+		return length_;
+	}
+
 	HOSTDEVICEQUALIFIER
 	FixedSizeSequence(){
 		memset(data, 0, DATA_BYTES);
@@ -65,6 +70,7 @@ struct FixedSizeSequence{
 	FixedSizeSequence& operator=(const FixedSizeSequence& other){
 		length() = other.length();
 		memcpy(data, other.data, sizeof(uint8_t) * DATA_BYTES);
+        return *this;
 	}
 
 	HOSTDEVICEQUALIFIER
@@ -115,6 +121,20 @@ struct FixedSizeSequence{
 		return '_';
 	}
 
+    HOSTDEVICEQUALIFIER
+     // static access to i-th base in data
+    static char get(const char* data, int length, int index) noexcept{
+        const int byte = index / 4;
+        const int basepos = index % 4;
+        switch((data[byte] >> (3-basepos) * 2) & 0x03){
+            case 0x00: return 'A';
+            case 0x01: return 'C';
+            case 0x02: return 'G';
+            case 0x03: return 'T';
+            default:return '_'; //cannot happen
+        }
+    }
+
 	HOSTDEVICEQUALIFIER
 	void setBase(int pos, char base){
                 const int FIRST_USED_BYTE = getNumBytes() - SDIV(length(), BASES_PER_BYTE);
@@ -155,7 +175,7 @@ struct FixedSizeSequence{
 
 	FixedSizeSequence reverseComplement() const{
 		FixedSizeSequence revcompl;
-		revcompl.length = length();
+		revcompl.length() = length();
 
 		bool res = encoded_to_reverse_complement_encoded(begin(), getNumBytes(), revcompl.begin(), getNumBytes(), length());
 		if(!res)
@@ -300,6 +320,182 @@ struct SequenceGeneralPtrLess{
 		}
 	}
 };
+
+
+
+
+struct Sequence2BitImpl{
+    static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode(const std::string& sequence){
+        return encode_2bit(sequence);
+    }
+
+    static int getNumBytes(int nBases) noexcept{
+        return SDIV(nBases, 4);
+    }
+
+    HOSTDEVICEQUALIFIER
+    static char get(const char* data, int nBytes, int nBases, int i) noexcept{
+        const int byte = i / 4;
+        const int basepos = i % 4;
+        switch((data[byte] >> (3-basepos) * 2) & 0x03){
+            case 0x00: return 'A';
+            case 0x01: return 'C';
+            case 0x02: return 'G';
+            case 0x03: return 'T';
+            default:return '_'; //cannot happen
+        }
+    }
+
+    static std::string toString(const std::uint8_t* data, int nBases){
+        return decode_2bit(data, nBases);
+    }
+
+    static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> reverseComplement(const std::uint8_t* data, int nBases){
+        return reverse_complement_2bit(data, nBases);
+    }
+
+    static constexpr bool isCompressed() noexcept{
+        return true;
+    }
+};
+
+
+
+
+template<class Impl>
+struct SequenceBase {
+
+    using Impl_t = Impl;
+
+	SequenceBase() : nBases(0){
+        data.second = 0;
+    }
+
+    ~SequenceBase(){}
+
+    SequenceBase(const std::string& sequence)
+		: nBases(sequence.length()){
+		data = Impl::encode(sequence);
+	}
+
+    SequenceBase(const std::uint8_t* rawdata, int nBases_) noexcept
+		: nBases(nBases_){
+
+		const int size = getNumBytes();
+		data.first = std::make_unique<std::uint8_t[]>(size);
+		data.second = size;
+
+		std::copy(rawdata, rawdata + size, begin());
+	}
+
+	SequenceBase(SequenceBase&& other) noexcept{
+        operator=(other);
+    }
+
+	SequenceBase(const SequenceBase& other) : nBases(other.nBases){
+		const int size = other.getNumBytes();
+		data.first = std::make_unique<std::uint8_t[]>(size);
+		data.second = size;
+
+		std::copy(other.begin(), other.end(), begin());
+    }
+
+	SequenceBase& operator=(const SequenceBase& other){
+        SequenceBase tmp(other);
+        swap(*this, tmp);
+        return *this;
+    }
+
+    SequenceBase& operator=(SequenceBase&& other){
+        swap(*this, other);
+        return *this;
+    }
+
+    bool operator==(const SequenceBase& rhs) const noexcept{
+        if(length() != rhs.length()) return false;
+        return (std::memcmp(begin(), rhs.begin(), getNumBytes()) == 0);
+    }
+
+    bool operator!=(const SequenceBase& other) const noexcept{
+        return !(*this == other);
+    }
+
+    bool operator==(const std::string& other) const noexcept{
+        return toString() == other;
+    }
+
+    bool operator!=(const std::string& other) const noexcept{
+        return !(*this == other);
+    }
+
+    bool operator<(const SequenceBase& rhs) const noexcept{
+		const int bases = length();
+		const int otherbases = rhs.length();
+		if(bases < otherbases) return true;
+		if(bases > otherbases) return false;
+
+		return (std::memcmp(begin(), rhs.begin(), getNumBytes()) < 0);
+	}
+
+	char operator[](int i) const noexcept{
+        return Impl::get((const char*)data.first.get(), data.second, nBases, i);
+    }
+
+	std::string toString() const{
+        return Impl::toString(data.first.get(), nBases);
+    }
+
+	SequenceBase reverseComplement() const{
+        SequenceBase revCompl;
+        revCompl.nBases = nBases;
+        revCompl.data = Impl::reverseComplement(data.first.get(), nBases);
+        return revCompl;
+    }
+
+	int getNumBytes() const noexcept{
+        return Impl::getNumBytes(nBases);
+    }
+
+	int length() const noexcept{
+        return nBases;
+    }
+
+	bool isCompressed() const noexcept{
+        return Impl::isCompressed();
+    }
+
+    std::uint8_t* begin() const noexcept{
+        return data.first.get();
+    }
+
+    std::uint8_t* end() const noexcept{
+        return data.first.get() + getNumBytes();
+    }
+
+    HOSTDEVICEQUALIFIER
+    static char get(const char* data, int nBytes, int nBases, int i) noexcept{
+		return Impl::get(data, nBytes, nBases, i);
+	}
+
+	std::pair<std::unique_ptr<std::uint8_t[]>, int> data;
+	int nBases;
+
+public:
+    friend void swap(SequenceBase& l, SequenceBase& r) noexcept{
+        using std::swap;
+
+        swap(l.data, r.data);
+        swap(l.nBases, r.nBases);
+    }
+
+    friend std::ostream& operator<<(std::ostream& stream, const SequenceBase& seq){
+        stream << seq.toString();
+        return stream;
+    }
+};
+
+using Sequence2Bit = SequenceBase<Sequence2BitImpl>;
+
 
 }
 #endif
