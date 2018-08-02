@@ -515,9 +515,16 @@ struct Sequence2BitHiLoImpl{
         std::uint8_t* hiRevC = reverseComplement;
         std::uint8_t* loRevC = hiRevC + halfbytes;
 
-        for(int i = 1; i < halfbytes; ++i){
-            hiRevC[i] = ~hiOrig[bytes - 1 - i];
-            loRevC[i] = ~loOrig[bytes - 1 - i];
+        auto reverse_complement_byte = [](auto b) {
+    		b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+    		b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+    		b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+    		return ~b;
+    	};
+
+        for(std::size_t i = 0; i < halfbytes; ++i){
+            hiRevC[i] = reverse_complement_byte(hiOrig[halfbytes - 1 - i]);
+            loRevC[i] = reverse_complement_byte(loOrig[halfbytes - 1 - i]);
         }
 
         if(unusedBits != 0){
