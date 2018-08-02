@@ -390,7 +390,7 @@ private:
 			init_SHDhandle(handle,
 							threadOpts.deviceId,
 							fileProperties.maxSequenceLength,
-							SDIV(fileProperties.maxSequenceLength, 4),
+							Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
 							threadOpts.gpuThresholdSHD);
 
             handle.buffers.resize(correctionOptions.batchsize,
