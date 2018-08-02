@@ -29,6 +29,18 @@ bool encoded_to_reverse_complement_encoded(const uint8_t* encoded, int encodedle
 
 std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode_2bit(const std::string& sequence);
 std::string decode_2bit(const std::unique_ptr<std::uint8_t[]>& encoded, std::size_t bases);
+std::string decode_2bit(const std::uint8_t* encoded, std::size_t bases);
+std::pair<std::unique_ptr<std::uint8_t[]>, int> reverse_complement_2bit(const uint8_t* encoded, int bases);
+
+
+std::pair<std::unique_ptr<std::uint8_t[]>, int> encode_2bit_hilo(const char* sequence, int nbases);
+std::pair<std::unique_ptr<std::uint8_t[]>, int> encode_2bit_hilo(const std::string& sequence);
+std::string decode_2bit_hilo(const std::uint8_t* encoded, int bases);
+std::string decode_2bit_hilo(const std::unique_ptr<std::uint8_t[]>& encoded, int bases);
+void reverse_complement_2bit_hilo(const uint8_t* encoded, int bases, uint8_t* rcencoded);
+std::pair<std::unique_ptr<std::uint8_t[]>, int> reverse_complement_2bit_hilo(const uint8_t* encoded, int bases);
+
+
 
 }
 
