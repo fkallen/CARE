@@ -522,7 +522,7 @@ struct Sequence2BitHiLoImpl{
     		return ~b;
     	};
 
-        for(std::size_t i = 0; i < halfbytes; ++i){
+        for(int i = 0; i < halfbytes; ++i){
             hiRevC[i] = reverse_complement_byte(hiOrig[halfbytes - 1 - i]);
             loRevC[i] = reverse_complement_byte(loOrig[halfbytes - 1 - i]);
         }
