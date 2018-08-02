@@ -405,13 +405,14 @@ struct Sequence2BitImpl{
     static char get(const char* data, int nBases, int i) noexcept{
         const int byte = i / 4;
         const int basepos = i % 4;
-        switch((data[byte] >> (3-basepos) * 2) & 0x03){
+        /*switch((data[byte] >> (3-basepos) * 2) & 0x03){
             case 0x00: return 'A';
             case 0x01: return 'C';
             case 0x02: return 'G';
             case 0x03: return 'T';
             default:return '_'; //cannot happen
-        }
+        }*/
+        return (char)((((const unsigned char*)data)[byte] >> (3-basepos) * 2) & 0x03);
     }
 
     static std::string toString(const std::uint8_t* data, int nBases){
@@ -475,13 +476,15 @@ struct Sequence2BitHiLoImpl{
         const unsigned char lobit = (lo[byteIndex] >> (7-pos)) & std::uint8_t(1);
         const unsigned char base = (hibit << 1) | lobit;
 
-        switch(base){
+        /*switch(base){
             case 0x00: return 'A';
             case 0x01: return 'C';
             case 0x02: return 'G';
             case 0x03: return 'T';
             default:return '_'; //cannot happen
-        }
+        }*/
+
+        return (char)base;
     }
 
     static std::string toString(const std::uint8_t* data, int nBases){
