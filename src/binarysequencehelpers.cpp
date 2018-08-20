@@ -210,7 +210,7 @@ std::pair<std::unique_ptr<std::uint8_t[]>, int> reverse_complement_2bit(const ui
 
 
 std::pair<std::unique_ptr<std::uint8_t[]>, int> encode_2bit_hilo(const char* sequence, std::size_t nbases){
-	const int bytes = int(2 * SDIV(nbases, sizeof(std::uint8_t) * 8));
+	const int bytes = int(2 * SDIV(nbases, sizeof(int) * 8) * sizeof(int));
 
 	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
 
@@ -255,7 +255,7 @@ std::string decode_2bit_hilo(const std::uint8_t* encoded, int bases){
     std::string sequence;
     sequence.reserve(bases);
 
-    const int bytes = int(2 * SDIV(bases, sizeof(std::uint8_t) * 8));
+    const int bytes = int(2 * SDIV(bases, sizeof(int) * 8) * sizeof(int));
 
     const std::uint8_t* hi = encoded;
     const std::uint8_t* lo = hi + bytes/2;
@@ -281,7 +281,7 @@ std::string decode_2bit_hilo(const std::uint8_t* encoded, int bases){
 
 void reverse_complement_2bit_hilo(const uint8_t* encoded, int bases, uint8_t* rcencoded){
 
-    const int bytes = int(2 * SDIV(bases, sizeof(std::uint8_t) * 8));
+    const int bytes = int(2 * SDIV(bases, sizeof(int) * 8) * sizeof(int));
     const int halfbytes = bytes / 2;
     const int unusedBits = bases % 8;
 
@@ -322,7 +322,7 @@ std::string decode_2bit_hilo(const std::unique_ptr<std::uint8_t[]>& encoded, int
 }
 
 std::pair<std::unique_ptr<std::uint8_t[]>, int> reverse_complement_2bit_hilo(const uint8_t* encoded, int bases){
-    const int bytes = int(2 * SDIV(bases, sizeof(std::uint8_t) * 8));
+    const int bytes = int(2 * SDIV(bases, sizeof(int) * 8) * sizeof(int));
 
     std::unique_ptr<std::uint8_t[]> reverseComplement = std::make_unique<std::uint8_t[]>(bytes);
 

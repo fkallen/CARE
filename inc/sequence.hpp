@@ -454,13 +454,56 @@ struct Sequence2BitImpl{
 };
 
 struct Sequence2BitHiLoImpl{
+    using PaddingType = unsigned int;
+    //using PaddingType = unsigned char;
+
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode(const std::string& sequence){
-        return encode_2bit_hilo(sequence);
+        //return encode_2bit_hilo(sequence);
+        const int nbases = sequence.size();
+        const int bytes = getNumBytes(nbases);
+
+    	std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
+
+    	std::memset(encoded.get(), 0, bytes);
+
+        std::uint8_t* hi = encoded.get();
+        std::uint8_t* lo = hi + bytes/2;
+
+    	for(int i = 0; i < nbases; i++){
+    		const int byteIndex = i / 8;
+    		const int pos = i % 8;
+            std::uint8_t mask = std::uint8_t(1) << (7-pos);
+
+            switch(sequence[i]) {
+            case 'A':
+                    hi[byteIndex] &= ~mask;
+                    lo[byteIndex] &= ~mask;
+                    break;
+            case 'C':
+                    hi[byteIndex] &= ~mask;
+                    lo[byteIndex] |= mask;
+                    break;
+            case 'G':
+                    hi[byteIndex] |= mask;
+                    lo[byteIndex] &= ~mask;
+                    break;
+            case 'T':
+                    hi[byteIndex] |= mask;
+                    lo[byteIndex] |= mask;
+                    break;
+            default:
+                    hi[byteIndex] &= ~mask;
+                    lo[byteIndex] &= ~mask;
+                    break;
+            }
+    	}
+
+    	return {std::move(encoded), bytes};
     }
 
     HOSTDEVICEQUALIFIER
     static int getNumBytes(int nBases) noexcept{
-        return int(2 * SDIV(nBases, sizeof(std::uint8_t) * 8));
+        return int(2 * SDIV(nBases, sizeof(PaddingType) * 8) * sizeof(PaddingType));
     }
 
     HOSTDEVICEQUALIFIER
@@ -488,7 +531,39 @@ struct Sequence2BitHiLoImpl{
     }
 
     static std::string toString(const std::uint8_t* data, int nBases){
-        return decode_2bit_hilo(data, nBases);
+        //return decode_2bit_hilo(data, nBases);
+
+        constexpr std::uint8_t BASE_A = 0x00;
+        constexpr std::uint8_t BASE_C = 0x01;
+        constexpr std::uint8_t BASE_G = 0x02;
+        constexpr std::uint8_t BASE_T = 0x03;
+
+        std::string sequence;
+        sequence.reserve(nBases);
+
+        const int bytes = getNumBytes(nBases);
+
+        const std::uint8_t* hi = data;
+        const std::uint8_t* lo = hi + bytes/2;
+
+        for(int i = 0; i < nBases; i++){
+            const int byteIndex = i / 8;
+            const int pos = i % 8;
+
+            const std::uint8_t hibit = (hi[byteIndex] >> (7-pos)) & std::uint8_t(1);
+            const std::uint8_t lobit = (lo[byteIndex] >> (7-pos)) & std::uint8_t(1);
+            const std::uint8_t base = (hibit << 1) | lobit;
+
+            switch(base){
+            case BASE_A: sequence.push_back('A'); break;
+            case BASE_C: sequence.push_back('C'); break;
+            case BASE_G: sequence.push_back('G'); break;
+            case BASE_T: sequence.push_back('T'); break;
+            default: sequence.push_back('_'); break; // cannot happen
+            }
+        }
+
+        return sequence;
     }
 
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> reverseComplement(const std::uint8_t* data, int nBases){
@@ -508,35 +583,39 @@ struct Sequence2BitHiLoImpl{
 
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement(std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
-        const int bytes = getNumBytes(sequencelength);
-        const int halfbytes = bytes / 2;
-        const int unusedBits = sequencelength % 8;
-
-        const std::uint8_t* hiOrig = sequence;
-        const std::uint8_t* loOrig = hiOrig + halfbytes;
-
-        std::uint8_t* hiRevC = reverseComplement;
-        std::uint8_t* loRevC = hiRevC + halfbytes;
 
         auto reverse_complement_byte = [](auto b) {
-    		b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-    		b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-    		b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-    		return ~b;
-    	};
+            b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+            b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+            b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+            return ~b;
+        };
 
-        for(int i = 0; i < halfbytes; ++i){
-            hiRevC[i] = reverse_complement_byte(hiOrig[halfbytes - 1 - i]);
-            loRevC[i] = reverse_complement_byte(loOrig[halfbytes - 1 - i]);
+        const int bytes = getNumBytes(sequencelength);
+        const int halfbytes = bytes / 2;
+        //const int unusedBitsByte = halfbytes*8 - sequencelength;
+        const int unusedBitsByte = SDIV(sequencelength, 8) * 8 - sequencelength;
+
+        const std::uint8_t* const hiOrigBytes = sequence;
+        const std::uint8_t* const loOrigBytes = sequence + halfbytes;
+        std::uint8_t* const hiRevCBytes = reverseComplement;
+        std::uint8_t* const loRevCBytes = reverseComplement + halfbytes;
+
+        const int halfBytesBytes = SDIV(sequencelength, 8);
+        for(int i = 0; i < halfBytesBytes; ++i){
+            hiRevCBytes[i] = reverse_complement_byte(hiOrigBytes[halfBytesBytes - 1 - i]);
+            loRevCBytes[i] = reverse_complement_byte(loOrigBytes[halfBytesBytes - 1 - i]);
+            //printf("%d %u %u\n", i, hiRevCBytes[i], loRevCBytes[i]);
         }
 
-        if(unusedBits != 0){
+        if(unusedBitsByte != 0){
             for(int i = 0; i < halfbytes - 1; ++i){
-                hiRevC[i] = (hiRevC[i] << unusedBits) | (hiRevC[i+1] >> (8 - unusedBits));
-                loRevC[i] = (loRevC[i] << unusedBits) | (loRevC[i+1] >> (8 - unusedBits));
+                hiRevCBytes[i] = (hiRevCBytes[i] << unusedBitsByte) | (hiRevCBytes[i+1] >> (8 - unusedBitsByte));
+                loRevCBytes[i] = (loRevCBytes[i] << unusedBitsByte) | (loRevCBytes[i+1] >> (8 - unusedBitsByte));
             }
-            hiRevC[halfbytes-1] <<= unusedBits;
-            loRevC[halfbytes-1] <<= unusedBits;
+
+            hiRevCBytes[halfbytes - 1] <<= unusedBitsByte;
+            loRevCBytes[halfbytes - 1] <<= unusedBitsByte;
         }
     };
 };
@@ -620,7 +699,22 @@ struct SequenceBase {
 	}
 
 	char operator[](int i) const noexcept{
-        return Impl::get((const char*)data.first.get(), nBases, i);
+        if(!Impl::isCompressed())
+            return Impl::get((const char*)data.first.get(), nBases, i);
+        else{
+            constexpr std::uint8_t BASE_A = 0x00;
+            constexpr std::uint8_t BASE_C = 0x01;
+            constexpr std::uint8_t BASE_G = 0x02;
+            constexpr std::uint8_t BASE_T = 0x03;
+
+            switch(Impl::get((const char*)data.first.get(), nBases, i)){
+            case BASE_A: return 'A';
+            case BASE_C: return 'C';
+            case BASE_G: return 'G';
+            case BASE_T: return 'T';
+            default: return '_';
+            }
+        }
     }
 
 	std::string toString() const{

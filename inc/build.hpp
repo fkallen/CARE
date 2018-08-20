@@ -68,6 +68,32 @@ namespace care{
 						}
 					}
 
+#if 0
+                    SequenceString s1(read.sequence);
+                    Sequence2Bit s2(read.sequence);
+                    Sequence2BitHiLo s3(read.sequence);
+
+                    assert(s1.toString() == read.sequence);
+                    assert(s2.toString() == read.sequence);
+                    assert(s3.toString() == read.sequence);
+
+                    SequenceString rs1 = s1.reverseComplement();
+                    Sequence2Bit rs2 = s2.reverseComplement();
+                    Sequence2BitHiLo rs3 = s3.reverseComplement();
+
+                    assert(rs1.toString() == rs2.toString());
+                    assert(rs1.toString() == rs3.toString());
+
+                    for(int i = 0; i < int(read.sequence.size()); i++){
+                        assert(s1[i] == s2[i]);
+                        assert(s1[i] == s3[i]);
+
+                        assert(rs1[i] == rs2[i]);
+                        assert(rs1[i] == rs3[i]);
+                    }
+#endif
+
+
 					minhasher->insertSequence(read.sequence, readnum);
 					readStorage->insertRead(readnum, read.sequence, read.quality);
 

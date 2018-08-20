@@ -108,8 +108,8 @@ void correctFile(const MinhashOptions& minhashOptions,
     using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
 
 	//using NoIndelSequence_t = SequenceString;
-    using NoIndelSequence_t = Sequence2Bit;
-    //using NoIndelSequence_t = Sequence2BitHiLo;
+    //using NoIndelSequence_t = Sequence2Bit;
+    using NoIndelSequence_t = Sequence2Bit;//HiLo;
 	using IndelSequence_t = Sequence2Bit;
 
     using Minhasher_t = Minhasher<Key_t, ReadId_t>;

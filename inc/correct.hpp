@@ -696,7 +696,8 @@ private:
 										write_read(candidateId, correctedCandidate.sequence);
 									else {
 										//correctedCandidate.sequence is reverse complement, make reverse complement again
-										const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
+										//const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
+                                        const std::string fwd = SequenceString(correctedCandidate.sequence).reverseComplement().toString();
 										write_read(candidateId, fwd);
 									}
 								}

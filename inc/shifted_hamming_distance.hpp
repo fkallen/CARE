@@ -833,7 +833,7 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
                       int maxSubjectLength,
                       int maxQueryLength,
                       Accessor accessor,
-                      RevCompl make_reverse_complement) noexcept{
+                      RevCompl make_reverse_complement){
 
       const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
       const int maxShiftsToCheck = maxSubjectLength+1 + maxQueryLength - 2*minoverlap;
