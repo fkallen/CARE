@@ -1,39 +1,53 @@
 #include "../inc/featureextractor.hpp"
+#include "../inc/multiple_sequence_alignment.hpp"
 
 #include <iomanip>
 #include <limits>
 #include <algorithm>
+#include <numeric>
 
 namespace care{
 
-    std::ostream& operator<<(std::ostream& os, const Feature& f){
+    std::ostream& operator<<(std::ostream& os, const MSAFeature& f){
         auto maybezero = [](double d){
             return d < 1e-10 ? 0.0 : d;
         };
-        //os << std::setprecision(5) << maybezero(f.A_weight_normalized) << '\t';
-        //os << std::setprecision(5) << maybezero(f.C_weight_normalized) << '\t';
-        //os << std::setprecision(5) << maybezero(f.G_weight_normalized) << '\t';
-        //os << std::setprecision(5) << maybezero(f.T_weight_normalized) << '\t';
-        os << std::setprecision(3) << maybezero(f.support) << '\t';
-        os << std::setprecision(3) << maybezero(f.col_support) << '\t';
-        os << f.original_base_coverage << '\t';
-        os << f.col_coverage << '\t';
+
+        os << std::setprecision(3) << maybezero(f.position_support) << '\t';
+        os << f.position_coverage << '\t';
         os << f.alignment_coverage << '\t';
         os << f.dataset_coverage << '\t';
-        os << f.position_in_read << '\t';
-        //os << f.k << '\t';
-        //os << f.original_base;
+
+        os << std::setprecision(3) << maybezero(f.min_support) << '\t';
+        os << std::setprecision(3) << maybezero(f.min_coverage) << '\t';
+        os << std::setprecision(3) << maybezero(f.max_support) << '\t';
+        os << std::setprecision(3) << maybezero(f.max_coverage) << '\t';
+        os << std::setprecision(3) << maybezero(f.mean_support) << '\t';
+        os << std::setprecision(3) << maybezero(f.mean_coverage) << '\t';
+        os << std::setprecision(3) << maybezero(f.median_support) << '\t';
+        os << std::setprecision(3) << maybezero(f.median_coverage) << '\t';
 
         return os;
     }
+
+
 
     std::vector<MSAFeature> extractFeatures(const pileup::PileupImage& pileup, const std::string& sequence,
                                     int k, double support_threshold,
                                     int dataset_coverage){
         auto isValidIndex = [&](int i){
-            //return pileup.columnProperties.subjectColumnsBegin_incl <= i
-            //    && i < pileup.columnProperties.subjectColumnsEnd_excl;
             return 0 <= i && i < pileup.columnProperties.columnsToCheck;
+        };
+
+        auto median = [](auto begin, auto end){
+            std::size_t n = std::distance(begin, end);
+            std::sort(begin, end);
+
+    		if(n % 2 == 0){
+    			return (*(begin + n / 2 - 1) + *(begin + n / 2) / 2);
+    		}else{
+    			return *(begin + n / 2 - 1);
+    		}
         };
 
         std::vector<MSAFeature> result;
@@ -47,32 +61,39 @@ namespace care{
             const int localindex = i - pileup.columnProperties.subjectColumnsBegin_incl;
 
             if(pileup.h_support[i] >= support_threshold && pileup.h_consensus[i] != sequence[localindex]){
-            //if(pileup.h_consensus[i] != sequence[localindex]){
+
+                int begin = i-k/2;
+                int end = i+k/2;
+
+                for(int j = 0; j < k; j++){
+                    if(!isValidIndex(begin))
+                        begin++;
+                    if(!isValidIndex(end))
+                        end--;
+                }
+                end++;
+
                 MSAFeature f;
                 f.position = localindex;
-                f.features.reserve(k+1);
+                f.position_support = pileup.h_support[i]; // support of the center of k-region (at read position "position")
+                f.position_coverage = pileup.h_origCoverage[i]; // coverage of the center of k-region (at read position "position")
+                f.alignment_coverage = alignment_coverage; // number of sequences in MSA. equivalent to the max possible value of coverage.
+                f.dataset_coverage = dataset_coverage;
 
-                for(int j = -k/2; j <= k/2; j++){
-                    const int featIndex = i+j;
-                    if(isValidIndex(featIndex)){
+                f.min_support = *std::min_element(pileup.h_support.begin() + begin, pileup.h_support.begin() + end);
+                f.min_coverage = *std::min_element(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end);
+                f.max_support = *std::max_element(pileup.h_support.begin() + begin, pileup.h_support.begin() + end);
+                f.max_coverage = *std::max_element(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end);
+                f.mean_support = std::accumulate(pileup.h_support.begin() + begin, pileup.h_support.begin() + end, 0.0) / (end - begin);
+                f.mean_coverage = std::accumulate(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end, 0.0) / (end - begin);
 
-                        double weightsum = pileup.h_Aweights[featIndex] + pileup.h_Cweights[featIndex]
-                                         + pileup.h_Gweights[featIndex] + pileup.h_Tweights[featIndex];
-                        f.features.push_back({  pileup.h_Aweights[featIndex] / weightsum,
-                                            pileup.h_Cweights[featIndex] / weightsum,
-                                            pileup.h_Gweights[featIndex] / weightsum,
-                                            pileup.h_Tweights[featIndex] / weightsum,
-                                            pileup.h_support[i],
-                                            pileup.h_support[featIndex],
-                                            pileup.h_origCoverage[i],
-                                            pileup.h_coverage[featIndex],
-                                            alignment_coverage,
-                                            dataset_coverage,
-                                            localindex,
-                                            k,
-                                            sequence[localindex]});
-                    }
-                }
+                std::array<double, 33> arr;
+
+                std::copy(pileup.h_support.begin() + begin, pileup.h_support.begin() + end, arr.begin());
+                f.median_support = median(arr.begin(), arr.begin() + (end-begin));
+
+                std::copy(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end, arr.begin());
+                f.median_coverage = median(arr.begin(), arr.begin() + (end-begin));
 
                 result.emplace_back(f);
             }

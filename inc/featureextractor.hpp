@@ -1,37 +1,35 @@
 #ifndef CARE_FEATURE_EXTRACTOR
 #define CARE_FEATURE_EXTRACTOR
 
-#include "multiple_sequence_alignment.hpp"
-
 #include <vector>
 #include <iostream>
 
 namespace care{
 
-    struct Feature{
-        double A_weight_normalized = 0.0f;
-        double C_weight_normalized= 0.0f;
-        double G_weight_normalized= 0.0f;
-        double T_weight_normalized= 0.0f;
-        double support = 0.0f; // support of the center of k-region
-        double col_support = 0.0f; // support of the column of this feature
-        int original_base_coverage = 0; // original_base_coverage of the center of k-region
-        int col_coverage = 0; //coverage of the oclumn of this feature
-        int alignment_coverage = 0; // number of sequences in MSA. equivalent to the max possible value of coverage.
-        int dataset_coverage = 0;
-        int position_in_read = 0; // the position in the center of k-region
-        int k = 0;
-        char original_base = 'N';
-
-        friend std::ostream& operator<<(std::ostream& os, const Feature& f);
-    };
+    //forward declaration
+    namespace pileup{
+        struct PileupImage;
+    }
 
     struct MSAFeature{
-        std::vector<Feature> features;
-        int position;
+        int position = -1;
+
+        double position_support = 0.0; // support of the center of k-region (at read position "position")
+        int position_coverage = 0; // coverage of the base in read at center of k-region (at read position "position")
+        int alignment_coverage = 0; // number of sequences in MSA. equivalent to the max possible value of coverage.
+        int dataset_coverage = 0; // estimated coverage of dataset
+
+        double min_support = 0.0;
+        double min_coverage = 0.0;
+        double max_support = 0.0;
+        double max_coverage = 0.0;
+        double mean_support = 0.0;
+        double mean_coverage = 0.0;
+        double median_support = 0.0;
+        double median_coverage = 0.0;
     };
 
-    void writeFeatures(std::ostream& os, const std::vector<MSAFeature>& vec);
+    std::ostream& operator<<(std::ostream& os, const MSAFeature& f);
 
     std::vector<MSAFeature> extractFeatures(const pileup::PileupImage& pileup, const std::string& sequence,
                                     int k, double support_threshold,
