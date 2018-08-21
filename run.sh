@@ -54,7 +54,7 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=true
+candidateCorrection=--candidateCorrection=false
 
 #if indels should be corrected, too
 indels=--indels=false

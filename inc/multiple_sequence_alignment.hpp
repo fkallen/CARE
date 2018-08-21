@@ -2,6 +2,7 @@
 #define CARE_MSA_HPP
 
 #include "qualityscoreweights.hpp"
+#include "featureextractor.hpp"
 
 #include <vector>
 #include <string>
@@ -34,7 +35,7 @@ namespace care{
 
 struct PileupImage{
 
-    struct Feature{
+    /*struct Feature{
         double min_support;
         double min_coverage;
         double max_support;
@@ -44,7 +45,9 @@ struct PileupImage{
         double median_support;
         double median_coverage;
         int position;
-    };
+        int original_base_coverage;
+        int original_base_support;
+    };*/
 
     struct CorrectedCandidate{
         std::uint64_t index;
@@ -63,7 +66,8 @@ struct PileupImage{
 
     struct PileupCorrectionSettings{
         double m;
-        double k;
+        int k;
+        int dataset_coverage;
     };
 
     struct PileupColumnProperties{
@@ -96,7 +100,8 @@ struct PileupImage{
     PileupCorrectionSettings correctionSettings;
 
     PileupImage(double m_coverage,
-                int kmerlength);
+                int kmerlength,
+                int dataset_coverage);
 
     PileupImage(const PileupImage& other);
 
@@ -129,7 +134,7 @@ struct PileupImage{
                 double median_support,
                 double median_coverage) const;
 
-    std::vector<Feature> getFeaturesOfNonConsensusPositions(
+    std::vector<MSAFeature> getFeaturesOfNonConsensusPositions(
                                     const std::string& sequence,
                                     int k,
                                     double support_threshold) const;
@@ -413,7 +418,7 @@ struct PileupImage{
         const double min_support_threshold = 1.0-3.0*estimatedErrorrate;
         const double min_coverage_threshold = correctionSettings.m / 6.0 * estimatedCoverage;
 
-#if 1
+#if 0
         CorrectionResult result = cpu_correct_sequence_internal(sequence_to_correct,
                                                         estimatedErrorrate,
                                                         avg_support_threshold,

@@ -399,7 +399,9 @@ private:
                 1.0);
 		}
 
-		pileup::PileupImage pileupImage(correctionOptions.m_coverage, correctionOptions.kmerlength);
+		pileup::PileupImage pileupImage(correctionOptions.m_coverage,
+                                        correctionOptions.kmerlength,
+                                        correctionOptions.estimatedCoverage);
 
 		std::array<std::vector<BatchElem_t>, nStreams> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
@@ -653,10 +655,8 @@ private:
 
 							if(MSAFeatures.size() > 0){
 								for(const auto& msafeature : MSAFeatures){
-									featurestream << b.readId << '\t' << msafeature.position << '\t' << msafeature.features.size() << '\n';
-									for(const auto& feature : msafeature.features){
-										featurestream << feature << '\n';
-									}
+									featurestream << b.readId << '\t' << msafeature.position << '\n';
+									featurestream << msafeature << '\n';
 								}
 
 							}

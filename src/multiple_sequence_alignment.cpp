@@ -2,6 +2,7 @@
 
 #include "../inc/celeganssrx218989.hpp"
 #include "../inc/ecolisrr490124.hpp"
+#include "../inc/dmelanogastersrr82337.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -12,10 +13,12 @@ namespace care{
 namespace pileup{
 
     PileupImage::PileupImage(double m_coverage,
-                int kmerlength){
+                int kmerlength,
+                int dataset_coverage){
 
         correctionSettings.m = m_coverage;
         correctionSettings.k = kmerlength;
+        correctionSettings.dataset_coverage = dataset_coverage;
     }
 
     PileupImage::PileupImage(const PileupImage& other){
@@ -344,79 +347,15 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal(const s
 }
 
 
-std::vector<PileupImage::Feature> PileupImage::getFeaturesOfNonConsensusPositions(
+std::vector<MSAFeature> PileupImage::getFeaturesOfNonConsensusPositions(
                                 const std::string& sequence,
                                 int k,
                                 double support_threshold) const{
 
     assert(k <= 30);
-
-    auto isValidIndex = [&](int i){
-        //return pileup.columnProperties.subjectColumnsBegin_incl <= i
-        //    && i < pileup.columnProperties.subjectColumnsEnd_excl;
-        return 0 <= i && i < columnProperties.columnsToCheck;
-    };
-
-    auto median = [](auto begin, auto end){
-        std::size_t n = std::distance(begin, end);
-        std::sort(begin, end);
-
-		if(n % 2 == 0){
-			return (*(begin + n / 2 - 1) + *(begin + n / 2) / 2);
-		}else{
-			return *(begin + n / 2 - 1);
-		}
-    };
-
-    const int alignment_coverage = *std::max_element(h_coverage.begin(), h_coverage.end());
-
-    std::vector<Feature> result;
-
-    for(int i = columnProperties.subjectColumnsBegin_incl;
-        i < columnProperties.subjectColumnsEnd_excl;
-        i++){
-
-        const int localindex = i - columnProperties.subjectColumnsBegin_incl;
-
-        if(h_support[i] >= support_threshold && h_consensus[i] != sequence[localindex]){
-            Feature f;
-            f.position = localindex;
-
-            int begin = i-k/2;
-            int end = i+k/2;
-
-            for(int j = 0; j < k; j++){
-                if(!isValidIndex(begin))
-                    begin++;
-                if(!isValidIndex(end))
-                    end--;
-            }
-            end++;
-
-            f.min_support = *std::min_element(h_support.begin() + begin, h_support.begin() + end);
-            f.min_coverage = *std::min_element(h_coverage.begin() + begin, h_coverage.begin() + end);
-            f.max_support = *std::max_element(h_support.begin() + begin, h_support.begin() + end);
-            f.max_coverage = *std::max_element(h_coverage.begin() + begin, h_coverage.begin() + end);
-            f.mean_support = std::accumulate(h_support.begin() + begin, h_support.begin() + end, 0.0) / (end - begin);
-            f.mean_coverage = std::accumulate(h_coverage.begin() + begin, h_coverage.begin() + end, 0.0) / (end - begin);
-
-            std::array<double, 32> arr;
-
-            std::copy(h_support.begin() + begin, h_support.begin() + end, arr.begin());
-            f.median_support = median(arr.begin(), arr.begin() + (end-begin));
-
-            std::copy(h_coverage.begin() + begin, h_coverage.begin() + end, arr.begin());
-            f.median_coverage = median(arr.begin(), arr.begin() + (end-begin));
-
-            //normalize to number of reads in msa
-            f.min_coverage /= alignment_coverage;
-            f.max_coverage /= alignment_coverage;
-            f.mean_coverage /= alignment_coverage;
-            f.median_coverage /= alignment_coverage;
-
-            result.emplace_back(f);
-        }
-    }
+    auto result = extractFeatures(*this, sequence,
+                                    k, support_threshold,
+                                    correctionSettings.dataset_coverage);
 
     return result;
 }
@@ -441,24 +380,14 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                                         0.0);
 
     for(const auto& feature : features){
-        /*if(shouldCorrect(feature.min_support,
-                    feature.min_coverage,
-                    feature.max_support,
-                    feature.max_coverage,
-                    feature.mean_support,
-                    feature.mean_coverage,
-                    feature.median_support,
-                    feature.median_coverage)){*/
-        /*if(!(feature.min_coverage <= 46.5 || (feature.min_coverage > 46.5 && feature.min_support <= 0.915 && feature.max_support <= 0.854))){
-
-            const int globalIndex = columnProperties.subjectColumnsBegin_incl + feature.position;
-            result.correctedSequence[feature.position] = h_consensus[globalIndex];
-        }*/
 
         constexpr double maxgini = 0.05;
 
-        namespace speciestype = ecoli_srr490124;
-        //namespace speciestype = celegans_srx218989;
+        //namespace speciestype = ecoli_srr490124;
+        namespace speciestype = celegans_srx218989;
+        //namespace speciestype = dmelanogaster_srr82337;
+#if 1
+
 #if 0
         const bool doCorrect = speciestype::shouldCorrect(feature.min_support,
                                             feature.min_coverage,
@@ -469,6 +398,24 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                             feature.median_support,
                                             feature.median_coverage,
                                             maxgini);
+#else
+
+
+        const bool doCorrect = speciestype::shouldCorrect(feature.position_support,
+                                            feature.position_coverage,
+                                            feature.alignment_coverage,
+                                            feature.dataset_coverage,
+                                            feature.min_support,
+                                            feature.min_coverage,
+                                            feature.max_support,
+                                            feature.max_coverage,
+                                            feature.mean_support,
+                                            feature.mean_coverage,
+                                            feature.median_support,
+                                            feature.median_coverage,
+                                            maxgini);
+#endif
+
 #else
         std::pair<int, int> p = speciestype::shouldCorrect_forest(feature.min_support,
                                             feature.min_coverage,
