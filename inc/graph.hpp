@@ -151,7 +151,7 @@ namespace errorgraph{
             CountIter: Iterator to int
             QualityIter: Iter to pointer to std::string
         */
-        template<class AlignmentIter, class SequenceIter, class CountIter, class QualityIter>
+        template<class AlignmentIter, class SequenceIter, /*class CountIter, */class QualityIter>
         void add_candidates(const std::string& sequence_to_correct,
                     const std::string* quality_of_sequence_to_correct,
                     AlignmentIter alignmentsBegin,
@@ -159,14 +159,14 @@ namespace errorgraph{
                     double desiredAlignmentMaxErrorRate,
                     SequenceIter candidateSequencesBegin,
                     SequenceIter candidateSequencesEnd,
-                    CountIter candidateCountsBegin,
-                    CountIter candidateCountsEnd,
+                    //CountIter candidateCountsBegin,
+                    //CountIter candidateCountsEnd,
                     QualityIter candidateQualitiesBegin,
                     QualityIter candidateQualitiesEnd) noexcept{
 
             // loop over alignments and insert them to the graph
 		auto alignmentiter = alignmentsBegin;
-		auto countiter = candidateCountsBegin;
+		//auto countiter = candidateCountsBegin;
 		auto candidateQualityiter = candidateQualitiesBegin;
 #if 0
             for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, candidateCountsBegin, candidateQualitiesBegin);
@@ -178,7 +178,7 @@ namespace errorgraph{
                 auto& countiter = std::get<2>(t);
                 auto& candidateQualityiter = std::get<3>(t);
 #endif
-	    for(; alignmentiter != alignmentsEnd; alignmentiter++, countiter++){
+	    for(; alignmentiter != alignmentsEnd; alignmentiter++/*, countiter++*/){
 
                 assert(*alignmentiter != nullptr);
                 errorgraphdetail::split_subs((*alignmentiter)->operations, sequence_to_correct);
@@ -195,7 +195,7 @@ namespace errorgraph{
                                                 (*alignmentiter)->get_subject_begin_incl()
                                                 : unknown_vertex_index;
 
-                const int count = *countiter; //number identical sequences with different quality scores
+                const int count = 1; //*countiter; //number identical sequences with different quality scores
 
                 for(int i = 0; i < count; i++, candidateQualityiter++){
                     const std::string* const qualitypointer = *candidateQualityiter;
@@ -429,7 +429,7 @@ namespace errorgraph{
         }
 
 
-        template<class AlignmentIter, class SequenceIter, class CountIter, class QualityIter>
+        template<class AlignmentIter, class SequenceIter, /*class CountIter, */class QualityIter>
         CorrectionResult correct(const std::string& sequence_to_correct,
                     const std::string* quality_of_sequence_to_correct,
                     AlignmentIter alignmentsBegin,
@@ -437,8 +437,8 @@ namespace errorgraph{
                     double desiredAlignmentMaxErrorRate,
                     SequenceIter candidateSequencesBegin,
                     SequenceIter candidateSequencesEnd,
-                    CountIter candidateCountsBegin,
-                    CountIter candidateCountsEnd,
+                    //CountIter candidateCountsBegin,
+                    //CountIter candidateCountsEnd,
                     QualityIter candidateQualitiesBegin,
                     QualityIter candidateQualitiesEnd,
                     double alpha,
@@ -453,8 +453,8 @@ namespace errorgraph{
                         desiredAlignmentMaxErrorRate,
                         candidateSequencesBegin,
                         candidateSequencesEnd,
-                        candidateCountsBegin,
-                        candidateCountsEnd,
+                        //candidateCountsBegin,
+                        //candidateCountsEnd,
                         candidateQualitiesBegin,
                         candidateQualitiesEnd);
 

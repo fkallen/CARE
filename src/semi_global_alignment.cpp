@@ -4,6 +4,7 @@
 
 namespace sga{
 
+HOSTDEVICEQUALIFIER
 bool AlignmentAttributes::operator==(const AlignmentAttributes& rhs) const{
     return score == rhs.score
         && subject_begin_incl == rhs.subject_begin_incl
@@ -14,62 +15,144 @@ bool AlignmentAttributes::operator==(const AlignmentAttributes& rhs) const{
         && isNormalized == rhs.isNormalized
         && isValid == rhs.isValid;
 }
+HOSTDEVICEQUALIFIER
 bool AlignmentAttributes::operator!=(const AlignmentAttributes& rhs) const{
     return !(*this == rhs);
 }
+HOSTDEVICEQUALIFIER
+int AlignmentAttributes::get_score() const{
+    return score;
+}
+HOSTDEVICEQUALIFIER
+int AlignmentAttributes::get_subject_begin_incl() const{
+    return subject_begin_incl;
+}
+HOSTDEVICEQUALIFIER
+int AlignmentAttributes::get_query_begin_incl() const{
+    return query_begin_incl;
+}
+HOSTDEVICEQUALIFIER
+int AlignmentAttributes::get_overlap() const{
+    return overlap;
+}
+HOSTDEVICEQUALIFIER
+int AlignmentAttributes::get_shift() const{
+    return shift;
+}
+HOSTDEVICEQUALIFIER
+int AlignmentAttributes::get_nOps() const{
+    return nOps;
+}
+HOSTDEVICEQUALIFIER
+bool AlignmentAttributes::get_isNormalized() const{
+    return isNormalized;
+}
+HOSTDEVICEQUALIFIER
+bool AlignmentAttributes::get_isValid() const{
+    return isValid;
+}
+HOSTDEVICEQUALIFIER
+int& AlignmentAttributes::get_score(){
+    return score;
+}
+HOSTDEVICEQUALIFIER
+int& AlignmentAttributes::get_subject_begin_incl(){
+    return subject_begin_incl;
+}
+HOSTDEVICEQUALIFIER
+int& AlignmentAttributes::get_query_begin_incl(){
+    return query_begin_incl;
+}
+HOSTDEVICEQUALIFIER
+int& AlignmentAttributes::get_overlap(){
+    return overlap;
+}
+HOSTDEVICEQUALIFIER
+int& AlignmentAttributes::get_shift(){
+    return shift;
+}
+HOSTDEVICEQUALIFIER
+int& AlignmentAttributes::get_nOps(){
+    return nOps;
+}
+HOSTDEVICEQUALIFIER
+bool& AlignmentAttributes::get_isNormalized(){
+    return isNormalized;
+}
+HOSTDEVICEQUALIFIER
+bool& AlignmentAttributes::get_isValid(){
+    return isValid;
+}
+
 bool AlignmentResult::operator==(const AlignmentResult& rhs) const{
     return attributes == rhs.attributes && operations == rhs.operations;
 }
 bool AlignmentResult::operator!=(const AlignmentResult& rhs) const{
     return !(*this == rhs);
 }
+HOSTDEVICEQUALIFIER
 int AlignmentResult::get_score() const{
-    return attributes.score;
+    return attributes.get_score();
 }
+HOSTDEVICEQUALIFIER
 int AlignmentResult::get_subject_begin_incl() const{
-    return attributes.subject_begin_incl;
+    return attributes.get_subject_begin_incl();
 }
+HOSTDEVICEQUALIFIER
 int AlignmentResult::get_query_begin_incl() const{
-    return attributes.query_begin_incl;
+    return attributes.get_query_begin_incl();
 }
+HOSTDEVICEQUALIFIER
 int AlignmentResult::get_overlap() const{
-    return attributes.overlap;
+    return attributes.get_overlap();
 }
+HOSTDEVICEQUALIFIER
 int AlignmentResult::get_shift() const{
-    return attributes.shift;
+    return attributes.get_shift();
 }
+HOSTDEVICEQUALIFIER
 int AlignmentResult::get_nOps() const{
-    return attributes.nOps;
+    return attributes.get_nOps();
 }
+HOSTDEVICEQUALIFIER
 bool AlignmentResult::get_isNormalized() const{
-    return attributes.isNormalized;
+    return attributes.get_isNormalized();
 }
+HOSTDEVICEQUALIFIER
 bool AlignmentResult::get_isValid() const{
-    return attributes.isValid;
+    return attributes.get_isValid();
 }
+HOSTDEVICEQUALIFIER
 int& AlignmentResult::get_score(){
-    return attributes.score;
+    return attributes.get_score();
 }
+HOSTDEVICEQUALIFIER
 int& AlignmentResult::get_subject_begin_incl(){
-    return attributes.subject_begin_incl;
+    return attributes.get_subject_begin_incl();
 }
+HOSTDEVICEQUALIFIER
 int& AlignmentResult::get_query_begin_incl(){
-    return attributes.query_begin_incl;
+    return attributes.get_query_begin_incl();
 }
+HOSTDEVICEQUALIFIER
 int& AlignmentResult::get_overlap(){
-    return attributes.overlap;
+    return attributes.get_overlap();
 }
+HOSTDEVICEQUALIFIER
 int& AlignmentResult::get_shift(){
-    return attributes.shift;
+    return attributes.get_shift();
 }
+HOSTDEVICEQUALIFIER
 int& AlignmentResult::get_nOps(){
-    return attributes.nOps;
+    return attributes.get_nOps();
 }
+HOSTDEVICEQUALIFIER
 bool& AlignmentResult::get_isNormalized(){
-    return attributes.isNormalized;
+    return attributes.get_isNormalized();
 }
+HOSTDEVICEQUALIFIER
 bool& AlignmentResult::get_isValid(){
-    return attributes.isValid;
+    return attributes.get_isValid();
 }
 
 void SGAdata::resize(int n_sub, int n_quer){
@@ -142,6 +225,70 @@ void SGAdata::resize(int n_sub, int n_quer){
 
 	n_subjects = n_sub;
 	n_queries = n_quer;
+
+    throw std::runtime_error("don't use me");
+}
+
+void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
+    #ifdef __NVCC__
+
+    cudaSetDevice(deviceId); CUERR;
+
+    n_subjects = n_sub;
+    n_queries = n_quer;
+    n_results = n_res;
+
+    const std::size_t memSubjects = n_sub * sequencepitch;
+    const std::size_t memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
+    const std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
+    const std::size_t memQueries = n_quer * sequencepitch;
+    const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
+    const std::size_t memResults = SDIV(sizeof(Attributes_t) * n_results, sequencepitch) * sequencepitch;
+    const std::size_t memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
+    const std::size_t memOps = SDIV(sizeof(Op_t) * n_results * max_ops_per_alignment, sequencepitch) * sequencepitch;
+
+    const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
+                                    + memQueries + memQueryLengths + memResults
+                                    + memBestAlignmentFlags + memOps;
+
+    if(requiredMem > allocatedMem){
+        cudaFree(deviceptr); CUERR;
+        cudaFreeHost(hostptr); CUERR;
+        cudaMalloc(&deviceptr, std::size_t(requiredMem * factor)); CUERR;
+        cudaMallocHost(&hostptr, std::size_t(requiredMem * factor)); CUERR;
+
+        allocatedMem = requiredMem * factor;
+    }
+
+    transfersizeH2D = memSubjects; // d_subjectsdata
+    transfersizeH2D += memSubjectLengths; // d_subjectlengths
+    transfersizeH2D += memNqueriesPrefixSum; // d_NqueriesPrefixSum
+    transfersizeH2D += memQueries; // d_queriesdata
+    transfersizeH2D += memQueryLengths; // d_querylengths
+
+    transfersizeD2H = memResults; //d_results
+    transfersizeD2H += memBestAlignmentFlags; // d_bestAlignmentFlags
+    transfersizeD2H += sizeof(Op_t) * n_results * max_ops_per_alignment; // d_ops
+
+    d_subjectsdata = (char*)deviceptr;
+    d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
+    d_NqueriesPrefixSum = (int*)(((char*)d_subjectlengths) + memSubjectLengths);
+    d_queriesdata = (char*)(((char*)d_NqueriesPrefixSum) + memNqueriesPrefixSum);
+    d_querylengths = (int*)(((char*)d_queriesdata) + memQueries);
+    d_results = (Attributes_t*)(((char*)d_querylengths) + memQueryLengths);
+    d_bestAlignmentFlags = (BestAlignment_t*)(((char*)d_results) + memResults);
+    d_ops = (Op_t*)(((char*)d_bestAlignmentFlags) + memBestAlignmentFlags);
+
+    h_subjectsdata = (char*)hostptr;
+    h_subjectlengths = (int*)(((char*)h_subjectsdata) + memSubjects);
+    h_NqueriesPrefixSum = (int*)(((char*)h_subjectlengths) + memSubjectLengths);
+    h_queriesdata = (char*)(((char*)h_NqueriesPrefixSum) + memNqueriesPrefixSum);
+    h_querylengths = (int*)(((char*)h_queriesdata) + memQueries);
+    h_results = (Attributes_t*)(((char*)h_querylengths) + memQueryLengths);
+    h_bestAlignmentFlags = (BestAlignment_t*)(((char*)h_results) + memResults);
+    h_ops = (Op_t*)(((char*)h_bestAlignmentFlags) + memBestAlignmentFlags);
+
+    #endif
 }
 
 
@@ -160,15 +307,22 @@ void cuda_init_SGAdata(SGAdata& data,
 #ifdef __NVCC__
     cudaSetDevice(deviceId); CUERR;
 
+    void* ptr;
+    std::size_t pitch;
+    cudaMallocPitch(&ptr, &pitch, max_sequence_bytes, 1); CUERR;
+    cudaFree(ptr); CUERR;
+    data.sequencepitch = pitch;
+
     for(int i = 0; i < SGAdata::n_streams; i++)
         cudaStreamCreate(&(data.streams[i])); CUERR;
 #endif
 }
 
 void cuda_cleanup_SGAdata(SGAdata& data){
+
 	#ifdef __NVCC__
 		cudaSetDevice(data.deviceId); CUERR;
-
+#if 0
 		cudaFree(data.d_results); CUERR;
 		cudaFree(data.d_ops); CUERR;
 		cudaFree(data.d_subjectsdata); CUERR;
@@ -184,7 +338,28 @@ void cuda_cleanup_SGAdata(SGAdata& data){
 		cudaFreeHost(data.h_subjectlengths); CUERR;
 		cudaFreeHost(data.h_querylengths); CUERR;
         cudaFreeHost(data.h_NqueriesPrefixSum); CUERR;
+#else
+        cudaFree(data.deviceptr); CUERR;
+        cudaFreeHost(data.hostptr); CUERR;
+        data.d_ops = nullptr;
+        data.h_ops = nullptr;
 
+        data.d_results = nullptr;
+        data.d_subjectsdata = nullptr;
+        data.d_queriesdata = nullptr;
+        data.d_subjectlengths = nullptr;
+        data.d_querylengths = nullptr;
+        data.d_NqueriesPrefixSum = nullptr;
+        data.d_bestAlignmentFlags = nullptr;
+
+        data.h_results = nullptr;
+        data.h_subjectsdata = nullptr;
+        data.h_queriesdata = nullptr;
+        data.h_subjectlengths = nullptr;
+        data.h_querylengths = nullptr;
+        data.h_NqueriesPrefixSum = nullptr;
+        data.h_bestAlignmentFlags = nullptr;
+#endif
 		for(int i = 0; i < SGAdata::n_streams; i++)
 			cudaStreamDestroy(data.streams[i]); CUERR;
 	#endif
