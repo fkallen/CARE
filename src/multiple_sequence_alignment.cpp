@@ -406,13 +406,13 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                             feature.alignment_coverage,
                                             feature.dataset_coverage,
                                             feature.min_support,
-                                            feature.min_coverage,
+                                            feature.min_coverage / feature.alignment_coverage,
                                             feature.max_support,
-                                            feature.max_coverage,
+                                            feature.max_coverage / feature.alignment_coverage,
                                             feature.mean_support,
-                                            feature.mean_coverage,
+                                            feature.mean_coverage / feature.alignment_coverage,
                                             feature.median_support,
-                                            feature.median_coverage,
+                                            feature.median_coverage / feature.alignment_coverage,
                                             maxgini);
 #endif
 
