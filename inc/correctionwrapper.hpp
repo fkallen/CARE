@@ -9,8 +9,21 @@ namespace care{
 
     //correct batchElem using Pileup
     using PileupCorrectionResult = pileup::PileupImage::CorrectionResult;
+    template<class BatchElem_t,
+        typename std::enable_if<!std::is_same<typename BatchElem_t::AlignmentResult_t, shd::Result_t>::value, int>::type = 0>
+    std::pair<PileupCorrectionResult, TaskTimings> correct(pileup::PileupImage& pileup,
+                                                            const BatchElem_t& b,
+                                                            double desiredAlignmentMaxErrorRate,
+                                                            double estimatedErrorrate,
+                                                            double estimatedCoverage,
+                                                            bool correctCandidates,
+                                                            int new_columns_to_correct) noexcept{
 
-    template<class BatchElem_t>
+        return {};
+    }
+
+    template<class BatchElem_t,
+        typename std::enable_if<std::is_same<typename BatchElem_t::AlignmentResult_t, shd::Result_t>::value, int*>::type = nullptr>
     std::pair<PileupCorrectionResult, TaskTimings> correct(pileup::PileupImage& pileup,
                                                             const BatchElem_t& b,
                                                             double desiredAlignmentMaxErrorRate,
@@ -67,7 +80,18 @@ namespace care{
     //correct batchElem using Error Graph
     using GraphCorrectionResult = errorgraph::ErrorGraph::CorrectionResult;
 
-    template<class BatchElem_t>
+    template<class BatchElem_t,
+        typename std::enable_if<!std::is_same<typename BatchElem_t::AlignmentResult_t, sga::Result_t>::value, int>::type = 0>
+    std::pair<GraphCorrectionResult, TaskTimings> correct(errorgraph::ErrorGraph& graph,
+                                                            const BatchElem_t& b,
+                                                            double desiredAlignmentMaxErrorRate,
+                                                            double alpha,
+                                                            double x) noexcept{
+        return {};
+    }
+
+    template<class BatchElem_t,
+        typename std::enable_if<std::is_same<typename BatchElem_t::AlignmentResult_t, sga::Result_t>::value, int*>::type = nullptr>
     std::pair<GraphCorrectionResult, TaskTimings> correct(errorgraph::ErrorGraph& graph,
                                                             const BatchElem_t& b,
                                                             double desiredAlignmentMaxErrorRate,
