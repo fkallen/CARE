@@ -109,7 +109,9 @@ void call_shd_kernel(const shd::SHDdata& shddata,
     SubjectIter,QueryIter: Iterator to const Sequence_t*
     AlignmentIter: Iterator to shd::Result_t
 */
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
 AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
                                 SubjectIter subjectsbegin,
                                 SubjectIter subjectsend,
@@ -123,7 +125,25 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
                                 double min_overlap_ratio,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
+                                SubjectIter subjectsbegin,
+                                SubjectIter subjectsend,
+                                QueryIter queriesbegin,
+                                QueryIter queriesend,
+                                AlignmentIter alignmentsbegin,
+                                AlignmentIter alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
 
     auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
@@ -308,13 +328,23 @@ must be called with the same mybuffers, alignmentsbegin, alignmentsend, canUseGp
 as the call to shifted_hamming_distance_async
 */
 
-template<class AlignmentIter>
+template<class AlignmentIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
 void shifted_hamming_distance_get_results(SHDhandle& handle,
                                 AlignmentIter alignmentsbegin,
                                 AlignmentIter alignmentsend,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignement type");
+}
+
+template<class AlignmentIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+void shifted_hamming_distance_get_results(SHDhandle& handle,
+                                AlignmentIter alignmentsbegin,
+                                AlignmentIter alignmentsend,
+                                bool canUseGpu){
+
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignement type");
 
     const int numberOfAlignments = std::distance(alignmentsbegin, alignmentsend);
 
@@ -358,7 +388,25 @@ void shifted_hamming_distance_get_results(SHDhandle& handle,
     return;
 }
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+AlignmentDevice shifted_hamming_distance(SHDhandle& handle,
+                                SubjectIter subjectsbegin,
+                                SubjectIter subjectsend,
+                                QueryIter queriesbegin,
+                                QueryIter queriesend,
+                                AlignmentIter alignmentsbegin,
+                                AlignmentIter alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
 AlignmentDevice shifted_hamming_distance(SHDhandle& handle,
                                 SubjectIter subjectsbegin,
                                 SubjectIter subjectsend,
@@ -441,7 +489,7 @@ void call_shd_with_revcompl_kernel(const shd::SHDdata& shddata,
 
 /*
 
-	########## SHIFTED HAMMING DISTANCE WITH REVERSE COMPLEMENT BULK
+	########## SHIFTED HAMMING DISTANCE WITH REVERSE COMPLEMENT batched
 */
 
 /*
@@ -450,8 +498,26 @@ void call_shd_with_revcompl_kernel(const shd::SHDdata& shddata,
     the second half of a result range willl store the reverse complement alignments
 */
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
-AlignmentDevice shifted_hamming_distance_with_revcompl_bulk_async(SHDhandle& handle,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+AlignmentDevice shifted_hamming_distance_with_revcompl_batched_async(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice shifted_hamming_distance_with_revcompl_batched_async(SHDhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
                                 const std::vector<SubjectIter>& subjectsend,
                                 const std::vector<QueryIter>& queriesbegin,
@@ -464,7 +530,7 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_bulk_async(SHDhandle& han
                                 double min_overlap_ratio,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
 
     auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
@@ -634,20 +700,28 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_bulk_async(SHDhandle& han
 
 
 /*
-Ensures that all alignment results from the preceding call to shifted_hamming_distance_with_revcompl_bulk_async
+Ensures that all alignment results from the preceding call to shifted_hamming_distance_with_revcompl_batched_async
 have been stored in the ranges [alignmentsbegin[i], alignmentsend[i][
 
 must be called with the same handle, alignmentsbegin, alignmentsend, canUseGpu
-as the call to shifted_hamming_distance_with_revcompl_bulk_async
+as the call to shifted_hamming_distance_with_revcompl_batched_async
 */
 
-template<class AlignmentIter>
-void shifted_hamming_distance_with_revcompl_get_results_bulk(SHDhandle& handle,
+template<class AlignmentIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+void shifted_hamming_distance_with_revcompl_get_results_batched(SHDhandle& handle,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                bool canUseGpu){}
+
+template<class AlignmentIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+void shifted_hamming_distance_with_revcompl_get_results_batched(SHDhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsbegin,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignement type");
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignement type");
 
     assert(alignmentsbegin.size() == alignmentsend.size());
 
@@ -713,8 +787,26 @@ void shifted_hamming_distance_with_revcompl_get_results_bulk(SHDhandle& handle,
     return;
 }
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
-AlignmentDevice shifted_hamming_distance_with_revcompl_bulk(SHDhandle& handle,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+AlignmentDevice shifted_hamming_distance_with_revcompl_batched(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice shifted_hamming_distance_with_revcompl_batched(SHDhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
                                 const std::vector<SubjectIter>& subjectsend,
                                 const std::vector<QueryIter>& queriesbegin,
@@ -727,13 +819,13 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_bulk(SHDhandle& handle,
                                 double min_overlap_ratio,
                                 bool canUseGpu){
 
-    AlignmentDevice device = shifted_hamming_distance_with_revcompl_bulk_async(handle, subjectsbegin, subjectsend,
+    AlignmentDevice device = shifted_hamming_distance_with_revcompl_batched_async(handle, subjectsbegin, subjectsend,
                                     queriesbegin, queriesend,
                                     alignmentsbegin, alignmentsend,
                                     queriesPerSubject, min_overlap,
                                     maxErrorRate, min_overlap_ratio, canUseGpu);
 
-    shifted_hamming_distance_with_revcompl_get_results_bulk(handle,
+    shifted_hamming_distance_with_revcompl_get_results_batched(handle,
                                     alignmentsbegin,
                                     alignmentsend,
                                     canUseGpu);
@@ -763,7 +855,7 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_bulk(SHDhandle& handle,
 
 /*
 
-	########## SHIFTED HAMMING DISTANCE CANONICAL BULK
+	########## SHIFTED HAMMING DISTANCE CANONICAL batched
 */
 
 
@@ -863,9 +955,28 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
     Flags indicate whether the better one is forward alignment, reverse complement alignment, or if both alignments are bad.
 */
 
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter>
-AlignmentDevice shifted_hamming_distance_canonical_bulk_async(SHDhandle& handle,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
                                 const std::vector<SubjectIter>& subjectsend,
                                 const std::vector<QueryIter>& queriesbegin,
@@ -880,7 +991,7 @@ AlignmentDevice shifted_hamming_distance_canonical_bulk_async(SHDhandle& handle,
                                 double min_overlap_ratio,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
 
     auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
@@ -1083,22 +1194,32 @@ AlignmentDevice shifted_hamming_distance_canonical_bulk_async(SHDhandle& handle,
 
 
 /*
-Ensures that all alignment results from the preceding call to shifted_hamming_distance_canonical_bulk_async
+Ensures that all alignment results from the preceding call to shifted_hamming_distance_canonical_batched_async
 have been stored in the range [alignmentsbegin[i], alignmentsend[i][
 
 must be called with the same handle, alignmentsbegin, alignmentsend, flagsbegin, flagsend, canUseGpu
-as the call to shifted_hamming_distance_canonical_bulk_async
+as the call to shifted_hamming_distance_canonical_batched_async
 */
 
-template<class AlignmentIter, class FlagsIter>
-void shifted_hamming_distance_canonical_get_results_bulk(SHDhandle& handle,
+template<class AlignmentIter, class FlagsIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                bool canUseGpu){}
+
+template<class AlignmentIter, class FlagsIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsbegin,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
     static_assert(std::is_same<typename FlagsIter::value_type, BestAlignment_t>::value, "shifted hamming distance unexpected flag type");
 
     assert(alignmentsbegin.size() == alignmentsend.size());
@@ -1166,8 +1287,28 @@ void shifted_hamming_distance_canonical_get_results_bulk(SHDhandle& handle,
     return;
 }
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter>
-AlignmentDevice shifted_hamming_distance_canonical_bulk(SHDhandle& handle,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+AlignmentDevice shifted_hamming_distance_canonical_batched(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice shifted_hamming_distance_canonical_batched(SHDhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
                                 const std::vector<SubjectIter>& subjectsend,
                                 const std::vector<QueryIter>& queriesbegin,
@@ -1182,14 +1323,14 @@ AlignmentDevice shifted_hamming_distance_canonical_bulk(SHDhandle& handle,
                                 double min_overlap_ratio,
                                 bool canUseGpu){
 
-    AlignmentDevice device = shifted_hamming_distance_canonical_bulk_async(handle, subjectsbegin, subjectsend,
+    AlignmentDevice device = shifted_hamming_distance_canonical_batched_async(handle, subjectsbegin, subjectsend,
                                     queriesbegin, queriesend,
                                     alignmentsbegin, alignmentsend,
                                     flagsbegin, flagsend,
                                     queriesPerSubject, min_overlap,
                                     maxErrorRate, min_overlap_ratio, canUseGpu);
 
-    shifted_hamming_distance_canonical_get_results_bulk(handle,
+    shifted_hamming_distance_canonical_get_results_batched(handle,
                                     alignmentsbegin,
                                     alignmentsend,
                                     flagsbegin,
@@ -1290,7 +1431,26 @@ void call_semi_global_alignment_kernel(const sga::SGAdata& sgadata,
     SubjectIter,QueryIter: Iterator to const Sequence_t*
     AlignmentIter: Iterator to sga::Result_t
 */
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+        typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
+AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
+                                SubjectIter subjectsbegin,
+                                SubjectIter subjectsend,
+                                QueryIter queriesbegin,
+                                QueryIter queriesend,
+                                AlignmentIter alignmentsbegin,
+                                AlignmentIter alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int score_match,
+                                int score_sub,
+                                int score_ins,
+                                int score_del,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+        typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
 AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
                                 SubjectIter subjectsbegin,
                                 SubjectIter subjectsend,
@@ -1305,7 +1465,7 @@ AlignmentDevice semi_global_alignment_async(SGAhandle& handle,
                                 int score_del,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi_global_alignment unexpected Alignement type");
+    //static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi_global_alignment unexpected Alignement type");
 
     auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
@@ -1488,7 +1648,15 @@ must be called with the same mybuffers, alignmentsbegin, alignmentsend, canUseGp
 as the call to semi_global_alignment_async
 */
 
-template<class AlignmentIter>
+template<class AlignmentIter,
+        typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
+void semi_global_alignment_get_results(SGAhandle& handle,
+                                AlignmentIter alignmentsbegin,
+                                AlignmentIter alignmentsend,
+                                bool canUseGpu){}
+
+template<class AlignmentIter,
+        typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
 void semi_global_alignment_get_results(SGAhandle& handle,
                                 AlignmentIter alignmentsbegin,
                                 AlignmentIter alignmentsend,
@@ -1546,7 +1714,26 @@ void semi_global_alignment_get_results(SGAhandle& handle,
     return;
 }
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter>
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+        typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
+AlignmentDevice semi_global_alignment(SGAhandle& handle,
+                                SubjectIter subjectsbegin,
+                                SubjectIter subjectsend,
+                                QueryIter queriesbegin,
+                                QueryIter queriesend,
+                                AlignmentIter alignmentsbegin,
+                                AlignmentIter alignmentsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int score_match,
+                                int score_sub,
+                                int score_ins,
+                                int score_del,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter,
+        typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
 AlignmentDevice semi_global_alignment(SGAhandle& handle,
                                 SubjectIter subjectsbegin,
                                 SubjectIter subjectsend,
@@ -1590,9 +1777,10 @@ AlignmentDevice semi_global_alignment(SGAhandle& handle,
 
 
 /*
-    SEMI GLOBAL ALIGNMENT CANONICAL BULK
+    SEMI GLOBAL ALIGNMENT CANONICAL batched
 */
 
+#ifdef __NVCC__
 
 
 template<class Sequence_t>
@@ -1687,6 +1875,7 @@ void call_sga_canonical_kernel(const sga::SGAdata& sgadata,
                               sgadata.streams[0]);
 }
 
+#endif
 
 /*
     Calculates both subject/query alignment and subject/reversecomplementquery alignment
@@ -1694,9 +1883,9 @@ void call_sga_canonical_kernel(const sga::SGAdata& sgadata,
     Flags indicate whether the better one is forward alignment, reverse complement alignment, or if both alignments are bad.
 */
 
-
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter>
-AlignmentDevice semi_global_alignment_canonical_bulk_async(SGAhandle& handle,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+        typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
+AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
                                 const std::vector<SubjectIter>& subjectsend,
                                 const std::vector<QueryIter>& queriesbegin,
@@ -1715,7 +1904,31 @@ AlignmentDevice semi_global_alignment_canonical_bulk_async(SGAhandle& handle,
                                 int score_del,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi global alignment unexpected Alignment type");
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+        typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                int score_match,
+                                int score_sub,
+                                int score_ins,
+                                int score_del,
+                                bool canUseGpu){
+
+    //static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi global alignment unexpected Alignment type");
 
     auto& mybuffers = handle.buffers;
     auto& timings = handle.timings;
@@ -1887,7 +2100,7 @@ AlignmentDevice semi_global_alignment_canonical_bulk_async(SGAhandle& handle,
 
                     auto revComplAlignment = cpu_semi_global_alignment<Sequence_t>(subject,
                                                         subjectLength,
-                                                        query,
+                                                        revcomplQuery,
                                                         queryLength,
                                                         score_match,
                                                         score_sub,
@@ -1929,21 +2142,33 @@ AlignmentDevice semi_global_alignment_canonical_bulk_async(SGAhandle& handle,
 
 
 /*
-Ensures that all alignment results from the preceding call to semi_global_alignment_canonical_bulk_async
+Ensures that all alignment results from the preceding call to semi_global_alignment_canonical_batched_async
 have been stored in the range [alignmentsbegin[i], alignmentsend[i][
 
 must be called with the same handle, alignmentsbegin, alignmentsend, flagsbegin, flagsend, canUseGpu
-as the call to semi_global_alignment_canonical_bulk_async
+as the call to semi_global_alignment_canonical_batched_async
 */
-template<class AlignmentIter, class FlagsIter>
-void semi_global_alignment_canonical_get_results_bulk(SGAhandle& handle,
+template<class AlignmentIter, class FlagsIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
+void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsbegin,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
                                 bool canUseGpu){
 
-    static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi global alignment unexpected Alignment type");
+}
+
+template<class AlignmentIter, class FlagsIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
+void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                bool canUseGpu){
+
+    //static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi global alignment unexpected Alignment type");
     static_assert(std::is_same<typename FlagsIter::value_type, BestAlignment_t>::value, "semi global alignment unexpected flag type");
 
     assert(alignmentsbegin.size() == alignmentsend.size());
@@ -2032,9 +2257,32 @@ void semi_global_alignment_canonical_get_results_bulk(SGAhandle& handle,
     return;
 }
 
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+        typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
+AlignmentDevice semi_global_alignment_canonical_batched(SGAhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                int score_match,
+                                int score_sub,
+                                int score_ins,
+                                int score_del,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter>
-AlignmentDevice semi_global_alignment_canonical_bulk(SGAhandle& handle,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+        typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice semi_global_alignment_canonical_batched(SGAhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
                                 const std::vector<SubjectIter>& subjectsend,
                                 const std::vector<QueryIter>& queriesbegin,
@@ -2053,7 +2301,7 @@ AlignmentDevice semi_global_alignment_canonical_bulk(SGAhandle& handle,
                                 int score_del,
                                 bool canUseGpu){
 
-    AlignmentDevice device = semi_global_alignment_canonical_bulk_async(handle, subjectsbegin, subjectsend,
+    AlignmentDevice device = semi_global_alignment_canonical_batched_async(handle, subjectsbegin, subjectsend,
                                     queriesbegin, queriesend,
                                     alignmentsbegin, alignmentsend,
                                     flagsbegin, flagsend,
@@ -2061,7 +2309,7 @@ AlignmentDevice semi_global_alignment_canonical_bulk(SGAhandle& handle,
                                     score_sub, score_ins, score_del,
                                     canUseGpu);
 
-    semi_global_alignment_canonical_get_results_bulk(handle,
+    semi_global_alignment_canonical_get_results_batched(handle,
                                     alignmentsbegin,
                                     alignmentsend,
                                     flagsbegin,
