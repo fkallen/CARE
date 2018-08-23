@@ -1,5 +1,9 @@
 buildcpu/
 buildgpu/
+debugbuildcpu/
+debugbuildgpu/
 tools/
 errorcorrector_cpu
 errorcorrector_gpu
+errorcorrector_cpu_debug
+errorcorrector_gpu_debug
