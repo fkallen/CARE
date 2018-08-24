@@ -383,8 +383,8 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
 
         constexpr double maxgini = 0.05;
 
-        //namespace speciestype = ecoli_srr490124;
-        namespace speciestype = celegans_srx218989;
+        namespace speciestype = ecoli_srr490124;
+        //namespace speciestype = celegans_srx218989;
         //namespace speciestype = dmelanogaster_srr82337;
 #if 1
 

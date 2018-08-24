@@ -5,6 +5,8 @@
 #include "hpc_helpers.cuh"
 #include "bestalignment.hpp"
 
+//#include "util.hpp"
+
 #include <cstdint>
 #include <algorithm>
 
@@ -186,6 +188,74 @@ cpu_shifted_hamming_distance(const char* subject,
     return result;
 }
 
+#if 0
+template<class Accessor>
+Result_t
+cpu_shifted_hamming_distance_new(const char* subject,
+                            int subjectlength,
+                            const char* query,
+                            int querylength,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double min_overlap_ratio,
+                            Accessor getChar
+                            B getNumBytes) noexcept{
+
+    const int totalbases = subjectlength + querylength;
+    const int minoverlap = std::max(min_overlap, int(double(subjectlength) * min_overlap_ratio));
+    int bestScore = totalbases; // score is number of mismatches
+    int bestShift = -querylength; // shift of query relative to subject. shift < 0 if query begins before subject
+
+    std::vector<char> subjectdata;
+    std::vector<char> querydata;
+
+    subjectdata.reserve(getNumBytes(subjectlength));
+    querydata.reserve(getNumBytes(querylength));
+
+    for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap; shift++){
+        const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+        const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+        subjectdata.insert(subjectdata.begin(), subject, subject + getNumBytes(subjectlength));
+        querydata.insert(querydata.begin(), query, query + getNumBytes(querylength));
+
+        shiftBitsBy(querydata.data(), getNumBytes(querylength), shift);
+
+        int score = hammingdistanceHiLo(subjectdata.data(), querydata.data(), sbases, qbases, getNumBytes(subjectlength));
+
+        #if 1
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+        #else
+        	score += totalbases - 2*overlapsize;
+        #endif
+
+        if(score < bestScore){
+            bestScore = score;
+            bestShift = shift;
+        }
+    }
+
+    Result_t result;
+    result.isValid = (bestShift != -querylength);
+
+    const int queryoverlapbegin_incl = std::max(-bestShift, 0);
+    const int queryoverlapend_excl = std::min(querylength, subjectlength - bestShift);
+    const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+    const int opnr = bestScore - totalbases + 2*overlapsize;
+
+    result.score = bestScore;
+    result.subject_begin_incl = std::max(0, bestShift);
+    result.query_begin_incl = queryoverlapbegin_incl;
+    result.overlap = overlapsize;
+    result.shift = bestShift;
+    result.nOps = opnr;
+    result.isNormalized = false;
+
+    return result;
+}
+#endif
 
 
 

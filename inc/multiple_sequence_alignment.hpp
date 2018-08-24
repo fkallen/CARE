@@ -418,7 +418,7 @@ struct PileupImage{
         const double min_support_threshold = 1.0-3.0*estimatedErrorrate;
         const double min_coverage_threshold = correctionSettings.m / 6.0 * estimatedCoverage;
 
-#if 1
+#if 0
         CorrectionResult result = cpu_correct_sequence_internal(sequence_to_correct,
                                                         estimatedErrorrate,
                                                         avg_support_threshold,
