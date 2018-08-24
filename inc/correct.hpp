@@ -255,6 +255,7 @@ struct alignment_result_type<true>{using type = SGAResult;};
 template<>
 struct alignment_result_type<false>{using type = SHDResult;};
 
+#if 0
 template<class minhasher_t,
 		 class readStorage_t,
 		 bool indels>
@@ -1246,7 +1247,7 @@ private:
 };
 
 
-
+#endif
 
 
 
@@ -1270,6 +1271,7 @@ using Minhasher_t = minhasher_t;
 		int deviceId;
 		int gpuThresholdSHD;
 		int gpuThresholdSGA;
+        bool canUseGpu;
 
 		std::string outputfile;
 		BatchGenerator<ReadId_t>* batchGen;
@@ -1286,6 +1288,7 @@ using Minhasher_t = minhasher_t;
     GoodAlignmentProperties goodAlignmentProperties;
     CorrectionOptions correctionOptions;
     CorrectionThreadOptions threadOpts;
+
     SequenceFileProperties fileProperties;
 
     correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
@@ -1417,7 +1420,7 @@ private:
 		std::array<std::vector<BatchElem_t>, nStreams> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-        constexpr bool canUseGpu = true;
+        const bool canUseGpu = threadOpts.canUseGpu;
 
 		while(!stopAndAbort && !readIds.empty()){
 
@@ -1980,6 +1983,7 @@ void correct(const MinhashOptions& minhashOptions,
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
         threadOpts.gpuThresholdSHD = deviceIds.size() == 0 ? 0 : gpuThresholdsSHD[threadId % deviceIds.size()];
         threadOpts.gpuThresholdSGA = deviceIds.size() == 0 ? 0 : gpuThresholdsSGA[threadId % deviceIds.size()];
+        threadOpts.canUseGpu = runtimeOptions.canUseGpu;
         threadOpts.outputfile = tmpfiles[threadId];
         threadOpts.batchGen = &generators[threadId];
         threadOpts.minhasher = &minhasher;

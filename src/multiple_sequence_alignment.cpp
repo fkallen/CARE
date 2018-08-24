@@ -387,7 +387,7 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
         //namespace speciestype = celegans_srx218989;
         //namespace speciestype = dmelanogaster_srr82337;
 
-//#define USE_TREE
+#define USE_TREE
 #define USE_NEW
 
 #ifdef USE_TREE

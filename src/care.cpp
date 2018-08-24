@@ -164,9 +164,9 @@ void correctFile(const MinhashOptions& minhashOptions,
 
 void performCorrection(const cxxopts::ParseResult& args) {
 	//check arguments
-    if(!args::areValid(args)){
+    /*if(!args::areValid(args)){
         throw std::runtime_error("care::performCorrection: Invalid arguments!");
-    }
+    }*/
 
 	//parse options from arguments
 	MinhashOptions minhashOptions = args::to<MinhashOptions>(args);
@@ -175,6 +175,36 @@ void performCorrection(const cxxopts::ParseResult& args) {
     CorrectionOptions correctionOptions = args::to<CorrectionOptions>(args);
 	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(args);
 	FileOptions fileOptions = args::to<FileOptions>(args);
+
+    {
+        bool valid = true;
+
+        valid &= args::isValid(minhashOptions);
+        valid &= args::isValid(alignmentOptions);
+        valid &= args::isValid(goodAlignmentProperties);
+        valid &= args::isValid(correctionOptions);
+        valid &= args::isValid(runtimeOptions);
+        valid &= args::isValid(fileOptions);
+
+        if(!valid)
+            throw std::runtime_error("care::performCorrection: Invalid arguments!");
+    }
+
+#ifndef __NVCC__
+        std::cout << "Running CARE CPU" << std::endl;
+#else
+    if(runtimeOptions.canUseGpu){
+        std::cout << "Running CARE GPU" << std::endl;
+        std::cout << "Can use the following GPU device Ids: ";
+
+        for(int i : runtimeOptions.deviceIds)
+            std::cout << i << " ";
+
+        std::cout << std::endl;
+    }else{
+        std::cout << "Running CARE CPU" << std::endl;
+    }
+#endif
 
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
@@ -191,20 +221,6 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	std::vector<char> readIsCorrectedVector(props.nReads, 0);
 	std::size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
-
-	std::vector<int> deviceIds;
-
-#ifdef __CUDACC__
-
-	int nGpus;
-	cudaGetDeviceCount(&nGpus); CUERR;
-    //TODO instead of failing, fall back to CPU mode by introducing variable canUseGpu and setting it to false
-	if(nGpus == 0)
-        throw std::runtime_error("No CUDA capable device found!");
-	for(int i = 0; i < nGpus; i++)
-	   deviceIds.push_back(i);
-
-#endif
 
 	const int iters = 1;
 	int iter = 0;
@@ -245,7 +261,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
             runtimeOptions, iterFileOptions,
 			props.nReads,
             readIsCorrectedVector, locksForProcessedFlags,
-            nLocksForProcessedFlags, deviceIds);
+            nLocksForProcessedFlags, runtimeOptions.deviceIds);
 
 		iter++;
 
