@@ -190,6 +190,17 @@ namespace care{
 				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
 			}
 
+            //Must call transform() beforehand !!!
+			std::pair<Value_t*, Value_t*> get_ranged(Key_t key) noexcept{
+				//TIMERSTARTCPU(binarysearch);
+				auto range = std::equal_range(keys.begin(), keys.end(), key);
+				if(range.first == keys.end()) return {};
+
+				Index_t index = std::distance(keys.begin(), range.first);
+
+				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+			}
+
 			void transform(){
 				if(noMoreWrites) return;
 				noMoreWrites = true;
@@ -427,6 +438,7 @@ struct Minhasher {
 		//TIMERSTOPCPU(minhashfunc);
 
 #if 1
+#if 0
 		std::vector<Value_t> allUniqueResults;
 		std::vector<Value_t> tmp;
 		//TIMERSTARTCPU(getcandrest);
@@ -443,22 +455,7 @@ struct Minhasher {
 			if(!Map_t::resultsAreSorted){
 				std::sort(entries.begin(), entries.end());
 			}
-#if 0
-			tmp.resize(allUniqueResults.size() + entries.size());
-			std::merge(entries.begin(), entries.end(), allUniqueResults.begin(), allUniqueResults.end(), tmp.begin());
-			std::swap(tmp, allUniqueResults);
-			auto uniqueEnd = std::unique(allUniqueResults.begin(), allUniqueResults.end());
-			allUniqueResults.resize(std::distance(allUniqueResults.begin(), uniqueEnd));
-#endif
 
-#if 0
-            tmp.resize(allUniqueResults.size() + entries.size());
-            auto union_end = std::set_union(entries.begin(), entries.end(), allUniqueResults.begin(), allUniqueResults.end(), tmp.begin());
-            tmp.resize(std::distance(tmp.begin(), union_end));
-            std::swap(tmp, allUniqueResults);
-#endif
-
-#if 1
             tmp.resize(allUniqueResults.size() + entries.size());
             auto union_end = set_union_n_or_empty(entries.begin(),
                                                 entries.end(),
@@ -472,16 +469,40 @@ struct Minhasher {
                 tmp.resize(std::distance(tmp.begin(), union_end));
                 std::swap(tmp, allUniqueResults);
             }
-#endif
 		}
+#else
 
-        //auto before = allUniqueResults.size();
-        //allUniqueResults.resize(std::min(allUniqueResults.size(), max_number_candidates));
-        //auto after = allUniqueResults.size();
-        //if(max_number_candidates != std::numeric_limits<std::uint64_t>::max())
-        //    std::cout << "resize from " << before << " to " << after << std::endl;
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+        //TIMERSTARTCPU(getcandrest);
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
 
-		//TIMERSTOPCPU(getcandrest);
+            auto entries_range = minhashTables[map]->get_ranged(key);
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+            if(map == 0){
+                //allUniqueResults.reserve(minparams.maps * entries.size());
+                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+            }
+
+            tmp.resize(allUniqueResults.size() + n_entries);
+            auto union_end = set_union_n_or_empty(entries_range.first,
+                                                entries_range.second,
+                                                allUniqueResults.begin(),
+                                                allUniqueResults.end(),
+                                                max_number_candidates,
+                                                tmp.begin());
+            if(tmp.begin() == union_end){
+                return {};
+            }else{
+                tmp.resize(std::distance(tmp.begin(), union_end));
+                std::swap(tmp, allUniqueResults);
+            }
+        }
+
+#endif
 		return allUniqueResults;
 #else
 
