@@ -1,4 +1,5 @@
 #include "../inc/args.hpp"
+#include "../inc/hpc_helpers.cuh"
 
 #include <iostream>
 #include <thread>
@@ -11,6 +12,19 @@ namespace filesys = std::experimental::filesystem;
 
 namespace care{
 namespace args{
+
+    std::vector<std::string> split(const std::string& str, char c){
+    	std::vector<std::string> result;
+
+    	std::stringstream ss(str);
+    	std::string s;
+
+    	while (std::getline(ss, s, c)) {
+    		result.emplace_back(s);
+    	}
+
+    	return result;
+    }
 
 	std::string getFileName(std::string filePath)
 	{
@@ -84,6 +98,42 @@ namespace args{
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = true;
 
+        auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
+
+        for(const auto& s : deviceIdsStrings){
+            result.deviceIds.emplace_back(std::stoi(s));
+        }
+
+#ifdef __NVCC__
+        int nDevices;
+
+        cudaGetDeviceCount(&nDevices); CUERR;
+
+        std::vector<int> invalidIds;
+
+        for(int id : result.deviceIds){
+            if(id >= nDevices){
+                invalidIds.emplace_back(id);
+                std::cout << "Found invalid device Id: " << id << std::endl;
+            }
+        }
+
+        if(invalidIds.size() > 0){
+            std::cout << "Available GPUs on your machine:" << std::endl;
+            for(int j = 0; j < nDevices; j++){
+                cudaDeviceProp prop;
+                cudaGetDeviceProperties(&prop, j); CUERR;
+                std::cout << "Id " << j << " : " << prop.name << std::endl;
+            }
+
+            for(int invalidid : invalidIds){
+                result.deviceIds.erase(std::find(result.deviceIds.begin(), result.deviceIds.end(), invalidid));
+            }
+        }
+
+        result.canUseGpu = result.deviceIds.size() > 0;
+
+#endif
         return result;
 	}
 
@@ -110,77 +160,101 @@ namespace args{
         return result;
 	}
 
-    bool areValid(const cxxopts::ParseResult& args){
+
+
+    template<>
+    bool isValid<MinhashOptions>(const MinhashOptions& opt){
         bool valid = true;
 
-		//check minhash options
-        auto minhashOptions = args::to<MinhashOptions>(args);
-        if(minhashOptions.maps < 1){
+        if(opt.maps < 1){
             valid = false;
-            std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(minhashOptions.maps) << std::endl;
+            std::cout << "Error: Number of hashmaps must be >= 1, is " + std::to_string(opt.maps) << std::endl;
         }
 
-        if(minhashOptions.k < 1 || minhashOptions.k > 32){
+        if(opt.k < 1 || opt.k > 32){
             valid = false;
-            std::cout << "Error: kmer length must be in range [1, 16], is " + std::to_string(minhashOptions.k) << std::endl;
+            std::cout << "Error: kmer length must be in range [1, 16], is " + std::to_string(opt.k) << std::endl;
         }
-
-        //check good alignment properties
-        auto goodAlignmentProperties = args::to<GoodAlignmentProperties>(args);
-
-        if(goodAlignmentProperties.maxErrorRate < 0.0 || goodAlignmentProperties.maxErrorRate > 1.0){
-            valid = false;
-            std::cout << "Error: maxmismatchratio must be in range [0.0, 1.0], is " + std::to_string(goodAlignmentProperties.maxErrorRate) << std::endl;
-        }
-
-        if(goodAlignmentProperties.min_overlap < 1){
-            valid = false;
-            std::cout << "Error: min_overlap must be > 0, is " + std::to_string(goodAlignmentProperties.min_overlap) << std::endl;
-        }
-
-        if(goodAlignmentProperties.min_overlap_ratio < 0.0 || goodAlignmentProperties.min_overlap_ratio > 1.0){
-            valid = false;
-            std::cout << "Error: min_overlap_ratio must be in range [0.0, 1.0], is "
-                        + std::to_string(goodAlignmentProperties.min_overlap_ratio) << std::endl;
-        }
-
-        //check correction options
-        auto corOpts = args::to<CorrectionOptions>(args);
-
-        if(corOpts.estimatedCoverage <= 0.0){
-            valid = false;
-            std::cout << "Error: estimatedCoverage must be > 0.0, is " + std::to_string(corOpts.estimatedCoverage) << std::endl;
-        }
-
-        if(corOpts.estimatedErrorrate <= 0.0){
-            valid = false;
-            std::cout << "Error: estimatedErrorrate must be > 0.0, is " + std::to_string(corOpts.estimatedErrorrate) << std::endl;
-        }
-
-        if(corOpts.batchsize < 1 /*|| corOpts.batchsize > 16*/){
-            valid = false;
-            std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(corOpts.batchsize) << std::endl;
-        }
-
-        //check runtime options
-        auto runtimeOpts = args::to<RuntimeOptions>(args);
-
-		if(runtimeOpts.threads < 1){
-            valid = false;
-            std::cout << "Error: threads must be > 0, is " + std::to_string(runtimeOpts.threads) << std::endl;
-        }
-
-        auto fileOpts = args::to<FileOptions>(args);
-
-		std::ifstream is(fileOpts.inputfile);
-		if(!(bool)is){
-			std::cout << "Error: cannot find input file " << fileOpts.inputfile << std::endl;
-		}
 
         return valid;
     }
 
+    template<>
+    bool isValid<AlignmentOptions>(const AlignmentOptions& opt){
+        bool valid = true;
 
+        return valid;
+    }
+
+    template<>
+    bool isValid<GoodAlignmentProperties>(const GoodAlignmentProperties& opt){
+        bool valid = true;
+
+        if(opt.maxErrorRate < 0.0 || opt.maxErrorRate > 1.0){
+            valid = false;
+            std::cout << "Error: maxmismatchratio must be in range [0.0, 1.0], is " + std::to_string(opt.maxErrorRate) << std::endl;
+        }
+
+        if(opt.min_overlap < 1){
+            valid = false;
+            std::cout << "Error: min_overlap must be > 0, is " + std::to_string(opt.min_overlap) << std::endl;
+        }
+
+        if(opt.min_overlap_ratio < 0.0 || opt.min_overlap_ratio > 1.0){
+            valid = false;
+            std::cout << "Error: min_overlap_ratio must be in range [0.0, 1.0], is "
+                        + std::to_string(opt.min_overlap_ratio) << std::endl;
+        }
+
+        return valid;
+    }
+
+    template<>
+    bool isValid<CorrectionOptions>(const CorrectionOptions& opt){
+        bool valid = true;
+
+        if(opt.estimatedCoverage <= 0.0){
+            valid = false;
+            std::cout << "Error: estimatedCoverage must be > 0.0, is " + std::to_string(opt.estimatedCoverage) << std::endl;
+        }
+
+        if(opt.estimatedErrorrate <= 0.0){
+            valid = false;
+            std::cout << "Error: estimatedErrorrate must be > 0.0, is " + std::to_string(opt.estimatedErrorrate) << std::endl;
+        }
+
+        if(opt.batchsize < 1 /*|| corOpts.batchsize > 16*/){
+            valid = false;
+            std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
+        }
+
+        return valid;
+    }
+
+    template<>
+    bool isValid<RuntimeOptions>(const RuntimeOptions& opt){
+        bool valid = true;
+
+        if(opt.threads < 1){
+            valid = false;
+            std::cout << "Error: threads must be > 0, is " + std::to_string(opt.threads) << std::endl;
+        }
+
+        return valid;
+    }
+
+    template<>
+    bool isValid<FileOptions>(const FileOptions& opt){
+        bool valid = true;
+
+        std::ifstream is(opt.inputfile);
+        if(!(bool)is){
+            valid = false;
+            std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
+        }
+
+        return valid;
+    }
 
 }
 }

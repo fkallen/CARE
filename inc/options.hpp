@@ -4,6 +4,7 @@
 #include "sequencefileio.hpp"
 
 #include <string>
+#include <vector>
 
 namespace care{
     enum class CorrectionMode {Hamming, Graph};
@@ -49,6 +50,8 @@ namespace care{
 		int nInserterThreads = 1;
 		int nCorrectorThreads = 1;
         bool showProgress = true;
+        bool canUseGpu = false;
+        std::vector<int> deviceIds;
 	};
 
 	struct FileOptions{
