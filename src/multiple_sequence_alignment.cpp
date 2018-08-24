@@ -386,9 +386,13 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
         namespace speciestype = ecoli_srr490124;
         //namespace speciestype = celegans_srx218989;
         //namespace speciestype = dmelanogaster_srr82337;
-#if 1
 
-#if 0
+//#define USE_TREE
+#define USE_NEW
+
+#ifdef USE_TREE
+
+#ifndef USE_NEW
         const bool doCorrect = speciestype::shouldCorrect(feature.min_support,
                                             feature.min_coverage,
                                             feature.max_support,
@@ -417,6 +421,8 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
 #endif
 
 #else
+
+#ifndef USE_NEW
         std::pair<int, int> p = speciestype::shouldCorrect_forest(feature.min_support,
                                             feature.min_coverage,
                                             feature.max_support,
@@ -426,6 +432,24 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                             feature.median_support,
                                             feature.median_coverage,
                                             maxgini);
+
+#else
+
+        std::pair<int, int> p = speciestype::shouldCorrect_forest(feature.position_support,
+                                            feature.position_coverage,
+                                            feature.alignment_coverage,
+                                            feature.dataset_coverage,
+                                            feature.min_support,
+                                            feature.min_coverage / feature.alignment_coverage,
+                                            feature.max_support,
+                                            feature.max_coverage / feature.alignment_coverage,
+                                            feature.mean_support,
+                                            feature.mean_coverage / feature.alignment_coverage,
+                                            feature.median_support,
+                                            feature.median_coverage / feature.alignment_coverage,
+                                            maxgini);
+
+#endif
 
         const bool doCorrect = p.second / (p.first + p.second) > 0.5;
 
