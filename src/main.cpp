@@ -52,8 +52,10 @@ int main(int argc, const char** argv){
                  cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("extractFeatures", "If set, extract MSA features",
               cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
-
+        ("deviceIds", "Space separated GPU device ids to be used for correction", cxxopts::value<std::vector<std::string>>()->default_value({}))
 	;
+
+    options.parse_positional({"deviceIds"});
 
 	auto parseresults = options.parse(argc, argv);
 
