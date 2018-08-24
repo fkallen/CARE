@@ -1379,38 +1379,41 @@ private:
             std::cout << "max_candidates " << max_candidates << std::endl;
 
 		constexpr int nStreams = 2;
+        const bool canUseGpu = threadOpts.canUseGpu;
 
 		std::vector<SHDhandle> shdhandles(nStreams);
 		std::vector<SGAhandle> sgahandles(nStreams);
 
-		if(indels){
-			for(auto& handle : sgahandles){
-				init_SGAhandle(handle,
-						threadOpts.deviceId,
-						fileProperties.maxSequenceLength,
-						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-						threadOpts.gpuThresholdSGA);
+        if(canUseGpu){
+    		if(indels){
+    			for(auto& handle : sgahandles){
+    				init_SGAhandle(handle,
+    						threadOpts.deviceId,
+    						fileProperties.maxSequenceLength,
+    						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+    						threadOpts.gpuThresholdSGA);
 
-				    handle.buffers.resize(correctionOptions.batchsize,
-					correctionOptions.batchsize * max_candidates,
-					2 * correctionOptions.batchsize * max_candidates,
-					1.0);
-			}
-		}else{
+    				    handle.buffers.resize(correctionOptions.batchsize,
+    					correctionOptions.batchsize * max_candidates,
+    					2 * correctionOptions.batchsize * max_candidates,
+    					1.0);
+    			}
+    		}else{
 
-			for(auto& handle : shdhandles){
-				init_SHDhandle(handle,
-						threadOpts.deviceId,
-						fileProperties.maxSequenceLength,
-						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-						threadOpts.gpuThresholdSHD);
+    			for(auto& handle : shdhandles){
+    				init_SHDhandle(handle,
+    						threadOpts.deviceId,
+    						fileProperties.maxSequenceLength,
+    						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+    						threadOpts.gpuThresholdSHD);
 
-				    handle.buffers.resize(correctionOptions.batchsize,
-					correctionOptions.batchsize * max_candidates,
-					2 * correctionOptions.batchsize * max_candidates,
-					1.0);
-			}
-		}
+    				    handle.buffers.resize(correctionOptions.batchsize,
+    					correctionOptions.batchsize * max_candidates,
+    					2 * correctionOptions.batchsize * max_candidates,
+    					1.0);
+    			}
+    		}
+        }
 
 		errorgraph::ErrorGraph errorgraph;
 		pileup::PileupImage pileupImage(correctionOptions.m_coverage,
@@ -1420,7 +1423,7 @@ private:
 		std::array<std::vector<BatchElem_t>, nStreams> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-        const bool canUseGpu = threadOpts.canUseGpu;
+
 
 		while(!stopAndAbort && !readIds.empty()){
 
@@ -1512,7 +1515,7 @@ private:
 								queriesend.emplace_back(b.fwdSequences.end());
 								alignmentsbegin.emplace_back(alignments.begin());
 								alignmentsend.emplace_back(alignments.end());
-				        flagsbegin.emplace_back(flags.begin());
+				                flagsbegin.emplace_back(flags.begin());
 								flagsend.emplace_back(flags.end());
 								queriesPerSubject.emplace_back(b.fwdSequences.size());
 							}
@@ -1845,8 +1848,15 @@ private:
 		}
 	#endif
 
-		for(auto& handle : shdhandles)
-		      destroy_SHDhandle(handle);
+        if(canUseGpu){
+            if(indels){
+                for(auto& handle : sgahandles)
+                    destroy_SGAhandle(handle);
+            }else{
+                for(auto& handle : shdhandles)
+                    destroy_SHDhandle(handle);
+            }
+        }
 	}
 };
 
