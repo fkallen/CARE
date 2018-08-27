@@ -336,6 +336,25 @@ cpu_semi_global_alignment(const char* subject,
     }
     //std::cout << "currow " << currow << ", curcol " << curcol << std::endl;
 
+    auto base_to_char = [](char b){
+        constexpr char BASE_A = 0x00;
+        constexpr char BASE_C = 0x01;
+        constexpr char BASE_G = 0x02;
+        constexpr char BASE_T = 0x03;
+
+        switch(b){
+            case BASE_A: return 'A';
+            case BASE_C: return 'C';
+            case BASE_G: return 'G';
+            case BASE_T: return 'T';
+            case 'A':
+            case 'C':
+            case 'G':
+            case 'T': return b;
+            default: return 'F';
+        }
+    };
+
     Result_t alignresult;
     alignresult.operations.reserve(currow + curcol);
 
@@ -352,21 +371,21 @@ cpu_semi_global_alignment(const char* subject,
             break;
         case AlignOp::Type::sub: //printf("s\n");
 
-            alignresult.operations.emplace_back((short)(currow-1), AlignOp::Type::sub, getChar(query, querybases, curcol - 1));
+            alignresult.operations.emplace_back((short)(currow-1), AlignOp::Type::sub, base_to_char(getChar(query, querybases, curcol - 1)));
 
             curcol -= 1;
             currow -= 1;
             break;
         case AlignOp::Type::del:  //printf("d\n");
 
-            alignresult.operations.emplace_back((short)(currow-1), AlignOp::Type::del, getChar(subject, subjectbases, currow - 1));
+            alignresult.operations.emplace_back((short)(currow-1), AlignOp::Type::del, base_to_char(getChar(subject, subjectbases, currow - 1)));
 
             curcol -= 0;
             currow -= 1;
             break;
         case AlignOp::Type::ins:  //printf("i\n");
 
-            alignresult.operations.emplace_back((short)currow, AlignOp::Type::ins, getChar(query, querybases, curcol - 1));
+            alignresult.operations.emplace_back((short)currow, AlignOp::Type::ins, base_to_char(getChar(query, querybases, curcol - 1)));
 
             curcol -= 1;
             currow -= 0;
@@ -388,6 +407,201 @@ cpu_semi_global_alignment(const char* subject,
 
     return alignresult;
 }
+
+
+
+
+
+
+template<class Accessor>
+Result_t
+cpu_semi_global_alignment_new(const char* subject,
+                            int subjectbases,
+                            const char* query,
+                            int querybases,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double min_overlap_ratio,
+                            int score_match,
+                            int score_sub,
+                            int score_ins,
+                            int score_del,
+                            Accessor getChar){
+
+    using Score_t = std::int64_t;
+
+    const int minoverlap = std::max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+
+    const int numrows = subjectbases + 1;
+    const int numcols = querybases + 1;
+
+    std::vector<Score_t> scores(numrows * numcols);
+    std::vector<char> prevs(numrows * numcols);
+
+    // init
+    for (int col = 0; col < numcols; ++col) {
+        scores[(0) * numcols + (col)] = Score_t(0);
+    }
+
+    // row 0 was filled by column loop
+    for (int row = 1; row < numrows; ++row) {
+        scores[(row) * numcols + (0)] = Score_t(0);
+    }
+
+    // fill matrix
+    for (int row = 1; row < numrows; ++row) {
+        for (int col = 1; col < numcols; ++col) {
+            // calc entry [row][col]
+
+            const bool ismatch = getChar(subject, subjectbases, row - 1) == getChar(query, querybases, col - 1);
+            const Score_t matchscore = scores[(row - 1) * numcols + (col - 1)]
+                        + (ismatch ? Score_t(score_match) : Score_t(score_sub));
+            const Score_t insscore = scores[(row) * numcols + (col - 1)] + Score_t(score_ins);
+            const Score_t delscore = scores[(row - 1) * numcols + (col)] + Score_t(score_del);
+
+            int maximum = 0;
+            if (matchscore < delscore) {
+                maximum = delscore;
+                prevs[(row) * numcols + (col)] = char(AlignOp::Type::del);
+            }else{
+                maximum = matchscore;
+                prevs[(row) * numcols + (col)] = ismatch ? char(AlignOp::Type::match) : char(AlignOp::Type::sub);
+            }
+            if (maximum < insscore) {
+                maximum = insscore;
+                prevs[(row) * numcols + (col)] = char(AlignOp::Type::ins);
+            }
+
+            scores[(row) * numcols + (col)] = maximum;
+        }
+    }
+#if 0
+    for (int row = 0; row < subjectbases + 1; ++row) {
+        if(row != 1 && (row-1)%32 == 0){
+            std::cout << std::endl;
+            std::cout << std::endl;
+            for (int col = 1; col < querybases + 1; ++col) {
+                std::cout << "____";
+            }
+            std::cout << std::endl;
+        }
+        std::cout << std::endl;
+        for (int col = 0; col < querybases + 1; ++col) {
+            if((col-1)%32 == 0) std::cout << " | ";
+            std::cout << std::setw(4) << scores[row][col];
+        }
+
+        std::cout << std::endl;
+    }
+#endif
+    // extract best alignment
+
+    int currow = subjectbases;
+    int curcol = querybases;
+    Score_t maximum = std::numeric_limits<Score_t>::min();
+
+    for (int row = 1; row < numrows; ++row) {
+        if(scores[(row) * numcols + (querybases)] > maximum){
+            //short oldmax = maximum;
+            maximum = scores[(row) * numcols + (querybases)];
+            currow = row;
+            curcol = querybases;
+
+            /*std::cout << "row = " << row << ": \n"
+                << scores[row][querybases] << " > " << oldmax << "\n"
+                << " update currow " << currow << ", curcol " << curcol << std::endl;*/
+        }
+    }
+
+    for (int col = 1; col < numcols; ++col) {
+        if(scores[(subjectbases) * numcols + (col)] > maximum){
+            //short oldmax = maximum;
+            maximum = scores[(subjectbases) * numcols + (col)];
+            currow = subjectbases;
+            curcol = col;
+
+            /*std::cout << "col = " << col << ": \n"
+                << scores[subjectbases][col] << " > " << oldmax << "\n"
+                << " update currow " << currow << ", curcol " << curcol << std::endl;*/
+        }
+    }
+    //std::cout << "currow " << currow << ", curcol " << curcol << std::endl;
+
+    auto base_to_char = [](char b){
+        constexpr char BASE_A = 0x00;
+        constexpr char BASE_C = 0x01;
+        constexpr char BASE_G = 0x02;
+        constexpr char BASE_T = 0x03;
+
+        switch(b){
+            case BASE_A: return 'A';
+            case BASE_C: return 'C';
+            case BASE_G: return 'G';
+            case BASE_T: return 'T';
+            case 'A':
+            case 'C':
+            case 'G':
+            case 'T': return b;
+            default: return 'F';
+        }
+    };
+
+    Result_t alignresult;
+    alignresult.operations.reserve(currow + curcol);
+
+    const int subject_end_excl = currow;
+
+    alignresult.get_score() = maximum;
+    alignresult.get_isNormalized() = false;
+
+    while(currow != 0 && curcol != 0){
+        switch (AlignOp::Type(prevs[(currow) * numcols + (curcol)])) {
+        case AlignOp::Type::match: //printf("m\n");
+            curcol -= 1;
+            currow -= 1;
+            break;
+        case AlignOp::Type::sub: //printf("s\n");
+
+            alignresult.operations.emplace_back((short)(currow-1), AlignOp::Type::sub, base_to_char(getChar(query, querybases, curcol - 1)));
+
+            curcol -= 1;
+            currow -= 1;
+            break;
+        case AlignOp::Type::del:  //printf("d\n");
+
+            alignresult.operations.emplace_back((short)(currow-1), AlignOp::Type::del, base_to_char(getChar(subject, subjectbases, currow - 1)));
+
+            curcol -= 0;
+            currow -= 1;
+            break;
+        case AlignOp::Type::ins:  //printf("i\n");
+
+            alignresult.operations.emplace_back((short)currow, AlignOp::Type::ins, base_to_char(getChar(query, querybases, curcol - 1)));
+
+            curcol -= 1;
+            currow -= 0;
+            break;
+        }
+    }
+
+    std::reverse(alignresult.operations.begin(), alignresult.operations.end());
+
+    alignresult.get_subject_begin_incl() = currow;
+    alignresult.get_query_begin_incl() = curcol;
+    alignresult.get_isValid() = true;
+    alignresult.get_overlap() = subject_end_excl - alignresult.get_subject_begin_incl();
+    alignresult.get_shift() = alignresult.get_subject_begin_incl() == 0
+                                ? -alignresult.get_query_begin_incl()
+                                : alignresult.get_subject_begin_incl();
+    alignresult.get_nOps() = alignresult.operations.size();
+    alignresult.get_isNormalized() = false;
+
+    return alignresult;
+}
+
+
+
+
 
 
 /*
