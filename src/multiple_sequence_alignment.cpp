@@ -3,6 +3,9 @@
 #include "../inc/celeganssrx218989.hpp"
 #include "../inc/ecolisrr490124.hpp"
 #include "../inc/dmelanogastersrr82337.hpp"
+#include "../inc/combinedforestaligncov.hpp"
+#include "../inc/celeganssrr543736.hpp"
+#include "../inc/combinedforestdatacov.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -383,11 +386,12 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
 
         constexpr double maxgini = 0.05;
 
-        namespace speciestype = ecoli_srr490124;
+        //namespace speciestype = ecoli_srr490124;
         //namespace speciestype = celegans_srx218989;
         //namespace speciestype = dmelanogaster_srr82337;
+        namespace speciestype = celegans_srr543736;
 
-#define USE_TREE
+//#define USE_TREE
 #define USE_NEW
 
 #ifdef USE_TREE
@@ -434,8 +438,9 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                             maxgini);
 
 #else
-
+#if 1
         std::pair<int, int> p = speciestype::shouldCorrect_forest(feature.position_support,
+                                    //combinedforestaligncov::shouldCorrect_forest(feature.position_support,
                                             feature.position_coverage,
                                             feature.alignment_coverage,
                                             feature.dataset_coverage,
@@ -448,6 +453,22 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                             feature.median_support,
                                             feature.median_coverage / feature.alignment_coverage,
                                             maxgini);
+#else
+        std::pair<int, int> p = //speciestype::shouldCorrect_forest(feature.position_support,
+                                    combinedforestdatacov::shouldCorrect_forest(feature.position_support,
+                                            feature.position_coverage,
+                                            feature.alignment_coverage / feature.dataset_coverage,
+                                            feature.dataset_coverage / feature.dataset_coverage,
+                                            feature.min_support,
+                                            feature.min_coverage / (feature.alignment_coverage * feature.dataset_coverage),
+                                            feature.max_support,
+                                            feature.max_coverage / (feature.alignment_coverage * feature.dataset_coverage),
+                                            feature.mean_support,
+                                            feature.mean_coverage / (feature.alignment_coverage * feature.dataset_coverage),
+                                            feature.median_support,
+                                            feature.median_coverage / (feature.alignment_coverage * feature.dataset_coverage),
+                                            maxgini);
+#endif
 
 #endif
 
