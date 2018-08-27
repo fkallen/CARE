@@ -278,6 +278,7 @@ struct ErrorCorrectionThread<minhasher_t, readStorage_t, false>{
 		int deviceId;
 		int gpuThresholdSHD;
 		int gpuThresholdSGA;
+        bool canUseGpu;
 
 		std::string outputfile;
 		BatchGenerator<ReadId_t>* batchGen;
@@ -407,7 +408,7 @@ private:
 		std::array<std::vector<BatchElem_t>, nStreams> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-        constexpr bool canUseGpu = true;
+        const bool canUseGpu = threadOpts.canUseGpu;
 
 		while(!stopAndAbort && !readIds.empty()){
 
@@ -810,6 +811,7 @@ struct ErrorCorrectionThread<minhasher_t, readStorage_t, true>{
 		int deviceId;
 		int gpuThresholdSHD;
 		int gpuThresholdSGA;
+        bool canUseGpu;
 
 		std::string outputfile;
 		BatchGenerator<ReadId_t>* batchGen;
@@ -936,7 +938,7 @@ private:
         std::array<std::vector<BatchElem_t>, nStreams> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-        constexpr bool canUseGpu = true;
+        const bool canUseGpu = threadOpts.canUseGpu;
 
 		while(!stopAndAbort &&!readIds.empty()){
 
@@ -1384,36 +1386,36 @@ private:
 		std::vector<SHDhandle> shdhandles(nStreams);
 		std::vector<SGAhandle> sgahandles(nStreams);
 
-        if(canUseGpu){
-    		if(indels){
-    			for(auto& handle : sgahandles){
-    				init_SGAhandle(handle,
-    						threadOpts.deviceId,
-    						fileProperties.maxSequenceLength,
-    						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-    						threadOpts.gpuThresholdSGA);
+		if(indels){
+			for(auto& handle : sgahandles){
+				init_SGAhandle(handle,
+						threadOpts.deviceId,
+						fileProperties.maxSequenceLength,
+						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+						threadOpts.gpuThresholdSGA);
+                if(canUseGpu){
+				    handle.buffers.resize(correctionOptions.batchsize,
+                        					correctionOptions.batchsize * max_candidates,
+                        					2 * correctionOptions.batchsize * max_candidates,
+                        					1.0);
+                }
+			}
+		}else{
 
-    				    handle.buffers.resize(correctionOptions.batchsize,
-    					correctionOptions.batchsize * max_candidates,
-    					2 * correctionOptions.batchsize * max_candidates,
-    					1.0);
-    			}
-    		}else{
-
-    			for(auto& handle : shdhandles){
-    				init_SHDhandle(handle,
-    						threadOpts.deviceId,
-    						fileProperties.maxSequenceLength,
-    						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-    						threadOpts.gpuThresholdSHD);
-
-    				    handle.buffers.resize(correctionOptions.batchsize,
-    					correctionOptions.batchsize * max_candidates,
-    					2 * correctionOptions.batchsize * max_candidates,
-    					1.0);
-    			}
-    		}
-        }
+			for(auto& handle : shdhandles){
+				init_SHDhandle(handle,
+						threadOpts.deviceId,
+						fileProperties.maxSequenceLength,
+						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+						threadOpts.gpuThresholdSHD);
+                if(canUseGpu){
+				    handle.buffers.resize(correctionOptions.batchsize,
+                    					correctionOptions.batchsize * max_candidates,
+                    					2 * correctionOptions.batchsize * max_candidates,
+                    					1.0);
+                }
+			}
+		}
 
 		errorgraph::ErrorGraph errorgraph;
 		pileup::PileupImage pileupImage(correctionOptions.m_coverage,
