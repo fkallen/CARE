@@ -59,6 +59,7 @@ namespace care{
 		std::string fileformatstring;
 		std::string inputfile;
 		std::string outputdirectory;
+        std::string outputfilename;
 		std::string outputfile;
 	};
 }

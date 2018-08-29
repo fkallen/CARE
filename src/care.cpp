@@ -11,6 +11,7 @@
 #include <vector>
 #include <iostream>
 #include <mutex>
+#include <thread>
 
 #include <experimental/filesystem>
 
@@ -177,17 +178,12 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	FileOptions fileOptions = args::to<FileOptions>(args);
 
     {
-        bool valid = true;
-
-        valid &= args::isValid(minhashOptions);
-        valid &= args::isValid(alignmentOptions);
-        valid &= args::isValid(goodAlignmentProperties);
-        valid &= args::isValid(correctionOptions);
-        valid &= args::isValid(runtimeOptions);
-        valid &= args::isValid(fileOptions);
-
-        if(!valid)
-            throw std::runtime_error("care::performCorrection: Invalid arguments!");
+        if(!args::isValid(minhashOptions)) throw std::runtime_error("care::performCorrection: Invalid minhashOptions!");
+        if(!args::isValid(alignmentOptions)) throw std::runtime_error("care::performCorrection: Invalid alignmentOptions!");
+        if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("care::performCorrection: Invalid goodAlignmentProperties!");
+        if(!args::isValid(correctionOptions)) throw std::runtime_error("care::performCorrection: Invalid correctionOptions!");
+        if(!args::isValid(runtimeOptions)) throw std::runtime_error("care::performCorrection: Invalid runtimeOptions!");
+        if(!args::isValid(fileOptions)) throw std::runtime_error("care::performCorrection: Invalid fileOptions!");
     }
 
 #ifndef __NVCC__
@@ -225,6 +221,14 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	const int iters = 1;
 	int iter = 0;
 
+    auto thread_id = std::this_thread::get_id();
+    std::string thread_id_string;
+    {
+        std::stringstream ss;
+        ss << thread_id;
+        thread_id_string = ss.str();
+    }
+
 #define DO_ALTERNATE
 
 	// correct file in multiple passes
@@ -237,23 +241,24 @@ void performCorrection(const cxxopts::ParseResult& args) {
 		// on odd iteration, correct file _iter_even and save to _iter_odd
 		if(iter == 0){
 			//inputfile remains original input file
-			iterFileOptions.outputfile = iterFileOptions.outputfile + "_iter_even";
+			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
 		}else{
 			if(iter % 2 == 0){
-				iterFileOptions.inputfile = iterFileOptions.outputfile + "_iter_odd";
-				iterFileOptions.outputfile = iterFileOptions.outputfile + "_iter_even";
+				iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
+				iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
 			}else{
-				iterFileOptions.inputfile = iterFileOptions.outputfile + "_iter_even";
-				iterFileOptions.outputfile = iterFileOptions.outputfile + "_iter_odd";
+				iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
+				iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
 			}
 		}
+
 #else
 		if(iter == 0){
 			//inputfile remains original input file
-			iterFileOptions.outputfile = iterFileOptions.outputfile + "_iter_0";
+			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_0";
 		}else{
-			iterFileOptions.inputfile = iterFileOptions.outputfile + "_iter_" + std::to_string(iter-1);
-			iterFileOptions.outputfile = iterFileOptions.outputfile + "_iter_" + std::to_string(iter);
+			iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iter-1);
+			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iter);
 		}
 #endif
 		correctFile(minhashOptions, alignmentOptions,
@@ -273,26 +278,26 @@ void performCorrection(const cxxopts::ParseResult& args) {
 
 #ifdef DO_ALTERNATE
 	if(iters % 2 == 0){
-		std::string toRename = fileOptions.outputfile + "_iter_odd";
+		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
 		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 
 		if(!keepIntermediateResults && iters > 1)
-			deleteFiles({fileOptions.outputfile + "_iter_even"});
+			deleteFiles({fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even"});
 	}else{
-		std::string toRename = fileOptions.outputfile + "_iter_even";
+		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
 		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 
 		if(!keepIntermediateResults && iters > 1)
-			deleteFiles({fileOptions.outputfile + "_iter_odd"});
+			deleteFiles({fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd"});
 	}
 #else
-	std::string toRename = fileOptions.outputfile + "_iter_" + std::to_string(iters-1);
+	std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iters-1);
 	std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 
 	if(!keepIntermediateResults){
 		std::vector<std::string> filestodelete;
 		for(int i = 0; i < iters-1; i++)
-			filestodelete.push_back(iterFileOptions.outputfile + "_iter_" + std::to_string(i));
+			filestodelete.push_back(fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(i));
 		deleteFiles(filestodelete);
 	}
 #endif

@@ -1,5 +1,6 @@
 #include "../inc/args.hpp"
 #include "../inc/hpc_helpers.cuh"
+#include "../inc/util.hpp"
 
 #include <iostream>
 #include <thread>
@@ -26,11 +27,10 @@ namespace args{
     	return result;
     }
 
-	std::string getFileName(std::string filePath)
-	{
-		filesys::path path(filePath);
-		return path.filename().string();
-	}
+    std::string getFileName(std::string filePath){
+        filesys::path path(filePath);
+        return path.filename().string();
+    }
 
 	template<>
 	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
@@ -143,12 +143,12 @@ namespace args{
 
 		result.inputfile = pr["inputfile"].as<std::string>();
 		result.outputdirectory = pr["outdir"].as<std::string>();
+        result.outputfilename = pr["outfile"].as<std::string>();
 
-		if(pr["outfile"].as<std::string>() == ""){
-			result.outputfile = result.outputdirectory + "/corrected_" + getFileName(result.inputfile);
-		}else{
-			result.outputfile = result.outputdirectory + "/" + pr["outfile"].as<std::string>();
-		}
+        if(result.outputfilename == "")
+            result.outputfilename = "corrected_" + getFileName(result.inputfile);
+
+		result.outputfile = result.outputdirectory + "/" + result.outputfilename;
 
 		result.fileformatstring = pr["fileformat"].as<std::string>();
 

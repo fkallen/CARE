@@ -1,5 +1,8 @@
 #include "../inc/util.hpp"
 
+#include <algorithm>
+
+
 #define SDIV(x,y)(((x)+(y)-1)/(y))
 
 void shiftBitsLeftBy(unsigned char* array, int bytes, int shiftamount){
@@ -100,5 +103,11 @@ int hammingdistanceHiLo(const std::uint8_t* l, const std::uint8_t* r, int length
 
 	return result;
 }
+
+
+
+
+
+
 
 #undef SDIV

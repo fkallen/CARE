@@ -1780,7 +1780,7 @@ private:
 
         featurestream.flush();
 
-	#if 1
+	#if 0
 		{
 			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 
@@ -1819,7 +1819,7 @@ private:
 		}
 	#endif
 
-	#if 1
+	#if 0
 		{
 			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 

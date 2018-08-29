@@ -1,7 +1,6 @@
 #ifndef CARE_UTIL_HPP
 #define CARE_UTIL_HPP
 
-
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -93,5 +92,6 @@ void shiftBitsRightBy(unsigned char* array, int bytes, int shiftamount);
 void shiftBitsBy(unsigned char* array, int bytes, int shiftamount);
 
 int hammingdistanceHiLo(const std::uint8_t* l, const std::uint8_t* r, int length_l, int length_r, int bytes);
+
 
 #endif
