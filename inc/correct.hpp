@@ -1700,7 +1700,8 @@ private:
 															correctionOptions.estimatedErrorrate,
 															correctionOptions.estimatedCoverage,
 															correctionOptions.correctCandidates,
-															correctionOptions.new_columns_to_correct);
+															correctionOptions.new_columns_to_correct,
+                                                            correctionOptions.classicMode);
 
 							tpd = std::chrono::system_clock::now();
 							readcorrectionTimeTotal += tpd - tpc;
@@ -1914,6 +1915,9 @@ void correct(const MinhashOptions& minhashOptions,
     /*
         Make candidate statistics
     */
+
+    std::cout << "estimating candidate cutoff" << std::endl;
+
     correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
 
     {
@@ -2016,7 +2020,7 @@ void correct(const MinhashOptions& minhashOptions,
         ecthreads[threadId].run();
     }
 
-
+    std::cout << "Correcting..." << std::endl;
 
 
 #ifndef DO_PROFILE
@@ -2094,11 +2098,10 @@ void correct(const MinhashOptions& minhashOptions,
     }
 #endif
 
+TIMERSTARTCPU(correction);
 
     for (auto& thread : ecthreads)
         thread.join();
-
-    std::cout << "threads done" << std::endl;
 
 #ifndef DO_PROFILE
     showProgress = false;
@@ -2106,6 +2109,12 @@ void correct(const MinhashOptions& minhashOptions,
     if(runtimeOptions.showProgress)
         printf("Progress: %3.2f %%\n", 100.00);
 #endif
+
+TIMERSTOPCPU(correction);
+
+    //std::cout << "threads done" << std::endl;
+
+
 
     minhasher.destroy();
 	readStorage.destroy();
@@ -2132,7 +2141,6 @@ void correct(const MinhashOptions& minhashOptions,
     }
 
     std::cout << "end merge" << std::endl;
-
 }
 
 
