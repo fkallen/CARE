@@ -43,6 +43,7 @@ namespace care{
 		int batchsize = 5;
         int new_columns_to_correct = 0;
         bool extractFeatures = false;
+        bool classicMode = false;
     };
 
 	struct RuntimeOptions{

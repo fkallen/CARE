@@ -9,6 +9,7 @@ namespace care{
 
     //correct batchElem using Pileup
     using PileupCorrectionResult = pileup::PileupImage::CorrectionResult;
+
     template<class BatchElem_t,
         typename std::enable_if<!std::is_same<typename BatchElem_t::AlignmentResult_t, shd::Result_t>::value, int>::type = 0>
     std::pair<PileupCorrectionResult, TaskTimings> correct(pileup::PileupImage& pileup,
@@ -17,7 +18,8 @@ namespace care{
                                                             double estimatedErrorrate,
                                                             double estimatedCoverage,
                                                             bool correctCandidates,
-                                                            int new_columns_to_correct) noexcept{
+                                                            int new_columns_to_correct,
+                                                            bool classicMode) noexcept{
 
         return {};
     }
@@ -30,7 +32,8 @@ namespace care{
                                                             double estimatedErrorrate,
                                                             double estimatedCoverage,
                                                             bool correctCandidates,
-                                                            int new_columns_to_correct) noexcept{
+                                                            int new_columns_to_correct,
+                                                            bool classicMode) noexcept{
             std::pair<PileupCorrectionResult, TaskTimings> result;
 
             auto& cor = result.first;
@@ -70,7 +73,8 @@ namespace care{
                                     estimatedErrorrate,
                                     estimatedCoverage,
                                     correctCandidates,
-                                    new_columns_to_correct);
+                                    new_columns_to_correct,
+                                    classicMode);
 
             tt.executionEnd();
 

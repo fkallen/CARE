@@ -412,23 +412,25 @@ struct PileupImage{
                 double estimatedErrorrate,
                 double estimatedCoverage,
                 bool correctCandidates,
-                int new_columns_to_correct){
+                int new_columns_to_correct,
+                bool classicMode){
 
         const double avg_support_threshold = 1.0-1.0*estimatedErrorrate;
         const double min_support_threshold = 1.0-3.0*estimatedErrorrate;
         const double min_coverage_threshold = correctionSettings.m / 6.0 * estimatedCoverage;
 
-#if 0
-        CorrectionResult result = cpu_correct_sequence_internal(sequence_to_correct,
+        CorrectionResult result;
+
+        if(classicMode){
+            result = cpu_correct_sequence_internal(sequence_to_correct,
                                                         estimatedErrorrate,
                                                         avg_support_threshold,
                                                         min_support_threshold,
                                                         min_coverage_threshold);
-#else
+        }else{
+            result = cpu_correct_sequence_internal_RF(sequence_to_correct);
+        }
 
-        CorrectionResult result = cpu_correct_sequence_internal_RF(sequence_to_correct);
-
-#endif
         if(correctCandidates && result.stats.isHQ){
             result.correctedCandidates = cpu_correct_candidates_internal(alignmentsBegin,
                                                             alignmentsEnd,

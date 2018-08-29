@@ -84,6 +84,7 @@ namespace args{
             pr["batchsize"].as<int>(),
             3, //new_columns_to_correct
             pr["extractFeatures"].as<bool>(),
+            pr["classicMode"].as<bool>(),
         };
 
         return result;
