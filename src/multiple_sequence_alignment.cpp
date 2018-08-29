@@ -372,6 +372,7 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
     CorrectionResult result;
     result.isCorrected = false;
     result.correctedSequence.resize(subjectlength);
+    result.stats.isHQ = false;
     result.stats.avg_support = 0;
     result.stats.min_support = 1.0;
     result.stats.max_coverage = 0;
@@ -439,8 +440,8 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
 
 #else
 #if 1
-        std::pair<int, int> p = speciestype::shouldCorrect_forest(feature.position_support,
-                                    //combinedforestaligncov::shouldCorrect_forest(feature.position_support,
+        std::pair<int, int> p = //speciestype::shouldCorrect_forest(feature.position_support,
+                                    combinedforestaligncov::shouldCorrect_forest(feature.position_support,
                                             feature.position_coverage,
                                             feature.alignment_coverage,
                                             feature.dataset_coverage,
