@@ -71,8 +71,6 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
     std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
 
-    std::cout << "begin correct" << std::endl;
-
     correct<Minhasher_t,
 			ReadStorage_t,
 			indelAlignment>(minhashOptions, alignmentOptions,
