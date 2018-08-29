@@ -1384,9 +1384,14 @@ SGAResult cpu_semi_global_alignment(const char* subject,
     auto accessor = [] (const char* data, int length, int index){
         return Sequence_t::get(data, length, index);
     };
-
+#if 1
     return sga::cpu_semi_global_alignment(subject, subjectlength, query, querylength,
                         score_match, score_sub, score_ins, score_del, accessor);
+#else
+return sga::cpu_semi_global_alignment_banded(subject, subjectlength, query, querylength,
+                    min_overlap, maxErrorRate, min_overlap_ratio,
+                    score_match, score_sub, score_ins, score_del, accessor);
+#endif
 }
 
 #ifdef __NVCC__

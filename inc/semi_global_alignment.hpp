@@ -415,7 +415,7 @@ cpu_semi_global_alignment(const char* subject,
 
 template<class Accessor>
 Result_t
-cpu_semi_global_alignment_new(const char* subject,
+cpu_semi_global_alignment_banded(const char* subject,
                             int subjectbases,
                             const char* query,
                             int querybases,
@@ -431,6 +431,8 @@ cpu_semi_global_alignment_new(const char* subject,
     using Score_t = std::int64_t;
 
     const int minoverlap = std::max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+    const int band_width_row = subjectbases - minoverlap;
+    const int band_width_col = querybases - minoverlap;
 
     const int numrows = subjectbases + 1;
     const int numcols = querybases + 1;
@@ -448,31 +450,43 @@ cpu_semi_global_alignment_new(const char* subject,
         scores[(row) * numcols + (0)] = Score_t(0);
     }
 
+    auto inBand = [&](int row, int band, int col){
+        return -band_width_row <= (col - row) && (col - row) <= band_width_col;
+    };
+
     // fill matrix
     for (int row = 1; row < numrows; ++row) {
-        for (int col = 1; col < numcols; ++col) {
-            // calc entry [row][col]
+        //for(int band = -band_width_row; band <= band_width_col; ++band){
+        for(int col = std::max(row-band_width_row, 1); col < std::min(row+band_width_col,numcols); ++col){
+            const int band = col - row;
+            //const int col = row + band;
 
-            const bool ismatch = getChar(subject, subjectbases, row - 1) == getChar(query, querybases, col - 1);
-            const Score_t matchscore = scores[(row - 1) * numcols + (col - 1)]
-                        + (ismatch ? Score_t(score_match) : Score_t(score_sub));
-            const Score_t insscore = scores[(row) * numcols + (col - 1)] + Score_t(score_ins);
-            const Score_t delscore = scores[(row - 1) * numcols + (col)] + Score_t(score_del);
+            //if(1 <= col && col < numcols){
+                // cell to be calculated is inside band
+                // calculate cell [row][col]
+                const bool ismatch = getChar(subject, subjectbases, row - 1) == getChar(query, querybases, col - 1);
+                const Score_t matchscore = scores[(row - 1) * numcols + (col - 1)]
+                            + (ismatch ? Score_t(score_match) : Score_t(score_sub));
+                const Score_t insscore = inBand(row, band, col-1) ? scores[(row) * numcols + (col - 1)] + Score_t(score_ins)
+                                                                : std::numeric_limits<Score_t>::min();
+                const Score_t delscore = inBand(row-1, band, col) ? scores[(row - 1) * numcols + (col)] + Score_t(score_del)
+                                                                : std::numeric_limits<Score_t>::min();
 
-            int maximum = 0;
-            if (matchscore < delscore) {
-                maximum = delscore;
-                prevs[(row) * numcols + (col)] = char(AlignOp::Type::del);
-            }else{
-                maximum = matchscore;
-                prevs[(row) * numcols + (col)] = ismatch ? char(AlignOp::Type::match) : char(AlignOp::Type::sub);
-            }
-            if (maximum < insscore) {
-                maximum = insscore;
-                prevs[(row) * numcols + (col)] = char(AlignOp::Type::ins);
-            }
+                int maximum = 0;
+                if (matchscore < delscore) {
+                    maximum = delscore;
+                    prevs[(row) * numcols + (col)] = char(AlignOp::Type::del);
+                }else{
+                    maximum = matchscore;
+                    prevs[(row) * numcols + (col)] = ismatch ? char(AlignOp::Type::match) : char(AlignOp::Type::sub);
+                }
+                if (maximum < insscore) {
+                    maximum = insscore;
+                    prevs[(row) * numcols + (col)] = char(AlignOp::Type::ins);
+                }
 
-            scores[(row) * numcols + (col)] = maximum;
+                scores[(row) * numcols + (col)] = maximum;
+            //}
         }
     }
 #if 0
