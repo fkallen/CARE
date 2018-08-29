@@ -16,11 +16,11 @@ datapath=/home/fekallen/arbeit/evaluationtool
 #inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
 #coverage=21
 
-inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
-coverage=255
+#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
+#coverage=255
 
-#inputfile=$datapath/datasets/E.coli_SRR490124.fastq
-#coverage=465
+inputfile=$datapath/datasets/E.coli_SRR490124.fastq
+coverage=465
 
 #inputfile=$datapath/datasets/E.coli_ERA000206.fastq
 #coverage=612
@@ -33,6 +33,11 @@ coverage=255
 
 #inputfile=$datapath/datasets/D.melanogaster_SRR823377.fastq
 #coverage=52
+
+## MiSeq ##
+
+#inputfile=$datapath/datasets/Salmonella_enterica_SRR1206093.fastq
+#coverage=97
 
 #estimated error rate
 errorrate=0.03
@@ -56,10 +61,10 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=true
+candidateCorrection=--candidateCorrection=false
 
 #if indels should be corrected, too
-indels=--indels=true
+indels=--indels=false
 
 extractFeatures=--extractFeatures=false
 
