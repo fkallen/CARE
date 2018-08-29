@@ -36,7 +36,9 @@ namespace care{
 			return false;
 
 		read->reset();
-		std::getline(is, read->header);
+        while(std::getline(is, read->header).good() && read->header == ""){
+            ;
+        }
 		if (!is.good())
 			return false;
 		if (read->header[0] != '@') {
