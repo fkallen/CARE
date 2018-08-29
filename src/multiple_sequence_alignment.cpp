@@ -1,11 +1,7 @@
 #include "../inc/multiple_sequence_alignment.hpp"
 
-#include "../inc/celeganssrx218989.hpp"
-#include "../inc/ecolisrr490124.hpp"
-#include "../inc/dmelanogastersrr82337.hpp"
-#include "../inc/combinedforestaligncov.hpp"
-#include "../inc/celeganssrr543736.hpp"
-#include "../inc/combinedforestdatacov.hpp"
+#include "../inc/treeclassifier.hpp"
+#include "../inc/forestclassifier.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -382,7 +378,7 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
     auto features = getFeaturesOfNonConsensusPositions(sequence_to_correct,
                                                         correctionSettings.k,
                                                         0.0);
-
+#if 0
     for(const auto& feature : features){
 
         constexpr double maxgini = 0.05;
@@ -439,7 +435,7 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
                                             maxgini);
 
 #else
-#if 1
+#if 0
         std::pair<int, int> p = //speciestype::shouldCorrect_forest(feature.position_support,
                                     combinedforestaligncov::shouldCorrect_forest(feature.position_support,
                                             feature.position_coverage,
@@ -476,6 +472,63 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
         const bool doCorrect = p.second / (p.first + p.second) > 0.5;
 
 #endif
+
+        if(doCorrect){
+            const int globalIndex = columnProperties.subjectColumnsBegin_incl + feature.position;
+            result.correctedSequence[feature.position] = h_consensus[globalIndex];
+        }
+    }
+#endif
+
+    for(const auto& feature : features){
+
+        constexpr double maxgini = 0.05;
+        constexpr double forest_correction_fraction = 0.5;
+
+    //#define USE_TREE
+
+    #ifdef USE_TREE
+
+        const bool doCorrect = care::treeclassifier::shouldCorrect(
+                                        care::treeclassifier::Mode::ecoli_srr490124,
+                                        //care::treeclassifier::Mode::celegans_srx218989,
+                                        //care::treeclassifier::Mode::dmelanogaster_srr82337,
+                                        //care::treeclassifier::Mode::celegans_srr543736,
+                                        feature.position_support,
+                                        feature.position_coverage,
+                                        feature.alignment_coverage,
+                                        feature.dataset_coverage,
+                                        feature.min_support,
+                                        feature.min_coverage,
+                                        feature.max_support,
+                                        feature.max_coverage,
+                                        feature.mean_support,
+                                        feature.mean_coverage,
+                                        feature.median_support,
+                                        feature.median_coverage,
+                                        maxgini);
+
+    #else
+        const bool doCorrect = care::forestclassifier::shouldCorrect(
+                                        care::forestclassifier::Mode::CombinedAlignCov,
+                                        feature.position_support,
+                                        feature.position_coverage,
+                                        feature.alignment_coverage,
+                                        feature.dataset_coverage,
+                                        feature.min_support,
+                                        feature.min_coverage,
+                                        feature.max_support,
+                                        feature.max_coverage,
+                                        feature.mean_support,
+                                        feature.mean_coverage,
+                                        feature.median_support,
+                                        feature.median_coverage,
+                                        maxgini,
+                                        forest_correction_fraction);
+
+
+    #endif
+
 
         if(doCorrect){
             const int globalIndex = columnProperties.subjectColumnsBegin_incl + feature.position;
