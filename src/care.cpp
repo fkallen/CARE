@@ -42,43 +42,36 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 	using Minhasher_t = minhasher_t;
 	using ReadStorage_t = readStorage_t;
 
+    auto toGB = [](std::size_t bytes){
+        double gb = bytes / 1024. / 1024. / 1024.0;
+        return gb;
+    };
+
     Minhasher_t minhasher(minhashOptions);
     ReadStorage_t readStorage(correctionOptions.useQualityScores);
 
     std::string stmp;
 
-    std::cout << "begin build" << std::endl;
+    std::cout << "loading file and building data structures..." << std::endl;
 
     //std::cin >> stmp;
-	TIMERSTARTCPU(LOAD_FILE);
+	TIMERSTARTCPU(load_and_build);
     build(fileOptions, runtimeOptions, readStorage, minhasher);
-	TIMERSTOPCPU(LOAD_FILE);
+	TIMERSTOPCPU(load_and_build);
 
     //std::cin >> stmp;
-    TIMERSTARTCPU(PREPROCESSING);
-	minhasher.transform();
-    std::cout << "hashmaps use " << (minhasher.numBytes() / 1024. / 1024. / 1024.) << " GB." << std::endl;
-    std::cout << "readStorage uses " << (readStorage.size() / 1024. / 1024. / 1024.) << " GB. "
-                << (readStorage.sizereal() / 1024. / 1024. / 1024.) << " GB." << std::endl;
-	readStorage.transform();
-    std::cout << "readStorage uses " << (readStorage.size() / 1024. / 1024. / 1024.) << " GB. "
-                << (readStorage.sizereal() / 1024. / 1024. / 1024.) << " GB." << std::endl;
-	TIMERSTOPCPU(PREPROCESSING);
 
-    #if 0
+    TIMERSTARTCPU(finalize_datastructures);
 
-        std::cout << "sequences size: " << readStorage.sequences.size() << std::endl;
-        std::cout << "sequences capacity: " << readStorage.sequences.capacity() << std::endl;
-        std::cout << "sequenceIndices size: " << readStorage.sequenceIndices.size() << std::endl;
-        std::cout << "sequenceIndices capacity: " << readStorage.sequenceIndices.capacity() << std::endl;
-        std::cout << "reverseComplSequenceIndices size: " << readStorage.reverseComplSequenceIndices.size() << std::endl;
-        std::cout << "reverseComplSequenceIndices capacity: " << readStorage.reverseComplSequenceIndices.capacity() << std::endl;
+    readStorage.transform();
+    minhasher.transform();
 
-    #endif
+	TIMERSTOPCPU(finalize_datastructures);
+
+    std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
+    std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
 
     std::cout << "begin correct" << std::endl;
-
-	TIMERSTARTCPU(CORRECT);
 
     correct<Minhasher_t,
 			ReadStorage_t,
@@ -89,8 +82,6 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 							readIsCorrectedVector, locksForProcessedFlags,
 							nLocksForProcessedFlags, deviceIds);
 
-
-	TIMERSTOPCPU(CORRECT);
 }
 
 void correctFile(const MinhashOptions& minhashOptions,
