@@ -52,6 +52,7 @@ namespace care{
 		int nCorrectorThreads = 1;
         bool showProgress = true;
         bool canUseGpu = false;
+        int max_candidates = 0;
         std::vector<int> deviceIds;
 	};
 

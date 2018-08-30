@@ -1293,7 +1293,9 @@ using Minhasher_t = minhasher_t;
 
     SequenceFileProperties fileProperties;
 
-    correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
+    //correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
+    std::uint64_t max_candidates;
+
 
     std::uint64_t nProcessedReads = 0;
 
@@ -1368,17 +1370,6 @@ private:
         std::uint64_t gpuAlignments = 0;
         //std::uint64_t savedAlignments = 0;
         //std::uint64_t performedAlignments = 0;
-
-        const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
-        const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
-        const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
-                                                        + 2.5 * estimatedDeviationAlignedCandidates;
-
-        const std::uint64_t max_candidates = estimatedAlignmentCountThreshold;// * correctionOptions.estimatedCoverage;
-        //const std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
-
-        if(threadOpts.threadId == 0)
-            std::cout << "max_candidates " << max_candidates << std::endl;
 
 		constexpr int nStreams = 2;
         const bool canUseGpu = threadOpts.canUseGpu;
@@ -1468,7 +1459,7 @@ private:
 						});
 
 						//don't correct candidates with more than estimatedAlignmentCountThreshold alignments
-						if(b.n_candidates > estimatedAlignmentCountThreshold)
+						if(b.n_candidates > max_candidates)
 							b.active = false;
 					}
 				}
@@ -1893,6 +1884,7 @@ void correct(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
+                  const SequenceFileProperties& props,
                   minhasher_t& minhasher,
                   readStorage_t& readStorage,
 				  std::vector<char>& readIsCorrectedVector,
@@ -1910,40 +1902,54 @@ void correct(const MinhashOptions& minhashOptions,
       // initialize qscore-to-weight lookup table
   	init_weights();
 
-    SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+    //SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
     /*
         Make candidate statistics
     */
 
-    std::cout << "estimating candidate cutoff" << std::endl;
+    std::uint64_t max_candidates = runtimeOptions.max_candidates;
+    //std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
 
-    correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
+    if(max_candidates == 0){
+        std::cout << "estimating candidate cutoff" << std::endl;
 
-    {
-        TIMERSTARTCPU(candidateestimation);
-        std::map<std::int64_t, std::int64_t> candidateHistogram
-                = correctiondetail::getCandidateCountHistogram(minhasher,
-                                            readStorage,
-                                            props.nReads / 10,
-                                            runtimeOptions.threads);
+        correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
 
-        TIMERSTOPCPU(candidateestimation);
+        {
+            TIMERSTARTCPU(candidateestimation);
+            std::map<std::int64_t, std::int64_t> candidateHistogram
+                    = correctiondetail::getCandidateCountHistogram(minhasher,
+                                                readStorage,
+                                                props.nReads / 10,
+                                                runtimeOptions.threads);
 
-        candidateDistribution = correctiondetail::estimateDist(candidateHistogram);
+            TIMERSTOPCPU(candidateestimation);
 
-        std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
-        std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
+            candidateDistribution = correctiondetail::estimateDist(candidateHistogram);
 
-        std::ofstream of("ncandidates.txt");
-        for(const auto& p : vec)
-            of << p.first << " " << p.second << '\n';
-        of.flush();
-    }
+            std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
+            std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
 
-    std::cout << "candidates.max " << candidateDistribution.max << std::endl;
-    std::cout << "candidates.average " << candidateDistribution.average << std::endl;
-    std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
+            std::ofstream of("ncandidates.txt");
+            for(const auto& p : vec)
+                of << p.first << " " << p.second << '\n';
+            of.flush();
+        }
+
+        std::cout << "candidates.max " << candidateDistribution.max << std::endl;
+        std::cout << "candidates.average " << candidateDistribution.average << std::endl;
+        std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
+
+        const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
+        const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
+        const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
+                                                        + 2.5 * estimatedDeviationAlignedCandidates;
+
+        max_candidates = estimatedAlignmentCountThreshold;
+    }    
+
+    std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
 
     /*
         Spawn correction threads
@@ -2015,7 +2021,7 @@ void correct(const MinhashOptions& minhashOptions,
         ecthreads[threadId].correctionOptions = correctionOptions;
         ecthreads[threadId].threadOpts = threadOpts;
         ecthreads[threadId].fileProperties = props;
-        ecthreads[threadId].candidateDistribution = candidateDistribution;
+        ecthreads[threadId].max_candidates = max_candidates;
 
         ecthreads[threadId].run();
     }

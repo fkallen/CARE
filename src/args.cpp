@@ -98,6 +98,8 @@ namespace args{
 		result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = true;
+        result.max_candidates = pr["maxCandidates"].as<int>();
+        std::cout << "result.max_candidates " << result.max_candidates << std::endl;
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 

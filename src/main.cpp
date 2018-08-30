@@ -55,6 +55,8 @@ int main(int argc, const char** argv){
         ("deviceIds", "Space separated GPU device ids to be used for correction", cxxopts::value<std::vector<std::string>>()->default_value({}))
         ("classicMode", "If set, MSA correction does not use decision trees",
               cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+        ("maxCandidates", "Upper limit for number of candidates per read. Reads with more than max_candidates candidates will not be corrected. The program will guess the limit if max_candidates == 0",
+      				 cxxopts::value<int>()->default_value("0")->implicit_value("0"))
 	;
 
     options.parse_positional({"deviceIds"});
