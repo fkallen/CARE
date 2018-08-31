@@ -7,8 +7,10 @@
 #include "../inc/celeganssrx218989.hpp"
 #include "../inc/ecolisrr490124.hpp"
 #include "../inc/dmelanogastersrr82337.hpp"
+#include "../inc/dmelanogastersrr988075.hpp"
 
 #include <utility>
+#include <stdexcept>
 
 namespace care{
 namespace forestclassifier{
@@ -68,9 +70,11 @@ namespace forestclassifier{
                 //namespace speciestype = ecoli_srr490124;
                 //namespace speciestype = celegans_srx218989;
                 //namespace speciestype = dmelanogaster_srr82337;
-                namespace speciestype = celegans_srr543736;
+                //namespace speciestype = celegans_srr543736;
+                namespace speciestype = dmelanogaster_srr988075;
 
-                forestresult = speciestype::shouldCorrect_forest(position_support,
+                forestresult = speciestype::shouldCorrect_forest(
+                                            position_support,
                                             position_coverage,
                                             alignment_coverage,
                                             dataset_coverage,

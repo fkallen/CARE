@@ -5,6 +5,7 @@
 #include "../inc/ecolisrr490124.hpp"
 #include "../inc/dmelanogastersrr82337.hpp"
 
+#include <stdexcept>
 
 namespace care{
 namespace treeclassifier{
