@@ -198,6 +198,8 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
 
+    std::cout << "Determining read properties..." << std::endl;
+
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
     std::cout << "----------------------------------------" << std::endl;
