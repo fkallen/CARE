@@ -4,11 +4,14 @@
 #include "cudareduce.cuh"
 #include "hpc_helpers.cuh"
 #include "bestalignment.hpp"
+#include "util.hpp"
 
 //#include "util.hpp"
 
 #include <cstdint>
 #include <algorithm>
+#include <vector>
+#include <bitset>
 
 namespace shd{
 
@@ -151,7 +154,7 @@ cpu_shifted_hamming_distance(const char* subject,
         const int max_errors = int(double(overlapsize) * maxErrorRate);
         int score = 0;
 
-        for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift) && score < max_errors; j++){
+        for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift) /*&& score < max_errors*/; j++){
             score += getChar(subject, subjectlength, j + shift) != getChar(query, querylength, j);
         }
 
@@ -188,8 +191,8 @@ cpu_shifted_hamming_distance(const char* subject,
     return result;
 }
 
-#if 0
-template<class Accessor>
+#if 1
+template<class B>
 Result_t
 cpu_shifted_hamming_distance_new(const char* subject,
                             int subjectlength,
@@ -198,30 +201,146 @@ cpu_shifted_hamming_distance_new(const char* subject,
                             int min_overlap,
                             double maxErrorRate,
                             double min_overlap_ratio,
-                            Accessor getChar
                             B getNumBytes) noexcept{
 
+    auto shiftBitsLeftBy = [](unsigned char* array, int bytes, int shiftamount){
+    	constexpr int maxshiftPerIter = 7;
+    	const int iters = SDIV(shiftamount, maxshiftPerIter);
+    	for(int iter = 0; iter < iters-1; ++iter){
+    		for(int i = 0; i < bytes - 1; ++i){
+    			array[i] = (array[i] << maxshiftPerIter) | (array[i+1] >> (8 - maxshiftPerIter));
+    		}
+    		array[bytes - 1] <<= maxshiftPerIter;
+
+    		shiftamount -= maxshiftPerIter;
+    	}
+
+    	for(int i = 0; i < bytes - 1; ++i){
+    		array[i] = (array[i] << shiftamount) | (array[i+1] >> (8 - shiftamount));
+    	}
+    	array[bytes - 1] <<= shiftamount;
+    };
+
+    auto hammingdistanceHiLo = [](const int* lhi,
+                                    const int* llo,
+                                    const int* rhi,
+                                    const int* rlo,
+                                    int lhi_bitcount,
+                                    int rhi_bitcount){
+
+    	const int overlap_bitcount = lhi_bitcount < rhi_bitcount ? lhi_bitcount : rhi_bitcount;
+        const int partitions = (overlap_bitcount / 8) / sizeof(int);
+
+    	int result = 0;
+
+    	for(int i = 0; i < partitions; i++){
+    		const int hixor = lhi[i] ^ rhi[i];
+    		const int loxor = llo[i] ^ rlo[i];
+    		const int bits = hixor | loxor;
+    		result += __builtin_popcount(bits);
+    	}
+
+        int remaining_bitcount = overlap_bitcount - partitions * sizeof(int) * 8;
+    	if(remaining_bitcount != 0){
+    		const int charpartitions = (remaining_bitcount / 8) / sizeof(std::uint8_t);
+
+    		const std::uint8_t* const lhichar = (const std::uint8_t*)(lhi + partitions);
+    		const std::uint8_t* const llochar = (const std::uint8_t*)(llo + partitions);
+    		const std::uint8_t* const rhichar = (const std::uint8_t*)(rhi + partitions);
+    		const std::uint8_t* const rlochar = (const std::uint8_t*)(rlo + partitions);
+
+    		for(int i = 0; i < charpartitions; i++){
+    			const std::uint8_t hixorchar = lhichar[i] ^ rhichar[i];
+    			const std::uint8_t loxorchar = llochar[i] ^ rlochar[i];
+    			const std::uint8_t bitschar = hixorchar | loxorchar;
+    			result += __builtin_popcount(bitschar);
+    		}
+
+    		remaining_bitcount = remaining_bitcount - charpartitions * sizeof(std::uint8_t) * 8;
+
+    		if(remaining_bitcount != 0){
+    			std::uint8_t mask = 0xFF << (sizeof(std::uint8_t)*8 - remaining_bitcount);
+    			const std::uint8_t hixorchar2 = lhichar[charpartitions] ^ rhichar[charpartitions];
+    			const std::uint8_t loxorchar2 = llochar[charpartitions] ^ rlochar[charpartitions];
+    			const std::uint8_t bitschar2 = hixorchar2 | loxorchar2;
+    			result += __builtin_popcount(bitschar2 & mask);
+    		}
+
+    	}
+
+        return result;
+    };
+
+    const int subjectbytes = getNumBytes(subjectlength);
+    const int querybytes = getNumBytes(querylength);
     const int totalbases = subjectlength + querylength;
     const int minoverlap = std::max(min_overlap, int(double(subjectlength) * min_overlap_ratio));
+
     int bestScore = totalbases; // score is number of mismatches
     int bestShift = -querylength; // shift of query relative to subject. shift < 0 if query begins before subject
 
-    std::vector<char> subjectdata;
-    std::vector<char> querydata;
+    std::vector<char> subjectdata(subjectbytes);
+    std::vector<char> querydata(querybytes);
 
-    subjectdata.reserve(getNumBytes(subjectlength));
-    querydata.reserve(getNumBytes(querylength));
+    int* subjectdata_hi = (int*)subjectdata.data();
+    int* subjectdata_lo = (int*)(subjectdata.data() + subjectbytes / 2);
+    int* querydata_hi = (int*)querydata.data();
+    int* querydata_lo = (int*)(querydata.data() + querybytes / 2);
 
-    for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap; shift++){
+#if 1
+
+    std::copy(subject, subject + subjectbytes, subjectdata.begin());
+    std::copy(query, query + querybytes, querydata.begin());
+
+
+    /*
+        The goal is to calculate the hamming distance for each shift in
+        for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap; shift++)
+
+        This loop is split into 3 parts. shift = 0, shift < 0 and shift > 0
+    */
+
+    //shift == 0
+    {
+        const int shift = 0;
         const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
         const int max_errors = int(double(overlapsize) * maxErrorRate);
 
-        subjectdata.insert(subjectdata.begin(), subject, subject + getNumBytes(subjectlength));
-        querydata.insert(querydata.begin(), query, query + getNumBytes(querylength));
+        int score = hammingdistanceHiLo(subjectdata_hi,
+                            subjectdata_lo,
+                            querydata_hi,
+                            querydata_lo,
+                            subjectlength - abs(shift),
+                            querylength - abs(shift));
 
-        shiftBitsBy(querydata.data(), getNumBytes(querylength), shift);
+        #if 1
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+        #else
+            score += totalbases - 2*overlapsize;
+        #endif
 
-        int score = hammingdistanceHiLo(subjectdata.data(), querydata.data(), sbases, qbases, getNumBytes(subjectlength));
+        if(score < bestScore){
+            bestScore = score;
+            bestShift = shift;
+        }
+    }
+
+    // shift < 0
+    for(int shift = -1; shift >= -querylength + minoverlap; --shift){
+        const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+        const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+        shiftBitsLeftBy((unsigned char*)querydata_hi, querybytes / 2, 1);
+        shiftBitsLeftBy((unsigned char*)querydata_lo, querybytes / 2, 1);
+
+        int score = hammingdistanceHiLo(subjectdata_hi,
+                            subjectdata_lo,
+                            querydata_hi,
+                            querydata_lo,
+                            subjectlength - abs(shift),
+                            querylength - abs(shift));
 
         #if 1
             score = (score < max_errors ?
@@ -236,6 +355,78 @@ cpu_shifted_hamming_distance_new(const char* subject,
             bestShift = shift;
         }
     }
+
+    //shift > 0
+
+    //load query again from memory since it has been modified by calculations with shift < 0
+    std::copy(query, query + querybytes, querydata.begin());
+
+    for(int shift = 1; shift < subjectlength - minoverlap; ++shift){
+        const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+        const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+        shiftBitsLeftBy((unsigned char*)subjectdata_hi, subjectbytes / 2, 1);
+        shiftBitsLeftBy((unsigned char*)subjectdata_lo, subjectbytes / 2, 1);
+
+        int score = hammingdistanceHiLo(subjectdata_hi,
+                            subjectdata_lo,
+                            querydata_hi,
+                            querydata_lo,
+                            subjectlength - abs(shift),
+                            querylength - abs(shift));
+
+        #if 1
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+        #else
+        	score += totalbases - 2*overlapsize;
+        #endif
+
+        if(score < bestScore){
+            bestScore = score;
+            bestShift = shift;
+        }
+    }
+
+#else
+
+    for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap; shift++){
+        const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+        const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+        std::copy(subject, subject + subjectbytes, subjectdata.begin());
+        std::copy(query, query + querybytes, querydata.begin());
+
+        if(shift < 0){
+            shiftBitsLeftBy((unsigned char*)querydata_hi, querybytes / 2, -shift);
+            shiftBitsLeftBy((unsigned char*)querydata_lo, querybytes / 2, -shift);
+        }else{
+            shiftBitsLeftBy((unsigned char*)subjectdata_hi, subjectbytes / 2, shift);
+            shiftBitsLeftBy((unsigned char*)subjectdata_lo, subjectbytes / 2, shift);
+        }
+
+        int score = hammingdistanceHiLo(subjectdata_hi,
+                            subjectdata_lo,
+                            querydata_hi,
+                            querydata_lo,
+                            subjectlength - abs(shift),
+                            querylength - abs(shift));
+
+        #if 1
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+        #else
+        	score += totalbases - 2*overlapsize;
+        #endif
+
+        if(score < bestScore){
+            bestScore = score;
+            bestShift = shift;
+        }
+    }
+#endif
 
     Result_t result;
     result.isValid = (bestShift != -querylength);

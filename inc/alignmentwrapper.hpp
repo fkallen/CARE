@@ -7,6 +7,7 @@
 #include "semi_global_alignment.hpp"
 #include "tasktiming.hpp"
 #include "bestalignment.hpp"
+#include "sequence.hpp"
 
 #include <vector>
 #include <chrono>
@@ -49,7 +50,7 @@ void destroy_SHDhandle(SHDhandle& handle);
     Wrapper functions for shifted hamming distance calls
     which derive the required accessor from Sequence_t
 */
-template<class Sequence_t>
+template<class Sequence_t, typename std::enable_if<!std::is_same<Sequence_t, Sequence2BitHiLo>::value, int>::type = 0>
 SHDResult cpu_shifted_hamming_distance(const char* subject,
                                         int subjectlength,
 										const char* query,
@@ -65,6 +66,24 @@ SHDResult cpu_shifted_hamming_distance(const char* subject,
     return shd::cpu_shifted_hamming_distance(subject, subjectlength, query, querylength,
                         min_overlap, maxErrorRate, min_overlap_ratio, accessor);
 }
+
+template<class Sequence_t, typename std::enable_if<std::is_same<Sequence_t, Sequence2BitHiLo>::value, int*>::type = nullptr>
+SHDResult cpu_shifted_hamming_distance(const char* subject,
+                                        int subjectlength,
+										const char* query,
+										int querylength,
+                                        int min_overlap,
+                                        double maxErrorRate,
+                                        double min_overlap_ratio){
+
+    auto getNumBytes = [] (int nbases){
+        return Sequence_t::getNumBytes(nbases);
+    };
+
+    return shd::cpu_shifted_hamming_distance_new(subject, subjectlength, query, querylength,
+                        min_overlap, maxErrorRate, min_overlap_ratio, getNumBytes);
+}
+
 
 #ifdef __NVCC__
 
