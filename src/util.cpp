@@ -27,7 +27,7 @@ void shiftBitsRightBy(unsigned char* array, int bytes, int shiftamount){
 	constexpr int maxshiftPerIter = 7;
 	const int iters = SDIV(shiftamount, maxshiftPerIter);
 	for(int iter = 0; iter < iters-1; ++iter){
-		for(int i = 0; i < bytes - 1; ++i){
+		for(int i = bytes - 1; i > 0; --i){
 			array[i] = (array[i] >> maxshiftPerIter) | (array[i-1] << (8 - maxshiftPerIter));
 		}
 		array[0] >>= maxshiftPerIter;
