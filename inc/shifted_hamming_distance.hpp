@@ -154,7 +154,7 @@ cpu_shifted_hamming_distance(const char* subject,
         const int max_errors = int(double(overlapsize) * maxErrorRate);
         int score = 0;
 
-        for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift) /*&& score < max_errors*/; j++){
+        for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift) && score < max_errors; j++){
             score += getChar(subject, subjectlength, j + shift) != getChar(query, querylength, j);
         }
 
@@ -226,19 +226,23 @@ cpu_shifted_hamming_distance_new(const char* subject,
                                     const int* rhi,
                                     const int* rlo,
                                     int lhi_bitcount,
-                                    int rhi_bitcount){
+                                    int rhi_bitcount,
+                                    int max_errors){
 
     	const int overlap_bitcount = lhi_bitcount < rhi_bitcount ? lhi_bitcount : rhi_bitcount;
         const int partitions = (overlap_bitcount / 8) / sizeof(int);
 
     	int result = 0;
 
-    	for(int i = 0; i < partitions; i++){
+    	for(int i = 0; i < partitions && result < max_errors; i++){
     		const int hixor = lhi[i] ^ rhi[i];
     		const int loxor = llo[i] ^ rlo[i];
     		const int bits = hixor | loxor;
     		result += __builtin_popcount(bits);
     	}
+
+        if(result >= max_errors)
+            return result;
 
         int remaining_bitcount = overlap_bitcount - partitions * sizeof(int) * 8;
     	if(remaining_bitcount != 0){
@@ -311,7 +315,8 @@ cpu_shifted_hamming_distance_new(const char* subject,
                             querydata_hi,
                             querydata_lo,
                             subjectlength - abs(shift),
-                            querylength - abs(shift));
+                            querylength - abs(shift),
+                            max_errors);
 
         #if 1
             score = (score < max_errors ?
@@ -340,7 +345,8 @@ cpu_shifted_hamming_distance_new(const char* subject,
                             querydata_hi,
                             querydata_lo,
                             subjectlength - abs(shift),
-                            querylength - abs(shift));
+                            querylength - abs(shift),
+                            max_errors);
 
         #if 1
             score = (score < max_errors ?
@@ -373,7 +379,8 @@ cpu_shifted_hamming_distance_new(const char* subject,
                             querydata_hi,
                             querydata_lo,
                             subjectlength - abs(shift),
-                            querylength - abs(shift));
+                            querylength - abs(shift),
+                            max_errors);
 
         #if 1
             score = (score < max_errors ?
