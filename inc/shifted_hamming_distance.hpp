@@ -194,7 +194,7 @@ cpu_shifted_hamming_distance(const char* subject,
 #if 1
 template<class B>
 Result_t
-cpu_shifted_hamming_distance_new(const char* subject,
+cpu_shifted_hamming_distance_popcount(const char* subject,
                             int subjectlength,
                             const char* query,
                             int querylength,

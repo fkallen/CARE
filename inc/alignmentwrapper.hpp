@@ -80,7 +80,7 @@ SHDResult cpu_shifted_hamming_distance(const char* subject,
         return Sequence_t::getNumBytes(nbases);
     };
 
-    return shd::cpu_shifted_hamming_distance_new(subject, subjectlength, query, querylength,
+    return shd::cpu_shifted_hamming_distance_popcount(subject, subjectlength, query, querylength,
                         min_overlap, maxErrorRate, min_overlap_ratio, getNumBytes);
 }
 
