@@ -880,6 +880,8 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_batched(SHDhandle& handle
 
 #ifdef __NVCC__
 
+#if 0
+
 template<class Sequence_t>
 void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                       int min_overlap,
@@ -923,8 +925,63 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                               shddata.streams[0]);
 }
 
+#else
+
 template<class Sequence_t>
-void call_shd_canonical_kernel(const shd::SHDdata& shddata,
+void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
+                      int min_overlap,
+                      double maxErrorRate,
+                      double min_overlap_ratio,
+                      int maxSubjectLength,
+                      int maxQueryLength){
+
+    auto getNumBytes = [] __device__ (int length){
+        return Sequence_t::getNumBytes(length);
+    };
+
+    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
+        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
+    };
+
+    auto comp = [=] __device__ (const SHDResult& fwdAlignment,
+                               const SHDResult& revcmplAlignment,
+                               int subjectlength,
+                               int querylength) -> BestAlignment_t{
+        return choose_best_alignment(fwdAlignment,
+                              revcmplAlignment,
+                              subjectlength,
+                              querylength,
+                              min_overlap_ratio,
+                              min_overlap,
+                              maxErrorRate);
+    };
+
+    shd::call_popcount_shd_with_revcompl_kernel_async(shddata,
+                                min_overlap,
+                                maxErrorRate,
+                                min_overlap_ratio,
+                                maxSubjectLength,
+                                maxQueryLength,
+                                make_reverse_complement,
+                                getNumBytes);
+
+    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
+                              shddata.d_bestAlignmentFlags,
+                              shddata.d_subjectlengths,
+                              shddata.d_querylengths,
+                              shddata.d_NqueriesPrefixSum,
+                              shddata.n_subjects,
+                              comp,
+                              shddata.n_queries,
+                              shddata.streams[0]);
+}
+
+
+
+#if 0
+
+template<class Sequence_t, typename std::enable_if<!std::is_same<Sequence_t, Sequence2BitHiLo>::value, int>::type = 0>
+void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                       int min_overlap,
                       double maxErrorRate,
                       double min_overlap_ratio,
@@ -952,9 +1009,9 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
                               maxErrorRate);
     };
 
-    shd::call_shd_with_revcompl_kernel(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
+    shd::call_shd_with_revcompl_kernel_async(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
 
-    call_cuda_find_best_alignment_kernel(shddata.d_results,
+    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
                               shddata.d_bestAlignmentFlags,
                               shddata.d_subjectlengths,
                               shddata.d_querylengths,
@@ -964,6 +1021,60 @@ void call_shd_canonical_kernel(const shd::SHDdata& shddata,
                               shddata.n_queries,
                               shddata.streams[0]);
 }
+
+
+template<class Sequence_t, typename std::enable_if<std::is_same<Sequence_t, Sequence2BitHiLo>::value, int*>::type = nullptr>
+void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
+                      int min_overlap,
+                      double maxErrorRate,
+                      double min_overlap_ratio,
+                      int maxSubjectLength,
+                      int maxQueryLength){
+    auto getNumBytes = [] __device__ (int length){
+        return Sequence_t::getNumBytes(length);
+    };
+
+
+    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
+        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
+    };
+
+    auto comp = [=] __device__ (const SHDResult& fwdAlignment,
+                               const SHDResult& revcmplAlignment,
+                               int subjectlength,
+                               int querylength) -> BestAlignment_t{
+        return choose_best_alignment(fwdAlignment,
+                              revcmplAlignment,
+                              subjectlength,
+                              querylength,
+                              min_overlap_ratio,
+                              min_overlap,
+                              maxErrorRate);
+    };
+
+    shd::call_popcount_shd_with_revcompl_kernel_async(shddata,
+                                min_overlap,
+                                maxErrorRate,
+                                min_overlap_ratio,
+                                maxSubjectLength,
+                                maxQueryLength,
+                                make_reverse_complement,
+                                getNumBytes);
+
+    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
+                              shddata.d_bestAlignmentFlags,
+                              shddata.d_subjectlengths,
+                              shddata.d_querylengths,
+                              shddata.d_NqueriesPrefixSum,
+                              shddata.n_subjects,
+                              comp,
+                              shddata.n_queries,
+                              shddata.streams[0]);
+}
+#endif
+
+#endif
+
 
 #endif
 
