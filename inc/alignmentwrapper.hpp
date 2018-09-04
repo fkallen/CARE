@@ -939,10 +939,6 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
         return Sequence_t::getNumBytes(length);
     };
 
-    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
-        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
-    };
-
     auto comp = [=] __device__ (const SHDResult& fwdAlignment,
                                const SHDResult& revcmplAlignment,
                                int subjectlength,
@@ -962,7 +958,6 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                                 min_overlap_ratio,
                                 maxSubjectLength,
                                 maxQueryLength,
-                                make_reverse_complement,
                                 getNumBytes);
 
     call_cuda_find_best_alignment_kernel_async(shddata.d_results,

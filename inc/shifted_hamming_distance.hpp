@@ -1245,7 +1245,7 @@ void call_shd_with_revcompl_kernel(const SHDdata& shddata,
 
 
 
-template<int threads_per_shift, class RevCompl, class B>
+template<int threads_per_shift, class B>
 __global__
 void
 cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
@@ -1260,7 +1260,6 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                               int min_overlap,
                               double maxErrorRate,
                               double min_overlap_ratio,
-                              RevCompl make_reverse_complement,
                               B getNumBytes){
 
     auto make_reverse_complement_inplace = [&](std::uint8_t* sequence, int sequencelength){
@@ -1627,6 +1626,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         // pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
         int2 myval = make_int2(bestScore, bestShift);
+        unsigned long long warpreduced = *((unsigned long long*)&myval);
 
         //reuse allocated shared memory since sequence data is no longer used
         //unsigned long long* blockreducetmp = (unsigned long long*)smem;
@@ -1637,9 +1637,14 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         };
 
         auto warptile = tiled_partition<32>(this_thread_block());
-        unsigned long long warpreduced = reduceTile(warptile,
-                                    *((unsigned long long*)&myval),
-                                    func);
+
+        for (unsigned int offset = warptile.size() / 2; offset > 0; offset /= 2){
+            warpreduced = func(warpreduced, warptile.shfl_down(warpreduced, offset));
+        }
+
+        //unsigned long long warpreduced = reduceTile(warptile,
+        //                            *((unsigned long long*)&myval),
+        //                            func);
         if(warptile.thread_rank() == 0)
             blockreducetmp[warpId] = warpreduced;
 
@@ -1681,14 +1686,13 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
 }
 
 
-template<class RevCompl, class B>
+template<class B>
 void call_popcount_shd_with_revcompl_kernel_async(const SHDdata& shddata,
                       int min_overlap,
                       double maxErrorRate,
                       double min_overlap_ratio,
                       int maxSubjectLength,
                       int maxQueryLength,
-                      RevCompl make_reverse_complement,
                       B getNumBytes){
 
         auto nextPow2 = [](unsigned int v){
@@ -1708,7 +1712,7 @@ void call_popcount_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       const int completeInts = maxSequenceLength / (sizeof(int) * 8);
       const int tilesize = std::min(32u, power_of_two(completeInts) ? completeInts : nextPow2(completeInts));
 
-      const int blocksize = 128;
+      const int blocksize = 64;
       const int tiles_per_block = blocksize / tilesize;
 
       dim3 block(blocksize, 1, 1);
@@ -1728,7 +1732,6 @@ void call_popcount_shd_with_revcompl_kernel_async(const SHDdata& shddata,
                                   min_overlap, \
                                   maxErrorRate, \
                                   min_overlap_ratio, \
-                                  make_reverse_complement, \
                                   getNumBytes); CUERR;
 
       switch(tilesize){
@@ -1744,14 +1747,13 @@ void call_popcount_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       #undef mycall
 }
 
-template<class RevCompl, class B>
+template<class B>
 void call_popcount_shd_with_revcompl_kernel(const SHDdata& shddata,
                       int min_overlap,
                       double maxErrorRate,
                       double min_overlap_ratio,
                       int maxSubjectLength,
                       int maxQueryLength,
-                      RevCompl make_reverse_complement,
                       B getNumBytes) noexcept{
 
     call_popcount_shd_with_revcompl_kernel_async(shddata,
@@ -1760,7 +1762,6 @@ void call_popcount_shd_with_revcompl_kernel(const SHDdata& shddata,
                         min_overlap_ratio,
                         maxSubjectLength,
                         maxQueryLength,
-                        make_reverse_complement,
                         getNumBytes);
 
     cudaStreamSynchronize(shddata.streams[0]); CUERR;
