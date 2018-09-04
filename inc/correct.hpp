@@ -1811,7 +1811,7 @@ private:
 		}
 	#endif
 
-	#if 0
+	#if 1
 		{
 			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 
@@ -1947,7 +1947,7 @@ void correct(const MinhashOptions& minhashOptions,
                                                         + 2.5 * estimatedDeviationAlignedCandidates;
 
         max_candidates = estimatedAlignmentCountThreshold;
-    }    
+    }
 
     std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
 

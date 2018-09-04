@@ -1262,7 +1262,53 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                               double min_overlap_ratio,
                               RevCompl make_reverse_complement,
                               B getNumBytes){
-#if 1
+
+    auto make_reverse_complement_inplace = [&](std::uint8_t* sequence, int sequencelength){
+
+        auto reverse_complement_byte = [](auto b) {
+            b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+            b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+            b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+            return ~b;
+        };
+
+        const int bytes = getNumBytes(sequencelength);
+        const int halfbytes = bytes / 2;
+        //const int unusedBitsByte = halfbytes*8 - sequencelength;
+        const int unusedBitsInLastUsedByte = SDIV(sequencelength, 8) * 8 - sequencelength;
+
+        std::uint8_t* const hiBytes = sequence;
+        std::uint8_t* const loBytes = sequence + halfbytes;
+
+        const int usedBytesPerHalf = SDIV(sequencelength, 8);
+        for(int i = 0; i < usedBytesPerHalf/2; ++i){
+            const std::uint8_t hifront = reverse_complement_byte(hiBytes[i]);
+            const std::uint8_t hiback = reverse_complement_byte(hiBytes[usedBytesPerHalf - 1 - i]);
+            hiBytes[i] = hiback;
+            hiBytes[usedBytesPerHalf - 1 - i] = hifront;
+
+            const std::uint8_t lofront = reverse_complement_byte(loBytes[i]);
+            const std::uint8_t loback = reverse_complement_byte(loBytes[usedBytesPerHalf - 1 - i]);
+            loBytes[i] = loback;
+            loBytes[usedBytesPerHalf - 1 - i] = lofront;
+        }
+        if(usedBytesPerHalf % 2 == 1){
+            const int middleindex = usedBytesPerHalf/2;
+            hiBytes[middleindex] = reverse_complement_byte(hiBytes[middleindex]);
+            loBytes[middleindex] = reverse_complement_byte(loBytes[middleindex]);
+        }
+
+        if(unusedBitsInLastUsedByte != 0){
+            for(int i = 0; i < halfbytes - 1; ++i){
+                hiBytes[i] = (hiBytes[i] << unusedBitsInLastUsedByte) | (hiBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+                loBytes[i] = (loBytes[i] << unusedBitsInLastUsedByte) | (loBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+            }
+
+            hiBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+            loBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+        }
+    };
+
     //use threads in tile to shift bit-array array by shiftamounts bits to the left
     auto shiftBitsLeftBy = [](thread_block_tile<threads_per_shift>& tile,
                                 unsigned char* array,
@@ -1306,41 +1352,6 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
 
         tile.sync();
     };
-#else
-
-
-    //use threads in tile to shift bit-array array by shiftamounts bits to the left
-    auto shiftBitsLeftBy = [](thread_block_tile<threads_per_shift>& tile,
-                                unsigned char* array,
-                                int bytes, // size of array
-                                int shiftamount){
-        constexpr int maxshiftPerIter = 7;
-        const int iters = SDIV(shiftamount, maxshiftPerIter);
-        if(tile.thread_rank() == 0){
-            for(int iter = 0; iter < iters-1; ++iter){
-                for(int i = 0; i < bytes - 1; i += 1){
-                    unsigned char cur = array[i];
-                    unsigned char next = array[i+1];
-
-                    array[i] = (cur << maxshiftPerIter) | (next >> (8 - maxshiftPerIter));
-                }
-                array[bytes - 1] <<= maxshiftPerIter;
-
-                shiftamount -= maxshiftPerIter;
-            }
-
-            for(int i = 0; i < bytes - 1; i += 1){
-                unsigned char cur = array[i];
-                unsigned char next = array[i+1];
-
-                array[i] = (cur << shiftamount) | (next >> (8 - shiftamount));
-            }
-            array[bytes - 1] <<= shiftamount;
-        }
-        tile.sync();
-    };
-
-#endif
 
     //result is returned by thread with tile.thread_rank() == 0
     auto hammingdistanceHiLo = [](thread_block_tile<threads_per_shift>& tile,
@@ -1426,23 +1437,18 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
     //set up shared memory pointers
     char* const sharedSubject = (char*)(smem);
     char* const sharedQuery = (char*)(sharedSubject + max_sequence_bytes * tiles_per_block);
-    char* const sharedQueryRevcompl = (char*)(sharedQuery + max_sequence_bytes * tiles_per_block);
+    //char* const sharedQueryRevcompl = (char*)(sharedQuery + max_sequence_bytes * tiles_per_block);
 
     //set up shared memory per tile
     char* const myTileSubject = sharedSubject + max_sequence_bytes * localTileId;
     char* const myTileQuery = sharedQuery + max_sequence_bytes * localTileId;
-    char* const myTileQueryRevcompl = sharedQueryRevcompl + max_sequence_bytes * localTileId;
+    //char* const myTileQueryRevcompl = sharedQueryRevcompl + max_sequence_bytes * localTileId;
 
     const int nQueries = NqueriesPrefixSum[Nsubjects];
 
     for(unsigned resultIndex = blockIdx.x; resultIndex < nQueries * 2; resultIndex += gridDim.x){
 
         const int queryIndex = resultIndex < nQueries ? resultIndex : resultIndex - nQueries;
-        //if(threadIdx.x == 0)
-        //    printf("resultIndex %d, nQueries %d, queryIndex %d\n", resultIndex, nQueries, queryIndex);
-
-        //if(threadIdx.x == 0)
-        //    printf("resultIndex = %d\n", resultIndex);
 
         //find subjectindex
         int subjectIndex = 0;
@@ -1467,60 +1473,26 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
 
         //queryIndex != resultIndex -> reverse complement
         if(queryIndex != resultIndex && tile.thread_rank() == 0){
-            make_reverse_complement((std::uint8_t*)myTileQueryRevcompl,
-                                    (const std::uint8_t*)myTileQuery,
-                                    querybases);
+
+            //make_reverse_complement((std::uint8_t*)myTileQueryRevcompl, (const std::uint8_t*)myTileQuery, querybases);
+
+            make_reverse_complement_inplace((std::uint8_t*)myTileQuery,querybases);
         }
 
         tile.sync();
 
         //begin SHD algorithm
 
-        const char* query = queryIndex == resultIndex ? myTileQuery : myTileQueryRevcompl;
-
-        /*if(resultIndex == 328 && threadIdx.x == 0){
-            auto b2c = [](char c){
-                switch(c){
-                    case 0x00: return 'A';
-                    case 0x01: return 'C';
-                    case 0x02: return 'G';
-                    case 0x03: return 'T';
-                    default: return 'F';
-                }
-            };
-            printf("resultindex %d, queryindex %d, subjectbases: %d, querybases %d\n", resultIndex, queryIndex, subjectbases, querybases);
-            printf("myTileSubject\n");
-            for(int i = 0; i < subjectbases; i++){
-                printf("%c", b2c(care::Sequence2BitHiLo::get(myTileSubject, subjectbases, i)));
-            }
-            printf("\n");
-
-            printf("myTileQuery\n");
-            for(int i = 0; i < querybases; i++){
-                printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQuery, querybases, i)));
-            }
-            printf("\n");
-
-            printf("myTileQueryRevcompl\n");
-            for(int i = 0; i < querybases; i++){
-                printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQueryRevcompl, querybases, i)));
-            }
-            printf("\n");
-
-            printf("query\n");
-            for(int i = 0; i < querybases; i++){
-                printf("%c", b2c(care::Sequence2BitHiLo::get(query, querybases, i)));
-            }
-            printf("\n");
-        }*/
+        //const char* query = queryIndex == resultIndex ? myTileQuery : myTileQueryRevcompl;
+        const char* query = myTileQuery;
 
         const int subjectbytes = getNumBytes(subjectbases);
         const int querybytes = getNumBytes(querybases);
         const int totalbases = subjectbases + querybases;
         const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
 
-        assert(subjectbytes % (2 * sizeof(int)) == 0);
-        assert(querybytes % (2 * sizeof(int)) == 0);
+        //assert(subjectbytes % (2 * sizeof(int)) == 0);
+        //assert(querybytes % (2 * sizeof(int)) == 0);
 
         //only valid for tile.thread_rank() == 0
         int bestScore = totalbases; // score is number of mismatches
@@ -1553,24 +1525,15 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                                 querybases - abs(shift),
                                 max_errors);
 
-
-
-                                score = (score < max_errors ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                //if(queryIndex == 1 && tile.thread_rank() == 0)
-                                //    printf("resultIndex %d, shift %d, score %d\n", resultIndex, shift, score);
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
 
             if(tile.thread_rank() == 0 && score < bestScore){
                 bestScore = score;
                 bestShift = shift;
             }
-
-            assert(score >= 0);
         }
-
-        __syncthreads(); //remove
 
         // shift > 0
         int shifts = subjectbases - minoverlap - 1;
@@ -1590,28 +1553,6 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             shiftBitsLeftBy(tile,(unsigned char*)subjectdata_hi, subjectbytes / 2, shiftamount);
             shiftBitsLeftBy(tile,(unsigned char*)subjectdata_lo, subjectbytes / 2, shiftamount);
 
-            /*if(resultIndex == 0 && tile.thread_rank() == 0 && shift == 38){
-                auto b2c = [](char c){
-                    switch(c){
-                        case 0x00: return 'A';
-                        case 0x01: return 'C';
-                        case 0x02: return 'G';
-                        case 0x03: return 'T';
-                        default: return 'F';
-                    }
-                };
-                printf("subjectbases: %d, querybases %d\n", subjectbases, querybases);
-                for(int i = 0; i < subjectbases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileSubject, subjectbases, i)));
-                }
-                printf("\n");
-
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQuery, querybases, i)));
-                }
-                printf("\n");
-            }*/
-
             int score = hammingdistanceHiLo(tile,
                                 subjectdata_hi,
                                 subjectdata_lo,
@@ -1621,22 +1562,15 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                                 querybases - abs(shift),
                                 max_errors);
 
-                                score = (score < max_errors ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                //if(queryIndex == 1 && tile.thread_rank() == 0)
-                                //    printf("resultIndex %d, shift %d, score %d\n", resultIndex, shift, score);
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
 
             if(tile.thread_rank() == 0 && score < bestScore){
                 bestScore = score;
                 bestShift = shift;
             }
-
-            assert(score >= 0);
         }
-
-        __syncthreads(); //remove
 
         //load subject again from memory since it has been modified by calculations with shift > 0
 
@@ -1645,8 +1579,6 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         }
 
         tile.sync();
-
-        __syncthreads(); //remove
 
         // shift < 0
         shifts = -(-querybases + minoverlap);
@@ -1663,82 +1595,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
 
             const int shiftamount = shift == firstShift ? -firstShift : 1; //firstShift is negative, don't forget the minus sign!
 
-            /*if(resultIndex == 328 && tile.thread_rank() == 0 && localTileId == 9){
-                auto b2c = [](char c){
-                    switch(c){
-                        case 0x00: return 'A';
-                        case 0x01: return 'C';
-                        case 0x02: return 'G';
-                        case 0x03: return 'T';
-                        default: return 'F';
-                    }
-                };
-                printf("without shift = %d, shiftamount == %d, tile %d\n", shift, shiftamount, localTileId);
-                printf("resultindex %d, queryindex %d, subjectbases: %d, querybases %d\n", resultIndex, queryIndex, subjectbases, querybases);
-                printf("myTileSubject\n");
-                for(int i = 0; i < subjectbases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileSubject, subjectbases, i)));
-                }
-                printf("\n");
-
-                printf("myTileQuery\n");
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQuery, querybases, i)));
-                }
-                printf("\n");
-
-                printf("myTileQueryRevcompl\n");
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQueryRevcompl, querybases, i)));
-                }
-                printf("\n");
-
-                printf("query\n");
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(query, querybases, i)));
-                }
-                printf("\n");
-            }*/
-
             shiftBitsLeftBy(tile,(unsigned char*)querydata_hi, querybytes / 2, shiftamount);
             shiftBitsLeftBy(tile,(unsigned char*)querydata_lo, querybytes / 2, shiftamount);
-
-            /*if(resultIndex == 328 && tile.thread_rank() == 0 && localTileId == 9){
-                auto b2c = [](char c){
-                    switch(c){
-                        case 0x00: return 'A';
-                        case 0x01: return 'C';
-                        case 0x02: return 'G';
-                        case 0x03: return 'T';
-                        default: return 'F';
-                    }
-                };
-                printf("with shift = %d, shiftamount == %d, tile %d\n", shift, shiftamount, localTileId);
-                printf("resultindex %d, queryindex %d, subjectbases: %d, querybases %d\n", resultIndex, queryIndex, subjectbases, querybases);
-                printf("myTileSubject\n");
-                for(int i = 0; i < subjectbases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileSubject, subjectbases, i)));
-                }
-                printf("\n");
-
-                printf("myTileQuery\n");
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQuery, querybases, i)));
-                }
-                printf("\n");
-
-                printf("myTileQueryRevcompl\n");
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(myTileQueryRevcompl, querybases, i)));
-                }
-                printf("\n");
-
-                printf("query\n");
-                for(int i = 0; i < querybases; i++){
-                    printf("%c", b2c(care::Sequence2BitHiLo::get(query, querybases, i)));
-                }
-                printf("\n");
-            }*/
 
             int score = hammingdistanceHiLo(tile,
                                 subjectdata_hi,
@@ -1749,19 +1607,14 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                                 querybases - abs(shift),
                                 max_errors);
 
-                                score = (score < max_errors ?
-                                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-                                //if(queryIndex == 1 && tile.thread_rank() == 0)
-                                //    printf("resultIndex %d, shift %d, score %d\n", resultIndex, shift, score);
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
 
             if(tile.thread_rank() == 0 && score < bestScore){
                 bestScore = score;
                 bestShift = shift;
             }
-
-            assert(score >= 0);
         }
 
         /*
@@ -1773,25 +1626,11 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         // perform reduction to find smallest score in block. the corresponding shift is required, too
         // pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
-        if(tile.thread_rank() != 0){
-            //bestScore = std::numeric_limits<int>::max();
-            //bestShift = std::numeric_limits<int>::max();
-            bestScore = totalbases; // score is number of mismatches
-            bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
-        }
-
         int2 myval = make_int2(bestScore, bestShift);
 
-        assert(bestScore >= 0);
-        assert(myval.x >= 0);
-
-        //if(resultIndex == 0){
-        //    printf("tid %d, bestScore %d, bestShift %d\n", threadIdx.x, bestScore, bestShift);
-        //}
-        __syncthreads();
-
         //reuse allocated shared memory since sequence data is no longer used
-        unsigned long long* blockreducetmp = (unsigned long long*)smem;
+        //unsigned long long* blockreducetmp = (unsigned long long*)smem;
+        __shared__ unsigned long long blockreducetmp[16];
 
         auto func = [](unsigned long long a, unsigned long long b){
             return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
@@ -1809,20 +1648,14 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         //make result
         if(threadIdx.x == 0){
             //reduce warp results
-            //if(resultIndex == 0){
-                //for(int i = 0; i < blockDim.x / WARPSIZE; i++){
-                //    printf("rid %d blockreducetmp[%d].x = %d\n", resultIndex, i, ((int2*)&(blockreducetmp[i]))->x);
-                //}
-            //}
+
             unsigned long long reduced = blockreducetmp[0];
-            for(int i = 0; i < blockDim.x / WARPSIZE; i++){
+            for(int i = 1; i < blockDim.x / WARPSIZE; i++){
                 reduced = func(reduced, blockreducetmp[i]);
             }
 
             bestScore = ((int2*)&reduced)->x;
             bestShift = ((int2*)&reduced)->y;
-
-            assert(bestScore >= 0);
 
             Result_t result;
 
@@ -1882,7 +1715,7 @@ void call_popcount_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       dim3 grid(shddata.n_queries*2, 1, 1); // one block per (query and its reverse complement)
       //dim3 grid(1, 1, 1); // one block per (query and its reverse complement)
 
-      const std::size_t smem = sizeof(char) * 3 * shddata.max_sequence_bytes * tiles_per_block;
+      const std::size_t smem = sizeof(char) * 2 * shddata.max_sequence_bytes * tiles_per_block;
 
       #define mycall(threads_per_shift) cuda_popcount_shifted_hamming_distance_with_revcompl_kernel<(threads_per_shift)> \
                                   <<<grid, block, smem, shddata.streams[0]>>>( \

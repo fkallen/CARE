@@ -101,7 +101,7 @@ void correctFile(const MinhashOptions& minhashOptions,
 
 	//using NoIndelSequence_t = SequenceString;
     //using NoIndelSequence_t = Sequence2Bit;
-    using NoIndelSequence_t = Sequence2Bit;//HiLo;
+    using NoIndelSequence_t = Sequence2BitHiLo;
 	using IndelSequence_t = Sequence2Bit;
 
     using Minhasher_t = Minhasher<Key_t, ReadId_t>;
