@@ -880,7 +880,7 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_batched(SHDhandle& handle
 
 #ifdef __NVCC__
 
-#if 1
+#if 0
 
 template<class Sequence_t>
 void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
@@ -895,8 +895,8 @@ void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
     };
 
 
-    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
-        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
+    auto make_reverse_complement = [] __device__ (std::uint8_t* sequence, int sequencelength){
+        return Sequence_t::make_reverse_complement_inplace(sequence, sequencelength);
     };
 
     auto comp = [=] __device__ (const SHDResult& fwdAlignment,

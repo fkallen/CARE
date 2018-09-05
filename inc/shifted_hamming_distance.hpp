@@ -1019,7 +1019,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                               double maxErrorRate,
                               double min_overlap_ratio,
                               Accessor getChar,
-                              RevCompl make_reverse_complement){
+                              RevCompl make_reverse_complement_inplace){
     constexpr int WARPSIZE = 32;
     constexpr int NWARPS = (BLOCKSIZE + WARPSIZE - 1) / WARPSIZE;
 
@@ -1032,7 +1032,6 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
     //set up shared memory pointers
     char* sharedSubject = (char*)(smem);
     char* sharedQuery = (char*)(sharedSubject + max_sequence_bytes);
-    char* sharedQueryRevcompl = (char*)(sharedQuery + max_sequence_bytes);
 
     const int nQueries = NqueriesPrefixSum[Nsubjects];
 
@@ -1058,23 +1057,18 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         for(int threadid = threadIdx.x; threadid < max_sequence_bytes; threadid += BLOCKSIZE){
             sharedQuery[threadid] = queriesdata[queryIndex * sequencepitch + threadid];
         }
-        //if(threadIdx.x == 0 && querybases != 100){
-        //    printf("sid %d, qid %d, s %d, q %d\n", subjectIndex, queryIndex, subjectbases, querybases);
-        //}
 
         __syncthreads();
 
-
-
         //queryIndex != resultIndex -> reverse complement
         if(queryIndex != resultIndex && threadIdx.x == 0){
-            make_reverse_complement((std::uint8_t*)sharedQueryRevcompl, (const std::uint8_t*)sharedQuery, querybases);
+            make_reverse_complement_inplace((std::uint8_t*)sharedQuery, querybases);
         }
         __syncthreads();
 
         //begin SHD algorithm
 
-        const char* query = queryIndex == resultIndex ? sharedQuery : sharedQueryRevcompl;
+        const char* query = sharedQuery;
 
         const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
         const int totalbases = subjectbases + querybases;
@@ -1179,7 +1173,7 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
       dim3 grid(shddata.n_queries*2, 1, 1); // one block per (query and its reverse complement)
 
-      const std::size_t smem = sizeof(char) * 3 * shddata.max_sequence_bytes;
+      const std::size_t smem = sizeof(char) * 2 * shddata.max_sequence_bytes;
 
       #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)> \
                                   <<<grid, block, smem, shddata.streams[0]>>>( \
