@@ -388,6 +388,35 @@ struct SequenceStringImpl{
             }
         }
     };
+
+    HOSTDEVICEQUALIFIER
+    static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
+
+        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+            switch(in){
+                case 'A': return 'T';
+                case 'C': return 'G';
+                case 'G': return 'C';
+                case 'T': return 'A';
+                default :return 'F';
+            }
+        };
+
+        const int bytes = getNumBytes(sequencelength);
+
+        for(int i = 0; i < bytes/2; i++){
+            const std::uint8_t front = make_reverse_complement_byte(sequence[i]);
+            const std::uint8_t back = make_reverse_complement_byte(sequence[bytes - 1 - i]);
+            sequence[i] = back;
+            sequence[bytes - 1 - i] = front;
+        }
+
+        if(bytes % 2 == 1){
+            const int middleindex = bytes/2;
+            sequence[middleindex] = make_reverse_complement_byte(sequence[middleindex]);
+        }
+    };
+
 };
 
 
@@ -431,8 +460,8 @@ struct Sequence2BitImpl{
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement(std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
         auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-            in = ((in >> 2)  & 0x3333u) | ((in & 0x3333u) << 2);
-            in = ((in >> 4)  & 0x0F0Fu) | ((in & 0x0F0Fu) << 4);
+            in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
+            in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
             return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
         };
 
@@ -451,6 +480,40 @@ struct Sequence2BitImpl{
             }
         }
     };
+
+    HOSTDEVICEQUALIFIER
+    static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
+
+        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+            in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
+            in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
+            return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+        };
+
+        const int bytes = getNumBytes(sequencelength);
+        const int unusedPositions = bytes * 4 - sequencelength;
+
+        for(int i = 0; i < bytes/2; i++){
+            const std::uint8_t front = make_reverse_complement_byte(sequence[i]);
+            const std::uint8_t back = make_reverse_complement_byte(sequence[bytes - 1 - i]);
+            sequence[i] = back;
+            sequence[bytes - 1 - i] = front;
+        }
+
+        if(bytes % 2 == 1){
+            const int middleindex = bytes/2;
+            sequence[middleindex] = make_reverse_complement_byte(sequence[middleindex]);
+        }
+
+        if(unusedPositions > 0){
+            sequence[0] <<= (2 * unusedPositions);
+            for(int i = 1; i < bytes; i++){
+                sequence[i-1] |= sequence[i] >> (2 * (4-unusedPositions));
+                sequence[i] <<= (2 * unusedPositions);
+            }
+        }
+    };
+
 };
 
 struct Sequence2BitHiLoImpl{
@@ -618,6 +681,55 @@ struct Sequence2BitHiLoImpl{
             loRevCBytes[halfbytes - 1] <<= unusedBitsByte;
         }
     };
+
+    HOSTDEVICEQUALIFIER
+    static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
+
+        auto make_reverse_complement_byte = [](auto b) {
+            b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+            b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+            b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+            return ~b;
+        };
+
+        const int bytes = getNumBytes(sequencelength);
+        const int halfbytes = bytes / 2;
+        //const int unusedBitsByte = halfbytes*8 - sequencelength;
+        const int unusedBitsInLastUsedByte = SDIV(sequencelength, 8) * 8 - sequencelength;
+
+        std::uint8_t* const hiBytes = sequence;
+        std::uint8_t* const loBytes = sequence + halfbytes;
+
+        const int usedBytesPerHalf = SDIV(sequencelength, 8);
+        for(int i = 0; i < usedBytesPerHalf/2; ++i){
+            const std::uint8_t hifront = make_reverse_complement_byte(hiBytes[i]);
+            const std::uint8_t hiback = make_reverse_complement_byte(hiBytes[usedBytesPerHalf - 1 - i]);
+            hiBytes[i] = hiback;
+            hiBytes[usedBytesPerHalf - 1 - i] = hifront;
+
+            const std::uint8_t lofront = make_reverse_complement_byte(loBytes[i]);
+            const std::uint8_t loback = make_reverse_complement_byte(loBytes[usedBytesPerHalf - 1 - i]);
+            loBytes[i] = loback;
+            loBytes[usedBytesPerHalf - 1 - i] = lofront;
+        }
+        if(usedBytesPerHalf % 2 == 1){
+            const int middleindex = usedBytesPerHalf/2;
+            hiBytes[middleindex] = make_reverse_complement_byte(hiBytes[middleindex]);
+            loBytes[middleindex] = make_reverse_complement_byte(loBytes[middleindex]);
+        }
+
+        if(unusedBitsInLastUsedByte != 0){
+            for(int i = 0; i < halfbytes - 1; ++i){
+                hiBytes[i] = (hiBytes[i] << unusedBitsInLastUsedByte) | (hiBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+                loBytes[i] = (loBytes[i] << unusedBitsInLastUsedByte) | (loBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+            }
+
+            hiBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+            loBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+        }
+    };
+
+
 };
 
 
@@ -761,6 +873,11 @@ struct SequenceBase {
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement(std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
         return Impl::make_reverse_complement(reverseComplement, sequence, sequencelength);
+    };
+
+    HOSTDEVICEQUALIFIER
+    static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
+        return Impl::make_reverse_complement_inplace(sequence, sequencelength);
     };
 
 	std::pair<std::unique_ptr<std::uint8_t[]>, int> data;

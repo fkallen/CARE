@@ -880,7 +880,7 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_batched(SHDhandle& handle
 
 #ifdef __NVCC__
 
-#if 0
+#if 1
 
 template<class Sequence_t>
 void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
