@@ -1368,11 +1368,6 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             laneresult += __popc(bits);
         }
 
-        int result = reduceTile(tile, laneresult, [](int l, int r){return l+r;});
-
-        if(result >= max_errors)
-            return result;
-
         int remaining_bitcount = overlap_bitcount - completepartitions * sizeof(int) * 8;
         if(remaining_bitcount != 0){
             const int completecharpartitions = (remaining_bitcount / 8) / sizeof(std::uint8_t);
@@ -1382,16 +1377,12 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             const std::uint8_t* const rhichar = (const std::uint8_t*)(rhi + completepartitions);
             const std::uint8_t* const rlochar = (const std::uint8_t*)(rlo + completepartitions);
 
-            laneresult = 0;
-
             for(int i = tile.thread_rank(); i < completecharpartitions; i += tile.size()){
                 const std::uint8_t hixorchar = lhichar[i] ^ rhichar[i];
                 const std::uint8_t loxorchar = llochar[i] ^ rlochar[i];
                 const std::uint8_t bitschar = hixorchar | loxorchar;
                 laneresult += __popc(bitschar);
             }
-
-            result += reduceTile(tile, laneresult, [](int l, int r){return l+r;});
 
             remaining_bitcount = remaining_bitcount - completecharpartitions * sizeof(std::uint8_t) * 8;
 
@@ -1400,9 +1391,11 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
                 const std::uint8_t hixorchar2 = lhichar[completecharpartitions] ^ rhichar[completecharpartitions];
                 const std::uint8_t loxorchar2 = llochar[completecharpartitions] ^ rlochar[completecharpartitions];
                 const std::uint8_t bitschar2 = hixorchar2 | loxorchar2;
-                result += __popc(bitschar2 & mask);
+                laneresult += __popc(bitschar2 & mask);
             }
         }
+
+        int result = reduceTile(tile, laneresult, [](int l, int r){return l+r;});
 
         return result;
     };
