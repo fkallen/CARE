@@ -2,8 +2,12 @@
 
 
 #gpu version does NOT work for long reads at the moment. we tested with reads of fixed length 100
-executable=./errorcorrector_gpu
-#executable=./errorcorrector_cpu
+executable=./errorcorrector_cpu
+
+if [ $# -gt 0 ]
+then
+	executable=./errorcorrector_$1
+fi
 
 #max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
 threads=16
@@ -16,8 +20,8 @@ datapath=/home/fekallen/arbeit/evaluationtool
 #inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
 #coverage=21
 
-#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
-#coverage=255
+inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
+coverage=255
 
 #inputfile=$datapath/datasets/E.coli_SRR490124.fastq
 #coverage=465
@@ -34,13 +38,14 @@ datapath=/home/fekallen/arbeit/evaluationtool
 #inputfile=$datapath/datasets/D.melanogaster_SRR823377.fastq
 #coverage=52
 
-inputfile=$datapath/datasets/D.melanogaster_SRR988075.fastq
-coverage=64
+#inputfile=$datapath/datasets/D.melanogaster_SRR988075.fastq
+#coverage=64
+
 
 #inputfile=$datapath/datasets/L.pneumophila_SRR801797.fastq
 #coverage=260
 
-candidates="--maxCandidates=1550"
+candidates="--maxCandidates=0"
 
 ## MiSeq ##
 
@@ -62,7 +67,7 @@ outputfile="readscorrectednew.fq"
 outfile="--outfile=$outputfile"
 #outfile=
 
-classicMode=--classicMode=false
+classicMode=--classicMode=true
 
 #fastq
 fileformat=fastq
@@ -71,7 +76,7 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=true
+candidateCorrection=--candidateCorrection=false
 
 #if indels should be corrected, too
 indels=--indels=false
