@@ -93,8 +93,7 @@
     #define H2H (cudaMemcpyHostToHost)
     #define D2D (cudaMemcpyDeviceToDevice)
 
-
-// safe division
-#define SDIV(x,y)(((x)+(y)-1)/(y))
+    // safe division
+    #define SDIV(x,y)(((x)+(y)-1)/(y))
 
 #endif
