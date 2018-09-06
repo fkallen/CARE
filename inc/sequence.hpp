@@ -529,34 +529,35 @@ struct Sequence2BitHiLoImpl{
 
     	std::memset(encoded.get(), 0, bytes);
 
-        std::uint8_t* hi = encoded.get();
-        std::uint8_t* lo = hi + bytes/2;
+        unsigned int* const hi = (unsigned int*)encoded.get();
+        unsigned int* const lo = (unsigned int*)(encoded.get() + bytes/2);
 
     	for(int i = 0; i < nbases; i++){
-    		const int byteIndex = i / 8;
-    		const int pos = i % 8;
-            std::uint8_t mask = std::uint8_t(1) << (7-pos);
+    		const int intIndex = i / (8 * sizeof(unsigned int));
+    		const int pos = i % (8 * sizeof(unsigned int));
+            //unsigned int mask = 1u << ((8 * sizeof(unsigned int)) - 1 - pos);
+            unsigned int mask = 1u << pos;
 
             switch(sequence[i]) {
             case 'A':
-                    hi[byteIndex] &= ~mask;
-                    lo[byteIndex] &= ~mask;
+                    hi[intIndex] &= ~mask;
+                    lo[intIndex] &= ~mask;
                     break;
             case 'C':
-                    hi[byteIndex] &= ~mask;
-                    lo[byteIndex] |= mask;
+                    hi[intIndex] &= ~mask;
+                    lo[intIndex] |= mask;
                     break;
             case 'G':
-                    hi[byteIndex] |= mask;
-                    lo[byteIndex] &= ~mask;
+                    hi[intIndex] |= mask;
+                    lo[intIndex] &= ~mask;
                     break;
             case 'T':
-                    hi[byteIndex] |= mask;
-                    lo[byteIndex] |= mask;
+                    hi[intIndex] |= mask;
+                    lo[intIndex] |= mask;
                     break;
             default:
-                    hi[byteIndex] &= ~mask;
-                    lo[byteIndex] &= ~mask;
+                    hi[intIndex] &= ~mask;
+                    lo[intIndex] &= ~mask;
                     break;
             }
     	}
@@ -573,13 +574,13 @@ struct Sequence2BitHiLoImpl{
     static char get(const char* data, int nBases, int i) noexcept{
         const int bytes = getNumBytes(nBases);
 
-        const unsigned char* const hi = (const unsigned char*)data;
-        const unsigned char* const lo = hi + bytes/2;
+        const unsigned int* const hi = (const unsigned int*)data;
+        const unsigned int* const lo = (const unsigned int*)(data + bytes/2);
 
-        const int byteIndex = i / 8;
-        const int pos = i % 8;
-        const unsigned char hibit = (hi[byteIndex] >> (7-pos)) & std::uint8_t(1);
-        const unsigned char lobit = (lo[byteIndex] >> (7-pos)) & std::uint8_t(1);
+        const int intIndex = i / (8 * sizeof(unsigned int));
+        const int pos = i % (8 * sizeof(unsigned int));
+        const unsigned char hibit = (hi[intIndex] >> pos) & 1u;
+        const unsigned char lobit = (lo[intIndex] >> pos) & 1u;
         const unsigned char base = (hibit << 1) | lobit;
 
         /*switch(base){
@@ -606,16 +607,16 @@ struct Sequence2BitHiLoImpl{
 
         const int bytes = getNumBytes(nBases);
 
-        const std::uint8_t* hi = data;
-        const std::uint8_t* lo = hi + bytes/2;
+        const unsigned int* const hi = (const unsigned int*)data;
+        const unsigned int* const lo = (const unsigned int*)(data + bytes/2);
 
         for(int i = 0; i < nBases; i++){
-            const int byteIndex = i / 8;
-            const int pos = i % 8;
+            const int intIndex = i / (8 * sizeof(unsigned int));
+            const int pos = i % (8 * sizeof(unsigned int));
 
-            const std::uint8_t hibit = (hi[byteIndex] >> (7-pos)) & std::uint8_t(1);
-            const std::uint8_t lobit = (lo[byteIndex] >> (7-pos)) & std::uint8_t(1);
-            const std::uint8_t base = (hibit << 1) | lobit;
+            const unsigned char hibit = (hi[intIndex] >> pos) & 1u;
+            const unsigned char lobit = (lo[intIndex] >> pos) & 1u;
+            const unsigned char base = (hibit << 1) | lobit;
 
             switch(base){
             case BASE_A: sequence.push_back('A'); break;
@@ -647,88 +648,138 @@ struct Sequence2BitHiLoImpl{
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement(std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
 
-        auto reverse_complement_byte = [](auto b) {
-            b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-            b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-            b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-            return ~b;
+        auto reverse_complement_int = [](auto n) {
+            n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+            n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+            n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+            n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+            n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+            return ~n;
         };
 
         const int bytes = getNumBytes(sequencelength);
-        const int halfbytes = bytes / 2;
-        //const int unusedBitsByte = halfbytes*8 - sequencelength;
-        const int unusedBitsByte = SDIV(sequencelength, 8) * 8 - sequencelength;
+        const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
 
-        const std::uint8_t* const hiOrigBytes = sequence;
-        const std::uint8_t* const loOrigBytes = sequence + halfbytes;
-        std::uint8_t* const hiRevCBytes = reverseComplement;
-        std::uint8_t* const loRevCBytes = reverseComplement + halfbytes;
+        const unsigned int* const hiOrig = (const unsigned int*)sequence;
+        const unsigned int* const loOrig = (const unsigned int*)(sequence + bytes/2);
 
-        const int halfBytesBytes = SDIV(sequencelength, 8);
-        for(int i = 0; i < halfBytesBytes; ++i){
-            hiRevCBytes[i] = reverse_complement_byte(hiOrigBytes[halfBytesBytes - 1 - i]);
-            loRevCBytes[i] = reverse_complement_byte(loOrigBytes[halfBytesBytes - 1 - i]);
-            //printf("%d %u %u\n", i, hiRevCBytes[i], loRevCBytes[i]);
+        unsigned int* const hiRevC = (unsigned int*)reverseComplement;
+        unsigned int* const loRevC = (unsigned int*)(reverseComplement + bytes/2);
+
+        const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
+        for(int i = 0; i < intsPerHalf; ++i){
+            hiRevC[i] = reverse_complement_int(hiOrig[intsPerHalf - 1 - i]);
+            loRevC[i] = reverse_complement_int(loOrig[intsPerHalf - 1 - i]);
         }
 
-        if(unusedBitsByte != 0){
-            for(int i = 0; i < halfbytes - 1; ++i){
-                hiRevCBytes[i] = (hiRevCBytes[i] << unusedBitsByte) | (hiRevCBytes[i+1] >> (8 - unusedBitsByte));
-                loRevCBytes[i] = (loRevCBytes[i] << unusedBitsByte) | (loRevCBytes[i+1] >> (8 - unusedBitsByte));
+        if(unusedBitsInt != 0){
+            for(int i = 0; i < intsPerHalf - 1; ++i){
+                hiRevC[i] = (hiRevC[i] >> unusedBitsInt) | (hiRevC[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                loRevC[i] = (loRevC[i] >> unusedBitsInt) | (loRevC[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
             }
 
-            hiRevCBytes[halfbytes - 1] <<= unusedBitsByte;
-            loRevCBytes[halfbytes - 1] <<= unusedBitsByte;
+            hiRevC[intsPerHalf - 1] >>= unusedBitsInt;
+            loRevC[intsPerHalf - 1] >>= unusedBitsInt;
         }
     };
-
+#if 1
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
 
-        auto make_reverse_complement_byte = [](auto b) {
-            b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-            b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-            b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-            return ~b;
+        auto reverse_complement_int = [](auto n) {
+            n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+            n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+            n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+            n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+            n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+            return ~n;
         };
 
         const int bytes = getNumBytes(sequencelength);
-        const int halfbytes = bytes / 2;
-        //const int unusedBitsByte = halfbytes*8 - sequencelength;
-        const int unusedBitsInLastUsedByte = SDIV(sequencelength, 8) * 8 - sequencelength;
+        const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
 
-        std::uint8_t* const hiBytes = sequence;
-        std::uint8_t* const loBytes = sequence + halfbytes;
+        unsigned int* const hi = (unsigned int*)sequence;
+        unsigned int* const lo = (unsigned int*)(sequence + bytes/2);
 
-        const int usedBytesPerHalf = SDIV(sequencelength, 8);
-        for(int i = 0; i < usedBytesPerHalf/2; ++i){
-            const std::uint8_t hifront = make_reverse_complement_byte(hiBytes[i]);
-            const std::uint8_t hiback = make_reverse_complement_byte(hiBytes[usedBytesPerHalf - 1 - i]);
-            hiBytes[i] = hiback;
-            hiBytes[usedBytesPerHalf - 1 - i] = hifront;
+        const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
+        for(int i = 0; i < intsPerHalf/2; ++i){
+            const unsigned int hifront = reverse_complement_int(hi[i]);
+            const unsigned int hiback = reverse_complement_int(hi[intsPerHalf - 1 - i]);
+            hi[i] = hiback;
+            hi[intsPerHalf - 1 - i] = hifront;
 
-            const std::uint8_t lofront = make_reverse_complement_byte(loBytes[i]);
-            const std::uint8_t loback = make_reverse_complement_byte(loBytes[usedBytesPerHalf - 1 - i]);
-            loBytes[i] = loback;
-            loBytes[usedBytesPerHalf - 1 - i] = lofront;
+            const unsigned int lofront = reverse_complement_int(lo[i]);
+            const unsigned int loback = reverse_complement_int(lo[intsPerHalf - 1 - i]);
+            lo[i] = loback;
+            lo[intsPerHalf - 1 - i] = lofront;
         }
-        if(usedBytesPerHalf % 2 == 1){
-            const int middleindex = usedBytesPerHalf/2;
-            hiBytes[middleindex] = make_reverse_complement_byte(hiBytes[middleindex]);
-            loBytes[middleindex] = make_reverse_complement_byte(loBytes[middleindex]);
+        if(intsPerHalf % 2 == 1){
+            const int middleindex = intsPerHalf/2;
+            hi[middleindex] = reverse_complement_int(hi[middleindex]);
+            lo[middleindex] = reverse_complement_int(lo[middleindex]);
         }
 
-        if(unusedBitsInLastUsedByte != 0){
-            for(int i = 0; i < halfbytes - 1; ++i){
-                hiBytes[i] = (hiBytes[i] << unusedBitsInLastUsedByte) | (hiBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
-                loBytes[i] = (loBytes[i] << unusedBitsInLastUsedByte) | (loBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+        if(unusedBitsInt != 0){
+            for(int i = 0; i < intsPerHalf - 1; ++i){
+                hi[i] = (hi[i] >> unusedBitsInt) | (hi[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                lo[i] = (lo[i] >> unusedBitsInt) | (lo[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
             }
 
-            hiBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
-            loBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+            hi[intsPerHalf - 1] >>= unusedBitsInt;
+            lo[intsPerHalf - 1] >>= unusedBitsInt;
         }
     };
+#else
 
+HOSTDEVICEQUALIFIER
+static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
+
+    auto make_reverse_complement_byte = [](auto b) {
+        b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+        b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+        b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+        return ~b;
+    };
+
+    const int bytes = getNumBytes(sequencelength);
+    const int halfbytes = bytes / 2;
+    //const int unusedBitsByte = halfbytes*8 - sequencelength;
+    const int unusedBitsInLastUsedByte = SDIV(sequencelength, 8) * 8 - sequencelength;
+
+    std::uint8_t* const hiBytes = sequence;
+    std::uint8_t* const loBytes = sequence + halfbytes;
+
+    const int usedBytesPerHalf = SDIV(sequencelength, 8);
+    for(int i = 0; i < usedBytesPerHalf/2; ++i){
+        const std::uint8_t hifront = make_reverse_complement_byte(hiBytes[i]);
+        const std::uint8_t hiback = make_reverse_complement_byte(hiBytes[usedBytesPerHalf - 1 - i]);
+        hiBytes[i] = hiback;
+        hiBytes[usedBytesPerHalf - 1 - i] = hifront;
+
+        const std::uint8_t lofront = make_reverse_complement_byte(loBytes[i]);
+        const std::uint8_t loback = make_reverse_complement_byte(loBytes[usedBytesPerHalf - 1 - i]);
+        loBytes[i] = loback;
+        loBytes[usedBytesPerHalf - 1 - i] = lofront;
+    }
+    if(usedBytesPerHalf % 2 == 1){
+        const int middleindex = usedBytesPerHalf/2;
+        hiBytes[middleindex] = make_reverse_complement_byte(hiBytes[middleindex]);
+        loBytes[middleindex] = make_reverse_complement_byte(loBytes[middleindex]);
+    }
+
+    if(unusedBitsInLastUsedByte != 0){
+        for(int i = 0; i < halfbytes - 1; ++i){
+            hiBytes[i] = (hiBytes[i] << unusedBitsInLastUsedByte) | (hiBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+            loBytes[i] = (loBytes[i] << unusedBitsInLastUsedByte) | (loBytes[i+1] >> (8 - unusedBitsInLastUsedByte));
+        }
+
+        hiBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+        loBytes[halfbytes - 1] <<= unusedBitsInLastUsedByte;
+    }
+};
+
+
+#endif
 
 };
 
@@ -837,6 +888,8 @@ struct SequenceBase {
         SequenceBase revCompl;
         revCompl.nBases = nBases;
         revCompl.data = Impl::reverseComplement(data.first.get(), nBases);
+        //std::cout << "orig:" << toString() << std::endl;
+        //std::cout << "revc:" << revCompl.toString() << std::endl;
         return revCompl;
     }
 
