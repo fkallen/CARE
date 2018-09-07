@@ -179,25 +179,9 @@ cuda_unpack_sequences_with_good_alignments_kernel(char* unpacked_sequences,
             unpacked_query[i] = get(query, length, i);
         }
 
-        /*if(index == 0 && flag == BestAlignment_t::ReverseComplement){
-            printf("before rc\n");
-            for(int i = 0; i < length; i++){
-                printf("%c", unpacked_query[i]);
-            }
-            printf("\n");
-        }*/
-
         if(flag == BestAlignment_t::ReverseComplement){
             make_reverse_complement_inplace((unsigned char*)unpacked_query, length);
         }
-
-        /*if(index == 0 && flag == BestAlignment_t::ReverseComplement){
-            printf("after rc\n");
-            for(int i = 0; i < length; i++){
-                printf("%c", unpacked_query[i]);
-            }
-            printf("\n");
-        }*/
     }
 }
 
@@ -213,13 +197,9 @@ void call_cuda_unpack_sequences_with_good_alignments_kernel_async(
                               Accessor get,
                               UnpackedRevcomplInplace make_reverse_complement_inplace,
                               cudaStream_t stream){
-#if 1
+
     dim3 block(128,1,1);
     dim3 grid(SDIV(n_queries, block.x), 1, 1);
-#else
-    dim3 block(128,1,1);
-    dim3 grid(1,1,1);
-#endif
 
     cuda_unpack_sequences_with_good_alignments_kernel<<<grid, block, 0, stream>>>(d_unpacked_sequences,
                                                     d_bestAlignmentFlags,
@@ -230,6 +210,94 @@ void call_cuda_unpack_sequences_with_good_alignments_kernel_async(
                                                     sequencepitch,
                                                     get,
                                                     make_reverse_complement_inplace); CUERR;
+}
+
+
+
+template<class Alignment, class AlignmentComp, class Accessor, class UnpackedRevcomplInplace>
+__global__
+void cuda_find_best_alignment_and_unpack_good_sequences_kernel(
+                            Alignment* results,
+                            BestAlignment_t* bestAlignmentFlags,
+                            char* unpacked_sequences,
+                            const int* subjectlengths,
+                            const int* querylengths,
+                            const int* NqueriesPrefixSum,
+                            const int n_subjects,
+                            const char* queriesdata,
+                            int max_sequence_length,
+                            size_t sequencepitch,
+                            AlignmentComp comp,
+                            Accessor get,
+                            UnpackedRevcomplInplace make_reverse_complement_inplace){
+
+    const int n_queries = NqueriesPrefixSum[n_subjects];
+
+    for(unsigned resultIndex = threadIdx.x + blockDim.x * blockIdx.x; resultIndex < n_queries; resultIndex += gridDim.x * blockDim.x){
+        const Alignment fwd = results[resultIndex];
+        const Alignment revcompl = results[resultIndex + n_queries];
+        const int queryLength = querylengths[resultIndex];
+
+        //find subjectindex
+        int subjectIndex = 0;
+        for(; subjectIndex < n_subjects; subjectIndex++){
+            if(resultIndex < NqueriesPrefixSum[subjectIndex+1])
+                break;
+        }
+        const int subjectLength = subjectlengths[subjectIndex];
+
+        const BestAlignment_t flag = comp(fwd, revcompl, subjectLength, queryLength);
+        bestAlignmentFlags[resultIndex] = flag;
+        results[resultIndex] = flag == BestAlignment_t::Forward ? fwd : revcompl;
+
+        const char* const query = queriesdata + resultIndex * sequencepitch;
+        char* const unpacked_query = unpacked_sequences + resultIndex * max_sequence_length;
+
+        for(int i = 0; i < queryLength; i++){
+            unpacked_query[i] = get(query, queryLength, i);
+        }
+
+        if(flag == BestAlignment_t::ReverseComplement){
+            make_reverse_complement_inplace((unsigned char*)unpacked_query, queryLength);
+        }
+    }
+}
+
+template<class Alignment, class AlignmentComp, class Accessor, class UnpackedRevcomplInplace>
+void call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
+                                Alignment* d_results,
+                                BestAlignment_t* d_bestAlignmentFlags,
+                                char* d_unpacked_sequences,
+                                const int* d_subjectlengths,
+                                const int* d_querylengths,
+                                const int* d_NqueriesPrefixSum,
+                                const int n_subjects,
+                                const int n_queries,
+                                const char* d_queriesdata,
+                                int max_sequence_length,
+                                size_t sequencepitch,
+                                AlignmentComp d_comp,
+                                Accessor d_get,
+                                UnpackedRevcomplInplace d_make_reverse_complement_inplace,
+                                cudaStream_t stream){
+
+    dim3 block(128,1,1);
+    dim3 grid(SDIV(n_queries, block.x), 1, 1);
+
+    cuda_find_best_alignment_and_unpack_good_sequences_kernel<<<grid, block, 0, stream>>>(d_results,
+                                                    d_bestAlignmentFlags,
+                                                    d_unpacked_sequences,
+                                                    d_subjectlengths,
+                                                    d_querylengths,
+                                                    d_NqueriesPrefixSum,
+                                                    n_subjects,
+                                                    d_queriesdata,
+                                                    max_sequence_length,
+                                                    sequencepitch,
+                                                    d_comp,
+                                                    d_get,
+                                                    d_make_reverse_complement_inplace); CUERR;
+
 }
 
 

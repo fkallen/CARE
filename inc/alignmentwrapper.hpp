@@ -1025,27 +1025,47 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                                         accessor,
                                         make_reverse_complement_inplace);
 
+#if 0
     call_cuda_find_best_alignment_kernel_async(shddata.d_results,
-                              shddata.d_bestAlignmentFlags,
-                              shddata.d_subjectlengths,
-                              shddata.d_querylengths,
-                              shddata.d_NqueriesPrefixSum,
-                              shddata.n_subjects,
-                              comp,
-                              shddata.n_queries,
-                              shddata.streams[0]);
+                            shddata.d_bestAlignmentFlags,
+                            shddata.d_subjectlengths,
+                            shddata.d_querylengths,
+                            shddata.d_NqueriesPrefixSum,
+                            shddata.n_subjects,
+                            comp,
+                            shddata.n_queries,
+                            shddata.streams[0]);
 
     call_cuda_unpack_sequences_with_good_alignments_kernel_async(
-                                  shddata.d_unpacked_queries,
-                                  shddata.d_bestAlignmentFlags,
-                                  shddata.d_queriesdata,
-                                  shddata.d_querylengths,
-                                  shddata.n_queries,
-                                  shddata.max_sequence_length,
-                                  shddata.sequencepitch,
-                                  nucleotide_accessor,
-                                  make_unpacked_reverse_complement_inplace,
-                                  shddata.streams[0]);
+                                    shddata.d_unpacked_queries,
+                                    shddata.d_bestAlignmentFlags,
+                                    shddata.d_queriesdata,
+                                    shddata.d_querylengths,
+                                    shddata.n_queries,
+                                    shddata.max_sequence_length,
+                                    shddata.sequencepitch,
+                                    nucleotide_accessor,
+                                    make_unpacked_reverse_complement_inplace,
+                                    shddata.streams[0]);
+#else
+
+call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
+                                    shddata.d_results,
+                                    shddata.d_bestAlignmentFlags,
+                                    shddata.d_unpacked_queries,
+                                    shddata.d_subjectlengths,
+                                    shddata.d_querylengths,
+                                    shddata.d_NqueriesPrefixSum,
+                                    shddata.n_subjects,
+                                    shddata.n_queries,
+                                    shddata.d_queriesdata,
+                                    shddata.max_sequence_length,
+                                    shddata.sequencepitch,
+                                    comp,
+                                    nucleotide_accessor,
+                                    make_unpacked_reverse_complement_inplace,
+                                    shddata.streams[0]);
+#endif
 
 }
 
@@ -1060,10 +1080,6 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
 
     auto getNumBytes = [] __device__ (int length){
         return Sequence_t::getNumBytes(length);
-    };
-
-    auto accessor = [] __device__ (const char* data, int length, int index){
-        return Sequence_t::get(data, length, index);
     };
 
     auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
@@ -1094,7 +1110,7 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                               maxSubjectLength,
                               maxQueryLength,
                               getNumBytes);
-
+#if 0
     call_cuda_find_best_alignment_kernel_async(shddata.d_results,
                             shddata.d_bestAlignmentFlags,
                             shddata.d_subjectlengths,
@@ -1116,6 +1132,25 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                                     nucleotide_accessor,
                                     make_unpacked_reverse_complement_inplace,
                                     shddata.streams[0]);
+#else
+
+call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
+                                    shddata.d_results,
+                                    shddata.d_bestAlignmentFlags,
+                                    shddata.d_unpacked_queries,
+                                    shddata.d_subjectlengths,
+                                    shddata.d_querylengths,
+                                    shddata.d_NqueriesPrefixSum,
+                                    shddata.n_subjects,
+                                    shddata.n_queries,
+                                    shddata.d_queriesdata,
+                                    shddata.max_sequence_length,
+                                    shddata.sequencepitch,
+                                    comp,
+                                    nucleotide_accessor,
+                                    make_unpacked_reverse_complement_inplace,
+                                    shddata.streams[0]);
+#endif
 }
 #endif
 
@@ -1131,7 +1166,7 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
     Flags indicate whether the better one is forward alignment, reverse complement alignment, or if both alignments are bad.
 */
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter, class StringIter,
     typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
 AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
@@ -1142,6 +1177,8 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 const std::vector<int>& queriesPerSubject,
                                 int min_overlap,
                                 double maxErrorRate,
@@ -1150,7 +1187,7 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
     return AlignmentDevice::None;
 }
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter, class StringIter,
     typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
 AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
@@ -1161,6 +1198,8 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 const std::vector<int>& queriesPerSubject,
                                 int min_overlap,
                                 double maxErrorRate,
@@ -1328,6 +1367,7 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
             auto queryIt = queriesbegin[i];
             auto alignmentsIt = alignmentsbegin[i];
             auto flagsIt = flagsbegin[i];
+            auto bestSequenceStringsIt = bestSequenceStringsbegin[i];
 
             for(auto subjectIt = subjectsbegin[i]; subjectIt != subjectsend[i]; ++subjectIt, ++subjectcount){
 
@@ -1367,16 +1407,19 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
 
                     *flagsIt = bestAlignmentFlag;
 
-                    if(bestAlignmentFlag == BestAlignment_t::Forward)
+                    if(bestAlignmentFlag == BestAlignment_t::Forward){
                         *alignmentsIt = fwdAlignment;
-                    else if(bestAlignmentFlag == BestAlignment_t::ReverseComplement)
+                        *bestSequenceStringsIt = std::move((*queryIt)->toString());
+                    }else if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
                         *alignmentsIt = revComplAlignment;
-                    else
+                        *bestSequenceStringsIt = std::move(revcomplsequence.toString());
+                    }else
                         ; //BestAlignment_t::None
 
                     ++queryIt;
                     ++alignmentsIt;
                     ++flagsIt;
+                    ++bestSequenceStringsIt;
                 }
             }
         }

@@ -49,11 +49,9 @@ struct BatchElem{
     std::vector<const Sequence_t*> fwdSequences;
 
     std::vector<AlignmentResult_t*> bestAlignments;
-    std::vector<const Sequence_t*> bestSequences;
 	std::vector<std::string> bestSequenceStrings;
 	std::vector<const std::string*> bestQualities;
 
-    std::vector<Sequence_t> reverseComplements;
     std::vector<std::string> reverseComplementQualities;
 
     std::vector<BestAlignment_t> bestAlignmentFlags;
@@ -95,19 +93,13 @@ struct BatchElem{
             activeCandidates.reserve(approxMaxCandidates);
             fwdSequences.reserve(approxMaxCandidates);
             bestAlignments.reserve(approxMaxCandidates);
-            bestSequences.reserve(approxMaxCandidates);
             bestSequenceStrings.reserve(approxMaxCandidates);
             bestQualities.reserve(approxMaxCandidates);
 
-            reverseComplements.reserve(approxMaxCandidates);
             reverseComplementQualities.reserve(approxMaxCandidates);
 
             bestAlignmentFlags.reserve(approxMaxCandidates);
             alignments.reserve(approxMaxCandidates);
-
-            if(!ReadStorage_t::has_reverse_complement){
-                reverseComplements.reserve(approxMaxCandidates);
-            }
     }
 
     BatchElem(const BatchElem& other)
@@ -124,10 +116,8 @@ struct BatchElem{
         activeCandidates(other.activeCandidates),
         fwdSequences(other.fwdSequences),
         bestAlignments(other.bestAlignments),
-        bestSequences(other.bestSequences),
         bestSequenceStrings(other.bestSequenceStrings),
         bestQualities(other.bestQualities),
-        reverseComplements(other.reverseComplements),
         reverseComplementQualities(other.reverseComplementQualities),
         bestAlignmentFlags(other.bestAlignmentFlags),
         alignments(other.alignments),
@@ -184,10 +174,8 @@ public:
         swap(l.activeCandidates, r.activeCandidates);
         swap(l.fwdSequences, r.fwdSequences);
         swap(l.bestAlignments, r.bestAlignments);
-        swap(l.bestSequences, r.bestSequences);
         swap(l.bestSequenceStrings, r.bestSequenceStrings);
         swap(l.bestQualities, r.bestQualities);
-        swap(l.reverseComplements, r.reverseComplements);
         swap(l.reverseComplementQualities, r.reverseComplementQualities);
         swap(l.bestAlignmentFlags, r.bestAlignmentFlags);
         swap(l.alignments, r.alignments);
@@ -214,11 +202,9 @@ void clear(BE& b){
     b.fwdSequences.clear();
     b.activeCandidates.clear();
     b.bestAlignments.clear();
-    b.bestSequences.clear();
     b.bestSequenceStrings.clear();
     b.bestQualities.clear();
 
-    b.reverseComplements.clear();
     b.reverseComplementQualities.clear();
 
     b.bestAlignmentFlags.clear();
@@ -235,12 +221,10 @@ void set_number_of_candidates(BE& b, std::uint64_t num){
     b.activeCandidates.resize(num, false);
     b.fwdSequences.resize(num);
     b.bestAlignments.resize(num);
-    b.bestSequences.resize(num);
     b.bestSequenceStrings.resize(num);
 
     b.bestAlignmentFlags.resize(num);
     b.alignments.resize(num);
-    b.reverseComplements.resize(num);
 
     b.n_candidates = num;
 }
@@ -318,8 +302,6 @@ template<class BE, class Func>
 void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_alignment){
     using AlignmentResult_t = typename BE::AlignmentResult_t;
 
-    using ReadId_t = typename BE::ReadId_t;
-
     const int lastIndex_excl = std::min(std::size_t(firstIndex + N), b.fwdSequences.size());
 
     if(!BE::ReadStorage_t::has_reverse_complement){
@@ -353,7 +335,6 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                 }
 
                 if(alignmentFlag == BestAlignment_t::Forward){
-                    b.bestSequences[i] = b.fwdSequences[i];
                     b.bestAlignments[i] = &b.alignments[i];
                     //new
                     //b.bestSequenceStrings[i] = b.fwdSequences[i]->toString();
@@ -363,8 +344,6 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     }
                 }else{
 
-                    b.reverseComplements[i] = std::move(b.fwdSequences[i]->reverseComplement());
-                    b.bestSequences[i] = &b.reverseComplements[i];
                     //new
                     //b.bestSequenceStrings[i] = b.reverseComplements[i].toString();
 
@@ -400,66 +379,6 @@ bool hasEnoughGoodCandidates(const BE& b){
 
     return false;
 }
-
-#if 0
-template<class BE>
-void prepare_good_candidates(BE& b){
-    DetermineGoodAlignmentStats stats;
-
-    b.mismatchratioThreshold = 0;
-    if (b.counts[0] >= b.goodAlignmentsCountThreshold) {
-        b.mismatchratioThreshold = 2 * b.mismatchratioBaseFactor;
-        stats.correctionCases[0]++;
-    } else if (b.counts[1] >= b.goodAlignmentsCountThreshold) {
-        b.mismatchratioThreshold = 3 * b.mismatchratioBaseFactor;
-        stats.correctionCases[1]++;
-    } else if (b.counts[2] >= b.goodAlignmentsCountThreshold) {
-        b.mismatchratioThreshold = 4 * b.mismatchratioBaseFactor;
-        stats.correctionCases[2]++;
-    } else { //no correction possible
-        stats.correctionCases[3]++;
-        b.active = false;
-        return;
-    }
-
-    std::size_t activeposition = 0;
-
-    for(std::size_t i = 0; i < b.activeCandidates.size(); i++){
-        if(b.activeCandidates[i]){
-            const double mismatchratio = double(b.bestAlignments[i]->get_nOps()) / double(b.bestAlignments[i]->get_overlap());
-            const bool notremoved = mismatchratio < b.mismatchratioThreshold;
-            if(notremoved){
-                b.fwdSequences[activeposition] = b.fwdSequences[i];
-                b.bestAlignments[activeposition] = b.bestAlignments[i];
-                b.bestSequences[activeposition] = b.bestSequences[i];
-                b.bestSequenceStrings[activeposition] = b.bestSequences[i]->toString();
-                b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
-                b.candidateIds[activeposition] = b.candidateIds[i];
-
-                if(b.canUseQualityScores){
-                    b.bestQualities[activeposition] = b.bestQualities[i];
-                }
-                activeposition++;
-            }
-        }
-    }
-
-    b.activeCandidates.clear(); //no longer need this, all remaining candidates are active
-
-    b.candidateIds.resize(activeposition);
-    b.bestQualities.resize(activeposition);
-    b.fwdSequences.resize(activeposition);
-    b.bestAlignments.resize(activeposition);
-    b.bestSequences.resize(activeposition);
-    b.bestSequenceStrings.resize(activeposition);
-    b.bestAlignmentFlags.resize(activeposition);
-
-    b.n_candidates = activeposition;
-}
-
-#else
-
-
 
 template<class BE>
 std::tuple<std::chrono::duration<double>, std::chrono::duration<double>, std::chrono::duration<double>>
@@ -506,8 +425,6 @@ prepare_good_candidates(BE& b){
                 if(activeposition != i){
                     b.fwdSequences[activeposition] = b.fwdSequences[i];
                     b.bestAlignments[activeposition] = b.bestAlignments[i];
-                    b.bestSequences[activeposition] = b.bestSequences[i];
-                    //b.bestSequenceStrings[activeposition] = std::move(b.bestSequences[i]->toString());
                     //new
                     b.bestSequenceStrings[activeposition] = std::move(b.bestSequenceStrings[i]);
                     b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
@@ -535,7 +452,6 @@ prepare_good_candidates(BE& b){
     b.bestQualities.resize(activeposition);
     b.fwdSequences.resize(activeposition);
     b.bestAlignments.resize(activeposition);
-    b.bestSequences.resize(activeposition);
     b.bestSequenceStrings.resize(activeposition);
     b.bestAlignmentFlags.resize(activeposition);
 
@@ -546,8 +462,6 @@ prepare_good_candidates(BE& b){
 
     return {da,db,dc};
 }
-
-#endif
 
 
 }

@@ -1490,6 +1490,9 @@ private:
 
                     std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsbegin;
                     std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsend;
+                    std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsbegin;
+                    std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsend;
+
 
 					std::vector<int> queriesPerSubject;
 
@@ -1501,27 +1504,31 @@ private:
 					alignmentsend.reserve(batchElems[streamIndex].size());
                     flagsbegin.reserve(batchElems[streamIndex].size());
 					flagsend.reserve(batchElems[streamIndex].size());
+                    bestSequenceStringsbegin.reserve(batchElems[streamIndex].size());
+                    bestSequenceStringsend.reserve(batchElems[streamIndex].size());
 					queriesPerSubject.reserve(batchElems[streamIndex].size());
 
 					//for(auto& b : batchElems[streamIndex]){
 					for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 						auto& b = *it;
 				        auto& flags = b.bestAlignmentFlags;
-
 				        auto& alignments = b.alignments;
+                        auto& strings = b.bestSequenceStrings;
 
-								subjectsbegin.emplace_back(&b.fwdSequence);
-								subjectsend.emplace_back(&b.fwdSequence + 1);
-								queriesbegin.emplace_back(b.fwdSequences.begin());
-								queriesend.emplace_back(b.fwdSequences.end());
-								alignmentsbegin.emplace_back(alignments.begin());
-								alignmentsend.emplace_back(alignments.end());
-				                flagsbegin.emplace_back(flags.begin());
-								flagsend.emplace_back(flags.end());
-								queriesPerSubject.emplace_back(b.fwdSequences.size());
-							}
+						subjectsbegin.emplace_back(&b.fwdSequence);
+						subjectsend.emplace_back(&b.fwdSequence + 1);
+						queriesbegin.emplace_back(b.fwdSequences.begin());
+						queriesend.emplace_back(b.fwdSequences.end());
+						alignmentsbegin.emplace_back(alignments.begin());
+						alignmentsend.emplace_back(alignments.end());
+		                flagsbegin.emplace_back(flags.begin());
+						flagsend.emplace_back(flags.end());
+                        bestSequenceStringsbegin.emplace_back(strings.begin());
+    					bestSequenceStringsend.emplace_back(strings.end());
+						queriesPerSubject.emplace_back(b.fwdSequences.size());
+					}
 
-				    	AlignmentDevice device = AlignmentDevice::None;
+				    AlignmentDevice device = AlignmentDevice::None;
 					if(indels){
 						device = semi_global_alignment_canonical_batched_async<Sequence_t>(sgahandles[streamIndex],
 														subjectsbegin,
@@ -1551,6 +1558,8 @@ private:
 														alignmentsend,
 														flagsbegin,
 														flagsend,
+                                                        bestSequenceStringsbegin,
+                                                        bestSequenceStringsend,
 														queriesPerSubject,
 														goodAlignmentProperties.min_overlap,
 														goodAlignmentProperties.maxErrorRate,

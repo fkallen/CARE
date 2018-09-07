@@ -99,64 +99,105 @@ void correctFile(const MinhashOptions& minhashOptions,
     using Key_t = std::uint32_t; // asume minhashOptions.k <= 16
     using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
 
-	//using NoIndelSequence_t = SequenceString;
-#if 1
-    using NoIndelSequence_t = Sequence2Bit;
-#else
-    using NoIndelSequence_t = Sequence2BitHiLo;
-#endif
-	using IndelSequence_t = Sequence2Bit;
-
     using Minhasher_t = Minhasher<Key_t, ReadId_t>;
-#if 0
-    using NoIndelReadStorage_t = ReadStorageNoPointer<NoIndelSequence_t, ReadId_t>;
-    using IndelReadStorage_t = ReadStorageNoPointer<IndelSequence_t, ReadId_t>;
-#else
-    using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
-    using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
-#endif
 
-	if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-		constexpr bool indels = false;
+    if(runtimeOptions.canUseGpu){
+        using NoIndelSequence_t = Sequence2Bit;
+        using IndelSequence_t = Sequence2Bit;
+        using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+        using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
 
-		correctFile_impl<Minhasher_t,
-						NoIndelReadStorage_t,
-						indels>
-						(
-							minhashOptions,
-							alignmentOptions,
-							goodAlignmentProperties,
-							correctionOptions,
-							runtimeOptions,
-							fileOptions,
-                            props,
-							nReads,
-							readIsCorrectedVector,
-							locksForProcessedFlags,
-							nLocksForProcessedFlags,
-							deviceIds
-						);
-	}else{
-		constexpr bool indels = true;
+        if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+    		constexpr bool indels = false;
 
-		correctFile_impl<Minhasher_t,
-						IndelReadStorage_t,
-						indels>
-						(
-							minhashOptions,
-							alignmentOptions,
-							goodAlignmentProperties,
-							correctionOptions,
-							runtimeOptions,
-							fileOptions,
-                            props,
-							nReads,
-							readIsCorrectedVector,
-							locksForProcessedFlags,
-							nLocksForProcessedFlags,
-							deviceIds
-						);
-	}
+    		correctFile_impl<Minhasher_t,
+    						NoIndelReadStorage_t,
+    						indels>
+    						(
+    							minhashOptions,
+    							alignmentOptions,
+    							goodAlignmentProperties,
+    							correctionOptions,
+    							runtimeOptions,
+    							fileOptions,
+                                props,
+    							nReads,
+    							readIsCorrectedVector,
+    							locksForProcessedFlags,
+    							nLocksForProcessedFlags,
+    							deviceIds
+    						);
+    	}else{
+    		constexpr bool indels = true;
+
+    		correctFile_impl<Minhasher_t,
+    						IndelReadStorage_t,
+    						indels>
+    						(
+    							minhashOptions,
+    							alignmentOptions,
+    							goodAlignmentProperties,
+    							correctionOptions,
+    							runtimeOptions,
+    							fileOptions,
+                                props,
+    							nReads,
+    							readIsCorrectedVector,
+    							locksForProcessedFlags,
+    							nLocksForProcessedFlags,
+    							deviceIds
+    						);
+    	}
+    }else{
+        using NoIndelSequence_t = Sequence2BitHiLo;
+        using IndelSequence_t = Sequence2Bit;
+        using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+        using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+
+        if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+            constexpr bool indels = false;
+
+            correctFile_impl<Minhasher_t,
+                            NoIndelReadStorage_t,
+                            indels>
+                            (
+                                minhashOptions,
+                                alignmentOptions,
+                                goodAlignmentProperties,
+                                correctionOptions,
+                                runtimeOptions,
+                                fileOptions,
+                                props,
+                                nReads,
+                                readIsCorrectedVector,
+                                locksForProcessedFlags,
+                                nLocksForProcessedFlags,
+                                deviceIds
+                            );
+        }else{
+            constexpr bool indels = true;
+
+            correctFile_impl<Minhasher_t,
+                            IndelReadStorage_t,
+                            indels>
+                            (
+                                minhashOptions,
+                                alignmentOptions,
+                                goodAlignmentProperties,
+                                correctionOptions,
+                                runtimeOptions,
+                                fileOptions,
+                                props,
+                                nReads,
+                                readIsCorrectedVector,
+                                locksForProcessedFlags,
+                                nLocksForProcessedFlags,
+                                deviceIds
+                            );
+        }
+    }
+
+
 }
 
 void performCorrection(const cxxopts::ParseResult& args) {
