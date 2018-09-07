@@ -947,7 +947,8 @@ struct SequenceBase {
         return nBases;
     }
 
-	bool isCompressed() const noexcept{
+    HOSTDEVICEQUALIFIER
+	constexpr bool isCompressed() const noexcept{
         return Impl::isCompressed();
     }
 
@@ -962,6 +963,25 @@ struct SequenceBase {
     HOSTDEVICEQUALIFIER
     static char get(const char* data, int nBases, int i) noexcept{
 		return Impl::get(data, nBases, i);
+	}
+
+    HOSTDEVICEQUALIFIER
+    static char get_as_nucleotide(const char* data, int nBases, int i) noexcept{
+        auto to_nuc = [](char c){
+            switch(c){
+            case 0x00: return 'A';
+            case 0x01: return 'C';
+            case 0x02: return 'G';
+            case 0x03: return 'T';
+            default: return 'F';
+            }
+        };
+
+        char c = Impl::get(data, nBases, i);
+        if(Impl::isCompressed()){
+            c = to_nuc(c);
+        }
+        return c;
 	}
 
     HOSTDEVICEQUALIFIER

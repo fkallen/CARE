@@ -1079,6 +1079,8 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                 if(alignmentFlag == BestAlignment_t::Forward){
                     b.bestSequences[i] = b.fwdSequences[i];
                     b.bestAlignments[i] = &b.alignments[i];
+                    //new
+                    //b.bestSequenceStrings[i] = b.fwdSequences[i]->toString();
 
                     if(b.canUseQualityScores){
                         b.bestQualities[i] = b.readStorage->fetchQuality_ptr(b.candidateIds[i]);
@@ -1090,6 +1092,8 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     #else
                     b.reverseComplements[i] = std::move(b.fwdSequences[i]->reverseComplement());
                     b.bestSequences[i] = &b.reverseComplements[i];
+                    //new
+                    //b.bestSequenceStrings[i] = b.reverseComplements[i].toString();
                     #endif
 
                     b.bestAlignments[i] = &b.alignments[i];
@@ -1123,66 +1127,6 @@ bool hasEnoughGoodCandidates(const BE& b){
     return false;
 }
 
-#if 0
-//new
-template<class BE>
-void prepare_good_candidates(BE& b){
-    DetermineGoodAlignmentStats stats;
-
-    b.mismatchratioThreshold = 0;
-    if (b.counts[0] >= b.goodAlignmentsCountThreshold) {
-        b.mismatchratioThreshold = 2 * b.mismatchratioBaseFactor;
-        stats.correctionCases[0]++;
-    } else if (b.counts[1] >= b.goodAlignmentsCountThreshold) {
-        b.mismatchratioThreshold = 3 * b.mismatchratioBaseFactor;
-        stats.correctionCases[1]++;
-    } else if (b.counts[2] >= b.goodAlignmentsCountThreshold) {
-        b.mismatchratioThreshold = 4 * b.mismatchratioBaseFactor;
-        stats.correctionCases[2]++;
-    } else { //no correction possible
-        stats.correctionCases[3]++;
-        b.active = false;
-        return;
-    }
-
-    std::size_t activeposition = 0;
-
-    //stable_partition on struct of arrays with condition (activeCandidates[i] && notremoved) ?
-    for(std::size_t i = 0; i < b.activeCandidates.size(); i++){
-        if(b.activeCandidates[i]){
-            const double mismatchratio = double(b.bestAlignments[i]->get_nOps()) / double(b.bestAlignments[i]->get_overlap());
-            const bool notremoved = mismatchratio < b.mismatchratioThreshold;
-            if(notremoved){
-                b.fwdSequences[activeposition] = b.fwdSequences[i];
-                b.bestAlignments[activeposition] = b.bestAlignments[i];
-                b.bestSequences[activeposition] = b.bestSequences[i];
-                b.bestSequenceStrings[activeposition] = b.bestSequences[i]->toString();
-                b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
-                b.candidateIds[activeposition] = b.candidateIds[i];
-
-                if(b.canUseQualityScores){
-                    b.bestQualities[activeposition] = b.bestQualities[i];
-                }
-                activeposition++;
-            }
-        }
-    }
-
-    b.activeCandidates.clear(); //no longer need this, all remaining candidates are active
-
-    b.candidateIds.resize(activeposition);
-    b.bestQualities.resize(activeposition);
-    b.fwdSequences.resize(activeposition);
-    b.bestAlignments.resize(activeposition);
-    b.bestSequences.resize(activeposition);
-    b.bestSequenceStrings.resize(activeposition);
-    b.bestAlignmentFlags.resize(activeposition);
-
-    b.n_candidates = activeposition;
-}
-
-#else
-//old
 #if 0
 template<class BE>
 void prepare_good_candidates(BE& b){
@@ -1286,8 +1230,9 @@ prepare_good_candidates(BE& b){
                 b.fwdSequences[activeposition] = b.fwdSequences[i];
                 b.bestAlignments[activeposition] = b.bestAlignments[i];
                 b.bestSequences[activeposition] = b.bestSequences[i];
-                //b.bestSequenceStrings[activeposition] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
                 b.bestSequenceStrings[activeposition] = std::move(b.bestSequences[i]->toString());
+                //new
+                //b.bestSequenceStrings[activeposition] = std::move(b.bestSequenceStrings[i]);
                 b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
                 b.candidateIds[activeposition] = b.candidateIds[i];
 
@@ -1322,10 +1267,6 @@ prepare_good_candidates(BE& b){
 
     return {da,db,dc};
 }
-
-
-#endif
-
 
 #endif
 

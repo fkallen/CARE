@@ -155,7 +155,82 @@ void call_cuda_find_best_alignment_kernel(Alignment* d_results,
 
 }
 
+template<class Accessor, class UnpackedRevcomplInplace>
+__global__
+void
+cuda_unpack_sequences_with_good_alignments_kernel(char* unpacked_sequences,
+                              const BestAlignment_t* bestAlignmentFlags,
+                              const char* queriesdata,
+                              const int* querylengths,
+                              const int n_queries,
+                              int max_sequence_length,
+                              size_t sequencepitch,
+                              Accessor get,
+                              UnpackedRevcomplInplace make_reverse_complement_inplace){
 
+    for(unsigned index = threadIdx.x + blockDim.x * blockIdx.x; index < n_queries; index += blockDim.x * gridDim.x){
+        BestAlignment_t flag = bestAlignmentFlags[index];
+        const int length = querylengths[index];
+
+        const char* const query = queriesdata + index * sequencepitch;
+        char* const unpacked_query = unpacked_sequences + index * max_sequence_length;
+
+        for(int i = 0; i < length; i++){
+            unpacked_query[i] = get(query, length, i);
+        }
+
+        /*if(index == 0 && flag == BestAlignment_t::ReverseComplement){
+            printf("before rc\n");
+            for(int i = 0; i < length; i++){
+                printf("%c", unpacked_query[i]);
+            }
+            printf("\n");
+        }*/
+
+        if(flag == BestAlignment_t::ReverseComplement){
+            make_reverse_complement_inplace((unsigned char*)unpacked_query, length);
+        }
+
+        /*if(index == 0 && flag == BestAlignment_t::ReverseComplement){
+            printf("after rc\n");
+            for(int i = 0; i < length; i++){
+                printf("%c", unpacked_query[i]);
+            }
+            printf("\n");
+        }*/
+    }
+}
+
+template<class Accessor, class UnpackedRevcomplInplace>
+void call_cuda_unpack_sequences_with_good_alignments_kernel_async(
+                              char* d_unpacked_sequences,
+                              const BestAlignment_t* d_bestAlignmentFlags,
+                              const char* d_queriesdata,
+                              const int* d_querylengths,
+                              const int n_queries,
+                              int max_sequence_length,
+                              size_t sequencepitch,
+                              Accessor get,
+                              UnpackedRevcomplInplace make_reverse_complement_inplace,
+                              cudaStream_t stream){
+#if 1
+    dim3 block(128,1,1);
+    dim3 grid(SDIV(n_queries, block.x), 1, 1);
+#else
+    dim3 block(128,1,1);
+    dim3 grid(1,1,1);
+#endif
+
+    cuda_unpack_sequences_with_good_alignments_kernel<<<grid, block, 0, stream>>>(d_unpacked_sequences,
+                                                    d_bestAlignmentFlags,
+                                                    d_queriesdata,
+                                                    d_querylengths,
+                                                    n_queries,
+                                                    max_sequence_length,
+                                                    sequencepitch,
+                                                    get,
+                                                    make_reverse_complement_inplace); CUERR;
+}
 
 
 #endif

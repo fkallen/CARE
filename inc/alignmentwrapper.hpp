@@ -991,8 +991,16 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
         return Sequence_t::get(data, length, index);
     };
 
+    auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+        return Sequence_t::get_as_nucleotide(data, length, index);
+    };
+
     auto make_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
         return Sequence_t::make_reverse_complement_inplace(sequence, sequencelength);
+    };
+
+    auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+        return SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
     };
 
     auto comp = [=] __device__ (const SHDResult& fwdAlignment,
@@ -1027,6 +1035,18 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                               shddata.n_queries,
                               shddata.streams[0]);
 
+    call_cuda_unpack_sequences_with_good_alignments_kernel_async(
+                                  shddata.d_unpacked_queries,
+                                  shddata.d_bestAlignmentFlags,
+                                  shddata.d_queriesdata,
+                                  shddata.d_querylengths,
+                                  shddata.n_queries,
+                                  shddata.max_sequence_length,
+                                  shddata.sequencepitch,
+                                  nucleotide_accessor,
+                                  make_unpacked_reverse_complement_inplace,
+                                  shddata.streams[0]);
+
 }
 
 template<class Sequence_t>
@@ -1038,40 +1058,64 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                       int maxSubjectLength,
                       int maxQueryLength){
 
-      auto getNumBytes = [] __device__ (int length){
-          return Sequence_t::getNumBytes(length);
-      };
+    auto getNumBytes = [] __device__ (int length){
+        return Sequence_t::getNumBytes(length);
+    };
 
-      auto comp = [=] __device__ (const SHDResult& fwdAlignment,
-                                 const SHDResult& revcmplAlignment,
-                                 int subjectlength,
-                                 int querylength) -> BestAlignment_t{
-          return choose_best_alignment(fwdAlignment,
-                                revcmplAlignment,
-                                subjectlength,
-                                querylength,
-                                min_overlap_ratio,
-                                min_overlap,
-                                maxErrorRate);
-      };
+    auto accessor = [] __device__ (const char* data, int length, int index){
+        return Sequence_t::get(data, length, index);
+    };
 
-      shd::call_popcount_shd_with_revcompl_kernel2_async(shddata,
-                                  min_overlap,
-                                  maxErrorRate,
-                                  min_overlap_ratio,
-                                  maxSubjectLength,
-                                  maxQueryLength,
-                                  getNumBytes);
+    auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+        return Sequence_t::get_as_nucleotide(data, length, index);
+    };
 
-      call_cuda_find_best_alignment_kernel_async(shddata.d_results,
-                                shddata.d_bestAlignmentFlags,
-                                shddata.d_subjectlengths,
-                                shddata.d_querylengths,
-                                shddata.d_NqueriesPrefixSum,
-                                shddata.n_subjects,
-                                comp,
-                                shddata.n_queries,
-                                shddata.streams[0]);
+    auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+        return SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+    };
+
+    auto comp = [=] __device__ (const SHDResult& fwdAlignment,
+                             const SHDResult& revcmplAlignment,
+                             int subjectlength,
+                             int querylength) -> BestAlignment_t{
+        return choose_best_alignment(fwdAlignment,
+                            revcmplAlignment,
+                            subjectlength,
+                            querylength,
+                            min_overlap_ratio,
+                            min_overlap,
+                            maxErrorRate);
+    };
+
+    shd::call_popcount_shd_with_revcompl_kernel2_async(shddata,
+                              min_overlap,
+                              maxErrorRate,
+                              min_overlap_ratio,
+                              maxSubjectLength,
+                              maxQueryLength,
+                              getNumBytes);
+
+    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
+                            shddata.d_bestAlignmentFlags,
+                            shddata.d_subjectlengths,
+                            shddata.d_querylengths,
+                            shddata.d_NqueriesPrefixSum,
+                            shddata.n_subjects,
+                            comp,
+                            shddata.n_queries,
+                            shddata.streams[0]);
+
+    call_cuda_unpack_sequences_with_good_alignments_kernel_async(
+                                    shddata.d_unpacked_queries,
+                                    shddata.d_bestAlignmentFlags,
+                                    shddata.d_queriesdata,
+                                    shddata.d_querylengths,
+                                    shddata.n_queries,
+                                    shddata.max_sequence_length,
+                                    shddata.sequencepitch,
+                                    nucleotide_accessor,
+                                    make_unpacked_reverse_complement_inplace,
+                                    shddata.streams[0]);
 }
 #endif
 
@@ -1246,9 +1290,31 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
 
         cudaMemcpyAsync(results,
             d_results,
-            mybuffers.transfersizeD2H, // transfersizeD2H includes the bestAlignmentFlags
+            mybuffers.transfersizeD2H, // transfersizeD2H includes the bestAlignmentFlags and unpacked queries
             D2H,
             mybuffers.streams[0]); CUERR;
+#if 0
+        cudaStreamSynchronize(mybuffers.streams[0]);
+
+        for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
+
+            for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
+                auto querystring = (*it)->toString();
+                auto rcquerystring = (*it)->reverseComplement().toString();
+
+                auto newstring = std::string{mybuffers.h_unpacked_queries + count * mybuffers.max_sequence_length,
+                                                    mybuffers.h_unpacked_queries + count * mybuffers.max_sequence_length + (*it)->length()};
+                auto flag = mybuffers.h_bestAlignmentFlags[count];
+                if((flag == BestAlignment_t::Forward && querystring != newstring) || (flag == BestAlignment_t::ReverseComplement && rcquerystring != newstring)){
+                    std::cout << (flag == BestAlignment_t::Forward ? "fwd" : "rc") << std::endl;
+                    std::cout << querystring << std::endl;
+                    std::cout << rcquerystring << std::endl;
+                    std::cout << newstring << std::endl;
+                    assert(false);
+                }
+            }
+        }
+#endif
 
     }else{ // use cpu for alignment
 

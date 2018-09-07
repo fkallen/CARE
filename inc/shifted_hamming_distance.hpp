@@ -93,6 +93,7 @@ struct SHDdata{
 	int* d_querylengths = nullptr;
     int* d_NqueriesPrefixSum = nullptr;
     BestAlignment_t* d_bestAlignmentFlags = nullptr;
+    char* d_unpacked_queries = nullptr;
 
 	Result_t* h_results = nullptr;
 	char* h_subjectsdata = nullptr;
@@ -101,6 +102,7 @@ struct SHDdata{
 	int* h_querylengths = nullptr;
     int* h_NqueriesPrefixSum = nullptr;
     BestAlignment_t* h_bestAlignmentFlags = nullptr;
+    char* h_unpacked_queries = nullptr;
 
 #ifdef __NVCC__
     static constexpr int n_streams = 1;
@@ -2196,8 +2198,6 @@ void call_popcount_shd_with_revcompl_kernel2_async(const SHDdata& shddata,
 
       #undef mycall
 }
-
-
 
 
 

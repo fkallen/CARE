@@ -100,7 +100,7 @@ void correctFile(const MinhashOptions& minhashOptions,
     using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
 
 	//using NoIndelSequence_t = SequenceString;
-#if 0
+#if 1
     using NoIndelSequence_t = Sequence2Bit;
 #else
     using NoIndelSequence_t = Sequence2BitHiLo;
