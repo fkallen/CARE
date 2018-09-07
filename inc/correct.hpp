@@ -1324,6 +1324,11 @@ using Minhasher_t = minhasher_t;
 	std::chrono::duration<double> graphbuildtime;
 	std::chrono::duration<double> graphcorrectiontime;
 
+
+    std::chrono::duration<double> initIdTimeTotal;
+
+    std::chrono::duration<double> da, db, dc;
+
     std::thread thread;
     bool isRunning = false;
     volatile bool stopAndAbort = false;
@@ -1420,10 +1425,10 @@ private:
 
 		while(!stopAndAbort && !readIds.empty()){
 
-            tpc = std::chrono::system_clock::now();
+
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
-
+                tpc = std::chrono::system_clock::now();
 				//fit vector size to actual batch size
 				if (batchElems[streamIndex].size() != readIds.size()) {
 					batchElems[streamIndex].resize(readIds.size(),
@@ -1446,6 +1451,9 @@ private:
 					}
 					unlock(b.readId);
 				}
+
+                tpd = std::chrono::system_clock::now();
+                initIdTimeTotal += tpd - tpc;
 
 				tpa = std::chrono::system_clock::now();
 
@@ -1642,25 +1650,27 @@ private:
 				tpd = std::chrono::system_clock::now();
 				determinegoodalignmentsTime += tpd - tpc;
 
+                tpc = std::chrono::system_clock::now();
 
-				//for(auto& b : batchElems[streamIndex]){
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
 					auto& b = *it;
 					if(b.active && hasEnoughGoodCandidates(b)){
-						tpc = std::chrono::system_clock::now();
 						if(b.active){
 							//move candidates which are used for correction to the front
-							prepare_good_candidates(b);
+							auto tup = prepare_good_candidates(b);
+                            da += std::get<0>(tup);
+                            db += std::get<1>(tup);
+                            dc += std::get<2>(tup);
 						}
-						tpd = std::chrono::system_clock::now();
-						fetchgoodcandidatesTime += tpd - tpc;
 					}else{
 						//not enough good candidates. cannot correct this read.
 						b.active = false;
 					}
 				}
 
-				//for(auto& b : batchElems[streamIndex]){
+                tpd = std::chrono::system_clock::now();
+                fetchgoodcandidatesTime += tpd - tpc;
+
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
 					auto& b = *it;
 					if(b.active){
@@ -1815,6 +1825,14 @@ private:
 		{
 			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 
+            std::cout << "thread " << threadOpts.threadId
+                    << " : preparation timings detail "
+                    << da.count() << " " << db.count() << " " << dc.count()<< '\n';
+
+
+            std::cout << "thread " << threadOpts.threadId
+                    << " : init batch elems "
+                    << initIdTimeTotal.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId
 					<< " : find candidates time "
 					<< mapMinhashResultsToSequencesTimeTotal.count() << '\n';
@@ -1823,6 +1841,9 @@ private:
 			std::cout << "thread " << threadOpts.threadId
 					<< " : determine good alignments time "
 					<< determinegoodalignmentsTime.count() << '\n';
+            std::cout << "thread " << threadOpts.threadId
+					<< " : fetch good candidates time "
+					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : correction time "
 					<< readcorrectionTimeTotal.count() << '\n';
 	#if 0

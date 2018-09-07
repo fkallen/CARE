@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <numeric>
+#include <chrono>
 
 //#define CALCULATE_EVERY_REVERSE_COMPLEMENT
 
@@ -1182,7 +1183,7 @@ void prepare_good_candidates(BE& b){
 
 #else
 //old
-
+#if 0
 template<class BE>
 void prepare_good_candidates(BE& b){
     DetermineGoodAlignmentStats stats;
@@ -1237,6 +1238,93 @@ void prepare_good_candidates(BE& b){
 
     b.n_candidates = activeposition;
 }
+
+#else
+
+
+
+template<class BE>
+std::tuple<std::chrono::duration<double>, std::chrono::duration<double>, std::chrono::duration<double>>
+prepare_good_candidates(BE& b){
+
+    std::chrono::duration<double> da, db, dc;
+
+
+    std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
+    tpa = std::chrono::system_clock::now();
+    DetermineGoodAlignmentStats stats;
+
+
+    b.mismatchratioThreshold = 0;
+    if (b.counts[0] >= b.goodAlignmentsCountThreshold) {
+        b.mismatchratioThreshold = 2 * b.mismatchratioBaseFactor;
+        stats.correctionCases[0]++;
+    } else if (b.counts[1] >= b.goodAlignmentsCountThreshold) {
+        b.mismatchratioThreshold = 3 * b.mismatchratioBaseFactor;
+        stats.correctionCases[1]++;
+    } else if (b.counts[2] >= b.goodAlignmentsCountThreshold) {
+        b.mismatchratioThreshold = 4 * b.mismatchratioBaseFactor;
+        stats.correctionCases[2]++;
+    } else { //no correction possible
+        stats.correctionCases[3]++;
+        b.active = false;
+        return {da,db,dc};
+    }
+
+    tpb = std::chrono::system_clock::now();
+    da = tpb-tpa;
+    tpa = std::chrono::system_clock::now();
+
+    std::size_t activeposition = 0;
+
+    for(std::size_t i = 0; i < b.activeCandidates.size(); i++){
+        if(b.activeCandidates[i]){
+            const double mismatchratio = double(b.bestAlignments[i]->get_nOps()) / double(b.bestAlignments[i]->get_overlap());
+            const bool notremoved = mismatchratio < b.mismatchratioThreshold;
+            if(notremoved){
+                b.fwdSequences[activeposition] = b.fwdSequences[i];
+                b.bestAlignments[activeposition] = b.bestAlignments[i];
+                b.bestSequences[activeposition] = b.bestSequences[i];
+                //b.bestSequenceStrings[activeposition] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+                b.bestSequenceStrings[activeposition] = std::move(b.bestSequences[i]->toString());
+                b.bestAlignmentFlags[activeposition] = b.bestAlignmentFlags[i];
+                b.candidateIds[activeposition] = b.candidateIds[i];
+
+                if(b.canUseQualityScores){
+                    b.bestQualities[activeposition] = b.bestQualities[i];
+                }
+                activeposition++;
+            }
+        }
+    }
+
+    //std::cout << b.activeCandidates.size() << " " <<
+
+    tpb = std::chrono::system_clock::now();
+    db = tpb-tpa;
+    tpa = std::chrono::system_clock::now();
+
+    b.activeCandidates.clear(); //no longer need this, all remaining candidates are active
+
+    b.candidateIds.resize(activeposition);
+    b.bestQualities.resize(activeposition);
+    b.fwdSequences.resize(activeposition);
+    b.bestAlignments.resize(activeposition);
+    b.bestSequences.resize(activeposition);
+    b.bestSequenceStrings.resize(activeposition);
+    b.bestAlignmentFlags.resize(activeposition);
+
+    b.n_candidates = activeposition;
+
+    tpb = std::chrono::system_clock::now();
+    dc = tpb-tpa;
+
+    return {da,db,dc};
+}
+
+
+#endif
 
 
 #endif

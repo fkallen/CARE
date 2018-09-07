@@ -610,6 +610,8 @@ struct Sequence2BitHiLoImpl{
         const unsigned int* const hi = (const unsigned int*)data;
         const unsigned int* const lo = (const unsigned int*)(data + bytes/2);
 
+#if 1
+
         for(int i = 0; i < nBases; i++){
             const int intIndex = i / (8 * sizeof(unsigned int));
             const int pos = i % (8 * sizeof(unsigned int));
@@ -626,6 +628,50 @@ struct Sequence2BitHiLoImpl{
             default: sequence.push_back('_'); break; // cannot happen
             }
         }
+
+#else
+        int previousIntIndex = -1;
+        std::uint64_t interleaved = 0;
+
+        //return 64 interleaved bits of two 32 bit numbers
+        auto interleave = [](std::uint64_t a, std::uint64_t b){
+                  a = (a | (a << 16)) & 0x0000FFFF0000FFFF;
+                  a = (a | (a << 8)) & 0x00FF00FF00FF00FF;
+                  a = (a | (a << 4)) & 0x0F0F0F0F0F0F0F0F;
+                  a = (a | (a << 2)) & 0x3333333333333333;
+                  a = (a | (a << 1)) & 0x5555555555555555;
+
+                  b = (b | (b << 16)) & 0x0000FFFF0000FFFF;
+                  b = (b | (b << 8)) & 0x00FF00FF00FF00FF;
+                  b = (b | (b << 4)) & 0x0F0F0F0F0F0F0F0F;
+                  b = (b | (b << 2)) & 0x3333333333333333;
+                  b = (b | (b << 1)) & 0x5555555555555555;
+
+                  return (a << 1) | b;
+          };
+
+        for(int i = 0; i < nBases; i++){
+            const int intIndex = i / (8 * sizeof(unsigned int));
+
+            if(intIndex != previousIntIndex){
+                interleaved = interleave(hi[intIndex], lo[intIndex]);
+                previousIntIndex = intIndex;
+            }
+
+            const int pos = i % (8 * sizeof(unsigned int));
+
+            const unsigned char base = (interleaved >> (2*pos)) & 3;
+
+            switch(base){
+            case BASE_A: sequence.push_back('A'); break;
+            case BASE_C: sequence.push_back('C'); break;
+            case BASE_G: sequence.push_back('G'); break;
+            case BASE_T: sequence.push_back('T'); break;
+            default: sequence.push_back('_'); break; // cannot happen
+            }
+        }
+
+#endif
 
         return sequence;
     }
