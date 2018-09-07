@@ -1399,22 +1399,26 @@ must be called with the same handle, alignmentsbegin, alignmentsend, flagsbegin,
 as the call to shifted_hamming_distance_canonical_batched_async
 */
 
-template<class AlignmentIter, class FlagsIter,
+template<class AlignmentIter, class FlagsIter, class StringIter,
     typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
 void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsbegin,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 bool canUseGpu){}
 
-template<class AlignmentIter, class FlagsIter,
+template<class AlignmentIter, class FlagsIter, class StringIter,
     typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
 void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsbegin,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 bool canUseGpu){
 
     //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
@@ -1425,6 +1429,7 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
 
     int numberOfAlignments = 0;
     int numberOfFlags = 0;
+    int numberOfBestSequenceStrings = 0;
 
     for(std::size_t i = 0; i < alignmentsbegin.size(); i++){
         numberOfAlignments += std::distance(alignmentsbegin[i], alignmentsend[i]);
@@ -1434,7 +1439,12 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
         numberOfFlags += std::distance(flagsbegin[i], flagsend[i]);
     }
 
+    for(std::size_t i = 0; i < bestSequenceStringsbegin.size(); i++){
+        numberOfBestSequenceStrings += std::distance(bestSequenceStringsbegin[i], bestSequenceStringsend[i]);
+    }
+
     assert(numberOfAlignments == numberOfFlags);
+    assert(numberOfAlignments == numberOfBestSequenceStrings);
 
     //nothing to do here
     if(numberOfAlignments == 0)
@@ -1447,8 +1457,9 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
-        shd::Result_t* results = mybuffers.h_results;
-        BestAlignment_t* bestAlignmentFlags = mybuffers.h_bestAlignmentFlags;
+        const shd::Result_t* const results = mybuffers.h_results;
+        const BestAlignment_t* const bestAlignmentFlags = mybuffers.h_bestAlignmentFlags;
+        const char* const bestSequenceStrings = mybuffers.h_unpacked_queries;
 
         cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
 
@@ -1458,15 +1469,20 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
 
         for(std::size_t i = 0, count = 0; i < alignmentsbegin.size(); ++i){
 
-			for(auto t = std::make_tuple(alignmentsbegin[i], flagsbegin[i]);
-                std::get<0>(t) != alignmentsend[i] && std::get<1>(t) != flagsend[i];
-                ++std::get<0>(t), ++std::get<1>(t), ++count){
+			for(auto t = std::make_tuple(alignmentsbegin[i], flagsbegin[i], bestSequenceStringsbegin[i]);
+                std::get<0>(t) != alignmentsend[i]
+                && std::get<1>(t) != flagsend[i]
+                && std::get<2>(t) != bestSequenceStringsend[i];
+                ++std::get<0>(t), ++std::get<1>(t), ++std::get<2>(t), ++count){
 
                 auto rit = std::get<0>(t);
                 auto fit = std::get<1>(t);
+                auto bit = std::get<2>(t);
 
                 *rit = results[count];
                 *fit = bestAlignmentFlags[count];
+                *bit = std::move(std::string{bestSequenceStrings + count * mybuffers.max_sequence_length,
+                                            bestSequenceStrings + count * mybuffers.max_sequence_length + mybuffers.h_querylengths[count]});
             }
 
 		}

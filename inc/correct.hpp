@@ -1477,9 +1477,9 @@ private:
 
 				tpa = std::chrono::system_clock::now();
 
-				auto activeBatchElemensEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+				auto activeBatchElementsEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
-				if(std::distance(batchElems[streamIndex].begin(), activeBatchElemensEnd) > 0){
+				if(std::distance(batchElems[streamIndex].begin(), activeBatchElementsEnd) > 0){
 
 					std::vector<const Sequence_t**> subjectsbegin;
 					std::vector<const Sequence_t**> subjectsend;
@@ -1504,7 +1504,7 @@ private:
 					queriesPerSubject.reserve(batchElems[streamIndex].size());
 
 					//for(auto& b : batchElems[streamIndex]){
-					for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
+					for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 						auto& b = *it;
 				        auto& flags = b.bestAlignmentFlags;
 
@@ -1585,25 +1585,32 @@ private:
 				std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsbegin;
 				std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsend;
 
+                std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsbegin;
+				std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsend;
+
 				alignmentsbegin.reserve(batchElems[streamIndex].size());
 				alignmentsend.reserve(batchElems[streamIndex].size());
 				flagsbegin.reserve(batchElems[streamIndex].size());
 				flagsend.reserve(batchElems[streamIndex].size());
+                bestSequenceStringsbegin.reserve(batchElems[streamIndex].size());
+				bestSequenceStringsend.reserve(batchElems[streamIndex].size());
 
-				auto activeBatchElemensEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+				auto activeBatchElementsEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
 				//for(auto& b : batchElems[streamIndex]){
-				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
+				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 					auto& b = *it;
 					auto& flags = b.bestAlignmentFlags;
 
 					auto& alignments = b.alignments;
+                    auto& strings = b.bestSequenceStrings;
 
 					alignmentsbegin.emplace_back(alignments.begin());
 					alignmentsend.emplace_back(alignments.end());
 					flagsbegin.emplace_back(flags.begin());
 					flagsend.emplace_back(flags.end());
-
+                    bestSequenceStringsbegin.emplace_back(strings.begin());
+					bestSequenceStringsend.emplace_back(strings.end());
 				}
 
 				if(indels){
@@ -1619,6 +1626,8 @@ private:
 											alignmentsend,
 											flagsbegin,
 											flagsend,
+                                            bestSequenceStringsbegin,
+                                            bestSequenceStringsend,
 											canUseGpu);
 				}
 
@@ -1629,7 +1638,7 @@ private:
 				//check quality of alignments
 				tpc = std::chrono::system_clock::now();
 				//for(auto& b : batchElems[streamIndex]){
-				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
+				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 					auto& b = *it;
 					if(b.active){
 						determine_good_alignments(b, [&](const AlignmentResult_t& fwdAlignment,
@@ -1652,7 +1661,7 @@ private:
 
                 tpc = std::chrono::system_clock::now();
 
-				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
+				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 					auto& b = *it;
 					if(b.active && hasEnoughGoodCandidates(b)){
 						if(b.active){
@@ -1671,7 +1680,7 @@ private:
                 tpd = std::chrono::system_clock::now();
                 fetchgoodcandidatesTime += tpd - tpc;
 
-				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElemensEnd; ++it){
+				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 					auto& b = *it;
 					if(b.active){
 						if(indels){
