@@ -116,6 +116,7 @@ namespace care{
 			Index_t nKeys;
 			Index_t nValues;
 			bool noMoreWrites;
+            bool canUseGpu = false;
 			std::vector<Key_t> keys;
 			std::vector<Value_t> values;
 			std::vector<Index_t> countsPrefixSum;
@@ -131,10 +132,10 @@ namespace care{
                     + keyIndexMap.numBytes();
             }
 
-			KeyValueMapFixedSize() : KeyValueMapFixedSize(0){
+			KeyValueMapFixedSize() : KeyValueMapFixedSize(0, false){
 			}
 
-			KeyValueMapFixedSize(Index_t size_) : size(size_), nKeys(size_), nValues(size_), noMoreWrites(false){
+			KeyValueMapFixedSize(Index_t size_, bool canUseGpu) : size(size_), nKeys(size_), nValues(size_), noMoreWrites(false), canUseGpu(canUseGpu){
 				keys.resize(size);
 				values.resize(size);
 			}
@@ -206,116 +207,139 @@ namespace care{
 				noMoreWrites = true;
 				if(size == 0) return;
 
-		#ifndef __NVCC__
-		//#if 1
+                auto cpu_transformation = [&](){
+                    std::vector<Index_t> indices(size);
+    				std::iota(indices.begin(), indices.end(), Index_t(0));
 
-				std::vector<Index_t> indices(size);
-				std::iota(indices.begin(), indices.end(), Index_t(0));
+    				//sort indices by key. if keys are equal, sort by value
+    				std::sort(indices.begin(), indices.end(), [&](auto a, auto b)->bool{
+    					if(keys[a] == keys[b]){
+    						return values[a] < values[b];
+    					}
+    					return keys[a] < keys[b];
+    				});
 
-				//sort indices by key. if keys are equal, sort by value
-				std::sort(indices.begin(), indices.end(), [&](auto a, auto b)->bool{
-					if(keys[a] == keys[b]){
-						return values[a] < values[b];
-					}
-					return keys[a] < keys[b];
-				});
+    				std::vector<Value_t> sortedValues(size);
+    				for(Index_t i = 0; i < size; i++){
+    					sortedValues[i] = values[indices[i]];
+    				}
 
-				std::vector<Value_t> sortedValues(size);
-				for(Index_t i = 0; i < size; i++){
-					sortedValues[i] = values[indices[i]];
-				}
+    				std::swap(sortedValues, values);
 
-				std::swap(sortedValues, values);
+    				std::sort(keys.begin(), keys.end());
 
-				std::sort(keys.begin(), keys.end());
+    				std::vector<Index_t> counts(size, 0);
 
-				std::vector<Index_t> counts(size, 0);
+    				//make keys unique and count frequency of each key
+    				Index_t unique_end = 1;
+    				counts[0]++;
+    				Key_t prev = keys[0];
+    				for(Index_t i = 1; i < size; i++){
+    					Key_t cur = keys[i];
+    					if(cur == prev){
+    						counts[unique_end-1]++;
+    					}else{
+    						keys[unique_end] = std::move(cur);
+    						counts[unique_end]++;
+    						unique_end++;
+    					}
+    					prev = cur;
+    				}
 
-				//make keys unique and count frequency of each key
-				Index_t unique_end = 1;
-				counts[0]++;
-				Key_t prev = keys[0];
-				for(Index_t i = 1; i < size; i++){
-					Key_t cur = keys[i];
-					if(cur == prev){
-						counts[unique_end-1]++;
-					}else{
-						keys[unique_end] = std::move(cur);
-						counts[unique_end]++;
-						unique_end++;
-					}
-					prev = cur;
-				}
+    				keys.resize(unique_end);
 
-				keys.resize(unique_end);
+    				//make prefix sum of counts
+    				countsPrefixSum.resize(unique_end+1);
+    				countsPrefixSum[0] = 0;
+    				for(Index_t i = 0; i < unique_end; i++)
+    					countsPrefixSum[i+1] = countsPrefixSum[i] + counts[i];
 
-				//make prefix sum of counts
-				countsPrefixSum.resize(unique_end+1);
-				countsPrefixSum[0] = 0;
-				for(Index_t i = 0; i < unique_end; i++)
-					countsPrefixSum[i+1] = countsPrefixSum[i] + counts[i];
+    				nKeys = unique_end;
+                };
 
-				nKeys = unique_end;
-		#else
+    		    if(!canUseGpu){
 
-				//sort values and keys by keys on gpu. equal keys are sorted by value
-				thrust::device_vector<Key_t> d_keys(size);
-				thrust::device_vector<Value_t> d_vals(size);
-				thrust::device_vector<Index_t> d_indices(size);
+    				cpu_transformation();
 
-				thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-				thrust::copy(values.begin(), values.end(), d_vals.begin());
-				thrust::sequence(d_indices.begin(), d_indices.end(), Index_t(0));
+                }else{
 
-				thrust::device_ptr<Key_t> keysptr = d_keys.data();
-				thrust::device_ptr<Value_t> valuesptr = d_vals.data();
+                    try{
 
-				thrust::sort(d_indices.begin(),
-							d_indices.end(),
-							[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
-								if(keysptr[lhs] == keysptr[rhs]){
-									return valuesptr[lhs] < valuesptr[rhs];
-								}
-								return keysptr[lhs] < keysptr[rhs];
-				});
+        				//sort values and keys by keys on gpu. equal keys are sorted by value
+        				thrust::device_vector<Key_t> d_keys(size);
+        				thrust::device_vector<Value_t> d_vals(size);
+        				thrust::device_vector<Index_t> d_indices(size);
 
-				thrust::copy(thrust::make_permutation_iterator(d_vals.begin(), d_indices.begin()),
-							thrust::make_permutation_iterator(d_vals.begin(), d_indices.end()),
-							values.begin());
+        				thrust::copy(keys.begin(), keys.end(), d_keys.begin());
+        				thrust::copy(values.begin(), values.end(), d_vals.begin());
+        				thrust::sequence(d_indices.begin(), d_indices.end(), Index_t(0));
 
-				thrust::copy(thrust::make_permutation_iterator(d_keys.begin(), d_indices.begin()),
-							thrust::make_permutation_iterator(d_keys.begin(), d_indices.end()),
-							keys.begin());
+        				thrust::device_ptr<Key_t> keysptr = d_keys.data();
+        				thrust::device_ptr<Value_t> valuesptr = d_vals.data();
 
-				thrust::copy(keys.begin(), keys.end(), d_keys.begin());
+        				thrust::sort(d_indices.begin(),
+        							d_indices.end(),
+        							[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
+        								if(keysptr[lhs] == keysptr[rhs]){
+        									return valuesptr[lhs] < valuesptr[rhs];
+        								}
+        								return keysptr[lhs] < keysptr[rhs];
+        				});
 
-				nKeys = thrust::inner_product(d_keys.begin(), d_keys.end() - 1,
-								d_keys.begin() + 1,
-								Index_t(1),
-								thrust::plus<Key_t>(),
-								thrust::not_equal_to<Key_t>());
+        				thrust::copy(thrust::make_permutation_iterator(d_vals.begin(), d_indices.begin()),
+        							thrust::make_permutation_iterator(d_vals.begin(), d_indices.end()),
+        							values.begin());
 
-				keys.resize(nKeys);
-				keys.shrink_to_fit();
+        				thrust::copy(thrust::make_permutation_iterator(d_keys.begin(), d_indices.begin()),
+        							thrust::make_permutation_iterator(d_keys.begin(), d_indices.end()),
+        							keys.begin());
 
-				// resize histogram storage
-				thrust::device_vector<Key_t> histogram_values(nKeys);
-				thrust::device_vector<Index_t> histogram_counts(nKeys);
-				thrust::device_vector<Index_t> histogram_counts_prefixsum(nKeys+1, 0); //inclusive with leading zero
+        				thrust::copy(keys.begin(), keys.end(), d_keys.begin());
 
-				// compact find the end of each bin of values
-				thrust::reduce_by_key(d_keys.begin(), d_keys.end(),
-								thrust::constant_iterator<Index_t>(1),
-								histogram_values.begin(),
-								histogram_counts.begin());
+                        //deallocate d_vals
+                        d_vals.clear();
+                        thrust::device_vector<Value_t>().swap(d_vals);
 
-				thrust::inclusive_scan(histogram_counts.begin(), histogram_counts.end(), histogram_counts_prefixsum.begin() + 1);
+                        //deallocate d_indices
+                        d_indices.clear();
+                        thrust::device_vector<Value_t>().swap(d_indices);
 
-				countsPrefixSum.resize(nKeys+1);
+        				nKeys = thrust::inner_product(d_keys.begin(), d_keys.end() - 1,
+        								d_keys.begin() + 1,
+        								Index_t(1),
+        								thrust::plus<Key_t>(),
+        								thrust::not_equal_to<Key_t>());
 
-				thrust::copy(histogram_values.begin(), histogram_values.end(), keys.begin());
-				thrust::copy(histogram_counts_prefixsum.begin(), histogram_counts_prefixsum.end(), countsPrefixSum.begin());
-		#endif
+        				keys.resize(nKeys);
+        				keys.shrink_to_fit();
+
+        				// resize histogram storage
+        				thrust::device_vector<Key_t> histogram_values(nKeys);
+        				thrust::device_vector<Index_t> histogram_counts(nKeys);
+        				thrust::device_vector<Index_t> histogram_counts_prefixsum(nKeys+1, 0); //inclusive with leading zero
+
+        				// compact find the end of each bin of values
+        				thrust::reduce_by_key(d_keys.begin(), d_keys.end(),
+        								thrust::constant_iterator<Index_t>(1),
+        								histogram_values.begin(),
+        								histogram_counts.begin());
+
+        				thrust::inclusive_scan(histogram_counts.begin(), histogram_counts.end(), histogram_counts_prefixsum.begin() + 1);
+
+        				countsPrefixSum.resize(nKeys+1);
+
+        				thrust::copy(histogram_values.begin(), histogram_values.end(), keys.begin());
+        				thrust::copy(histogram_counts_prefixsum.begin(), histogram_counts_prefixsum.end(), countsPrefixSum.begin());
+                    }catch(const std::bad_alloc& e){
+                        std::cerr << e.what() << std::endl;
+                        std::cerr << "Falling back to cpu transformation" << std::endl;
+                        cpu_transformation();
+                    }catch(const thrust::system_error& e){
+                        std::cerr << e.what() << std::endl;
+                        std::cerr << "Falling back to cpu transformation" << std::endl;
+                        cpu_transformation();
+                    }
+                }
 
 				/*keyIndexMap = KeyIndexMap(nKeys / load);
 				for(Index_t i = 0; i < nKeys; i++){
@@ -348,6 +372,7 @@ struct Minhasher {
 	std::vector<std::unique_ptr<Map_t>> minhashTables;
 	MinhashOptions minparams;
 	ReadId_t nReads;
+    bool canUseGpu = false;
 
     std::size_t numBytes() const{
         //return minhashTables[0]->numBytes() * minhashTables.size();
@@ -357,10 +382,10 @@ struct Minhasher {
         return result;
     }
 
-	Minhasher() : Minhasher(MinhashOptions{2,16}){}
+	Minhasher() : Minhasher(MinhashOptions{2,16}, false){}
 
-	Minhasher(const MinhashOptions& parameters)
-		: minparams(parameters), nReads(0)
+	Minhasher(const MinhashOptions& parameters, bool canUseGpu)
+		: minparams(parameters), nReads(0), canUseGpu(canUseGpu)
 	{
 		if(maximum_number_of_maps < minparams.maps)
 			throw std::runtime_error("Minhasher: Maximum number of maps is "
@@ -383,7 +408,7 @@ struct Minhasher {
 
 		for (int i = 0; i < minparams.maps; ++i) {
 			minhashTables[i].reset();
-			minhashTables[i].reset(new Map_t(nReads));
+			minhashTables[i].reset(new Map_t(nReads, canUseGpu));
 		}
 	}
 
