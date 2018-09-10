@@ -291,15 +291,15 @@ void fetch_candidates_from_readstorage(BE& b){
 
 
 
-template<class BE, class Func>
-void determine_good_alignments(BE& b, Func get_best_alignment){
-    determine_good_alignments(b, 0, b.fwdSequences.size(), get_best_alignment);
+template<class BE>
+void determine_good_alignments(BE& b){
+    determine_good_alignments(b, 0, b.fwdSequences.size());
 }
 
 
 
-template<class BE, class Func>
-void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_alignment){
+template<class BE>
+void determine_good_alignments(BE& b, int firstIndex, int N){
     using AlignmentResult_t = typename BE::AlignmentResult_t;
 
     const int lastIndex_excl = std::min(std::size_t(firstIndex + N), b.fwdSequences.size());
@@ -334,20 +334,13 @@ void determine_good_alignments(BE& b, int firstIndex, int N, Func get_best_align
                     b.counts[2] += 1;
                 }
 
-                if(alignmentFlag == BestAlignment_t::Forward){
-                    b.bestAlignments[i] = &b.alignments[i];
-                    //new
-                    //b.bestSequenceStrings[i] = b.fwdSequences[i]->toString();
+                b.bestAlignments[i] = &b.alignments[i];
 
+                if(alignmentFlag == BestAlignment_t::Forward){
                     if(b.canUseQualityScores){
                         b.bestQualities[i] = b.readStorage->fetchQuality_ptr(b.candidateIds[i]);
                     }
                 }else{
-
-                    //new
-                    //b.bestSequenceStrings[i] = b.reverseComplements[i].toString();
-
-                    b.bestAlignments[i] = &b.alignments[i];
 
                     if(b.canUseQualityScores){
                         if(BE::ReadStorage_t::has_reverse_complement){
