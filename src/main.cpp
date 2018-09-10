@@ -70,6 +70,14 @@ int main(int argc, const char** argv){
 
 	care::performCorrection(parseresults);
 
+#ifdef __NVCC__
+    int ngpus;
+    cudaGetDeviceCount(&ngpus);
+    for(int i = 0; i < ngpus; i++){
+        cudaSetDevice(i);
+        cudaDeviceReset();
+    }
+#endif
 
 	return 0;
 }
