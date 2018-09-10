@@ -120,6 +120,7 @@ struct SHDdata{
     int n_results = 0;
 	int max_n_subjects = 0;
 	int max_n_queries = 0;
+    int max_n_results = 0;
 
     // if number of alignments to calculate is >= gpuThreshold, use GPU.
     int gpuThreshold = 0;

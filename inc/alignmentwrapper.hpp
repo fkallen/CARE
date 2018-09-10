@@ -237,40 +237,12 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
 
 
         // copy data to gpu
-#if 0
-        cudaMemcpyAsync(mybuffers.d_subjectsdata,
-                mybuffers.h_subjectsdata,
-                numberOfSubjects * mybuffers.sequencepitch,
-                H2D,
-                mybuffers.streams[0]); CUERR;
-        cudaMemcpyAsync(mybuffers.d_queriesdata,
-                mybuffers.h_queriesdata,
-                numberOfAlignments * mybuffers.sequencepitch,
-                H2D,
-                mybuffers.streams[0]); CUERR;
-        cudaMemcpyAsync(mybuffers.d_subjectlengths,
-                mybuffers.h_subjectlengths,
-                numberOfSubjects * sizeof(int),
-                H2D,
-                mybuffers.streams[0]); CUERR;
-        cudaMemcpyAsync(mybuffers.d_querylengths,
-                mybuffers.h_querylengths,
-                numberOfAlignments * sizeof(int),
-                H2D,
-                mybuffers.streams[0]); CUERR;
-        cudaMemcpyAsync(mybuffers.d_NqueriesPrefixSum,
-                mybuffers.h_NqueriesPrefixSum,
-                (numberOfSubjects+1) * sizeof(int),
-                H2D,
-                mybuffers.streams[0]); CUERR;
-#else
         cudaMemcpyAsync(mybuffers.deviceptr,
                         mybuffers.hostptr,
                         mybuffers.transfersizeH2D,
                         H2D,
                         mybuffers.streams[0]); CUERR;
 
-#endif
         call_shd_kernel_async<Sequence_t>(mybuffers,
                                     min_overlap,
                                     maxErrorRate,
@@ -280,19 +252,12 @@ AlignmentDevice shifted_hamming_distance_async(SHDhandle& handle,
 
         shd::Result_t* results = mybuffers.h_results;
         shd::Result_t* d_results = mybuffers.d_results;
-#if 0
-        cudaMemcpyAsync(results,
-            d_results,
-            sizeof(shd::Result_t) * numberOfAlignments,
-            D2H,
-            mybuffers.streams[0]); CUERR;
-#else
+
         cudaMemcpyAsync(results,
             d_results,
             mybuffers.transfersizeD2H,
             D2H,
             mybuffers.streams[0]); CUERR;
-#endif
 
     }else{ // use cpu for alignment
 
@@ -880,104 +845,6 @@ AlignmentDevice shifted_hamming_distance_with_revcompl_batched(SHDhandle& handle
 
 #ifdef __NVCC__
 
-#if 0
-
-template<class Sequence_t>
-void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
-                      int min_overlap,
-                      double maxErrorRate,
-                      double min_overlap_ratio,
-                      int maxSubjectLength,
-                      int maxQueryLength){
-
-    auto accessor = [] __device__ (const char* data, int length, int index){
-        return Sequence_t::get(data, length, index);
-    };
-
-
-    auto make_reverse_complement = [] __device__ (std::uint8_t* sequence, int sequencelength){
-        return Sequence_t::make_reverse_complement_inplace(sequence, sequencelength);
-    };
-
-    auto comp = [=] __device__ (const SHDResult& fwdAlignment,
-                               const SHDResult& revcmplAlignment,
-                               int subjectlength,
-                               int querylength) -> BestAlignment_t{
-        return choose_best_alignment(fwdAlignment,
-                              revcmplAlignment,
-                              subjectlength,
-                              querylength,
-                              min_overlap_ratio,
-                              min_overlap,
-                              maxErrorRate);
-    };
-
-    shd::call_shd_with_revcompl_kernel_async(shddata, min_overlap, maxErrorRate, min_overlap_ratio, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
-
-    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
-                              shddata.d_bestAlignmentFlags,
-                              shddata.d_subjectlengths,
-                              shddata.d_querylengths,
-                              shddata.d_NqueriesPrefixSum,
-                              shddata.n_subjects,
-                              comp,
-                              shddata.n_queries,
-                              shddata.streams[0]);
-}
-
-#else
-
-#if 0
-
-template<class Sequence_t>
-void call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
-                      int min_overlap,
-                      double maxErrorRate,
-                      double min_overlap_ratio,
-                      int maxSubjectLength,
-                      int maxQueryLength){
-
-    auto getNumBytes = [] __device__ (int length){
-        return Sequence_t::getNumBytes(length);
-    };
-
-    auto comp = [=] __device__ (const SHDResult& fwdAlignment,
-                               const SHDResult& revcmplAlignment,
-                               int subjectlength,
-                               int querylength) -> BestAlignment_t{
-        return choose_best_alignment(fwdAlignment,
-                              revcmplAlignment,
-                              subjectlength,
-                              querylength,
-                              min_overlap_ratio,
-                              min_overlap,
-                              maxErrorRate);
-    };
-
-    shd::call_popcount_shd_with_revcompl_kernel2_async(shddata,
-                                min_overlap,
-                                maxErrorRate,
-                                min_overlap_ratio,
-                                maxSubjectLength,
-                                maxQueryLength,
-                                getNumBytes);
-
-    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
-                              shddata.d_bestAlignmentFlags,
-                              shddata.d_subjectlengths,
-                              shddata.d_querylengths,
-                              shddata.d_NqueriesPrefixSum,
-                              shddata.n_subjects,
-                              comp,
-                              shddata.n_queries,
-                              shddata.streams[0]);
-}
-
-
-
-#else
-
-
 template<class Sequence_t>
 typename std::enable_if<!std::is_same<Sequence_t, Sequence2BitHiLo>::value, void>::type
 call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
@@ -1025,48 +892,22 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                                         accessor,
                                         make_reverse_complement_inplace);
 
-#if 0
-    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
-                            shddata.d_bestAlignmentFlags,
-                            shddata.d_subjectlengths,
-                            shddata.d_querylengths,
-                            shddata.d_NqueriesPrefixSum,
-                            shddata.n_subjects,
-                            comp,
-                            shddata.n_queries,
-                            shddata.streams[0]);
-
-    call_cuda_unpack_sequences_with_good_alignments_kernel_async(
-                                    shddata.d_unpacked_queries,
-                                    shddata.d_bestAlignmentFlags,
-                                    shddata.d_queriesdata,
-                                    shddata.d_querylengths,
-                                    shddata.n_queries,
-                                    shddata.max_sequence_length,
-                                    shddata.sequencepitch,
-                                    nucleotide_accessor,
-                                    make_unpacked_reverse_complement_inplace,
-                                    shddata.streams[0]);
-#else
-
-call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
-                                    shddata.d_results,
-                                    shddata.d_bestAlignmentFlags,
-                                    shddata.d_unpacked_queries,
-                                    shddata.d_subjectlengths,
-                                    shddata.d_querylengths,
-                                    shddata.d_NqueriesPrefixSum,
-                                    shddata.n_subjects,
-                                    shddata.n_queries,
-                                    shddata.d_queriesdata,
-                                    shddata.max_sequence_length,
-                                    shddata.sequencepitch,
-                                    comp,
-                                    nucleotide_accessor,
-                                    make_unpacked_reverse_complement_inplace,
-                                    shddata.streams[0]);
-#endif
-
+    call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
+                                        shddata.d_results,
+                                        shddata.d_bestAlignmentFlags,
+                                        shddata.d_unpacked_queries,
+                                        shddata.d_subjectlengths,
+                                        shddata.d_querylengths,
+                                        shddata.d_NqueriesPrefixSum,
+                                        shddata.n_subjects,
+                                        shddata.n_queries,
+                                        shddata.d_queriesdata,
+                                        shddata.max_sequence_length,
+                                        shddata.sequencepitch,
+                                        comp,
+                                        nucleotide_accessor,
+                                        make_unpacked_reverse_complement_inplace,
+                                        shddata.streams[0]);
 }
 
 template<class Sequence_t>
@@ -1110,31 +951,9 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
                               maxSubjectLength,
                               maxQueryLength,
                               getNumBytes);
-#if 0
-    call_cuda_find_best_alignment_kernel_async(shddata.d_results,
-                            shddata.d_bestAlignmentFlags,
-                            shddata.d_subjectlengths,
-                            shddata.d_querylengths,
-                            shddata.d_NqueriesPrefixSum,
-                            shddata.n_subjects,
-                            comp,
-                            shddata.n_queries,
-                            shddata.streams[0]);
 
-    call_cuda_unpack_sequences_with_good_alignments_kernel_async(
-                                    shddata.d_unpacked_queries,
-                                    shddata.d_bestAlignmentFlags,
-                                    shddata.d_queriesdata,
-                                    shddata.d_querylengths,
-                                    shddata.n_queries,
-                                    shddata.max_sequence_length,
-                                    shddata.sequencepitch,
-                                    nucleotide_accessor,
-                                    make_unpacked_reverse_complement_inplace,
-                                    shddata.streams[0]);
-#else
 
-call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
+                              call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
                                     shddata.d_results,
                                     shddata.d_bestAlignmentFlags,
                                     shddata.d_unpacked_queries,
@@ -1150,12 +969,7 @@ call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
                                     nucleotide_accessor,
                                     make_unpacked_reverse_complement_inplace,
                                     shddata.streams[0]);
-#endif
 }
-#endif
-
-#endif
-
 
 #endif
 
@@ -1225,6 +1039,8 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
     assert(subjectsbegin.size() == alignmentsend.size());
     assert(subjectsbegin.size() == flagsbegin.size());
     assert(subjectsbegin.size() == flagsend.size());
+    assert(subjectsbegin.size() == bestSequenceStringsbegin.size());
+    assert(subjectsbegin.size() == bestSequenceStringsend.size());
 
     for(std::size_t i = 0; i < flagsbegin.size(); i++){
         numberOfFlags += std::distance(flagsbegin[i], flagsend[i]);
@@ -1322,14 +1138,11 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                                     maxSubjectLength,
                                     maxQueryLength); CUERR;
 
-        //copy alignments and flags to host
+        //copy results to host
 
-        shd::Result_t* results = mybuffers.h_results;
-        shd::Result_t* d_results = mybuffers.d_results;
-
-        cudaMemcpyAsync(results,
-            d_results,
-            mybuffers.transfersizeD2H, // transfersizeD2H includes the bestAlignmentFlags and unpacked queries
+        cudaMemcpyAsync(mybuffers.h_results,
+            mybuffers.d_results,
+            mybuffers.transfersizeD2H,
             D2H,
             mybuffers.streams[0]); CUERR;
 #if 0
@@ -1377,7 +1190,6 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                 const char* const subject = (const char*)(*subjectIt)->begin();
                 const int subjectLength = (*subjectIt)->length();
 
-
                 const int nQueries = queriesPerSubject[subjectcount];
 
                 for(int i = 0; i < nQueries; i++){
@@ -1404,6 +1216,7 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                                                                               min_overlap_ratio,
                                                                               min_overlap,
                                                                               maxErrorRate);
+
 
                     *flagsIt = bestAlignmentFlag;
 
@@ -1469,6 +1282,7 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
 
     assert(alignmentsbegin.size() == alignmentsend.size());
     assert(flagsbegin.size() == flagsend.size());
+    assert(bestSequenceStringsbegin.size() == bestSequenceStringsend.size());
 
     int numberOfAlignments = 0;
     int numberOfFlags = 0;
@@ -1500,11 +1314,11 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
+        cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
+
         const shd::Result_t* const results = mybuffers.h_results;
         const BestAlignment_t* const bestAlignmentFlags = mybuffers.h_bestAlignmentFlags;
         const char* const bestSequenceStrings = mybuffers.h_unpacked_queries;
-
-        cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
 
         timings.executionEnd();
 
@@ -2071,6 +1885,14 @@ void call_sga_canonical_kernel_async(const sga::SGAdata& sgadata,
         return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
     };
 
+    auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+        return Sequence_t::get_as_nucleotide(data, length, index);
+    };
+
+    auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+        return SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+    };
+
     auto comp = [=] __device__ (const sga::Attributes_t& fwdAlignment,
                                const sga::Attributes_t& revcmplAlignment,
                                int subjectlength,
@@ -2086,7 +1908,7 @@ void call_sga_canonical_kernel_async(const sga::SGAdata& sgadata,
 
     sga::call_semi_global_alignment_with_revcompl_kernel_async(sgadata, score_match, score_sub, score_ins, score_del, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
 
-    call_cuda_find_best_alignment_kernel_async(sgadata.d_results,
+    /*call_cuda_find_best_alignment_kernel_async(sgadata.d_results,
                               sgadata.d_bestAlignmentFlags,
                               sgadata.d_subjectlengths,
                               sgadata.d_querylengths,
@@ -2094,53 +1916,24 @@ void call_sga_canonical_kernel_async(const sga::SGAdata& sgadata,
                               sgadata.n_subjects,
                               comp,
                               sgadata.n_queries,
-                              sgadata.streams[0]);
-}
+                              sgadata.streams[0]);*/
 
-template<class Sequence_t>
-void call_sga_canonical_kernel(const sga::SGAdata& sgadata,
-                      int min_overlap,
-                      double maxErrorRate,
-                      double min_overlap_ratio,
-                      int maxSubjectLength,
-                      int maxQueryLength,
-                      int score_match,
-                      int score_sub,
-                      int score_ins,
-                      int score_del){
-
-    auto accessor = [] __device__ (const char* data, int length, int index){
-        return Sequence_t::get(data, length, index);
-    };
-
-    auto make_reverse_complement = [] __device__ (std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
-        return Sequence_t::make_reverse_complement(reverseComplement, sequence, sequencelength);
-    };
-
-    auto comp = [=] __device__ (const sga::Attributes_t& fwdAlignment,
-                               const sga::Attributes_t& revcmplAlignment,
-                               int subjectlength,
-                               int querylength) -> BestAlignment_t{
-        return choose_best_alignment(fwdAlignment,
-                              revcmplAlignment,
-                              subjectlength,
-                              querylength,
-                              min_overlap_ratio,
-                              min_overlap,
-                              maxErrorRate);
-    };
-
-    sga::call_semi_global_alignment_with_revcompl_kernel(sgadata, score_match, score_sub, score_ins, score_del, maxSubjectLength, maxQueryLength, accessor, make_reverse_complement);
-
-    call_cuda_find_best_alignment_kernel(sgadata.d_results,
-                              sgadata.d_bestAlignmentFlags,
-                              sgadata.d_subjectlengths,
-                              sgadata.d_querylengths,
-                              sgadata.d_NqueriesPrefixSum,
-                              sgadata.n_subjects,
-                              comp,
-                              sgadata.n_queries,
-                              sgadata.streams[0]);
+    call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
+                                      sgadata.d_results,
+                                      sgadata.d_bestAlignmentFlags,
+                                      sgadata.d_unpacked_queries,
+                                      sgadata.d_subjectlengths,
+                                      sgadata.d_querylengths,
+                                      sgadata.d_NqueriesPrefixSum,
+                                      sgadata.n_subjects,
+                                      sgadata.n_queries,
+                                      sgadata.d_queriesdata,
+                                      sgadata.max_sequence_length,
+                                      sgadata.sequencepitch,
+                                      comp,
+                                      nucleotide_accessor,
+                                      make_unpacked_reverse_complement_inplace,
+                                      sgadata.streams[0]);
 }
 
 #endif
@@ -2151,7 +1944,7 @@ void call_sga_canonical_kernel(const sga::SGAdata& sgadata,
     Flags indicate whether the better one is forward alignment, reverse complement alignment, or if both alignments are bad.
 */
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter, class StringIter,
         typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
 AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
@@ -2162,6 +1955,8 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 const std::vector<int>& queriesPerSubject,
                                 int min_overlap,
                                 double maxErrorRate,
@@ -2175,7 +1970,7 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
     return AlignmentDevice::None;
 }
 
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter, class StringIter,
         typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
 AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                 const std::vector<SubjectIter>& subjectsbegin,
@@ -2186,6 +1981,8 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 const std::vector<int>& queriesPerSubject,
                                 int min_overlap,
                                 double maxErrorRate,
@@ -2215,6 +2012,8 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
     assert(subjectsbegin.size() == alignmentsend.size());
     assert(subjectsbegin.size() == flagsbegin.size());
     assert(subjectsbegin.size() == flagsend.size());
+    assert(subjectsbegin.size() == bestSequenceStringsbegin.size());
+    assert(subjectsbegin.size() == bestSequenceStringsend.size());
 
     for(std::size_t i = 0; i < flagsbegin.size(); i++){
         numberOfFlags += std::distance(flagsbegin[i], flagsend[i]);
@@ -2236,6 +2035,7 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
     //nothing to do here
     if(numberOfAlignments == 0)
         return device;
+
 #ifdef __NVCC__
 
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
@@ -2315,14 +2115,11 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                             score_ins,
                                             score_del); CUERR;
 
-        //copy alignments and flags to host
+        //copy results to host
 
-        sga::Attributes_t* results = mybuffers.h_results;
-        sga::Attributes_t* d_results = mybuffers.d_results;
-
-        cudaMemcpyAsync(results,
-            d_results,
-            mybuffers.transfersizeD2H, // transfersizeD2H includes the bestAlignmentFlags and ops
+        cudaMemcpyAsync(mybuffers.h_results,
+            mybuffers.d_results,
+            mybuffers.transfersizeD2H,
             D2H,
             mybuffers.streams[0]); CUERR;
 
@@ -2338,6 +2135,7 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
             auto queryIt = queriesbegin[i];
             auto alignmentsIt = alignmentsbegin[i];
             auto flagsIt = flagsbegin[i];
+            auto bestSequenceStringsIt = bestSequenceStringsbegin[i];
 
             for(auto subjectIt = subjectsbegin[i]; subjectIt != subjectsend[i]; ++subjectIt, ++subjectcount){
 
@@ -2346,7 +2144,6 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
 
                 const char* const subject = (const char*)(*subjectIt)->begin();
                 const int subjectLength = (*subjectIt)->length();
-
 
                 const int nQueries = queriesPerSubject[subjectcount];
 
@@ -2389,18 +2186,22 @@ AlignmentDevice semi_global_alignment_canonical_batched_async(SGAhandle& handle,
                                                                               min_overlap,
                                                                               maxErrorRate);
 
+
                     *flagsIt = bestAlignmentFlag;
 
-                    if(bestAlignmentFlag == BestAlignment_t::Forward)
+                    if(bestAlignmentFlag == BestAlignment_t::Forward){
                         *alignmentsIt = fwdAlignment;
-                    else if(bestAlignmentFlag == BestAlignment_t::ReverseComplement)
+                        *bestSequenceStringsIt = std::move((*queryIt)->toString());
+                    }else if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
                         *alignmentsIt = revComplAlignment;
-                    else
+                        *bestSequenceStringsIt = std::move(revcomplsequence.toString());
+                    }else
                         ; //BestAlignment_t::None
 
                     ++queryIt;
                     ++alignmentsIt;
                     ++flagsIt;
+                    ++bestSequenceStringsIt;
                 }
             }
         }
@@ -2422,24 +2223,28 @@ have been stored in the range [alignmentsbegin[i], alignmentsend[i][
 must be called with the same handle, alignmentsbegin, alignmentsend, flagsbegin, flagsend, canUseGpu
 as the call to semi_global_alignment_canonical_batched_async
 */
-template<class AlignmentIter, class FlagsIter,
+template<class AlignmentIter, class FlagsIter, class StringIter,
     typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
 void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
-                                std::vector<AlignmentIter>& alignmentsbegin,
-                                std::vector<AlignmentIter>& alignmentsend,
-                                std::vector<FlagsIter>& flagsbegin,
-                                std::vector<FlagsIter>& flagsend,
-                                bool canUseGpu){
+                                    std::vector<AlignmentIter>& alignmentsbegin,
+                                    std::vector<AlignmentIter>& alignmentsend,
+                                    std::vector<FlagsIter>& flagsbegin,
+                                    std::vector<FlagsIter>& flagsend,
+                                    std::vector<StringIter>& bestSequenceStringsbegin,
+                                    std::vector<StringIter>& bestSequenceStringsend,
+                                    bool canUseGpu){
 
 }
 
-template<class AlignmentIter, class FlagsIter,
+template<class AlignmentIter, class FlagsIter, class StringIter,
     typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
 void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
                                 std::vector<AlignmentIter>& alignmentsbegin,
                                 std::vector<AlignmentIter>& alignmentsend,
                                 std::vector<FlagsIter>& flagsbegin,
                                 std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
                                 bool canUseGpu){
 
     //static_assert(std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, "semi global alignment unexpected Alignment type");
@@ -2447,9 +2252,11 @@ void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
 
     assert(alignmentsbegin.size() == alignmentsend.size());
     assert(flagsbegin.size() == flagsend.size());
+    assert(bestSequenceStringsbegin.size() == bestSequenceStringsend.size());
 
     int numberOfAlignments = 0;
     int numberOfFlags = 0;
+    int numberOfBestSequenceStrings = 0;
 
     for(std::size_t i = 0; i < alignmentsbegin.size(); i++){
         numberOfAlignments += std::distance(alignmentsbegin[i], alignmentsend[i]);
@@ -2459,7 +2266,12 @@ void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
         numberOfFlags += std::distance(flagsbegin[i], flagsend[i]);
     }
 
+    for(std::size_t i = 0; i < bestSequenceStringsbegin.size(); i++){
+        numberOfBestSequenceStrings += std::distance(bestSequenceStringsbegin[i], bestSequenceStringsend[i]);
+    }
+
     assert(numberOfAlignments == numberOfFlags);
+    assert(numberOfAlignments == numberOfBestSequenceStrings);
 
     //nothing to do here
     if(numberOfAlignments == 0)
@@ -2472,11 +2284,12 @@ void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
+        cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
+
         const sga::Attributes_t* results = mybuffers.h_results;
         const BestAlignment_t* bestAlignmentFlags = mybuffers.h_bestAlignmentFlags;
         const sga::Op_t* ops = mybuffers.h_ops;
-
-        cudaStreamSynchronize(mybuffers.streams[0]); CUERR;
+        const char* const bestSequenceStrings = mybuffers.h_unpacked_queries;
 
         timings.executionEnd();
 
@@ -2484,14 +2297,20 @@ void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
 
         for(std::size_t i = 0, count = 0; i < alignmentsbegin.size(); ++i){
 
-			for(auto t = std::make_tuple(alignmentsbegin[i], flagsbegin[i]);
-                std::get<0>(t) != alignmentsend[i] && std::get<1>(t) != flagsend[i];
-                ++std::get<0>(t), ++std::get<1>(t), ++count){
+            for(auto t = std::make_tuple(alignmentsbegin[i], flagsbegin[i], bestSequenceStringsbegin[i]);
+                std::get<0>(t) != alignmentsend[i]
+                && std::get<1>(t) != flagsend[i]
+                && std::get<2>(t) != bestSequenceStringsend[i];
+                ++std::get<0>(t), ++std::get<1>(t), ++std::get<2>(t), ++count){
 
                 auto rit = std::get<0>(t);
                 auto fit = std::get<1>(t);
+                auto bit = std::get<2>(t);
 
                 rit->attributes = results[count];
+
+                *bit = std::move(std::string{bestSequenceStrings + count * mybuffers.max_sequence_length,
+                                            bestSequenceStrings + count * mybuffers.max_sequence_length + mybuffers.h_querylengths[count]});
 
                 *fit = bestAlignmentFlags[count];
 
@@ -2529,68 +2348,6 @@ void semi_global_alignment_canonical_get_results_batched(SGAhandle& handle,
 #endif
 
     return;
-}
-
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
-        typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int>::type = 0>
-AlignmentDevice semi_global_alignment_canonical_batched(SGAhandle& handle,
-                                const std::vector<SubjectIter>& subjectsbegin,
-                                const std::vector<SubjectIter>& subjectsend,
-                                const std::vector<QueryIter>& queriesbegin,
-                                const std::vector<QueryIter>& queriesend,
-                                std::vector<AlignmentIter>& alignmentsbegin,
-                                std::vector<AlignmentIter>& alignmentsend,
-                                std::vector<FlagsIter>& flagsbegin,
-                                std::vector<FlagsIter>& flagsend,
-                                const std::vector<int>& queriesPerSubject,
-                                int min_overlap,
-                                double maxErrorRate,
-                                double min_overlap_ratio,
-                                int score_match,
-                                int score_sub,
-                                int score_ins,
-                                int score_del,
-                                bool canUseGpu){
-    return AlignmentDevice::None;
-}
-
-template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter,
-        typename std::enable_if<std::is_same<typename AlignmentIter::value_type, sga::Result_t>::value, int*>::type = nullptr>
-AlignmentDevice semi_global_alignment_canonical_batched(SGAhandle& handle,
-                                const std::vector<SubjectIter>& subjectsbegin,
-                                const std::vector<SubjectIter>& subjectsend,
-                                const std::vector<QueryIter>& queriesbegin,
-                                const std::vector<QueryIter>& queriesend,
-                                std::vector<AlignmentIter>& alignmentsbegin,
-                                std::vector<AlignmentIter>& alignmentsend,
-                                std::vector<FlagsIter>& flagsbegin,
-                                std::vector<FlagsIter>& flagsend,
-                                const std::vector<int>& queriesPerSubject,
-                                int min_overlap,
-                                double maxErrorRate,
-                                double min_overlap_ratio,
-                                int score_match,
-                                int score_sub,
-                                int score_ins,
-                                int score_del,
-                                bool canUseGpu){
-
-    AlignmentDevice device = semi_global_alignment_canonical_batched_async(handle, subjectsbegin, subjectsend,
-                                    queriesbegin, queriesend,
-                                    alignmentsbegin, alignmentsend,
-                                    flagsbegin, flagsend,
-                                    queriesPerSubject, score_match,
-                                    score_sub, score_ins, score_del,
-                                    canUseGpu);
-
-    semi_global_alignment_canonical_get_results_batched(handle,
-                                    alignmentsbegin,
-                                    alignmentsend,
-                                    flagsbegin,
-                                    flagsend,
-                                    canUseGpu);
-
-    return device;
 }
 
 

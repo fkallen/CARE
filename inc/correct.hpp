@@ -1478,6 +1478,8 @@ private:
 														alignmentsend,
 														flagsbegin,
 														flagsend,
+                                                        bestSequenceStringsbegin,
+                                                        bestSequenceStringsend,
 														queriesPerSubject,
 														goodAlignmentProperties.min_overlap,
 														goodAlignmentProperties.maxErrorRate,
@@ -1567,6 +1569,8 @@ private:
 										                    alignmentsend,
 										                    flagsbegin,
 										                    flagsend,
+                                                            bestSequenceStringsbegin,
+                                                            bestSequenceStringsend,
 										                    canUseGpu);
 				}else{
 					shifted_hamming_distance_canonical_get_results_batched(shdhandles[streamIndex],

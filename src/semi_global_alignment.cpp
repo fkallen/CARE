@@ -156,77 +156,7 @@ bool& AlignmentResult::get_isValid(){
 }
 
 void SGAdata::resize(int n_sub, int n_quer){
-#ifdef __NVCC__
-	cudaSetDevice(deviceId); CUERR;
-
-	bool resizeResult = false;
-
-	if(n_sub > max_n_subjects){
-		const int newmax = 1.5 * n_sub;
-		std::size_t oldpitch = sequencepitch;
-		cudaFree(d_subjectsdata); CUERR;
-		cudaMallocPitch(&d_subjectsdata, &sequencepitch, max_sequence_bytes, newmax); CUERR;
-		assert(!oldpitch || oldpitch == sequencepitch);
-
-		cudaFreeHost(h_subjectsdata); CUERR;
-		cudaMallocHost(&h_subjectsdata, sequencepitch * newmax); CUERR;
-
-		cudaFree(d_subjectlengths); CUERR;
-		cudaMalloc(&d_subjectlengths, sizeof(int) * newmax); CUERR;
-
-		cudaFreeHost(h_subjectlengths); CUERR;
-		cudaMallocHost(&h_subjectlengths, sizeof(int) * newmax); CUERR;
-
-        cudaFree(d_NqueriesPrefixSum); CUERR;
-        cudaMalloc(&d_NqueriesPrefixSum, sizeof(int) * (n_sub+1)); CUERR;
-
-        cudaFreeHost(h_NqueriesPrefixSum); CUERR;
-        cudaMallocHost(&h_NqueriesPrefixSum, sizeof(int) * (n_sub+1)); CUERR;
-
-		max_n_subjects = newmax;
-		resizeResult = true;
-	}
-
-
-	if(n_quer > max_n_queries){
-		const int newmax = 1.5 * n_quer;
-		size_t oldpitch = sequencepitch;
-		cudaFree(d_queriesdata); CUERR;
-		cudaMallocPitch(&d_queriesdata, &sequencepitch, max_sequence_bytes, newmax); CUERR;
-		assert(!oldpitch || oldpitch == sequencepitch);
-
-		cudaFreeHost(h_queriesdata); CUERR;
-		cudaMallocHost(&h_queriesdata, sequencepitch * newmax); CUERR;
-
-		cudaFree(d_querylengths); CUERR;
-		cudaMalloc(&d_querylengths, sizeof(int) * newmax); CUERR;
-
-		cudaFreeHost(h_querylengths); CUERR;
-		cudaMallocHost(&h_querylengths, sizeof(int) * newmax); CUERR;
-
-		max_n_queries = newmax;
-		resizeResult = true;
-	}
-
-	if(resizeResult){
-		cudaFree(d_results); CUERR;
-		cudaMalloc(&d_results, sizeof(Attributes_t) * max_n_subjects * max_n_queries); CUERR;
-
-		cudaFreeHost(h_results); CUERR;
-		cudaMallocHost(&h_results, sizeof(Attributes_t) * max_n_subjects * max_n_queries); CUERR;
-
-		cudaFree(d_ops); CUERR;
-		cudaFreeHost(h_ops); CUERR;
-
-		cudaMalloc(&d_ops, sizeof(Op_t) * max_n_queries * max_ops_per_alignment); CUERR;
-		cudaMallocHost(&h_ops, sizeof(Op_t) * max_n_queries * max_ops_per_alignment); CUERR;
-	}
-#endif
-
-	n_subjects = n_sub;
-	n_queries = n_quer;
-
-    throw std::runtime_error("don't use me");
+    resize(n_sub, n_quer, n_quer);
 }
 
 void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
@@ -246,10 +176,12 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     const std::size_t memResults = SDIV(sizeof(Attributes_t) * n_results, sequencepitch) * sequencepitch;
     const std::size_t memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
     const std::size_t memOps = SDIV(sizeof(Op_t) * n_results * max_ops_per_alignment, sequencepitch) * sequencepitch;
+    const std::size_t memUnpackedQueries = SDIV(sizeof(char) * n_quer * max_sequence_length, sequencepitch) * sequencepitch;
 
     const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
                                     + memQueries + memQueryLengths + memResults
-                                    + memBestAlignmentFlags + memOps;
+                                    + memBestAlignmentFlags + memOps
+                                    + memUnpackedQueries;
 
     if(requiredMem > allocatedMem){
         cudaFree(deviceptr); CUERR;
@@ -268,7 +200,8 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
 
     transfersizeD2H = memResults; //d_results
     transfersizeD2H += memBestAlignmentFlags; // d_bestAlignmentFlags
-    transfersizeD2H += sizeof(Op_t) * n_results * max_ops_per_alignment; // d_ops
+    transfersizeD2H += memOps; // d_ops
+    transfersizeD2H += sizeof(char) * n_quer * max_sequence_length; // d_unpacked_queries
 
     d_subjectsdata = (char*)deviceptr;
     d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
@@ -278,6 +211,7 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     d_results = (Attributes_t*)(((char*)d_querylengths) + memQueryLengths);
     d_bestAlignmentFlags = (BestAlignment_t*)(((char*)d_results) + memResults);
     d_ops = (Op_t*)(((char*)d_bestAlignmentFlags) + memBestAlignmentFlags);
+    d_unpacked_queries = (char*)(((char*)d_ops) + memOps);
 
     h_subjectsdata = (char*)hostptr;
     h_subjectlengths = (int*)(((char*)h_subjectsdata) + memSubjects);
@@ -287,6 +221,7 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     h_results = (Attributes_t*)(((char*)h_querylengths) + memQueryLengths);
     h_bestAlignmentFlags = (BestAlignment_t*)(((char*)h_results) + memResults);
     h_ops = (Op_t*)(((char*)h_bestAlignmentFlags) + memBestAlignmentFlags);
+    h_unpacked_queries = (char*)(((char*)h_ops) + memOps);
 
     #endif
 }
