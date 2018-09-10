@@ -1020,5 +1020,23 @@ using Sequence2Bit = SequenceBase<Sequence2BitImpl>;
 using Sequence2BitHiLo = SequenceBase<Sequence2BitHiLoImpl>;
 using SequenceString = SequenceBase<SequenceStringImpl>;
 
+template<class T>
+inline std::string getSequenceType();
+
+template<>
+inline std::string getSequenceType<Sequence2Bit>(){
+    return "Sequence2Bit";
+}
+
+template<>
+inline std::string getSequenceType<Sequence2BitHiLo>(){
+    return "Sequence2BitHiLo";
+}
+
+template<>
+inline std::string getSequenceType<SequenceStringImpl>(){
+    return "SequenceStringImpl";
+}
+
 }
 #endif
