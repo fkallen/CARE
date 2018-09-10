@@ -42,13 +42,16 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 
 	using Minhasher_t = minhasher_t;
 	using ReadStorage_t = readStorage_t;
+    using Sequence_t = typename ReadStorage_t::Sequence_t;
 
     auto toGB = [](std::size_t bytes){
         double gb = bytes / 1024. / 1024. / 1024.0;
         return gb;
     };
 
-    Minhasher_t minhasher(minhashOptions);
+    std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
+
+    Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
     ReadStorage_t readStorage(correctionOptions.useQualityScores);
 
     std::string stmp;
