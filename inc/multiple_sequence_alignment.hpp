@@ -1,8 +1,9 @@
 #ifndef CARE_MSA_HPP
 #define CARE_MSA_HPP
 
-#include "qualityscoreweights.hpp"
+
 #include "featureextractor.hpp"
+#include "msa_kernels.hpp"
 
 #include <vector>
 #include <string>
@@ -28,10 +29,6 @@ namespace care{
             bool failedMinSupport;
             bool failedMinCoverage;
         };
-
-
-
-// TEST
 
 struct PileupImage{
 
@@ -203,6 +200,56 @@ struct PileupImage{
             }
             h_coverage[globalIndex]++;
         }
+    }
+
+    template<class AlignmentIter, class SequenceIter, class QualityIter>
+    void init_gpu(const std::string& sequence_to_correct,
+              const std::string* quality_of_sequence_to_correct,
+                AlignmentIter alignmentsBegin,
+                AlignmentIter alignmentsEnd,
+                SequenceIter candidateSequencesBegin,
+                SequenceIter candidateSequencesEnd,
+                QualityIter candidateQualitiesBegin,
+                QualityIter candidateQualitiesEnd){
+
+        const int subjectlength = sequence_to_correct.length();
+
+        //determine number of columns in pileup image
+        columnProperties.startindex = 0;
+        columnProperties.endindex = sequence_to_correct.length();
+
+        for(auto p = std::make_pair(alignmentsBegin, candidateSequencesBegin);
+            p.first != alignmentsEnd;
+            p.first++, p.second++){
+
+            auto& alignmentiter = p.first;
+            auto& sequenceiter = p.second;
+
+            const int shift = (*alignmentiter)->get_shift();
+            columnProperties.startindex = std::min(shift, columnProperties.startindex);
+            const int queryEndsAt = sequenceiter->length() + shift;
+            columnProperties.endindex = std::max(queryEndsAt, columnProperties.endindex);
+        }
+
+        columnProperties.columnsToCheck = columnProperties.endindex - columnProperties.startindex;
+        columnProperties.subjectColumnsBegin_incl = std::max(-columnProperties.startindex,0);
+        columnProperties.subjectColumnsEnd_excl = columnProperties.subjectColumnsBegin_incl + sequence_to_correct.length();
+
+        /*call_init_msa_gpu_kernel_async(
+                                char* d_multiple_sequence_alignments,
+                                const T* d_results,
+                                const BestAlignment_t* d_flags,
+                                const char* d_unpacked_subjects,
+                                const int* d_subjectLengths,
+                                const char* d_unpacked_queries,
+                                const int* d_queryLengths,
+                                const int* d_NqueriesPrefixSum,
+                                int n_subjects,
+                                int n_queries,
+                                int max_sequence_length,
+                                int subjectColumnsBegin_incl,
+                                size_t sequencepitch,
+                                cudaStream_t stream*/
     }
 
     /*
