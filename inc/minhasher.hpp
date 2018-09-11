@@ -192,7 +192,7 @@ namespace care{
 			}
 
             //Must call transform() beforehand !!!
-			std::pair<Value_t*, Value_t*> get_ranged(Key_t key) noexcept{
+			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) noexcept{
 				//TIMERSTARTCPU(binarysearch);
 				auto range = std::equal_range(keys.begin(), keys.end(), key);
 				if(range.first == keys.end()) return {};
