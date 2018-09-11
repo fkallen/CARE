@@ -145,12 +145,14 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
     call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
                                         shddata.d_results,
                                         shddata.d_bestAlignmentFlags,
+                                        shddata.d_unpacked_subjects,
                                         shddata.d_unpacked_queries,
                                         shddata.d_subjectlengths,
                                         shddata.d_querylengths,
                                         shddata.d_NqueriesPrefixSum,
                                         shddata.n_subjects,
                                         shddata.n_queries,
+                                        shddata.d_subjectsdata,
                                         shddata.d_queriesdata,
                                         shddata.max_sequence_length,
                                         shddata.sequencepitch,
@@ -373,10 +375,15 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
 
 
         // copy data to gpu
+        std::size_t transfersizeH2D = mybuffers.memSubjects; // d_subjectsdata
+        transfersizeH2D += mybuffers.memSubjectLengths; // d_subjectlengths
+        transfersizeH2D += mybuffers.memNqueriesPrefixSum; // d_NqueriesPrefixSum
+        transfersizeH2D += mybuffers.memQueries; // d_queriesdata
+        transfersizeH2D += mybuffers.memQueryLengths; // d_querylengths
 
         cudaMemcpyAsync(mybuffers.deviceptr,
                         mybuffers.hostptr,
-                        mybuffers.transfersizeH2D,
+                        transfersizeH2D,
                         H2D,
                         mybuffers.streams[0]); CUERR;
 
@@ -388,11 +395,16 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                                     maxSubjectLength,
                                     maxQueryLength); CUERR;
 
+        std::size_t transfersizeD2H = mybuffers.memResults; //d_results
+        transfersizeD2H += mybuffers.memBestAlignmentFlags; // d_bestAlignmentFlags
+        transfersizeD2H += mybuffers.memUnpackedSubjects; // d_unpacked_subjects
+        transfersizeD2H += mybuffers.memUnpackedQueries; // d_unpacked_queries
+
         //copy results to host
 
         cudaMemcpyAsync(mybuffers.h_results,
             mybuffers.d_results,
-            mybuffers.transfersizeD2H,
+            transfersizeD2H,
             D2H,
             mybuffers.streams[0]); CUERR;
 #if 0
