@@ -80,14 +80,14 @@ namespace shd{
         n_queries = n_quer;
         n_results = n_res;
 
-        const std::size_t memSubjects = sizeof(char) * n_sub * sequencepitch;
-        const std::size_t memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
-        const std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
-        const std::size_t memQueries = sizeof(char) * n_quer * sequencepitch;
-        const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
-        const std::size_t memResults = SDIV(sizeof(AlignmentResult) * n_results, sequencepitch) * sequencepitch;
-        const std::size_t memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
-        const std::size_t memUnpackedQueries = SDIV(sizeof(char) * n_quer * max_sequence_length, sequencepitch) * sequencepitch;
+        memSubjects = sizeof(char) * n_sub * sequencepitch;
+        memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
+        memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
+        memQueries = sizeof(char) * n_quer * sequencepitch;
+        memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
+        memResults = SDIV(sizeof(AlignmentResult) * n_results, sequencepitch) * sequencepitch;
+        memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
+        memUnpackedQueries = SDIV(sizeof(char) * n_quer * max_sequence_length, sequencepitch) * sequencepitch;
 
         const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
                                         + memQueries + memQueryLengths + memResults

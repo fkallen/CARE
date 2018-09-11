@@ -122,6 +122,15 @@ struct SHDdata{
 	int max_n_queries = 0;
     int max_n_results = 0;
 
+    std::size_t memSubjects;
+    std::size_t memSubjectLengths;
+    std::size_t memNqueriesPrefixSum;
+    std::size_t memQueries;
+    std::size_t memQueryLengths;
+    std::size_t memResults;
+    std::size_t memBestAlignmentFlags;
+    std::size_t memUnpackedQueries;
+
     // if number of alignments to calculate is >= gpuThreshold, use GPU.
     int gpuThreshold = 0;
 
