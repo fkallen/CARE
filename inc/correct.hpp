@@ -266,6 +266,8 @@ using Minhasher_t = minhasher_t;
 
     std::chrono::duration<double> da, db, dc;
 
+    TaskTimings detailedCorrectionTimings;
+
     std::thread thread;
     bool isRunning = false;
     volatile bool stopAndAbort = false;
@@ -313,7 +315,7 @@ private:
         //std::uint64_t savedAlignments = 0;
         //std::uint64_t performedAlignments = 0;
 
-		constexpr int nStreams = 4;
+		constexpr int nStreams = 2;
         const bool canUseGpu = threadOpts.canUseGpu;
 
 		std::vector<SHDhandle> shdhandles(nStreams);
@@ -631,10 +633,12 @@ private:
 														correctionOptions.graphalpha,
 														correctionOptions.graphx);
 
-							auto& correctionResult = res.first;
-
 							tpd = std::chrono::system_clock::now();
 							readcorrectionTimeTotal += tpd - tpc;
+
+                            detailedCorrectionTimings += res.second;
+
+                            auto& correctionResult = res.first;
 
 							write_read(b.readId, correctionResult.correctedSequence);
 							lock(b.readId);
@@ -654,6 +658,8 @@ private:
 
 							tpd = std::chrono::system_clock::now();
 							readcorrectionTimeTotal += tpd - tpc;
+
+                            detailedCorrectionTimings += res.second;
 
 							/*
 								features
@@ -794,6 +800,11 @@ private:
 					<< fetchgoodcandidatesTime.count() << '\n';
 			std::cout << "thread " << threadOpts.threadId << " : correction time "
 					<< readcorrectionTimeTotal.count() << '\n';
+
+            std::cout << "thread " << threadOpts.threadId << " : detailed correction time " << '\n'
+					<< detailedCorrectionTimings << '\n';
+
+
 	#if 0
 			if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
 				std::cout << "thread " << threadOpts.threadId << " : pileup vote "
