@@ -12,6 +12,11 @@ fi
 #max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
 threads=16
 
+if [ $# -gt 1 ]
+then
+	threads=$2
+fi
+
 deviceIds="--deviceIds=0"
 
 datapath=/home/fekallen/arbeit/evaluationtool
@@ -76,7 +81,7 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=false
+candidateCorrection=--candidateCorrection=true
 
 #if indels should be corrected, too
 indels=--indels=false
