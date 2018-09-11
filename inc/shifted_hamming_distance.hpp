@@ -93,7 +93,17 @@ struct SHDdata{
 	int* d_querylengths = nullptr;
     int* d_NqueriesPrefixSum = nullptr;
     BestAlignment_t* d_bestAlignmentFlags = nullptr;
+    char* d_unpacked_subjects = nullptr;
     char* d_unpacked_queries = nullptr;
+
+    char* d_multiple_sequence_alignment = nullptr;
+    float* d_multiple_sequence_alignment_weights = nullptr;
+    char* d_consensus = nullptr;
+    float* d_support = nullptr;
+    int* d_coverage = nullptr;
+    float* d_origWeights = nullptr;
+    int* d_origCoverages = nullptr;
+    char* d_qualityscores = nullptr;
 
 	Result_t* h_results = nullptr;
 	char* h_subjectsdata = nullptr;
@@ -102,7 +112,17 @@ struct SHDdata{
 	int* h_querylengths = nullptr;
     int* h_NqueriesPrefixSum = nullptr;
     BestAlignment_t* h_bestAlignmentFlags = nullptr;
+    char* h_unpacked_subjects = nullptr;
     char* h_unpacked_queries = nullptr;
+
+    char* h_multiple_sequence_alignment = nullptr;
+    float* h_multiple_sequence_alignment_weights = nullptr;
+    char* h_consensus = nullptr;
+    float* h_support = nullptr;
+    int* h_coverage = nullptr;
+    float* h_origWeights = nullptr;
+    int* h_origCoverages = nullptr;
+    char* h_qualityscores = nullptr;
 
 #ifdef __NVCC__
     static constexpr int n_streams = 1;
@@ -129,7 +149,19 @@ struct SHDdata{
     std::size_t memQueryLengths;
     std::size_t memResults;
     std::size_t memBestAlignmentFlags;
+    std::size_t memUnpackedSubjects;
     std::size_t memUnpackedQueries;
+    std::size_t memMultipleSequenceAlignment;
+    std::size_t memMultipleSequenceAlignmentWeights;
+    std::size_t memConsensus;
+    std::size_t memSupport;
+    std::size_t memCoverage;
+    std::size_t memQualityScores;
+    std::size_t memOrigWeights;
+    std::size_t memOrigCoverage;
+
+    std::size_t msa_row_pitch;
+    std::size_t msa_weights_row_pitch;
 
     // if number of alignments to calculate is >= gpuThreshold, use GPU.
     int gpuThreshold = 0;

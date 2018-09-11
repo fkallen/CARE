@@ -73,12 +73,16 @@ namespace shd{
     void SHDdata::resize(int n_sub, int n_quer, int n_res, double factor){
 
     #ifdef __NVCC__
+        static_assert(sizeof(float) == sizeof(int), "sizeof(float) != sizeof(int)");
 
         cudaSetDevice(deviceId); CUERR;
 
         n_subjects = n_sub;
         n_queries = n_quer;
         n_results = n_res;
+
+        msa_row_pitch = SDIV((max_sequence_length * 3 - 2), sequencepitch) * sequencepitch;
+        msa_weights_row_pitch = SDIV(sizeof(float) * (max_sequence_length * 3 - 2), sequencepitch) * sequencepitch;
 
         memSubjects = sizeof(char) * n_sub * sequencepitch;
         memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
@@ -87,12 +91,29 @@ namespace shd{
         memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
         memResults = SDIV(sizeof(AlignmentResult) * n_results, sequencepitch) * sequencepitch;
         memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
+        memUnpackedSubjects = SDIV(sizeof(char) * n_sub * max_sequence_length, sequencepitch) * sequencepitch;
         memUnpackedQueries = SDIV(sizeof(char) * n_quer * max_sequence_length, sequencepitch) * sequencepitch;
+        memMultipleSequenceAlignment = msa_row_pitch * (n_quer + n_sub);
+        memMultipleSequenceAlignmentWeights = msa_weights_row_pitch * (n_quer + n_sub);
+        memConsensus = msa_row_pitch * n_sub;
+        memSupport = msa_weights_row_pitch * n_sub;
+        memCoverage = msa_weights_row_pitch * n_sub;
+        memOrigWeights = msa_weights_row_pitch * n_sub;
+        memOrigCoverage = msa_weights_row_pitch * n_sub;
+        memQualityScores = msa_row_pitch * (n_quer + n_sub);
 
         const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
                                         + memQueries + memQueryLengths + memResults
                                         + memBestAlignmentFlags
-                                        + memUnpackedQueries;
+                                        + memUnpackedSubjects
+                                        + memUnpackedQueries
+                                        + memMultipleSequenceAlignment
+                                        + memConsensus
+                                        + memSupport
+                                        + memCoverage
+                                        + memOrigWeights
+                                        + memOrigCoverage
+                                        + memQualityScores;
 
         if(requiredMem > allocatedMem){
             cudaFree(deviceptr); CUERR;
@@ -103,7 +124,7 @@ namespace shd{
             allocatedMem = requiredMem * factor;
         }
 
-        transfersizeH2D = memSubjects; // d_subjectsdata
+        /*transfersizeH2D = memSubjects; // d_subjectsdata
         transfersizeH2D += memSubjectLengths; // d_subjectlengths
         transfersizeH2D += memNqueriesPrefixSum; // d_NqueriesPrefixSum
         transfersizeH2D += memQueries; // d_queriesdata
@@ -111,7 +132,7 @@ namespace shd{
 
         transfersizeD2H = memResults; //d_results
         transfersizeD2H += memBestAlignmentFlags; // d_bestAlignmentFlags
-        transfersizeD2H += sizeof(char) * n_quer * max_sequence_length; // d_unpacked_queries
+        transfersizeD2H += sizeof(char) * n_quer * max_sequence_length; // d_unpacked_queries*/
 
         d_subjectsdata = (char*)deviceptr;
         d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
@@ -120,7 +141,17 @@ namespace shd{
         d_querylengths = (int*)(((char*)d_queriesdata) + memQueries);
         d_results = (AlignmentResult*)(((char*)d_querylengths) + memQueryLengths);
         d_bestAlignmentFlags = (BestAlignment_t*)(((char*)d_results) + memResults);
-        d_unpacked_queries = (char*)(((char*)d_bestAlignmentFlags) + memBestAlignmentFlags);
+        d_unpacked_subjects = (char*)(((char*)d_bestAlignmentFlags) + memBestAlignmentFlags);
+        d_unpacked_queries = (char*)(((char*)d_unpacked_subjects) + memUnpackedSubjects);
+        d_multiple_sequence_alignment = (char*)(((char*)d_unpacked_queries) + memUnpackedQueries);
+        d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignment) + memMultipleSequenceAlignment);
+        d_consensus = (char*)(((char*)d_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
+        d_support = (float*)(((char*)d_consensus) + memConsensus);
+        d_coverage = (int*)(((char*)d_support) + memSupport);
+        d_origWeights = (float*)(((char*)d_coverage) + memCoverage);
+        d_origCoverages = (int*)(((char*)d_origWeights) + memOrigWeights);
+        d_qualityscores = (char*)(((char*)d_origCoverages) + memOrigCoverage);
+
 
         h_subjectsdata = (char*)hostptr;
         h_subjectlengths = (int*)(((char*)h_subjectsdata) + memSubjects);
@@ -129,7 +160,16 @@ namespace shd{
         h_querylengths = (int*)(((char*)h_queriesdata) + memQueries);
         h_results = (AlignmentResult*)(((char*)h_querylengths) + memQueryLengths);
         h_bestAlignmentFlags = (BestAlignment_t*)(((char*)h_results) + memResults);
-        h_unpacked_queries = (char*)(((char*)h_bestAlignmentFlags) + memBestAlignmentFlags);
+        h_unpacked_subjects = (char*)(((char*)h_bestAlignmentFlags) + memBestAlignmentFlags);
+        h_unpacked_queries = (char*)(((char*)h_unpacked_subjects) + memUnpackedSubjects);
+        h_multiple_sequence_alignment_weights = (float*)(((char*)h_multiple_sequence_alignment) + memMultipleSequenceAlignment);
+        h_consensus = (char*)(((char*)h_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
+        h_consensus = (char*)(((char*)h_multiple_sequence_alignment) + memMultipleSequenceAlignment);
+        h_support = (float*)(((char*)h_consensus) + memConsensus);
+        h_coverage = (int*)(((char*)h_support) + memSupport);
+        h_origWeights = (float*)(((char*)h_coverage) + memCoverage);
+        h_origCoverages = (int*)(((char*)h_origWeights) + memOrigWeights);
+        h_qualityscores = (char*)(((char*)h_origCoverages) + memOrigCoverage);
 
         #endif
     }
