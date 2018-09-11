@@ -211,77 +211,53 @@ struct PileupImage{
         CountIter: Iterator to int
         QualityIter: Iter to pointer to std::string
     */
-    template<class AlignmentIter, class SequenceIter, /*class CountIter,*/ class QualityIter>
+    template<class AlignmentIter, class SequenceIter, class QualityIter>
     void cpu_add_candidates(const std::string& sequence_to_correct,
                 AlignmentIter alignmentsBegin,
                 AlignmentIter alignmentsEnd,
                 double desiredAlignmentMaxErrorRate,
                 SequenceIter candidateSequencesBegin,
                 SequenceIter candidateSequencesEnd,
-                //CountIter candidateCountsBegin,
-                //CountIter candidateCountsEnd,
                 QualityIter candidateQualitiesBegin,
                 QualityIter candidateQualitiesEnd){
 
         // add weights for each base in every candidate sequences
-	auto alignmentiter = alignmentsBegin;
-	auto sequenceiter = candidateSequencesBegin;
-	//auto countiter = candidateCountsBegin;
-	auto candidateQualityiter = candidateQualitiesBegin;
-#if 0
-        for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, candidateCountsBegin, candidateQualitiesBegin);
+        for(auto t = std::make_tuple(alignmentsBegin, candidateSequencesBegin, candidateQualitiesBegin);
             std::get<0>(t) != alignmentsEnd;
-            std::get<0>(t)++, std::get<1>(t)++, std::get<2>(t)++/*quality iter is incremented in loop body*/){
+            ++std::get<0>(t), ++std::get<1>(t), ++std::get<2>(t)){
 
             auto& alignmentiter = std::get<0>(t);
             auto& sequenceiter = std::get<1>(t);
-            auto& countiter = std::get<2>(t);
-            auto& candidateQualityiter = std::get<3>(t);
-#else
-	//for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++, countiter++){
-    for(; alignmentiter != alignmentsEnd; alignmentiter++, sequenceiter++){
-#endif
+            auto& candidateQualityiter = std::get<2>(t);
+
             const double defaultweight = 1.0 - std::sqrt((*alignmentiter)->get_nOps()
                                                         / ((*alignmentiter)->get_overlap()
                                                             * desiredAlignmentMaxErrorRate));
             const int len = sequenceiter->length();
-            const int freq = 1;//*countiter;
             const int defaultcolumnoffset = columnProperties.subjectColumnsBegin_incl + (*alignmentiter)->get_shift();
-
-            //use h_support as temporary storage to accumulate the quality factors for position j
-            for(int f = 0; f < freq; f++){
-                if(*candidateQualityiter != nullptr){
-                    for(int j = 0; j < len; j++){
-                        h_support[j] += qscore_to_weight[(unsigned char)(*(*candidateQualityiter))[j]];
-                    }
-                }else{
-                    for(int j = 0; j < len; j++){
-                        h_support[j] += 1;
-                    }
-                }
-                candidateQualityiter++;
-            }
 
             for(int j = 0; j < len; j++){
                 const int globalIndex = defaultcolumnoffset + j;
-                assert(globalIndex < max_n_columns);
-                assert(j < max_n_columns);
+                //assert(globalIndex < max_n_columns);
+                //assert(j < max_n_columns);
 
-                const double qw = h_support[j] * defaultweight;
+                const double qw = *candidateQualityiter != nullptr ?
+                                            qscore_to_weight[(unsigned char)(*(*candidateQualityiter))[j]] * defaultweight
+                                            : 1.0;
                 const char base = (*sequenceiter)[j];
                 switch(base){
-                    case 'A': h_Aweights[globalIndex] += qw; h_As[globalIndex] += freq;
+                    case 'A': h_Aweights[globalIndex] += qw; h_As[globalIndex] += 1;
                     break;
-                    case 'C': h_Cweights[globalIndex] += qw; h_Cs[globalIndex] += freq;
+                    case 'C': h_Cweights[globalIndex] += qw; h_Cs[globalIndex] += 1;
                     break;
-                    case 'G': h_Gweights[globalIndex] += qw; h_Gs[globalIndex] += freq;
+                    case 'G': h_Gweights[globalIndex] += qw; h_Gs[globalIndex] += 1;
                     break;
-                    case 'T': h_Tweights[globalIndex] += qw; h_Ts[globalIndex] += freq;
+                    case 'T': h_Tweights[globalIndex] += qw; h_Ts[globalIndex] += 1;
                     break;
                     default: std::cout << "Pileup: Found invalid base in candidate sequence\n"; break;
                 }
-                h_coverage[globalIndex] += freq;
-                h_support[j] = 0;
+                h_coverage[globalIndex] += 1;
+                //h_support[j] = 0;
             }
         }
 
