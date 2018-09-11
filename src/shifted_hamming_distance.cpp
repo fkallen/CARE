@@ -1,4 +1,5 @@
 #include "../inc/shifted_hamming_distance.hpp"
+#include "../inc/msa_kernels.hpp"
 
 #include <cassert>
 
@@ -101,6 +102,7 @@ namespace shd{
         memOrigWeights = msa_weights_row_pitch * n_sub;
         memOrigCoverage = msa_weights_row_pitch * n_sub;
         memQualityScores = msa_row_pitch * (n_quer + n_sub);
+        memMSAColumnProperties = SDIV(sizeof(care::msa::MSAColumnProperties) * n_sub, sequencepitch) * sequencepitch;
 
         const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
                                         + memQueries + memQueryLengths + memResults
@@ -113,7 +115,8 @@ namespace shd{
                                         + memCoverage
                                         + memOrigWeights
                                         + memOrigCoverage
-                                        + memQualityScores;
+                                        + memQualityScores
+                                        + memMSAColumnProperties;
 
         if(requiredMem > allocatedMem){
             cudaFree(deviceptr); CUERR;
@@ -123,16 +126,6 @@ namespace shd{
 
             allocatedMem = requiredMem * factor;
         }
-
-        /*transfersizeH2D = memSubjects; // d_subjectsdata
-        transfersizeH2D += memSubjectLengths; // d_subjectlengths
-        transfersizeH2D += memNqueriesPrefixSum; // d_NqueriesPrefixSum
-        transfersizeH2D += memQueries; // d_queriesdata
-        transfersizeH2D += memQueryLengths; // d_querylengths
-
-        transfersizeD2H = memResults; //d_results
-        transfersizeD2H += memBestAlignmentFlags; // d_bestAlignmentFlags
-        transfersizeD2H += sizeof(char) * n_quer * max_sequence_length; // d_unpacked_queries*/
 
         d_subjectsdata = (char*)deviceptr;
         d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
@@ -151,6 +144,7 @@ namespace shd{
         d_origWeights = (float*)(((char*)d_coverage) + memCoverage);
         d_origCoverages = (int*)(((char*)d_origWeights) + memOrigWeights);
         d_qualityscores = (char*)(((char*)d_origCoverages) + memOrigCoverage);
+        d_msa_column_properties = (care::msa::MSAColumnProperties*)(((char*)d_qualityscores) + memQualityScores);
 
 
         h_subjectsdata = (char*)hostptr;
@@ -170,6 +164,7 @@ namespace shd{
         h_origWeights = (float*)(((char*)h_coverage) + memCoverage);
         h_origCoverages = (int*)(((char*)h_origWeights) + memOrigWeights);
         h_qualityscores = (char*)(((char*)h_origCoverages) + memOrigCoverage);
+        h_msa_column_properties = (care::msa::MSAColumnProperties*)(((char*)d_qualityscores) + memQualityScores);
 
         #endif
     }

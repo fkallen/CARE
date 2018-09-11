@@ -7,8 +7,6 @@
 #include "util.hpp"
 #include "sequence.hpp"
 
-//#include "util.hpp"
-
 #include <cstdint>
 #include <algorithm>
 #include <vector>
@@ -18,6 +16,12 @@
 #include <cooperative_groups.h>
 using namespace cooperative_groups;
 #endif
+
+namespace care{
+    namespace msa{
+        struct MSAColumnProperties;
+    }
+}
 
 namespace shd{
 
@@ -104,6 +108,7 @@ struct SHDdata{
     float* d_origWeights = nullptr;
     int* d_origCoverages = nullptr;
     char* d_qualityscores = nullptr;
+    care::msa::MSAColumnProperties* d_msa_column_properties = nullptr;
 
 	Result_t* h_results = nullptr;
 	char* h_subjectsdata = nullptr;
@@ -123,6 +128,7 @@ struct SHDdata{
     float* h_origWeights = nullptr;
     int* h_origCoverages = nullptr;
     char* h_qualityscores = nullptr;
+    care::msa::MSAColumnProperties* h_msa_column_properties = nullptr;
 
 #ifdef __NVCC__
     static constexpr int n_streams = 1;
@@ -159,6 +165,7 @@ struct SHDdata{
     std::size_t memQualityScores;
     std::size_t memOrigWeights;
     std::size_t memOrigCoverage;
+    std::size_t memMSAColumnProperties;
 
     std::size_t msa_row_pitch;
     std::size_t msa_weights_row_pitch;
