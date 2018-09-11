@@ -104,10 +104,10 @@ namespace msa{
                             const int* const __restrict__ queryLengths,
                             const char* const __restrict__ subjectQualityScores,
                             const char* const __restrict__ queryQualityScores,
+                            const MSAColumnProperties* const __restrict__ columnProperties,
                             const int* const __restrict__ NqueriesPrefixSum,
                             int n_subjects,
                             int max_sequence_length,
-                            int subjectColumnsBegin_incl,
                             bool canUseQualityScores,
                             size_t sequencepitch,
                             size_t msa_row_pitch,
@@ -119,6 +119,8 @@ namespace msa{
 
         //copy each subject into the top row of its multiple sequence alignment
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+            const int subjectColumnsBegin_incl = columnProperties[subjectIndex].subjectColumnsBegin_incl;
+
             const unsigned offset1 = msa_row_pitch * (subjectIndex+NqueriesPrefixSum[subjectIndex]);
             const unsigned offset2 = msa_weights_row_pitch_floats * (subjectIndex+NqueriesPrefixSum[subjectIndex]);
 
@@ -150,6 +152,8 @@ namespace msa{
                 if(queryIndex < NqueriesPrefixSum[subjectIndex+1])
                     break;
             }
+
+            const int subjectColumnsBegin_incl = columnProperties[subjectIndex].subjectColumnsBegin_incl;
 
             const int localQueryIndex = queryIndex - NqueriesPrefixSum[subjectIndex];
 
@@ -196,11 +200,10 @@ namespace msa{
                             const char* const __restrict__ unpacked_subjects,
                             const char* const __restrict__ multiple_sequence_alignments,
                             const float* const __restrict__ multiple_sequence_alignment_weights,
+                            const MSAColumnProperties* const __restrict__ columnProperties,
                             const int* const __restrict__ NqueriesPrefixSum,
                             int n_subjects,
                             int max_sequence_length,
-                            int subjectColumnsBegin_incl,
-                            int subjectColumnsEnd_excl,
                             size_t sequencepitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
@@ -214,6 +217,8 @@ namespace msa{
         //process multiple sequence alignment of each subject
         //for each column in msa, find consensus and support
         for(unsigned subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
+            const int subjectColumnsBegin_incl = columnProperties[subjectIndex].subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = columnProperties[subjectIndex].subjectColumnsEnd_excl;
 
             const char* const subject = unpacked_subjects + subjectIndex * sequencepitch;
 
@@ -338,11 +343,11 @@ namespace msa{
                             const int* d_queryLengths,
                             const char* d_subjectQualityScores,
                             const char* d_queryQualityScores,
+                            const MSAColumnProperties* d_columnProperties,
                             const int* d_NqueriesPrefixSum,
                             int n_subjects,
                             int n_queries,
                             int max_sequence_length,
-                            int subjectColumnsBegin_incl,
                             bool canUseQualityScores,
                             size_t sequencepitch,
                             size_t msa_row_pitch,
@@ -362,10 +367,10 @@ namespace msa{
                                                         d_queryLengths,
                                                         d_subjectQualityScores,
                                                         d_queryQualityScores,
+                                                        d_columnProperties,
                                                         d_NqueriesPrefixSum,
                                                         n_subjects,
                                                         max_sequence_length,
-                                                        subjectColumnsBegin_incl,
                                                         canUseQualityScores,
                                                         sequencepitch,
                                                         msa_row_pitch,
@@ -382,12 +387,11 @@ namespace msa{
                             const char* d_unpacked_subjects,
                             const char* const d_multiple_sequence_alignments,
                             const float* const d_multiple_sequence_alignment_weights,
+                            const MSAColumnProperties* d_columnProperties,
                             const int* const d_NqueriesPrefixSum,
                             int n_subjects,
                             int n_queries,
                             int max_sequence_length,
-                            int subjectColumnsBegin_incl,
-                            int subjectColumnsEnd_excl,
                             size_t sequencepitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
@@ -408,11 +412,10 @@ namespace msa{
                                                             d_unpacked_subjects,
                                                             d_multiple_sequence_alignments,
                                                             d_multiple_sequence_alignment_weights,
+                                                            d_columnProperties,
                                                             d_NqueriesPrefixSum,
                                                             n_subjects,
                                                             max_sequence_length,
-                                                            subjectColumnsBegin_incl,
-                                                            subjectColumnsEnd_excl,
                                                             sequencepitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
