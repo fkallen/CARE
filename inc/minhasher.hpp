@@ -256,11 +256,11 @@ namespace care{
 
     				nKeys = unique_end;
                 };
-
+#ifdef __NVCC__
     		    if(!canUseGpu){
-
+#endif
     				cpu_transformation();
-
+#ifdef __NVCC__
                 }else{
 
                     try{
@@ -340,7 +340,7 @@ namespace care{
                         cpu_transformation();
                     }
                 }
-
+#endif
 				/*keyIndexMap = KeyIndexMap(nKeys / load);
 				for(Index_t i = 0; i < nKeys; i++){
 					keyIndexMap.insert(keys[i], i);
