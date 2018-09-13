@@ -7,9 +7,10 @@
 
 #include <limits>
 
+#ifdef __NVCC__
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
-
+#endif
 namespace care{
 
 namespace msa{
