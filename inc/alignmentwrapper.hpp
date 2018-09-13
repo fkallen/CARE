@@ -283,7 +283,7 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
     int numberOfAlignments = 0;
     int numberOfQueries = 0;
     int numberOfSubjects = 0;
-
+#if 0
     assert(subjectsbegin.size() == subjectsend.size());
     assert(subjectsbegin.size() == queriesbegin.size());
     assert(subjectsbegin.size() == queriesend.size());
@@ -293,7 +293,7 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
     assert(subjectsbegin.size() == flagsend.size());
     assert(subjectsbegin.size() == bestSequenceStringsbegin.size());
     assert(subjectsbegin.size() == bestSequenceStringsend.size());
-
+#endif
     for(std::size_t i = 0; i < flagsbegin.size(); i++){
         numberOfFlags += std::distance(flagsbegin[i], flagsend[i]);
     }
@@ -303,14 +303,16 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
     for(std::size_t i = 0; i < queriesbegin.size(); i++){
         numberOfQueries += std::distance(queriesbegin[i], queriesend[i]);
     }
+#if 0
     assert(numberOfAlignments == numberOfQueries);
     assert(numberOfAlignments == numberOfFlags);
-
+#endif
     for(std::size_t i = 0; i < subjectsbegin.size(); i++){
         numberOfSubjects += std::distance(subjectsbegin[i], subjectsend[i]);
     }
+#if 0
     assert(numberOfSubjects == (int)queriesPerSubject.size());
-
+#endif
     //nothing to do here
     if(numberOfAlignments == 0)
         return device;
@@ -330,10 +332,10 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
         for(std::size_t i = 0, count = 0; i < subjectsbegin.size(); i++){
 
             for(auto it = subjectsbegin[i]; it != subjectsend[i]; ++it, ++count){
-
+#if 0
                 assert((*it)->length() <= mybuffers.max_sequence_length);
                 assert((*it)->getNumBytes() <= mybuffers.max_sequence_bytes);
-
+#endif
                 std::memcpy(mybuffers.h_subjectsdata + count * mybuffers.sequencepitch,
                             (*it)->begin(),
                             (*it)->getNumBytes());
@@ -349,10 +351,10 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
         for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
 
             for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
-
+#if 0
                 assert((*it)->length() <= mybuffers.max_sequence_length);
                 assert((*it)->getNumBytes() <= mybuffers.max_sequence_bytes);
-
+#endif
                 std::memcpy(mybuffers.h_queriesdata + count * mybuffers.sequencepitch,
                             (*it)->begin(),
                             (*it)->getNumBytes());
@@ -366,13 +368,13 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
         mybuffers.h_NqueriesPrefixSum[0] = 0;
         for(std::size_t i = 0; i < queriesPerSubject.size(); i++)
             mybuffers.h_NqueriesPrefixSum[i+1] = mybuffers.h_NqueriesPrefixSum[i] + queriesPerSubject[i];
-
+#if 0
         assert(numberOfAlignments == mybuffers.h_NqueriesPrefixSum[queriesPerSubject.size()]);
-
+#endif
         timings.preprocessingEnd();
 
-        timings.executionBegin();
 
+        timings.h2dBegin();
 
         // copy data to gpu
         std::size_t transfersizeH2D = mybuffers.memSubjects; // d_subjectsdata
@@ -387,6 +389,9 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                         H2D,
                         mybuffers.streams[0]); CUERR;
 
+        timings.h2dEnd();
+
+        timings.executionBegin();
 
         call_shd_canonical_kernel_async<Sequence_t>(mybuffers,
                                     min_overlap,
@@ -394,6 +399,10 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                                     min_overlap_ratio,
                                     maxSubjectLength,
                                     maxQueryLength); CUERR;
+
+        timings.executionEnd();
+
+        timings.d2hBegin();
 
         std::size_t transfersizeD2H = mybuffers.memResults; //d_results
         transfersizeD2H += mybuffers.memBestAlignmentFlags; // d_bestAlignmentFlags
@@ -407,6 +416,8 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
             transfersizeD2H,
             D2H,
             mybuffers.streams[0]); CUERR;
+
+        timings.d2hEnd();
 #if 0
         cudaStreamSynchronize(mybuffers.streams[0]);
 
@@ -445,10 +456,10 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
             auto bestSequenceStringsIt = bestSequenceStringsbegin[i];
 
             for(auto subjectIt = subjectsbegin[i]; subjectIt != subjectsend[i]; ++subjectIt, ++subjectcount){
-
+#if 0
                 assert((*subjectIt)->length() <= mybuffers.max_sequence_length);
                 assert((*subjectIt)->getNumBytes() <= mybuffers.max_sequence_bytes);
-
+#endif
                 const char* const subject = (const char*)(*subjectIt)->begin();
                 const int subjectLength = (*subjectIt)->length();
 
@@ -541,11 +552,11 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
 
     //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
     static_assert(std::is_same<typename FlagsIter::value_type, BestAlignment_t>::value, "shifted hamming distance unexpected flag type");
-
+#if 0
     assert(alignmentsbegin.size() == alignmentsend.size());
     assert(flagsbegin.size() == flagsend.size());
     assert(bestSequenceStringsbegin.size() == bestSequenceStringsend.size());
-
+#endif
     int numberOfAlignments = 0;
     int numberOfFlags = 0;
     int numberOfBestSequenceStrings = 0;
@@ -561,10 +572,10 @@ void shifted_hamming_distance_canonical_get_results_batched(SHDhandle& handle,
     for(std::size_t i = 0; i < bestSequenceStringsbegin.size(); i++){
         numberOfBestSequenceStrings += std::distance(bestSequenceStringsbegin[i], bestSequenceStringsend[i]);
     }
-
+#if 0
     assert(numberOfAlignments == numberOfFlags);
     assert(numberOfAlignments == numberOfBestSequenceStrings);
-
+#endif
     //nothing to do here
     if(numberOfAlignments == 0)
         return;
