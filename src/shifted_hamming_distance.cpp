@@ -7,12 +7,9 @@ namespace shd{
 
     bool AlignmentResult::operator==(const AlignmentResult& rhs) const noexcept{
         return score == rhs.score
-            && subject_begin_incl == rhs.subject_begin_incl
-            && query_begin_incl == rhs.query_begin_incl
             && overlap == rhs.overlap
             && shift == rhs.shift
             && nOps == rhs.nOps
-            && isNormalized == rhs.isNormalized
             && isValid == rhs.isValid;
     }
     bool AlignmentResult::operator!=(const AlignmentResult& rhs) const noexcept{
@@ -20,12 +17,6 @@ namespace shd{
     }
     int AlignmentResult::get_score() const noexcept{
         return score;
-    }
-    int AlignmentResult::get_subject_begin_incl() const noexcept{
-        return subject_begin_incl;
-    }
-    int AlignmentResult::get_query_begin_incl() const noexcept{
-        return query_begin_incl;
     }
     int AlignmentResult::get_overlap() const noexcept{
         return overlap;
@@ -36,20 +27,11 @@ namespace shd{
     int AlignmentResult::get_nOps() const noexcept{
         return nOps;
     }
-    bool AlignmentResult::get_isNormalized() const noexcept{
-        return isNormalized;
-    }
     bool AlignmentResult::get_isValid() const noexcept{
         return isValid;
     }
     int& AlignmentResult::get_score() noexcept{
         return score;
-    }
-    int& AlignmentResult::get_subject_begin_incl() noexcept{
-        return subject_begin_incl;
-    }
-    int& AlignmentResult::get_query_begin_incl() noexcept{
-        return query_begin_incl;
     }
     int& AlignmentResult::get_overlap() noexcept{
         return overlap;
@@ -59,9 +41,6 @@ namespace shd{
     }
     int& AlignmentResult::get_nOps() noexcept{
         return nOps;
-    }
-    bool& AlignmentResult::get_isNormalized() noexcept{
-        return isNormalized;
     }
     bool& AlignmentResult::get_isValid() noexcept{
         return isValid;
@@ -108,15 +87,15 @@ namespace shd{
                                         + memQueries + memQueryLengths + memResults
                                         + memBestAlignmentFlags
                                         + memUnpackedSubjects
-                                        + memUnpackedQueries
-                                        + memMultipleSequenceAlignment
+                                        + memUnpackedQueries;
+                                        /*+ memMultipleSequenceAlignment
                                         + memConsensus
                                         + memSupport
                                         + memCoverage
                                         + memOrigWeights
                                         + memOrigCoverage
                                         + memQualityScores
-                                        + memMSAColumnProperties;
+                                        + memMSAColumnProperties;*/
 
         if(requiredMem > allocatedMem){
             cudaFree(deviceptr); CUERR;
@@ -128,14 +107,16 @@ namespace shd{
         }
 
         d_subjectsdata = (char*)deviceptr;
-        d_subjectlengths = (int*)(((char*)d_subjectsdata) + memSubjects);
-        d_NqueriesPrefixSum = (int*)(((char*)d_subjectlengths) + memSubjectLengths);
-        d_queriesdata = (char*)(((char*)d_NqueriesPrefixSum) + memNqueriesPrefixSum);
-        d_querylengths = (int*)(((char*)d_queriesdata) + memQueries);
+        d_queriesdata = (char*)(((char*)d_subjectsdata) + memSubjects);
+        d_NqueriesPrefixSum = (int*)(((char*)d_queriesdata) + memQueries);
+        d_subjectlengths = (int*)(((char*)d_NqueriesPrefixSum) + memNqueriesPrefixSum);
+        d_querylengths = (int*)(((char*)d_subjectlengths) + memSubjectLengths);
+
         d_results = (AlignmentResult*)(((char*)d_querylengths) + memQueryLengths);
         d_bestAlignmentFlags = (BestAlignment_t*)(((char*)d_results) + memResults);
         d_unpacked_subjects = (char*)(((char*)d_bestAlignmentFlags) + memBestAlignmentFlags);
         d_unpacked_queries = (char*)(((char*)d_unpacked_subjects) + memUnpackedSubjects);
+
         d_multiple_sequence_alignment = (char*)(((char*)d_unpacked_queries) + memUnpackedQueries);
         d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignment) + memMultipleSequenceAlignment);
         d_consensus = (char*)(((char*)d_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
@@ -148,14 +129,16 @@ namespace shd{
 
 
         h_subjectsdata = (char*)hostptr;
-        h_subjectlengths = (int*)(((char*)h_subjectsdata) + memSubjects);
-        h_NqueriesPrefixSum = (int*)(((char*)h_subjectlengths) + memSubjectLengths);
-        h_queriesdata = (char*)(((char*)h_NqueriesPrefixSum) + memNqueriesPrefixSum);
-        h_querylengths = (int*)(((char*)h_queriesdata) + memQueries);
+        h_queriesdata = (char*)(((char*)h_subjectsdata) + memSubjects);
+        h_NqueriesPrefixSum = (int*)(((char*)h_queriesdata) + memQueries);
+        h_subjectlengths = (int*)(((char*)h_NqueriesPrefixSum) + memNqueriesPrefixSum);
+        h_querylengths = (int*)(((char*)h_subjectlengths) + memSubjectLengths);
+
         h_results = (AlignmentResult*)(((char*)h_querylengths) + memQueryLengths);
         h_bestAlignmentFlags = (BestAlignment_t*)(((char*)h_results) + memResults);
         h_unpacked_subjects = (char*)(((char*)h_bestAlignmentFlags) + memBestAlignmentFlags);
         h_unpacked_queries = (char*)(((char*)h_unpacked_subjects) + memUnpackedSubjects);
+
         h_multiple_sequence_alignment_weights = (float*)(((char*)h_multiple_sequence_alignment) + memMultipleSequenceAlignment);
         h_consensus = (char*)(((char*)h_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
         h_consensus = (char*)(((char*)h_multiple_sequence_alignment) + memMultipleSequenceAlignment);
