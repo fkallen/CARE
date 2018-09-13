@@ -804,6 +804,9 @@ private:
             std::cout << "thread " << threadOpts.threadId << " : detailed correction time " << '\n'
 					<< detailedCorrectionTimings << '\n';
 
+            std::cout << "thread " << threadOpts.threadId << " : detailed alignment time " << '\n'
+                    << shdhandles[0].timings << '\n';
+
 
 	#if 0
 			if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
@@ -1054,7 +1057,7 @@ void correct(const MinhashOptions& minhashOptions,
     int sleepiter = 0;
 
     std::chrono::duration<double> runtime = std::chrono::seconds(0);
-    std::chrono::duration<int> sleepinterval = std::chrono::seconds(3);
+    std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
 
     while(true){
 
