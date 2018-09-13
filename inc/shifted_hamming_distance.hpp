@@ -27,12 +27,9 @@ namespace shd{
 
 struct AlignmentResult{
 	int score;
-	int subject_begin_incl;
-	int query_begin_incl;
 	int overlap;
 	int shift;
 	int nOps; //edit distance / number of operations
-	bool isNormalized;
 	bool isValid;
 
     HOSTDEVICEQUALIFIER
@@ -42,33 +39,21 @@ struct AlignmentResult{
     HOSTDEVICEQUALIFIER
     int get_score() const noexcept;
     HOSTDEVICEQUALIFIER
-    int get_subject_begin_incl() const noexcept;
-    HOSTDEVICEQUALIFIER
-    int get_query_begin_incl() const noexcept;
-    HOSTDEVICEQUALIFIER
     int get_overlap() const noexcept;
     HOSTDEVICEQUALIFIER
     int get_shift() const noexcept;
     HOSTDEVICEQUALIFIER
     int get_nOps() const noexcept;
     HOSTDEVICEQUALIFIER
-    bool get_isNormalized() const noexcept;
-    HOSTDEVICEQUALIFIER
     bool get_isValid() const noexcept;
     HOSTDEVICEQUALIFIER
     int& get_score() noexcept;
-    HOSTDEVICEQUALIFIER
-    int& get_subject_begin_incl() noexcept;
-    HOSTDEVICEQUALIFIER
-    int& get_query_begin_incl() noexcept;
     HOSTDEVICEQUALIFIER
     int& get_overlap() noexcept;
     HOSTDEVICEQUALIFIER
     int& get_shift() noexcept;
     HOSTDEVICEQUALIFIER
     int& get_nOps() noexcept;
-    HOSTDEVICEQUALIFIER
-    bool& get_isNormalized() noexcept;
     HOSTDEVICEQUALIFIER
     bool& get_isValid() noexcept;
 };
@@ -235,12 +220,9 @@ cpu_shifted_hamming_distance(const char* subject,
     const int opnr = bestScore - totalbases + 2*overlapsize;
 
     result.score = bestScore;
-    result.subject_begin_incl = std::max(0, bestShift);
-    result.query_begin_incl = queryoverlapbegin_incl;
     result.overlap = overlapsize;
     result.shift = bestShift;
     result.nOps = opnr;
-    result.isNormalized = false;
 
     return result;
 }
@@ -580,12 +562,9 @@ cpu_shifted_hamming_distance_popcount(const char* subject,
     const int opnr = bestScore - totalbases + 2*overlapsize;
 
     result.score = bestScore;
-    result.subject_begin_incl = std::max(0, bestShift);
-    result.query_begin_incl = queryoverlapbegin_incl;
     result.overlap = overlapsize;
     result.shift = bestShift;
     result.nOps = opnr;
-    result.isNormalized = false;
 
     return result;
 }
@@ -651,12 +630,15 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         }
 
         __syncthreads();
-
         //queryIndex != resultIndex -> reverse complement
-        if(queryIndex != resultIndex && threadIdx.x == 0){
-            make_reverse_complement_inplace((std::uint8_t*)sharedQuery, querybases);
+        if(queryIndex != resultIndex){
+            if(threadIdx.x == 0){
+                make_reverse_complement_inplace((std::uint8_t*)sharedQuery, querybases);
+            }
+            __syncthreads();
         }
-        __syncthreads();
+
+
 
         //begin SHD algorithm
 
@@ -668,7 +650,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
         int bestScore = totalbases; // score is number of mismatches
         int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
 
-        for(int shift = -querybases + minoverlap + threadIdx.x; shift < subjectbases - minoverlap; shift += BLOCKSIZE){
+        for(int shift = -querybases + minoverlap + threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE){
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
             const int max_errors = int(double(overlapsize) * maxErrorRate);
             int score = 0;
@@ -676,21 +658,10 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift) && score < max_errors; j++){
                 score += getChar(sharedSubject, subjectbases, j + shift) != getChar(query, querybases, j);
             }
-#if 1
+
             score = (score < max_errors ?
                     score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
                     : std::numeric_limits<int>::max()); // too many errors, discard
-#else
-	    score += totalbases - 2*overlapsize;
-#endif
-
-            /*if(queryIndex == 0){
-            for(int i = 0; i < blockDim.x; i++){
-                if(threadIdx.x == i){
-                    printf("shift = %d, score = %d\n", shift, score);
-                }
-            }
-        }*/
 
             if(score < bestScore){
                 bestScore = score;
@@ -708,21 +679,13 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
         };
 
-        #if __CUDACC_VER_MAJOR__ < 9
-                unsigned long long tilereduced = reduceTile<32>(*((unsigned long long*)&myval), func);
-                int warp = threadIdx.x / WARPSIZE;
-                int lane = threadIdx.x % WARPSIZE;
-                if(lane == 0)
-                    blockreducetmp[warp] = tilereduced;
-        #else
-                auto tile = tiled_partition<32>(this_thread_block());
-                unsigned long long tilereduced = reduceTile(tile,
-                                            *((unsigned long long*)&myval),
-                                            func);
-                int warp = threadIdx.x / WARPSIZE;
-                if(tile.thread_rank() == 0)
-                    blockreducetmp[warp] = tilereduced;
-        #endif
+        auto tile = tiled_partition<32>(this_thread_block());
+        unsigned long long tilereduced = reduceTile(tile,
+                                    *((unsigned long long*)&myval),
+                                    func);
+        int warp = threadIdx.x / WARPSIZE;
+        if(tile.thread_rank() == 0)
+            blockreducetmp[warp] = tilereduced;
 
         __syncthreads();
 
@@ -746,18 +709,14 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             const int opnr = bestScore - totalbases + 2*overlapsize;
 
             result.score = bestScore;
-            result.subject_begin_incl = max(0, bestShift);
-            result.query_begin_incl = queryoverlapbegin_incl;
             result.overlap = overlapsize;
             result.shift = bestShift;
             result.nOps = opnr;
-            result.isNormalized = false;
 
             results[resultIndex] = result;
         }
     }
 }
-
 
 template<class Accessor, class RevCompl>
 void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
@@ -770,7 +729,7 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
                       RevCompl make_reverse_complement){
 
       const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
-      const int maxShiftsToCheck = maxSubjectLength+1 + maxQueryLength - 2*minoverlap;
+      const int maxShiftsToCheck = maxSubjectLength + maxQueryLength - 2*minoverlap;
       dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
       dim3 grid(shddata.n_queries*2, 1, 1); // one block per (query and its reverse complement)
 
@@ -805,29 +764,450 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
       #undef mycall
 }
 
+
+
+
+
+#if 1
+
+template<class T>
+__device__ __forceinline__
+char get2bitenc(const T data, int nBases, int i) noexcept{
+    const int byte = i / 4;
+    const int basepos = i % 4;
+    return (char)((data[byte] >> (3-basepos) * 2) & 0x03);
+}
+
+template<class T>
+__device__ __forceinline__
+void make_reverse_complement_inplace_2bitenc(T sequence, int sequencelength){
+
+    auto getNumBytes = [](int nBases){
+        return SDIV(nBases, 4);
+    };
+
+    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+        in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
+        in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
+        return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+    };
+
+    const int bytes = getNumBytes(sequencelength);
+    const int unusedPositions = bytes * 4 - sequencelength;
+
+    for(int i = 0; i < bytes/2; i++){
+        const std::uint8_t front = make_reverse_complement_byte(sequence[i]);
+        const std::uint8_t back = make_reverse_complement_byte(sequence[bytes - 1 - i]);
+        sequence[i] = back;
+        sequence[bytes - 1 - i] = front;
+    }
+
+    if(bytes % 2 == 1){
+        const int middleindex = bytes/2;
+        sequence[middleindex] = make_reverse_complement_byte(sequence[middleindex]);
+    }
+
+    if(unusedPositions > 0){
+        sequence[0] <<= (2 * unusedPositions);
+        for(int i = 1; i < bytes; i++){
+            sequence[i-1] |= sequence[i] >> (2 * (4-unusedPositions));
+            sequence[i] <<= (2 * unusedPositions);
+        }
+    }
+
+};
+
+template<class R, class T, class IndexFunc>
+struct linearmapper{
+    T ptr;
+    IndexFunc func;
+
+    __device__
+    linearmapper(T ptr, IndexFunc func) : ptr(ptr), func(func){}
+
+    __device__
+    R operator[](int i) const{
+        return *((R*)(ptr + func(i)));
+    }
+
+    __device__
+    R& operator[](int i){
+        return *((R*)(ptr + func(i)));
+    }
+};
+
+/*
+    Kernel which uses one thread per query, each thread has its own smem to store subject and query
+*/
+template<int BLOCKSIZE, class Accessor, class RevCompl>
+__global__
+void
+cuda_shifted_hamming_distance_with_revcompl_kernel_new(Result_t* results,
+                              const char* subjectsdata,
+                              const int* subjectlengths,
+                              const char* queriesdata,
+                              const int* querylengths,
+                              const int* NqueriesPrefixSum,
+                              int Nsubjects,
+                              int max_sequence_bytes,
+                              size_t sequencepitch,
+                              int min_overlap,
+                              double maxErrorRate,
+                              double min_overlap_ratio,
+                              Accessor getChar,
+                              RevCompl make_reverse_complement_inplace){
+    constexpr int WARPSIZE = 32;
+
+    static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
+    static_assert(BLOCKSIZE % WARPSIZE == 0,
+        "BLOCKSIZE must be multiple of WARPSIZE");
+
+    auto smem_index = [](int i) -> int{
+        return i * BLOCKSIZE;
+    };
+
+    extern __shared__ char smem[];
+
+    //set up shared memory pointers
+    char* const sharedSubjects = (char*)(smem);
+    char* const sharedQueries = (char*)(sharedSubjects + BLOCKSIZE * max_sequence_bytes);
+
+    char* const mySubject = sharedSubjects + threadIdx.x;
+    char* const myQuery = sharedQueries + threadIdx.x;
+
+    auto mySubject_linear_uchar = linearmapper<std::uint8_t, char*, decltype(smem_index)>((char*)mySubject, smem_index);
+    auto myQuery_linear_uchar = linearmapper<std::uint8_t, char*, decltype(smem_index)>((char*)myQuery, smem_index);
+
+    const int nQueries = NqueriesPrefixSum[Nsubjects];
+
+    for(unsigned resultIndex = threadIdx.x + blockDim.x * blockIdx.x; resultIndex < nQueries * 2; resultIndex += blockDim.x * gridDim.x){
+        const int queryIndex = resultIndex < nQueries ? resultIndex : resultIndex - nQueries;
+
+        int subjectIndex = 0;
+        for(; subjectIndex < Nsubjects; subjectIndex++){
+            if(queryIndex < NqueriesPrefixSum[subjectIndex+1])
+                break;
+        }
+
+        const int subjectbases = subjectlengths[subjectIndex];
+        const int querybases = querylengths[queryIndex];
+
+        for(int lane = 0; lane < max_sequence_bytes; lane += 1){
+            mySubject[smem_index(lane)] = subjectsdata[subjectIndex * sequencepitch + lane];
+            myQuery[smem_index(lane)] = queriesdata[queryIndex * sequencepitch + lane];
+        }
+
+        if(queryIndex != resultIndex){
+            make_reverse_complement_inplace_2bitenc(myQuery_linear_uchar, querybases);
+        }
+
+        const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+        const int totalbases = subjectbases + querybases;
+
+        int bestScore = totalbases; // score is number of mismatches
+        int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
+
+        for(int shift = -querybases + minoverlap; shift < subjectbases - minoverlap; shift += 1){
+            const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            int score = 0;
+
+            for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift) && score < max_errors; j++){
+                score += get2bitenc(mySubject_linear_uchar, subjectbases, j + shift) != get2bitenc(myQuery_linear_uchar, querybases, j);
+            }
+
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+
+            if(score < bestScore){
+                bestScore = score;
+                bestShift = shift;
+            }
+        }
+
+        Result_t result;
+
+        result.isValid = (bestShift != -querybases);
+        const int queryoverlapbegin_incl = max(-bestShift, 0);
+        const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+        const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+        const int opnr = bestScore - totalbases + 2*overlapsize;
+
+        result.score = bestScore;
+        result.overlap = overlapsize;
+        result.shift = bestShift;
+        result.nOps = opnr;
+
+        results[resultIndex] = result;
+
+    }
+}
+
 template<class Accessor, class RevCompl>
-void call_shd_with_revcompl_kernel(const SHDdata& shddata,
+void call_shd_with_revcompl_kernel_new_async(const SHDdata& shddata,
                       int min_overlap,
                       double maxErrorRate,
                       double min_overlap_ratio,
                       int maxSubjectLength,
                       int maxQueryLength,
                       Accessor accessor,
-                      RevCompl make_reverse_complement) noexcept{
+                      RevCompl make_reverse_complement){
 
-    call_shd_with_revcompl_kernel_async(shddata,
-                        min_overlap,
-                        maxErrorRate,
-                        min_overlap_ratio,
-                        maxSubjectLength,
-                        maxQueryLength,
-                        accessor,
-                        make_reverse_complement);
+    int blocksize = 64;
 
-    cudaStreamSynchronize(shddata.streams[0]); CUERR;
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(SDIV(shddata.n_queries*2, block.x), 1, 1); // one block per (query and its reverse complement)
+
+    const std::size_t smem = sizeof(char) * 2 * blocksize * shddata.max_sequence_bytes;
+
+    #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel_new<(blocksize)> \
+                              <<<grid, block, smem, shddata.streams[0]>>>( \
+                              shddata.d_results, \
+                              shddata.d_subjectsdata, shddata.d_subjectlengths, \
+                              shddata.d_queriesdata, shddata.d_querylengths, \
+                              shddata.d_NqueriesPrefixSum, shddata.n_subjects, \
+                              shddata.max_sequence_bytes, \
+                              shddata.sequencepitch, \
+                              min_overlap, \
+                              maxErrorRate, \
+                              min_overlap_ratio, \
+                              accessor, \
+                              make_reverse_complement); CUERR;
+
+    switch(blocksize){
+    case 32: mycall(32); break;
+    case 64: mycall(64); break;
+    case 96: mycall(96); break;
+    case 128: mycall(128); break;
+    case 160: mycall(160); break;
+    case 192: mycall(192); break;
+    case 224: mycall(224); break;
+    case 256: mycall(256); break;
+    default: throw std::runtime_error("Want to call shd kernel with invalid block size.");
+    }
+
+    #undef mycall
 }
 
 
+
+
+
+
+/*
+    Kernel for fixed length sequences which stores sequences in local array
+*/
+template<int BLOCKSIZE, class Accessor, class RevCompl>
+__global__
+void
+cuda_shifted_hamming_distance_with_revcompl_kernel_new2(Result_t* results,
+                              const char* subjectsdata,
+                              const int* subjectlengths,
+                              const char* queriesdata,
+                              const int* querylengths,
+                              const int* NqueriesPrefixSum,
+                              int Nsubjects,
+                              int max_sequence_bytes,
+                              size_t sequencepitch,
+                              int min_overlap,
+                              double maxErrorRate,
+                              double min_overlap_ratio,
+                              Accessor getChar,
+                              RevCompl make_reverse_complement_inplace){
+
+    constexpr int SEQUENCELENGTH = 101;
+    constexpr int SEQUENCEBYTES = SDIV(SEQUENCELENGTH, 4);
+
+    //assert(max_sequence_bytes == SEQUENCEBYTES);
+
+    /*auto get2bitenc_unroll = [&](const char* data, int nBases, int i){
+        const int byte = i / 4;
+        const int basepos = i % 4;
+        return (char)(((unsigned char)data[byte] >> (3-basepos) * 2) & 0x03);
+    };*/
+
+    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+        in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
+        in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
+        return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+    };
+
+    auto make_reverse_complement_int = [](std::uint32_t s){
+        s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
+        s = ((s >> 4)  & 0x0F0F0F0Fu) | ((s & 0x0F0F0F0Fu) << 4);
+        s = ((s >> 8)  & 0x00FF00FFu) | ((s & 0x00FF00FFu) << 8);
+        s = ((s >> 16) & 0x0000FFFFu) | ((s & 0x0000FFFFu) << 16);
+        return (std::uint32_t(-1) - s) >> (8 * sizeof(s) - (16 << 1));
+    };
+
+    char mySubject[26];
+    char myQuery[26];
+
+    const int nQueries = NqueriesPrefixSum[Nsubjects];
+
+    for(unsigned resultIndex = threadIdx.x + blockDim.x * blockIdx.x; resultIndex < nQueries * 2; resultIndex += blockDim.x * gridDim.x){
+        const int queryIndex = resultIndex < nQueries ? resultIndex : resultIndex - nQueries;
+
+        int subjectIndex = 0;
+        for(; subjectIndex < Nsubjects; subjectIndex++){
+            if(queryIndex < NqueriesPrefixSum[subjectIndex+1])
+                break;
+        }
+
+        #pragma unroll
+        for(int lane = 0; lane < SEQUENCEBYTES; lane += 1){
+            mySubject[lane] = subjectsdata[subjectIndex * sequencepitch + lane];
+            myQuery[lane] = queriesdata[queryIndex * sequencepitch + lane];
+        }
+
+        if(queryIndex != resultIndex){
+            const int unusedPositions = SEQUENCEBYTES * 4 - SEQUENCELENGTH;
+
+            #pragma unroll
+            for(int i = 0; i < SEQUENCEBYTES/2; i++){
+                const std::uint8_t front = make_reverse_complement_byte(myQuery[i]);
+                const std::uint8_t back = make_reverse_complement_byte(myQuery[SEQUENCEBYTES - 1 - i]);
+                myQuery[i] = back;
+                myQuery[SEQUENCEBYTES - 1 - i] = front;
+            }
+
+            if(SEQUENCEBYTES % 2 == 1){
+                const int middleindex = SEQUENCEBYTES/2;
+                myQuery[middleindex] = make_reverse_complement_byte(myQuery[middleindex]);
+            }
+
+            if(unusedPositions > 0){
+                myQuery[0] <<= (2 * unusedPositions);
+                #pragma unroll
+                for(int i = 1; i < SEQUENCEBYTES; i++){
+                    myQuery[i-1] |= myQuery[i] >> (2 * (4-unusedPositions));
+                    myQuery[i] <<= (2 * unusedPositions);
+                }
+            }
+        }
+
+        const int minoverlap = max(min_overlap, int(double(SEQUENCELENGTH) * min_overlap_ratio));
+        const int totalbases = SEQUENCELENGTH + SEQUENCELENGTH;
+
+        int bestScore = totalbases; // score is number of mismatches
+        int bestShift = -SEQUENCELENGTH; // shift of query relative to subject. shift < 0 if query begins before subject
+
+        #pragma unroll 4
+        for(int shift = -SEQUENCELENGTH; shift < SEQUENCELENGTH; shift += 1){
+
+            if(shift >= -SEQUENCELENGTH + minoverlap && shift < SEQUENCELENGTH - minoverlap){
+
+                const int overlapsize = min(SEQUENCELENGTH, SEQUENCELENGTH - shift) - max(-shift, 0);
+                const int max_errors = int(double(overlapsize) * maxErrorRate);
+                int score = 0;
+
+                #pragma unroll 4
+                for(int j = max(-shift, 0); j < min(SEQUENCELENGTH, SEQUENCELENGTH - shift); j++){
+                    const int byteSub = (j + shift) / 4;
+                    const int baseposSub = (j + shift) % 4;
+                    const int byteQuer = (j) / 4;
+                    const int baseposQuer = (j) % 4;
+                    const unsigned char charSub = ((unsigned char)mySubject[byteSub] >> (3-baseposSub) * 2) & 0x03;
+                    const unsigned char charQuer = ((unsigned char)myQuery[byteQuer] >> (3-baseposQuer) * 2) & 0x03;
+
+                    score += charSub != charQuer;
+                    //if(score >= max_errors)
+                    //    break;
+                }
+
+                score = (score < max_errors ?
+                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                        : std::numeric_limits<int>::max()); // too many errors, discard
+
+                if(score < bestScore){
+                    bestScore = score;
+                    bestShift = shift;
+                }
+            }
+
+
+        }
+
+        Result_t result;
+
+        result.isValid = (bestShift != -SEQUENCELENGTH);
+        const int queryoverlapbegin_incl = max(-bestShift, 0);
+        const int queryoverlapend_excl = min(SEQUENCELENGTH, SEQUENCELENGTH - bestShift);
+        const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+        const int opnr = bestScore - totalbases + 2*overlapsize;
+
+        result.score = bestScore;
+        result.overlap = overlapsize;
+        result.shift = bestShift;
+        result.nOps = opnr;
+
+        results[resultIndex] = result;
+
+    }
+}
+
+template<class Accessor, class RevCompl>
+void call_shd_with_revcompl_kernel_new2_async(const SHDdata& shddata,
+                      int min_overlap,
+                      double maxErrorRate,
+                      double min_overlap_ratio,
+                      int maxSubjectLength,
+                      int maxQueryLength,
+                      Accessor accessor,
+                      RevCompl make_reverse_complement){
+
+    int blocksize = 128;
+
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(SDIV(shddata.n_queries*2, block.x), 1, 1); // one block per (query and its reverse complement)
+
+    const std::size_t smem = 0;
+
+    #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel_new2<(blocksize)> \
+                              <<<grid, block, smem, shddata.streams[0]>>>( \
+                              shddata.d_results, \
+                              shddata.d_subjectsdata, shddata.d_subjectlengths, \
+                              shddata.d_queriesdata, shddata.d_querylengths, \
+                              shddata.d_NqueriesPrefixSum, shddata.n_subjects, \
+                              shddata.max_sequence_bytes, \
+                              shddata.sequencepitch, \
+                              min_overlap, \
+                              maxErrorRate, \
+                              min_overlap_ratio, \
+                              accessor, \
+                              make_reverse_complement); CUERR;
+
+    switch(blocksize){
+    case 32: mycall(32); break;
+    case 64: mycall(64); break;
+    case 96: mycall(96); break;
+    case 128: mycall(128); break;
+    case 160: mycall(160); break;
+    case 192: mycall(192); break;
+    case 224: mycall(224); break;
+    case 256: mycall(256); break;
+    default: throw std::runtime_error("Want to call shd kernel with invalid block size.");
+    }
+
+    #undef mycall
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#endif
 
 
 
@@ -1153,12 +1533,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
             const int opnr = bestScore - totalbases + 2*overlapsize;
 
             result.score = bestScore;
-            result.subject_begin_incl = max(0, bestShift);
-            result.query_begin_incl = queryoverlapbegin_incl;
             result.overlap = overlapsize;
             result.shift = bestShift;
             result.nOps = opnr;
-            result.isNormalized = false;
 
             results[resultIndex] = result;
         }
