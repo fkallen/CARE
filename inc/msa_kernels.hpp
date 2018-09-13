@@ -30,7 +30,7 @@ namespace care{
                             int n_queries,
                             cudaStream_t stream);
 
-        void call_msa_init_kernel_async(
+        void call_msa_add_sequences_kernel_async(
                                 char* d_multiple_sequence_alignments,
                                 float* const d_multiple_sequence_alignment_weights,
                                 const shd::Result_t* d_results,
