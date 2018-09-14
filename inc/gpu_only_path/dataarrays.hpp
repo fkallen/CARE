@@ -1,6 +1,10 @@
 #ifndef CARE_GPU_DATA_ARRAYS_HPP
 #define CARE_GPU_DATA_ARRAYS_HPP
 
+#include "../hpc_helpers.cuh"
+#include "bestalignment.hpp"
+#include "msa.hpp"
+
 namespace care{
 namespace gpu{
 
@@ -90,10 +94,28 @@ namespace gpu{
             d_alignment_isValid = (bool*)(((char*)d_alignment_nOps) + memAlignmentnOps);
             d_alignment_best_alignment_flags = (BestAlignment_t*)(((char*)d_alignment_isValid) + memAlignmentisValid);
 
-            if(n_quer > n_queries){
-                cudaFree(d_indices_per_subject); CUERR;
-                cudaMalloc(&d_indices_per_subject, sizeof(int) * n_quer); CUERR;
+
+            std::size_t memSubjectIndices = SDIV((n_sub) * sizeof(int), padding_bytes) * padding_bytes;
+            std::size_t memHQSubjectIndices = SDIV((n_sub) * sizeof(int), padding_bytes) * padding_bytes;
+            std::size_t memIsHQSubject = SDIV((n_sub) * sizeof(bool), padding_bytes) * padding_bytes;
+            std::size_t memNumHQSubjectIndices = sizeof(int);
+
+            std::size_t total_subject_indices_data_size = memSubjectIndices
+                                                    + memHQSubjectIndices
+                                                    + memIsHQSubject
+                                                    + memNumHQSubjectIndices;
+
+            if(total_subject_indices_data_size >= subject_indices_data_size){
+                cudaFree(subject_indices_data_device); CUERR;
+                cudaMalloc(&subject_indices_data_device, total_subject_indices_data_size); CUERR;
+
+                subject_indices_size = total_subject_indices_size;
             }
+
+            d_subject_indices = (int*)subject_indices_data_device;
+            d_high_quality_subject_indices = (int*)(((char*)d_subject_indices) + memSubjectIndices);
+            d_is_high_quality_subject = (bool*)(((char*)d_high_quality_subject_indices) + memHQSubjectIndices);
+            d_num_high_quality_subject_indices = (int*)(((char*)d_is_high_quality_subject) + memIsHQSubject);
 
             n_subjects = n_sub;
             n_queries = n_quer;
@@ -104,12 +126,21 @@ namespace gpu{
         void set_n_indices(int n_indices_){
             n_indices = n_indices_;
 
+            if(d_num_indices == nullptr){
+                cudaMalloc(&d_num_indices, sizeof(int)); CUERR;
+            }
+            if(h_num_indices == nullptr){
+                cudaMallocHost(&h_num_indices, sizeof(int)); CUERR;
+            }
+
             //indices
 
             std::size_t memIndices = SDIV(n_indices * sizeof(int), padding_bytes) * padding_bytes;
+            std::size_t memIndicesPerSubject = SDIV(n_subjects* sizeof(int), padding_bytes) * padding_bytes;
             std::size_t memIndicesPerSubjectPrefixSum = SDIV((n_subjects+1)* sizeof(int), padding_bytes) * padding_bytes;
 
             std::size_t total_indices_transfer_data_size = memIndices
+                                                            + memIndicesPerSubject
                                                             + memIndicesPerSubjectPrefixSum;
 
             if(total_indices_transfer_data_size > indices_transfer_data_size){
@@ -122,11 +153,15 @@ namespace gpu{
             }
 
             h_indices = (int*)indices_transfer_data_host;
-            h_indices_per_subject_prefixsum = (int*)(((char*)h_indices) + memIndices);
+            h_indices_per_subject = (int*)(((char*)h_indices) + memIndices);
+            h_indices_per_subject_prefixsum = (int*)(((char*)h_indices_per_subject) + memIndicesPerSubject);
 
             d_indices = (int*)indices_transfer_data_device;
-            d_indices_per_subject_prefixsum = (int*)(((char*)d_indices) + memIndices);
+            d_indices_per_subject = (int*)(((char*)d_indices) + memIndices);
+            d_indices_per_subject_prefixsum = (int*)(((char*)d_indices_per_subject) + memIndicesPerSubject);
+        }
 
+        void allocateCorrectionData(){
             //qualities
 
             std::size_t memCandidateQualities = n_indices * quality_pitch;
@@ -183,7 +218,7 @@ namespace gpu{
             d_subject_is_corrected = (int*)(((char*)d_num_corrected_candidates) + memNumCorrectedCandidates);
 
 
-            //multple sequence alignment
+            //multiple sequence alignment
 
             int msa_max_column_count = (3*maximum_sequence_length - 2*min_overlap);
             msa_pitch = SDIV(sizeof(char)*msa_max_column_count, padding_bytes) * padding_bytes;
@@ -197,6 +232,7 @@ namespace gpu{
             std::size_t memOrigWeights = SDIV(msa_max_column_count * n_subjects * sizeof(float), padding_bytes) * padding_bytes;
             std::size_t memOrigCoverage = SDIV(msa_max_column_count * n_subjects * sizeof(int), padding_bytes) * padding_bytes;
             std::size_t memMSAColumnProperties = SDIV(n_subjects * sizeof(care::msa::MSAColumnProperties), padding_bytes) * padding_bytes;
+            std::size_t memIsHighQualityMSA = SDIV(n_subjects *  sizeof(bool), padding_bytes) * padding_bytes;
 
             std::size_t total_msa_data_size = memMultipleSequenceAlignment
                                                 + memMultipleSequenceAlignmentWeights
@@ -205,7 +241,8 @@ namespace gpu{
                                                 + memCoverage
                                                 + memOrigWeights
                                                 + memOrigCoverage
-                                                + memMSAColumnProperties;
+                                                + memMSAColumnProperties
+                                                + memIsHighQualityMSA;
 
             if(total_msa_data_size > msa_data_size){
                 cudaFree(msa_data_device); CUERR;
@@ -213,8 +250,8 @@ namespace gpu{
                 msa_data_size = total_msa_data_size;
             }
 
-            d_multiple_sequence_alignment = (char*)msa_data_device;
-            d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignment) + memMultipleSequenceAlignment);
+            d_multiple_sequence_alignments = (char*)msa_data_device;
+            d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignments) + memMultipleSequenceAlignment);
             d_consensus = (char*)(((char*)d_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
             d_support = (float*)(((char*)d_consensus) + memConsensus);
             d_coverage = (int*)(((char*)d_support) + memSupport);
@@ -242,11 +279,14 @@ namespace gpu{
             cudaFree(a.d_indices_per_subject); CUERR;
             cudaFree(a.alignment_result_data_device); CUERR;
             cudaFree(a.alignment_transfer_data_device); CUERR;
+            cudaFree(a.d_num_indices); CUERR;
+            cudaFree(a.subject_indices_data); CUERR;
 
             cudaFreeHost(a.correction_results_transfer_data_host); CUERR;
             cudaFreeHost(a.qualities_transfer_data_host); CUERR;
             cudaFreeHost(a.indices_transfer_data_host); CUERR;
             cudaFreeHost(a.alignment_transfer_data_host); CUERR;
+            cudaFreeHost(a.h_num_indices); CUERR;
 
             a.d_temp_storage = nullptr;
             a.msa_data_device = nullptr;
@@ -260,6 +300,13 @@ namespace gpu{
             a.qualities_transfer_data_host = nullptr;
             a.indices_transfer_data_host = nullptr;
             a.alignment_transfer_data_host = nullptr;
+            a.d_num_indices = nullptr;
+            a.h_num_indices = nullptr;
+            a.subject_indices_data_device = nullptr;
+            a.d_subject_indices = nullptr;
+            a.d_high_quality_subject_indices = nullptr;
+            a.d_is_high_quality_subject = nullptr;
+            a.d_num_high_quality_subject_indices = nullptr;
 
             a.alignment_transfer_data_size = 0;
             a.alignment_result_data_size = 0;
@@ -268,6 +315,7 @@ namespace gpu{
             a.correction_results_transfer_data_size = 0;
             a.msa_data_size = 0;
             a.tmp_storage_size = 0;
+            a.subject_indices_data_size = 0;
         }
 
         int deviceId;
@@ -277,6 +325,15 @@ namespace gpu{
         int n_indices = 0;
         int maximum_sequence_length = 0;
         int min_overlap = 1;
+
+        //subject indices
+
+        std::size_t subject_indices_data_size = 0;
+        void* subject_indices_data_device = nullptr;
+        int* d_subject_indices = nullptr;
+        int* d_high_quality_subject_indices = nullptr;
+        bool* d_is_high_quality_subject = nullptr;
+        int* d_num_high_quality_subject_indices = nullptr;
 
         // alignment input
         void* alignment_transfer_data_host = nullptr;
@@ -307,6 +364,9 @@ namespace gpu{
 
         int* d_indices = nullptr;
         int* d_indices_per_subject_prefixsum = nullptr;
+
+        int* h_num_indices = nullptr;
+        int* d_num_indices = nullptr;
 
         //qualities input
         void* qualities_transfer_data_host = nullptr;
@@ -359,8 +419,10 @@ namespace gpu{
         // multiple sequence alignment
         void* msa_data_device = nullptr;
         std::size_t msa_data_size = 0;
+        std::size_t msa_pitch = 0;
+        std::size_t msa_weights_pitch = 0;
 
-        char* d_multiple_sequence_alignment = nullptr;
+        char* d_multiple_sequence_alignments = nullptr;
         float* d_multiple_sequence_alignment_weights = nullptr;
         char* d_consensus = nullptr;
         float* d_support = nullptr;
