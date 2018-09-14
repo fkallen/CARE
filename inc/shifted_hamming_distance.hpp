@@ -773,44 +773,52 @@ void call_shd_with_revcompl_kernel_async(const SHDdata& shddata,
 template<class T>
 __device__ __forceinline__
 char get2bitenc(const T data, int nBases, int i) noexcept{
-    const int byte = i / 4;
-    const int basepos = i % 4;
-    return (char)((data[byte] >> (3-basepos) * 2) & 0x03);
+    constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
+    const int intIndex = i / basesPerInt;
+    const int pos = i % basesPerInt;
+
+    return (char)((data[intIndex] >> ((basesPerInt-1-pos) * 2)) & 0x00000003);
 }
 
 template<class T>
 __device__ __forceinline__
 void make_reverse_complement_inplace_2bitenc(T sequence, int sequencelength){
 
-    auto getNumBytes = [](int nBases){
-        return SDIV(nBases, 4);
+    constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
+
+    auto getNumBytes = [basesPerInt](int nBases){
+        const std::size_t nInts = SDIV(nBases, basesPerInt);
+
+        return nInts * sizeof(std::uint32_t);
     };
 
-    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-        in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
-        in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
-        return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+    auto make_reverse_complement_int = [](std::uint32_t s){
+        s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
+        s = ((s >> 4)  & 0x0F0F0F0Fu) | ((s & 0x0F0F0F0Fu) << 4);
+        s = ((s >> 8)  & 0x00FF00FFu) | ((s & 0x00FF00FFu) << 8);
+        s = ((s >> 16) & 0x0000FFFFu) | ((s & 0x0000FFFFu) << 16);
+        return (std::uint32_t(-1) - s) >> (8 * sizeof(s) - (16 << 1));
     };
 
-    const int bytes = getNumBytes(sequencelength);
-    const int unusedPositions = bytes * 4 - sequencelength;
+    const int nInts = getNumBytes(sequencelength) / sizeof(std::uint32_t);
+    const int unusedPositions = nInts * basesPerInt - sequencelength;
 
-    for(int i = 0; i < bytes/2; i++){
-        const std::uint8_t front = make_reverse_complement_byte(sequence[i]);
-        const std::uint8_t back = make_reverse_complement_byte(sequence[bytes - 1 - i]);
+    for(int i = 0; i < nInts/2; i++){
+        const std::uint32_t front = make_reverse_complement_int(sequence[i]);
+        const std::uint32_t back = make_reverse_complement_int(sequence[nInts - 1 - i]);
         sequence[i] = back;
-        sequence[bytes - 1 - i] = front;
+        sequence[nInts - 1 - i] = front;
     }
 
-    if(bytes % 2 == 1){
-        const int middleindex = bytes/2;
-        sequence[middleindex] = make_reverse_complement_byte(sequence[middleindex]);
+    if(nInts % 2 == 1){
+        const int middleindex = nInts/2;
+        sequence[middleindex] = make_reverse_complement_int(sequence[middleindex]);
     }
 
     if(unusedPositions > 0){
         sequence[0] <<= (2 * unusedPositions);
-        for(int i = 1; i < bytes; i++){
-            sequence[i-1] |= sequence[i] >> (2 * (4-unusedPositions));
+        for(int i = 1; i < nInts; i++){
+            sequence[i-1] |= sequence[i] >> (2 * (basesPerInt-unusedPositions));
             sequence[i] <<= (2 * unusedPositions);
         }
     }
@@ -866,17 +874,17 @@ cuda_shifted_hamming_distance_with_revcompl_kernel_new(Result_t* results,
         return i * BLOCKSIZE;
     };
 
-    extern __shared__ char smem[];
+    extern __shared__ std::uint32_t shared_memory[];
 
     //set up shared memory pointers
-    char* const sharedSubjects = (char*)(smem);
-    char* const sharedQueries = (char*)(sharedSubjects + BLOCKSIZE * max_sequence_bytes);
+    std::uint32_t* const sharedSubjects = (std::uint32_t*)(shared_memory);
+    std::uint32_t* const sharedQueries = (std::uint32_t*)(((char*)(sharedSubjects)) + BLOCKSIZE * max_sequence_bytes);
 
-    char* const mySubject = sharedSubjects + threadIdx.x;
-    char* const myQuery = sharedQueries + threadIdx.x;
+    std::uint32_t* const mySubject = sharedSubjects + threadIdx.x;
+    std::uint32_t* const myQuery = sharedQueries + threadIdx.x;
 
-    auto mySubject_linear_uchar = linearmapper<std::uint8_t, char*, decltype(smem_index)>((char*)mySubject, smem_index);
-    auto myQuery_linear_uchar = linearmapper<std::uint8_t, char*, decltype(smem_index)>((char*)myQuery, smem_index);
+    auto mySubject_linear_uchar = linearmapper<std::uint32_t, std::uint32_t*, decltype(smem_index)>((std::uint32_t*)mySubject, smem_index);
+    auto myQuery_linear_uchar = linearmapper<std::uint32_t, std::uint32_t*, decltype(smem_index)>((std::uint32_t*)myQuery, smem_index);
 
     const int nQueries = NqueriesPrefixSum[Nsubjects];
 
@@ -892,7 +900,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel_new(Result_t* results,
         const int subjectbases = subjectlengths[subjectIndex];
         const int querybases = querylengths[queryIndex];
 
-        for(int lane = 0; lane < max_sequence_bytes; lane += 1){
+        for(int lane = 0; lane < max_sequence_bytes / sizeof(std::uint32_t); lane += 1){
             mySubject[smem_index(lane)] = subjectsdata[subjectIndex * sequencepitch + lane];
             myQuery[smem_index(lane)] = queriesdata[queryIndex * sequencepitch + lane];
         }
