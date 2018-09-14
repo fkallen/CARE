@@ -1,7 +1,7 @@
 #ifndef READ_HPP
 #define READ_HPP
 
-#include "binarysequencehelpers.hpp"
+
 #include "hpc_helpers.cuh"
 
 #include <algorithm>
@@ -114,80 +114,77 @@ struct SequenceStringImpl{
 
 
 struct Sequence2BitImpl{
+    static constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
+
+    static constexpr std::uint32_t BASE_A = 0x00000000;
+    static constexpr std::uint32_t BASE_C = 0x00000001;
+    static constexpr std::uint32_t BASE_G = 0x00000002;
+    static constexpr std::uint32_t BASE_T = 0x00000003;
+
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode(const std::string& sequence){
         //return encode_2bit(sequence);
 
-        constexpr std::uint8_t BASE_A = 0x00;
-        constexpr std::uint8_t BASE_C = 0x01;
-        constexpr std::uint8_t BASE_G = 0x02;
-        constexpr std::uint8_t BASE_T = 0x03;
-
         const std::size_t l = sequence.length();
-        const std::size_t bytes = SDIV(l, 4);
+        const std::size_t nInts = getNumBytes(l) / sizeof(std::uint32_t);
 
-        std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
+        std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(nInts * sizeof(std::uint32_t));
+        std::uint32_t* const data = (std::uint32_t*)encoded.get();
 
-        std::memset(encoded.get(), 0, bytes);
+        std::memset(encoded.get(), 0, nInts * sizeof(std::uint32_t));
 
         for(std::size_t i = 0; i < l; i++){
-            const std::size_t byteIndex = i / 4;
-            const std::size_t pos = i % 4;
+            const std::size_t intIndex = i / basesPerInt;
+            const std::size_t pos = i % basesPerInt;
             switch(sequence[i]) {
             case 'A':
-                    encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                    data[intIndex] |= BASE_A << (2*((basesPerInt - 1)-pos));
                     break;
             case 'C':
-                    encoded[byteIndex] |= BASE_C << (2*(3-pos));
+                    data[intIndex] |= BASE_C << (2*((basesPerInt - 1)-pos));
                     break;
             case 'G':
-                    encoded[byteIndex] |= BASE_G << (2*(3-pos));
+                    data[intIndex] |= BASE_G << (2*((basesPerInt - 1)-pos));
                     break;
             case 'T':
-                    encoded[byteIndex] |= BASE_T << (2*(3-pos));
+                    data[intIndex] |= BASE_T << (2*((basesPerInt - 1)-pos));
                     break;
             default:
-                    encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                    data[intIndex] |= BASE_A << (2*((basesPerInt - 1)-pos));
                     break;
             }
         }
 
-        return {std::move(encoded), bytes};
+        return {std::move(encoded), nInts * sizeof(std::uint32_t)};
     }
 
     HOSTDEVICEQUALIFIER
     static int getNumBytes(int nBases) noexcept{
-        return SDIV(nBases, 4);
+        const std::size_t nInts = SDIV(nBases, basesPerInt);
+
+        return nInts * sizeof(std::uint32_t);
     }
 
     HOSTDEVICEQUALIFIER
     static char get(const char* data, int nBases, int i) noexcept{
-        const int byte = i / 4;
-        const int basepos = i % 4;
-        /*switch((data[byte] >> (3-basepos) * 2) & 0x03){
-            case 0x00: return 'A';
-            case 0x01: return 'C';
-            case 0x02: return 'G';
-            case 0x03: return 'T';
-            default:return '_'; //cannot happen
-        }*/
-        return (char)((((const unsigned char*)data)[byte] >> (3-basepos) * 2) & 0x03);
+        const int intIndex = i / basesPerInt;
+        const int pos = i % basesPerInt;
+        const std::uint32_t* const udata = (const std::uint32_t*)data;
+
+        return (char)((udata[intIndex] >> ((basesPerInt-1-pos) * 2)) & 0x00000003);
     }
 
     static std::string toString(const std::uint8_t* data, int nBases){
         //return decode_2bit(data, nBases);
 
-        constexpr std::uint8_t BASE_A = 0x00;
-        constexpr std::uint8_t BASE_C = 0x01;
-        constexpr std::uint8_t BASE_G = 0x02;
-        constexpr std::uint8_t BASE_T = 0x03;
+        const std::uint32_t* const udata = (const std::uint32_t*)data;
 
         std::string sequence;
     	sequence.reserve(nBases);
 
     	for(int i = 0; i < nBases; i++){
-    		const std::size_t byteIndex = i / 4;
-    		const std::size_t pos = i % 4;
-            const std::uint8_t base = (data[byteIndex] >> (2*(3-pos))) & 0x03;
+            const int intIndex = i / basesPerInt;
+            const int pos = i % basesPerInt;
+            const std::uint8_t base = ((udata[intIndex] >> ((basesPerInt-1-pos) * 2)) & 0x00000003);
             switch(base){
                 case BASE_A: sequence.push_back('A'); break;
                 case BASE_C: sequence.push_back('C'); break;
@@ -202,7 +199,7 @@ struct Sequence2BitImpl{
 
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> reverseComplement(const std::uint8_t* data, int nBases){
         //return reverse_complement_2bit(data, nBases);
-        const int bytes = (nBases + 3) / 4;
+        const int bytes = getNumBytes(nBases);
 
         std::unique_ptr<std::uint8_t[]> reverseComplement = std::make_unique<std::uint8_t[]>(bytes);
 
@@ -219,24 +216,30 @@ struct Sequence2BitImpl{
 
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement(std::uint8_t* reverseComplement, const std::uint8_t* sequence, int sequencelength){
-        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-            in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
-            in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
-            return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+
+        auto make_reverse_complement_int = [](std::uint32_t s){
+            s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
+            s = ((s >> 4)  & 0x0F0F0F0Fu) | ((s & 0x0F0F0F0Fu) << 4);
+            s = ((s >> 8)  & 0x00FF00FFu) | ((s & 0x00FF00FFu) << 8);
+            s = ((s >> 16) & 0x0000FFFFu) | ((s & 0x0000FFFFu) << 16);
+            return (std::uint32_t(-1) - s) >> (8 * sizeof(s) - (16 << 1));
         };
 
-        const int bytes = getNumBytes(sequencelength);
-        const int unusedPositions = bytes * 4 - sequencelength;
+        const std::uint32_t* const usequence = (const std::uint32_t*)sequence;
+        std::uint32_t* const ureverseComplement = (std::uint32_t*)reverseComplement;
 
-        for(int i = 0; i < bytes; i++){
-            reverseComplement[i] = make_reverse_complement_byte(sequence[bytes - 1 - i]);
+        const int nInts = getNumBytes(sequencelength) / sizeof(std::uint32_t);
+        const int unusedPositions = nInts * basesPerInt - sequencelength;
+
+        for(int i = 0; i < nInts; i++){
+            ureverseComplement[i] = make_reverse_complement_int(usequence[nInts - 1 - i]);
         }
 
         if(unusedPositions > 0){
-            reverseComplement[0] <<= (2 * unusedPositions);
-            for(int i = 1; i < bytes; i++){
-                reverseComplement[i-1] |= reverseComplement[i] >> (2 * (4-unusedPositions));
-                reverseComplement[i] <<= (2 * unusedPositions);
+            ureverseComplement[0] <<= (2 * unusedPositions);
+            for(int i = 1; i < nInts; i++){
+                ureverseComplement[i-1] |= ureverseComplement[i] >> (2 * (basesPerInt-unusedPositions));
+                ureverseComplement[i] <<= (2 * unusedPositions);
             }
         }
     };
@@ -244,32 +247,36 @@ struct Sequence2BitImpl{
     HOSTDEVICEQUALIFIER
     static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
 
-        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-            in = ((in >> 2)  & 0x33) | ((in & 0x33) << 2);
-            in = ((in >> 4)  & 0x0F) | ((in & 0x0F) << 4);
-            return (std::uint8_t(-1) - in) >> (8 * 1 - (4 << 1));
+        auto make_reverse_complement_int = [](std::uint32_t s){
+            s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
+            s = ((s >> 4)  & 0x0F0F0F0Fu) | ((s & 0x0F0F0F0Fu) << 4);
+            s = ((s >> 8)  & 0x00FF00FFu) | ((s & 0x00FF00FFu) << 8);
+            s = ((s >> 16) & 0x0000FFFFu) | ((s & 0x0000FFFFu) << 16);
+            return (std::uint32_t(-1) - s) >> (8 * sizeof(s) - (16 << 1));
         };
 
-        const int bytes = getNumBytes(sequencelength);
-        const int unusedPositions = bytes * 4 - sequencelength;
+        std::uint32_t* const usequence = (std::uint32_t*)sequence;
 
-        for(int i = 0; i < bytes/2; i++){
-            const std::uint8_t front = make_reverse_complement_byte(sequence[i]);
-            const std::uint8_t back = make_reverse_complement_byte(sequence[bytes - 1 - i]);
-            sequence[i] = back;
-            sequence[bytes - 1 - i] = front;
+        const int nInts = getNumBytes(sequencelength) / sizeof(std::uint32_t);
+        const int unusedPositions = nInts * basesPerInt - sequencelength;
+
+        for(int i = 0; i < nInts/2; i++){
+            const std::uint32_t front = make_reverse_complement_int(usequence[i]);
+            const std::uint32_t back = make_reverse_complement_int(usequence[nInts - 1 - i]);
+            usequence[i] = back;
+            usequence[nInts - 1 - i] = front;
         }
 
-        if(bytes % 2 == 1){
-            const int middleindex = bytes/2;
-            sequence[middleindex] = make_reverse_complement_byte(sequence[middleindex]);
+        if(nInts % 2 == 1){
+            const int middleindex = nInts/2;
+            usequence[middleindex] = make_reverse_complement_int(usequence[middleindex]);
         }
 
         if(unusedPositions > 0){
-            sequence[0] <<= (2 * unusedPositions);
-            for(int i = 1; i < bytes; i++){
-                sequence[i-1] |= sequence[i] >> (2 * (4-unusedPositions));
-                sequence[i] <<= (2 * unusedPositions);
+            usequence[0] <<= (2 * unusedPositions);
+            for(int i = 1; i < nInts; i++){
+                usequence[i-1] |= usequence[i] >> (2 * (basesPerInt-unusedPositions));
+                usequence[i] <<= (2 * unusedPositions);
             }
         }
     };
