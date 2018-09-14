@@ -115,7 +115,43 @@ struct SequenceStringImpl{
 
 struct Sequence2BitImpl{
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> encode(const std::string& sequence){
-        return encode_2bit(sequence);
+        //return encode_2bit(sequence);
+
+        constexpr std::uint8_t BASE_A = 0x00;
+        constexpr std::uint8_t BASE_C = 0x01;
+        constexpr std::uint8_t BASE_G = 0x02;
+        constexpr std::uint8_t BASE_T = 0x03;
+
+        const std::size_t l = sequence.length();
+        const std::size_t bytes = SDIV(l, 4);
+
+        std::unique_ptr<std::uint8_t[]> encoded = std::make_unique<std::uint8_t[]>(bytes);
+
+        std::memset(encoded.get(), 0, bytes);
+
+        for(std::size_t i = 0; i < l; i++){
+            const std::size_t byteIndex = i / 4;
+            const std::size_t pos = i % 4;
+            switch(sequence[i]) {
+            case 'A':
+                    encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                    break;
+            case 'C':
+                    encoded[byteIndex] |= BASE_C << (2*(3-pos));
+                    break;
+            case 'G':
+                    encoded[byteIndex] |= BASE_G << (2*(3-pos));
+                    break;
+            case 'T':
+                    encoded[byteIndex] |= BASE_T << (2*(3-pos));
+                    break;
+            default:
+                    encoded[byteIndex] |= BASE_A << (2*(3-pos));
+                    break;
+            }
+        }
+
+        return {std::move(encoded), bytes};
     }
 
     HOSTDEVICEQUALIFIER
@@ -138,11 +174,42 @@ struct Sequence2BitImpl{
     }
 
     static std::string toString(const std::uint8_t* data, int nBases){
-        return decode_2bit(data, nBases);
+        //return decode_2bit(data, nBases);
+
+        constexpr std::uint8_t BASE_A = 0x00;
+        constexpr std::uint8_t BASE_C = 0x01;
+        constexpr std::uint8_t BASE_G = 0x02;
+        constexpr std::uint8_t BASE_T = 0x03;
+
+        std::string sequence;
+    	sequence.reserve(nBases);
+
+    	for(int i = 0; i < nBases; i++){
+    		const std::size_t byteIndex = i / 4;
+    		const std::size_t pos = i % 4;
+            const std::uint8_t base = (data[byteIndex] >> (2*(3-pos))) & 0x03;
+            switch(base){
+                case BASE_A: sequence.push_back('A'); break;
+                case BASE_C: sequence.push_back('C'); break;
+                case BASE_G: sequence.push_back('G'); break;
+                case BASE_T: sequence.push_back('T'); break;
+                default: sequence.push_back('_'); break; // cannot happen
+            }
+    	}
+
+    	return sequence;
     }
 
     static std::pair<std::unique_ptr<std::uint8_t[]>, std::size_t> reverseComplement(const std::uint8_t* data, int nBases){
-        return reverse_complement_2bit(data, nBases);
+        //return reverse_complement_2bit(data, nBases);
+        const int bytes = (nBases + 3) / 4;
+
+        std::unique_ptr<std::uint8_t[]> reverseComplement = std::make_unique<std::uint8_t[]>(bytes);
+
+        //encoded_to_reverse_complement_encoded(data, bytes, reverseComplement.get(), bytes, nBases);
+        make_reverse_complement(reverseComplement.get(), data, nBases);
+
+        return {std::move(reverseComplement), bytes};
     }
 
     HOSTDEVICEQUALIFIER
