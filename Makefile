@@ -5,21 +5,26 @@ HOSTLINKER=g++
 CXXFLAGS = -std=c++14
 CFLAGS = -Wall -fopenmp -g -Iinc -O3
 CFLAGS_DEBUG = -Wall -fopenmp -g -Iinc
-NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX)
-NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX)
+
+CUB_INCLUDE = -I/home/fekallen/cub-1.8.0
+
+NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(CUB_INCLUDE)
+NVCCFLAGS_DEBUG = -G -x cu -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(CUB_INCLUDE)
 
 #TODO CUDA_PATH =
 
 CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
+
+
 
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs
 
 SOURCES = $(wildcard src/*.cpp)
 OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES))
-OBJECTS_GPU = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES))
+OBJECTS_GPU = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES)) buildgpu/kernels.o
 OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, debugbuildcpu/%.o, $(SOURCES))
-OBJECTS_GPU_DEBUG = $(patsubst src/%.cpp, debugbuildgpu/%.o, $(SOURCES))
+OBJECTS_GPU_DEBUG = $(patsubst src/%.cpp, debugbuildgpu/%.o, $(SOURCES)) debugbuildgpu/kernels.o
 
 PATH_CORRECTOR=$(shell pwd)
 
@@ -37,6 +42,8 @@ cpu:	$(CPU_VERSION)
 gpu:	$(GPU_VERSION)
 cpud:	$(CPU_VERSION_DEBUG)
 gpud:	$(GPU_VERSION_DEBUG)
+
+
 
 $(GPU_VERSION) : $(OBJECTS_GPU)
 	@echo Linking $(GPU_VERSION)
@@ -61,6 +68,10 @@ buildcpu/%.o : src/%.cpp | makedir
 buildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+	
+buildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
 debugbuildcpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
@@ -69,6 +80,10 @@ debugbuildcpu/%.o : src/%.cpp | makedir
 debugbuildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+	
+debugbuildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@	
 
 minhashertest:
 	@echo Building minhashertest
