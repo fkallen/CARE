@@ -1,14 +1,23 @@
 #ifndef CARE_CORRECT_ONLY_GPU_HPP
 #define CARE_CORRECT_ONLY_GPU_HPP
 
-#include "../shifted_hamming_distance.hpp"
 #include "../hpc_helpers.cuh"
+#include "../options.hpp"
+#include "../tasktiming.hpp"
+#include "../sequence.hpp"
+
+#include "kernels.hpp"
 #include "dataarrays.hpp"
 
+#include <thread>
 #include <vector>
 #include <string>
 #include <mutex>
 #include <cstdint>
+#include <cstring>
+#include <cassert>
+#include <numeric>
+#include <algorithm>
 
 #ifdef __NVCC__
 #include <cub/cub.cuh>
@@ -16,6 +25,51 @@
 
 namespace care{
 namespace gpu{
+	
+	template<class ReadId_t>
+struct BatchGenerator{
+    BatchGenerator(){}
+    BatchGenerator(std::uint64_t firstId, std::uint64_t lastIdExcl, std::uint64_t batchsize)
+            : batchsize(batchsize), firstId(firstId), lastIdExcl(lastIdExcl), currentId(firstId){
+                if(batchsize == 0) throw std::runtime_error("BatchGenerator: invalid batch size");
+                if(firstId >= lastIdExcl) throw std::runtime_error("BatchGenerator: firstId >= lastIdExcl");
+            }
+    BatchGenerator(std::uint64_t totalNumberOfReads, std::uint64_t batchsize_, int threadId, int nThreads){
+        if(threadId < 0) throw std::runtime_error("BatchGenerator: invalid threadId");
+        if(nThreads < 0) throw std::runtime_error("BatchGenerator: invalid nThreads");
+
+    	std::uint64_t chunksize = totalNumberOfReads / nThreads;
+    	int leftover = totalNumberOfReads % nThreads;
+
+    	if(threadId < leftover){
+    		chunksize++;
+    		firstId = threadId == 0 ? 0 : threadId * chunksize;
+    		lastIdExcl = firstId + chunksize;
+    	}else{
+    		firstId = leftover * (chunksize+1) + (threadId - leftover) * chunksize;;
+    		lastIdExcl = firstId + chunksize;
+    	}
+
+
+        currentId = firstId;
+        batchsize = batchsize_;
+        //std::cout << "thread " << threadId << " firstId " << firstId << " lastIdExcl " << lastIdExcl << " batchsize " << batchsize << std::endl;
+    };
+
+    std::vector<ReadId_t> getNextReadIds(){
+        std::vector<ReadId_t> result;
+    	while(result.size() < batchsize && currentId < lastIdExcl){
+    		result.push_back(currentId);
+    		currentId++;
+    	}
+        return result;
+    }
+
+    std::uint64_t batchsize;
+    std::uint64_t firstId;
+    std::uint64_t lastIdExcl;
+    std::uint64_t currentId;
+};
 
 
     /*
@@ -85,7 +139,7 @@ namespace gpu{
 
 
 
-        6. Determine indices i < M where d_alignment_best_alignment_flags[i] != BestAlignment_t::None
+        6. Determine alignments which should be used for correction
 
             d_indices[M]
 
@@ -257,20 +311,23 @@ namespace gpu{
 
 
     template<class minhasher_t,
-    		 class readStorage_t>
+    		 class readStorage_t,
+			 class batchgenerator_t>
     struct ErrorCorrectionThreadOnlyGPU{
     using Minhasher_t = minhasher_t;
     	using ReadStorage_t = readStorage_t;
     	using Sequence_t = typename ReadStorage_t::Sequence_t;
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
-        using CorrectionTask_t = CorrectionTask<ReadId_t, Sequence_t>;
+        using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
+		using BatchGenerator_t = batchgenerator_t;
 
     	struct CorrectionThreadOptions{
     		int threadId;
     		int deviceId;
+			bool canUseGpu;
 
     		std::string outputfile;
-    		BatchGenerator<ReadId_t>* batchGen;
+    		BatchGenerator_t* batchGen;
     		const Minhasher_t* minhasher;
     		const ReadStorage_t* readStorage;
     		std::mutex* coutLock;
@@ -291,7 +348,6 @@ namespace gpu{
 
         std::uint64_t nProcessedReads = 0;
 
-        DetermineGoodAlignmentStats goodAlignmentStats;
         std::uint64_t minhashcandidates = 0;
         std::uint64_t duplicates = 0;
     	int nProcessedQueries = 0;
@@ -328,9 +384,9 @@ namespace gpu{
         volatile bool stopAndAbort = false;
 
         void run(){
-            if(isRunning) throw std::runtime_error("ErrorCorrectionThreadCombined::run: Is already running.");
+            if(isRunning) throw std::runtime_error("ErrorCorrectionThreadOnlyGPU::run: Is already running.");
             isRunning = true;
-            thread = std::move(std::thread(&ErrorCorrectionThreadCombined::execute, this));
+            thread = std::move(std::thread(&ErrorCorrectionThreadOnlyGPU::execute, this));
         }
 
         void join(){
@@ -338,10 +394,12 @@ namespace gpu{
             isRunning = false;
         }
 
-    private:
+    public:
 
     	void execute() {
     		isRunning = true;
+			
+			assert(threadOpts.canUseGpu);
 
     		std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
@@ -366,9 +424,9 @@ namespace gpu{
     		};
 
             // device lambdas for sequence functions
-            auto getNumBytes = [] __device__ (int length){
+            /*auto getNumBytes = [] __device__ (int length){
                 return Sequence_t::getNumBytes(length);
-            };
+            };*/
 
             auto accessor = [] __device__ (const char* data, int length, int index){
                 return Sequence_t::get(data, length, index);
@@ -383,7 +441,7 @@ namespace gpu{
             };
 
             auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
-                return SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+                return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
             };
 
             auto best_alignment_comp = [=] __device__ (int fwd_alignment_overlap,
@@ -403,17 +461,14 @@ namespace gpu{
                                             revc_alignment_isvalid,
                                             subjectlength,
                                             querylength,
-                                            min_overlap_ratio,
-                                            min_overlap,
-                                            maxErrorRate);
+                                            goodAlignmentProperties.min_overlap_ratio,
+                                            goodAlignmentProperties.min_overlap,
+                                            correctionOptions.estimatedErrorrate * 4.0);
             };
 
-            std::uint64_t cpuAlignments = 0;
-            std::uint64_t gpuAlignments = 0;
-            //std::uint64_t savedAlignments = 0;
-            //std::uint64_t performedAlignments = 0;
-
     		constexpr int nStreams = 1;
+			
+			cudaSetDevice(threadOpts.deviceId);
 
     		std::vector<DataArrays<Sequence_t>> dataArrays;
             std::array<std::vector<CorrectionTask_t>, nStreams> correctionTasks;
@@ -426,12 +481,15 @@ namespace gpu{
 
     		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-            const auto& readStorage = threadOpts->readStorage;
-            const auto& minhasher = threadOpts->minhasher;
+            const auto& readStorage = threadOpts.readStorage;
+            const auto& minhasher = threadOpts.minhasher;
 
             const double avg_support_threshold = 1.0-1.0*correctionOptions.estimatedErrorrate;
             const double min_support_threshold = 1.0-3.0*correctionOptions.estimatedErrorrate;
-            const double min_coverage_threshold = correctionOptions.m_coverage / 6.0 * correctionOptions.estimatedCoverage;
+			// coverage is always >= 1 
+            const double min_coverage_threshold = std::max(1.0, 
+														correctionOptions.m_coverage / 6.0 * correctionOptions.estimatedCoverage);
+			const int new_columns_to_correct = 2;
 
     		while(!stopAndAbort && !readIds.empty()){
 
@@ -459,7 +517,7 @@ namespace gpu{
                         const Sequence_t* sequenceptr = readStorage->fetchSequence_ptr(id);
                         const std::string* qualityptr = nullptr;
 
-                        if(correctionOptions.canUseQualityScores)
+                        if(correctionOptions.useQualityScores)
                             qualityptr = readStorage->fetchQuality_ptr(id);
 
                         correctionTasks[streamIndex].emplace_back(id, sequenceptr, qualityptr);
@@ -485,7 +543,7 @@ namespace gpu{
                     }else{
                         for(auto candidate_read_id : task.candidate_read_ids){
                             task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-                            if(correctionOptions.canUseQualityScores)
+                            if(correctionOptions.useQualityScores)
                                 task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
                         }
                     }
@@ -499,7 +557,7 @@ namespace gpu{
                                                         correctionTasks[streamIndex].end(),
                                                         int(0),
                                                         [](const auto& l, const auto& r){
-                                                            return int(l.candidate_read_ids.size()) + int(r.candidate_read_ids.size())
+                                                            return l + int(r.candidate_read_ids.size());
                                                         });
 
 
@@ -507,13 +565,15 @@ namespace gpu{
                 //candidate sequence lengths, candidates_per_subject_prefixsum to GPU
 
                 //allocate data arrays
+				
 
-                dataArrays[streamIndex].set_problem_dimensions(int(correctionTasks[streamIndex]).size(),
+                dataArrays[streamIndex].set_problem_dimensions(int(correctionTasks[streamIndex].size()),
                                                             nTotalCandidates,
                                                             fileProperties.maxSequenceLength,
                                                             goodAlignmentProperties.min_overlap,
-                                                            goodAlignmentProperties.min_overlap_ratio);
-                dataArrays[streamIndex].set_n_indices(nTotalCandidates);
+                                                            goodAlignmentProperties.min_overlap_ratio); CUERR;
+															
+                dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
 
                 //fill data arrays
                 dataArrays[streamIndex].h_candidates_per_subject_prefixsum[0] = 0;
@@ -527,10 +587,10 @@ namespace gpu{
 
                     //fill subject
                     std::memcpy(arrays.h_subject_sequences_data + i * arrays.encoded_sequence_pitch,
-                                subject_sequence->begin(),
-                                subject_sequence->getNumBytes());
-                    arrays.h_subject_sequences_lengths[i] = candidate_sequence->length();
-                    maxSubjectLength = std::max(int(subject_sequence->length()), maxSubjectLength);
+                                task.subject_sequence->begin(),
+                                task.subject_sequence->getNumBytes());
+                    arrays.h_subject_sequences_lengths[i] = task.subject_sequence->length();
+                    maxSubjectLength = std::max(int(task.subject_sequence->length()), maxSubjectLength);
 
                     //fill candidates
                     for(const Sequence_t* candidate_sequence : task.candidate_sequences){
@@ -552,9 +612,9 @@ namespace gpu{
 
                 //data required for alignment is now ready for transfer
 
-                cudaMemcpyAsync(arrays.alignment_transfer_data_device,
-                                arrays.alignment_transfer_data_host,
-                                arrays.alignment_transfer_data_size,
+                cudaMemcpyAsync(dataArrays[streamIndex].alignment_transfer_data_device,
+                                dataArrays[streamIndex].alignment_transfer_data_host,
+                                dataArrays[streamIndex].alignment_transfer_data_size,
                                 H2D,
                                 streams[streamIndex]); CUERR;
 
@@ -562,25 +622,25 @@ namespace gpu{
 
 
                 call_shd_with_revcompl_kernel_async(
-                                        arrays.d_alignment_scores,
-                                        arrays.d_alignment_overlaps,
-                                        arrays.d_alignment_shifts,
-                                        arrays.d_alignment_nOps,
-                                        arrays.d_alignment_isValid,
-                                        arrays.d_subject_sequences_data,
-                                        arrays.d_candidate_sequences_data,
-                                        arrays.d_subject_sequences_lengths,
-                                        arrays.d_candidate_sequences_lengths,
-                                        arrays.d_candidates_per_subject_prefixsum,
-                                        arrays.n_subjects,
-                                        Sequence_t::getNumBytes(arrays.maximum_sequence_length),
-                                        arrays.encoded_sequence_pitch,
+                                        dataArrays[streamIndex].d_alignment_scores,
+                                        dataArrays[streamIndex].d_alignment_overlaps,
+                                        dataArrays[streamIndex].d_alignment_shifts,
+                                        dataArrays[streamIndex].d_alignment_nOps,
+                                        dataArrays[streamIndex].d_alignment_isValid,
+                                        dataArrays[streamIndex].d_subject_sequences_data,
+                                        dataArrays[streamIndex].d_candidate_sequences_data,
+                                        dataArrays[streamIndex].d_subject_sequences_lengths,
+                                        dataArrays[streamIndex].d_candidate_sequences_lengths,
+                                        dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
+                                        dataArrays[streamIndex].n_subjects,
+                                        Sequence_t::getNumBytes(dataArrays[streamIndex].maximum_sequence_length),
+                                        dataArrays[streamIndex].encoded_sequence_pitch,
                                         goodAlignmentProperties.min_overlap,
-                                        goodAlignmentProperties.maxErrorRate,
+                                        correctionOptions.estimatedErrorrate * 4.0,
                                         goodAlignmentProperties.min_overlap_ratio,
                                         accessor,
                                         make_reverse_complement_inplace,
-                                        arrays.n_queries,
+                                        dataArrays[streamIndex].n_queries,
                                         maxSubjectLength,
                                         maxQueryLength,
                                         streams[streamIndex]);
@@ -589,56 +649,85 @@ namespace gpu{
                 //    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
 
                 call_cuda_find_best_alignment_kernel_async(
-                                                    arrays.d_alignment_best_alignment_flags,
-                                                    arrays.d_alignment_scores
-                                                    arrays.d_alignment_overlaps,
-                                                    arrays.d_alignment_shifts
-                                                    arrays.d_alignment_nOps,
-                                                    arrays.d_alignment_isValid,
-                                                    arrays.d_subject_sequences_lengths,
-                                                    arrays.d_candidate_sequences_lengths,
-                                                    arrays.d_candidates_per_subject_prefixsum,
-                                                    arrays.n_subjects,
+                                                    dataArrays[streamIndex].d_alignment_best_alignment_flags,
+                                                    dataArrays[streamIndex].d_alignment_scores,
+                                                    dataArrays[streamIndex].d_alignment_overlaps,
+                                                    dataArrays[streamIndex].d_alignment_shifts,
+                                                    dataArrays[streamIndex].d_alignment_nOps,
+                                                    dataArrays[streamIndex].d_alignment_isValid,
+                                                    dataArrays[streamIndex].d_subject_sequences_lengths,
+                                                    dataArrays[streamIndex].d_candidate_sequences_lengths,
+                                                    dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
+                                                    dataArrays[streamIndex].n_subjects,
+													goodAlignmentProperties.min_overlap_ratio,
+													goodAlignmentProperties.min_overlap,
+													correctionOptions.estimatedErrorrate * 4.0,
                                                     best_alignment_comp,
-                                                    arrays.n_queries,
+                                                    dataArrays[streamIndex].n_queries,
                                                     streams[streamIndex]);
 
-                //Step 6. Determine indices i < M where d_alignment_best_alignment_flags[i] != BestAlignment_t::None
+                //Step 6. Determine alignments which should be used for correction
+			
+				std::size_t temp_storage_bytes = 0;
+				
+				auto select_alignments_by_flag = [&](){		
+					
+					auto select_alignment_op = [] __device__ (const BestAlignment_t& flag){
+						return flag != BestAlignment_t::None;
+					};
 
-                auto select_alignment_op = [] __device__ (const BestAlignment_t& flag){
-                    return flag != BestAlignment_t::None;
-                };
-
-                cub::TransformInputIterator<bool,decltype(select_alignment_op), BestAlignment_t*>
-                                d_isGoodAlignment(arrays.d_alignment_best_alignment_flags,
+					cub::TransformInputIterator<bool,decltype(select_alignment_op), BestAlignment_t*>
+                                d_isGoodAlignment(dataArrays[streamIndex].d_alignment_best_alignment_flags,
                                                   select_alignment_op);
+				
+					
+					cub::DeviceSelect::Flagged(nullptr,
+												temp_storage_bytes,
+												cub::CountingInputIterator<int>(0),
+												d_isGoodAlignment,
+												dataArrays[streamIndex].d_indices,
+												dataArrays[streamIndex].d_num_indices,
+												nTotalCandidates,
+												streams[streamIndex]); CUERR;
 
+					dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
 
-                std::size_t temp_storage_bytes = 0;
-                cub::DeviceSelect::Flagged(nullptr,
-                                            temp_storage_bytes,
-                                            cub::CountingInputIterator<int>(0),
-                                            arrays.d_isGoodAlignment,
-                                            arrays.d_indices,
-                                            arrays.d_num_indices,
-                                            nTotalCandidates,
-                                            streams[streamIndex]); CUERR;
+					cub::DeviceSelect::Flagged(dataArrays[streamIndex].d_temp_storage,
+												temp_storage_bytes,
+												cub::CountingInputIterator<int>(0),
+												d_isGoodAlignment,
+												dataArrays[streamIndex].d_indices,
+												dataArrays[streamIndex].d_num_indices,
+												nTotalCandidates,
+												streams[streamIndex]); CUERR;
+				};
 
-                dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
-
-                cub::DeviceSelect::Flagged(arrays.d_temp_storage,
-                                            temp_storage_bytes,
-                                            cub::CountingInputIterator<int>(0),
-                                            arrays.d_isGoodAlignment,
-                                            arrays.d_indices,
-                                            arrays.d_num_indices,
-                                            nTotalCandidates,
-                                            streams[streamIndex]); CUERR;
-
-                cudaMemcpyAsync(arrays.h_num_indices, arrays.d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
+				//Determine indices i < M where d_alignment_best_alignment_flags[i] != BestAlignment_t::None. this selects all good alignments
+                select_alignments_by_flag();
+			
+				//choose the most appropriate subset of alignments from the good alignments. 
+				//This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
+				call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                                        dataArrays[streamIndex].d_alignment_best_alignment_flags,
+                                        dataArrays[streamIndex].d_alignment_overlaps,
+                                        dataArrays[streamIndex].d_alignment_nOps,
+                                        dataArrays[streamIndex].d_indices,
+										dataArrays[streamIndex].d_indices_per_subject,
+										dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+                                        dataArrays[streamIndex].n_subjects,
+										dataArrays[streamIndex].n_queries,
+										dataArrays[streamIndex].d_num_indices,
+										correctionOptions.estimatedErrorrate,
+										correctionOptions.estimatedCoverage * correctionOptions.m_coverage,
+										streams[streamIndex]);
+				
+				//determine indices of remaining alignments
+				select_alignments_by_flag();
+				
+				cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
                 cudaStreamSynchronize(streams[streamIndex]); CUERR; // need h_num_indices before continuing
 
-                dataArrays[streamIndex].set_n_indices(*arrays.h_num_indices);
+                dataArrays[streamIndex].set_n_indices(*dataArrays[streamIndex].h_num_indices);
 
                 dataArrays[streamIndex].allocateCorrectionData();
 
@@ -647,283 +736,446 @@ namespace gpu{
                 //Get number of indices per subject by creating histrogram
                 cub::DeviceHistogram::HistogramRange(nullptr,
                                                     temp_storage_bytes,
-                                                    arrays.d_indices,
-                                                    arrays.d_indices_per_subject,
-                                                    arrays.n_subjects+1,
-                                                    arrays.d_candidates_per_subject_prefixsum,
-                                                    arrays.n_indices,
+                                                    dataArrays[streamIndex].d_indices,
+                                                    dataArrays[streamIndex].d_indices_per_subject,
+                                                    dataArrays[streamIndex].n_subjects+1,
+                                                    dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
+                                                    dataArrays[streamIndex].n_indices,
                                                     streams[streamIndex]); CUERR;
 
                 dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
 
-                cub::DeviceHistogram::HistogramRange(arrays.d_temp_storage,
+                cub::DeviceHistogram::HistogramRange(dataArrays[streamIndex].d_temp_storage,
                                                     temp_storage_bytes,
-                                                    arrays.d_indices,
-                                                    arrays.d_indices_per_subject,
-                                                    arrays.n_subjects+1,
-                                                    arrays.d_candidates_per_subject_prefixsum,
-                                                    arrays.n_indices,
+                                                    dataArrays[streamIndex].d_indices,
+                                                    dataArrays[streamIndex].d_indices_per_subject,
+                                                    dataArrays[streamIndex].n_subjects+1,
+                                                    dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
+                                                    dataArrays[streamIndex].n_indices,
                                                     streams[streamIndex]); CUERR;
 
                 //Make prefix sum
                 cub::DeviceScan::ExclusiveSum(nullptr,
                                                 temp_storage_bytes,
-                                                arrays.d_indices_per_subject,
-                                                arrays.d_indices_per_subject_prefixsum,
-                                                arrays.n_subjects,
+                                                dataArrays[streamIndex].d_indices_per_subject,
+                                                dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+                                                dataArrays[streamIndex].n_subjects,
                                                 streams[streamIndex]); CUERR;
 
                 dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
 
-                cub::DeviceScan::ExclusiveSum(arrays.d_temp_storage,
+                cub::DeviceScan::ExclusiveSum(dataArrays[streamIndex].d_temp_storage,
                                                 temp_storage_bytes,
-                                                arrays.d_indices_per_subject,
-                                                arrays.d_indices_per_subject_prefixsum,
-                                                arrays.n_subjects,
+                                                dataArrays[streamIndex].d_indices_per_subject,
+                                                dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+                                                dataArrays[streamIndex].n_subjects,
                                                 streams[streamIndex]); CUERR;
 
                 //Step 8. Copy d_indices, d_indices_per_subject, d_indices_per_subject_prefixsum to host
 
-                cudaMemcpyAsync(arrays.indices_transfer_data_host,
-                                arrays.indices_transfer_data_device,
-                                arrays.total_indices_transfer_data_size,
+                cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
+                                dataArrays[streamIndex].indices_transfer_data_device,
+                                dataArrays[streamIndex].indices_transfer_data_size,
                                 D2H,
                                 streams[streamIndex]); CUERR;
 
                 // Step 9. Allocate quality score data and correction data
 
-                arrays.allocateCorrectionData();
+                dataArrays[streamIndex].allocateCorrectionData();
 
                 cudaStreamSynchronize(streams[streamIndex]); CUERR; // need indices on host before continuing
 
                 //Step 10. Copy quality scores of candidates referenced by h_indices to gpu
+                
+                if(correctionOptions.useQualityScores){
 
-                /*
-                    assume task 0 has candidates q0, q1, q2
-                    assume task 1 has candidates w0, w1, w2
-                    h_candidates_per_subject_prefixsum = [0, 3, 6]
+					/*
+						assume task 0 has candidates q0, q1, q2
+						assume task 1 has candidates w0, w1, w2
+						h_candidates_per_subject_prefixsum = [0, 3, 6]
 
-                    assume selected candidates q0, q2, w2
-                    h_indices = [0, 2, 5]
-                    h_indices_per_subject = [2, 1]
-                    h_indices_per_subject_prefixsum = [0, 2]
-                    ----------------------------
+						assume selected candidates q0, q2, w2
+						h_indices = [0, 2, 5]
+						h_indices_per_subject = [2, 1]
+						h_indices_per_subject_prefixsum = [0, 2]
+						----------------------------
 
-                    task 0:
-                    num_indices_for_this_task = 2
-                    indices_for_this_task = h_indices + 0
-                    num_candidates_before_this_task = 0
-                    copy candidates 0-0 = q0, 2-0 = q2
+						task 0:
+						num_indices_for_this_task = 2
+						indices_for_this_task = h_indices + 0
+						num_candidates_before_this_task = 0
+						copy candidates 0-0 = q0, 2-0 = q2
 
-                    task 1:
-                    num_indices_for_this_task = 1
-                    indices_for_this_task = h_indices + 2
-                    num_candidates_before_this_task = 2
-                    copy candidates 5-3 = w2
-                */
+						task 1:
+						num_indices_for_this_task = 1
+						indices_for_this_task = h_indices + 2
+						num_candidates_before_this_task = 2
+						copy candidates 5-3 = w2
+					*/
 
-                for(std::size_t subject_index = 0, count = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
-                    const auto& task = correctionTasks[streamIndex][subject_index];
-                    auto& arrays = dataArrays[streamIndex];
+					for(std::size_t subject_index = 0, count = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
+						const auto& task = correctionTasks[streamIndex][subject_index];
+						auto& arrays = dataArrays[streamIndex];
 
-                    const int num_indices_for_this_task = arrays.h_indices_per_subject[subject_index];
-                    const int* const indices_for_this_task = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
-                    const int num_candidates_before_this_task = arrays.h_candidates_per_subject_prefixsum[subject_index];
+						const int num_indices_for_this_task = arrays.h_indices_per_subject[subject_index];
+						const int* const indices_for_this_task = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
+						const int num_candidates_before_this_task = arrays.h_candidates_per_subject_prefixsum[subject_index];
 
-                    std::memcpy(arrays.h_subject_qualities + subject_index * quality_pitch,
-                                task.subject_quality->begin(),
-                                task.subject_quality->length());
+						std::memcpy(arrays.h_subject_qualities + subject_index * arrays.quality_pitch,
+									task.subject_quality->c_str(),
+									task.subject_quality->length());
 
-                    for(int j = 0; j < num_indices_for_this_task; ++j, ++count){
-                        //calculate task local index
-                        const int candidate_index = indices_for_this_task[j] - num_candidates_before_this_task;
+						for(int j = 0; j < num_indices_for_this_task; ++j, ++count){
+							//calculate task local index
+							const int candidate_index = indices_for_this_task[j] - num_candidates_before_this_task;
 
-                        std::memcpy(arrays.h_candidate_qualities + count * quality_pitch,
-                                    task.candidate_qualities[candidate_index]->begin(),
-                                    task.candidate_qualities[candidate_index]->length());
-                    }
-                }
+							std::memcpy(arrays.h_candidate_qualities + count * arrays.quality_pitch,
+										task.candidate_qualities[candidate_index]->c_str(),
+										task.candidate_qualities[candidate_index]->length());
+						}
+					}
 
-                cudaMemcpyAsync(arrays.qualities_transfer_data_device,
-                                arrays.qualities_transfer_data_host,
-                                arrays.qualities_transfer_data_size,
-                                H2D,
-                                streams[streamIndex]); CUERR;
+					cudaMemcpyAsync(dataArrays[streamIndex].qualities_transfer_data_device,
+									dataArrays[streamIndex].qualities_transfer_data_host,
+									dataArrays[streamIndex].qualities_transfer_data_size,
+									H2D,
+									streams[streamIndex]); CUERR;
+								
+				}
 
                 // Step 11. Determine multiple sequence alignment properties
 
                 call_msa_init_kernel_async(
-                                arrays.d_msa_column_properties,
-                                arrays.d_alignment_shifts,
-                                arrays.d_alignment_best_alignment_flags,
-                                arrays.d_subject_sequences_lengths,
-                                arrays.d_candidate_sequences_lengths,
-                                arrays.d_indices,
-                                arrays.d_indices_per_subject,
-                                arrays.d_indices_per_subject_prefixsum,
-                                arrays.n_subjects,
-                                arrays.n_queries,
+                                dataArrays[streamIndex].d_msa_column_properties,
+                                dataArrays[streamIndex].d_alignment_shifts,
+                                dataArrays[streamIndex].d_alignment_best_alignment_flags,
+                                dataArrays[streamIndex].d_subject_sequences_lengths,
+                                dataArrays[streamIndex].d_candidate_sequences_lengths,
+                                dataArrays[streamIndex].d_indices,
+                                dataArrays[streamIndex].d_indices_per_subject,
+                                dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+                                dataArrays[streamIndex].n_subjects,
+                                dataArrays[streamIndex].n_queries,
                                 streams[streamIndex]);
 
 
                 //Step 12. Fill multiple sequence alignment
 
                 call_msa_add_sequences_kernel_async(
-                                arrays.d_multiple_sequence_alignments,
-                                arrays.d_multiple_sequence_alignment_weights,
-                                arrays.d_alignment_shifts,
-                                arrays.d_alignment_best_alignment_flags,
-                                arrays.d_subject_sequences_data,
-                                arrays.d_candidate_sequences_data,
-                                arrays.d_subject_sequences_lengths,
-                                arrays.d_candidate_sequences_lengths,
-                                arrays.d_subject_qualities,
-                                arrays.d_candidate_qualities,
-                                arrays.d_msa_column_properties,
-                                arrays.d_candidates_per_subject_prefixsum,
-                                arrays.d_indices,
-                                arrays.d_indices_per_subject,
-                                arrays.d_indices_per_subject_prefixsum,
-                                arrays.n_subjects,
-                                arrays.n_queries,
-                                arrays.n_indices,
+                                dataArrays[streamIndex].d_multiple_sequence_alignments,
+                                dataArrays[streamIndex].d_multiple_sequence_alignment_weights,
+                                dataArrays[streamIndex].d_alignment_shifts,
+                                dataArrays[streamIndex].d_alignment_best_alignment_flags,
+                                dataArrays[streamIndex].d_subject_sequences_data,
+                                dataArrays[streamIndex].d_candidate_sequences_data,
+                                dataArrays[streamIndex].d_subject_sequences_lengths,
+                                dataArrays[streamIndex].d_candidate_sequences_lengths,
+                                dataArrays[streamIndex].d_subject_qualities,
+                                dataArrays[streamIndex].d_candidate_qualities,
+                                dataArrays[streamIndex].d_msa_column_properties,
+                                dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
+                                dataArrays[streamIndex].d_indices,
+                                dataArrays[streamIndex].d_indices_per_subject,
+                                dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+                                dataArrays[streamIndex].n_subjects,
+                                dataArrays[streamIndex].n_queries,
+                                dataArrays[streamIndex].n_indices,
                                 correctionOptions.useQualityScores,
-                                arrays.encoded_sequence_pitch,
-                                arrays.quality_pitch
-                                arrays.msa_row_pitch,
-                                arrays.msa_weights_row_pitch,
+                                dataArrays[streamIndex].encoded_sequence_pitch,
+                                dataArrays[streamIndex].quality_pitch,
+                                dataArrays[streamIndex].msa_pitch,
+                                dataArrays[streamIndex].msa_weights_pitch,
                                 nucleotide_accessor,
                                 streams[streamIndex]);
 
                 //Step 13. Determine consensus in multiple sequence alignment
 
                 call_msa_find_consensus_kernel_async(
-                                        arrays.d_consensus,
-                                        arrays.d_support,
-                                        arrays.d_coverage,
-                                        arrays.d_origWeights,
-                                        arrays.d_origCoverages,
-                                        arrays.d_multiple_sequence_alignments,
-                                        arrays.d_multiple_sequence_alignment_weights,
-                                        arrays.d_msa_column_properties,
-                                        arrays.d_candidates_per_subject_prefixsum,
-                                        arrays.d_indices_per_subject,
-                                        arrays.d_indices_per_subject_prefixsum,
-                                        arrays.n_subjects,
-                                        arrays.n_queries,
-                                        arrays.n_indices,
-                                        arrays.msa_pitch,
-                                        arrays.msa_weights_pitch,
-                                        3*arrays.maximum_sequence_length - 2*goodAlignmentProperties.min_overlap,
-                                        streams[streamIndex]);
+								dataArrays[streamIndex].d_consensus,
+								dataArrays[streamIndex].d_support,
+								dataArrays[streamIndex].d_coverage,
+								dataArrays[streamIndex].d_origWeights,
+								dataArrays[streamIndex].d_origCoverages,
+								dataArrays[streamIndex].d_multiple_sequence_alignments,
+								dataArrays[streamIndex].d_multiple_sequence_alignment_weights,
+								dataArrays[streamIndex].d_msa_column_properties,
+								dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
+								dataArrays[streamIndex].d_indices_per_subject,
+								dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+								dataArrays[streamIndex].n_subjects,
+								dataArrays[streamIndex].n_queries,
+								dataArrays[streamIndex].n_indices,
+								dataArrays[streamIndex].msa_pitch,
+								dataArrays[streamIndex].msa_weights_pitch,
+								3*dataArrays[streamIndex].maximum_sequence_length - 2*goodAlignmentProperties.min_overlap,
+								streams[streamIndex]);
 
                 // Step 14. Correction
-
+								
                 // correct subjects
                 call_msa_correct_subject_kernel_async(
-                                        arrays.d_consensus,
-                                        arrays.d_support,
-                                        arrays.d_coverage,
-                                        arrays.d_origCoverages,
-                                        arrays.d_multiple_sequence_alignments,
-                                        arrays.d_msa_column_properties,
-                                        arrays.d_indices_per_subject_prefixsum,
-                                        arrays.d_is_high_quality_subject,
-                                        arrays.d_corrected_subjects,
-                                        arrays.n_subjects,
-                                        arrays.n_queries,
-                                        arrays.n_indices,
-                                        arrays.sequence_pitch,
-                                        arrays.msa_pitch,
-                                        arrays.msa_weights_pitch,
-                                        correctionOptions.estimatedErrorrate,
-                                        avg_support_threshold,
-                                        min_support_threshold,
-                                        min_coverage_threshold,
-                                        correctionOptions.kmerlength,
-                                        arrays.maximum_sequence_length,
-                                        streams[streamIndex]);
+								dataArrays[streamIndex].d_consensus,
+								dataArrays[streamIndex].d_support,
+								dataArrays[streamIndex].d_coverage,
+								dataArrays[streamIndex].d_origCoverages,
+								dataArrays[streamIndex].d_multiple_sequence_alignments,
+								dataArrays[streamIndex].d_msa_column_properties,
+								dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+								dataArrays[streamIndex].d_is_high_quality_subject,
+								dataArrays[streamIndex].d_corrected_subjects,
+								dataArrays[streamIndex].d_subject_is_corrected,
+								dataArrays[streamIndex].n_subjects,
+								dataArrays[streamIndex].n_queries,
+								dataArrays[streamIndex].n_indices,
+								dataArrays[streamIndex].sequence_pitch,
+								dataArrays[streamIndex].msa_pitch,
+								dataArrays[streamIndex].msa_weights_pitch,
+								correctionOptions.estimatedErrorrate,
+								avg_support_threshold,
+								min_support_threshold,
+								min_coverage_threshold,
+								correctionOptions.kmerlength,
+								dataArrays[streamIndex].maximum_sequence_length,
+								streams[streamIndex]);
+				
 
                 // find subject ids of subjects with high quality multiple sequence alignment
                 cub::DeviceSelect::Flagged(nullptr,
-                                            temp_storage_bytes,
-                                            cub::CountingInputIterator<int>(0),
-                                            arrays.d_high_quality_subject_indices,
-                                            arrays.d_num_high_quality_subject_indices,
-                                            arrays.n_subjects,
-                                            streams[streamIndex]); CUERR;
+								temp_storage_bytes,
+								cub::CountingInputIterator<int>(0),
+								dataArrays[streamIndex].d_is_high_quality_subject,
+								dataArrays[streamIndex].d_high_quality_subject_indices,
+								dataArrays[streamIndex].d_num_high_quality_subject_indices,
+								dataArrays[streamIndex].n_subjects,
+								streams[streamIndex]); CUERR;
 
                 dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
 
-                cub::DeviceSelect::Flagged(arrays.d_temp_storage,
-                                            temp_storage_bytes,
-                                            cub::CountingInputIterator<int>(0),
-                                            arrays.d_high_quality_subject_indices,
-                                            arrays.d_num_high_quality_subject_indices,
-                                            arrays.n_subjects,
-                                            streams[streamIndex]); CUERR;
+                cub::DeviceSelect::Flagged(dataArrays[streamIndex].d_temp_storage,
+								temp_storage_bytes,
+								cub::CountingInputIterator<int>(0),
+								dataArrays[streamIndex].d_is_high_quality_subject,
+								dataArrays[streamIndex].d_high_quality_subject_indices,
+								dataArrays[streamIndex].d_num_high_quality_subject_indices,
+								dataArrays[streamIndex].n_subjects,
+								streams[streamIndex]); CUERR;
+											
+				// correct candidates
+				call_msa_correct_candidates_kernel_async(
+								dataArrays[streamIndex].d_consensus,
+								dataArrays[streamIndex].d_support,
+								dataArrays[streamIndex].d_coverage,
+								dataArrays[streamIndex].d_origCoverages,
+								dataArrays[streamIndex].d_multiple_sequence_alignments,
+								dataArrays[streamIndex].d_msa_column_properties,
+								dataArrays[streamIndex].d_indices,
+								dataArrays[streamIndex].d_indices_per_subject,
+								dataArrays[streamIndex].d_indices_per_subject_prefixsum,
+								dataArrays[streamIndex].d_high_quality_subject_indices,
+								dataArrays[streamIndex].d_num_high_quality_subject_indices,
+								dataArrays[streamIndex].d_alignment_shifts,
+								dataArrays[streamIndex].d_alignment_best_alignment_flags,
+								dataArrays[streamIndex].d_candidate_sequences_lengths,
+								dataArrays[streamIndex].d_num_corrected_candidates,
+								dataArrays[streamIndex].d_corrected_candidates,
+								dataArrays[streamIndex].d_indices_of_corrected_candidates,
+								dataArrays[streamIndex].n_subjects,
+								dataArrays[streamIndex].n_queries,
+								dataArrays[streamIndex].n_indices,
+								dataArrays[streamIndex].sequence_pitch,
+								dataArrays[streamIndex].msa_pitch,
+								dataArrays[streamIndex].msa_weights_pitch,
+								min_support_threshold,
+								min_coverage_threshold,
+								new_columns_to_correct,
+								make_unpacked_reverse_complement_inplace,
+								dataArrays[streamIndex].maximum_sequence_length,
+								streams[streamIndex]);
+				
+				//copy correction results to host
+				cudaMemcpyAsync(dataArrays[streamIndex].correction_results_transfer_data_host,
+								dataArrays[streamIndex].correction_results_transfer_data_device,
+								dataArrays[streamIndex].correction_results_transfer_data_size,
+								D2H,
+								streams[streamIndex]); CUERR;
+								
+				cudaStreamSynchronize(streams[streamIndex]); CUERR;
+								
+				//unpack results
+				
+				//DEBUGGING
+				cudaMemcpyAsync(dataArrays[streamIndex].msa_data_host,
+								dataArrays[streamIndex].msa_data_device,
+								dataArrays[streamIndex].msa_data_size,
+								D2H,
+								streams[streamIndex]); CUERR; 
+				cudaStreamSynchronize(streams[streamIndex]); CUERR;
+								
+				//DEBUGGING
+				cudaMemcpyAsync(dataArrays[streamIndex].alignment_result_data_host,
+								dataArrays[streamIndex].alignment_result_data_device,
+								dataArrays[streamIndex].alignment_result_data_size,
+								D2H,
+								streams[streamIndex]); CUERR; 
+				cudaStreamSynchronize(streams[streamIndex]); CUERR;
+				
+				//DEBUGGING
+				cudaMemcpyAsync(dataArrays[streamIndex].subject_indices_data_host,
+								dataArrays[streamIndex].subject_indices_data_device,
+								dataArrays[streamIndex].subject_indices_data_size,
+								D2H,
+								streams[streamIndex]); CUERR; 
+				cudaStreamSynchronize(streams[streamIndex]); CUERR;
+				
+				//DEBUGGING
+				for(std::size_t subject_index = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
+					auto& task = correctionTasks[streamIndex][subject_index];
+					auto& arrays = dataArrays[streamIndex];
+					
+					const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
+							
+					const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
+					const unsigned offset2 = msa_weights_pitch_floats * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
 
+					const char* const my_multiple_sequence_alignment = arrays.h_multiple_sequence_alignments + offset1;
+					const float* const my_multiple_sequence_alignment_weight = arrays.h_multiple_sequence_alignment_weights + offset2;
+					
+					char* const my_consensus = arrays.h_consensus + subject_index * arrays.msa_pitch;
+					float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
+					int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
 
-
-				nProcessedReads += readIds.size();
-				readIds = threadOpts.batchGen->getNextReadIds();
-
-
-
-
-
-				tpc = std::chrono::system_clock::now();
-				std::pair<PileupCorrectionResult, TaskTimings> res =
-											correct(pileupImage,
-												b,
-												goodAlignmentProperties.maxErrorRate,
-												correctionOptions.estimatedErrorrate,
-												correctionOptions.estimatedCoverage,
-												correctionOptions.correctCandidates,
-												correctionOptions.new_columns_to_correct,
-                                                correctionOptions.classicMode);
-
-				tpd = std::chrono::system_clock::now();
-				readcorrectionTimeTotal += tpd - tpc;
-
-                detailedCorrectionTimings += res.second;
-
-				/*
-					features
-				*/
-
-				/*if(correctionOptions.extractFeatures){
-					std::vector<MSAFeature> MSAFeatures =  extractFeatures(pileupImage, b.fwdSequenceString,
-													threadOpts.minhasher->minparams.k, 0.0,
-													correctionOptions.estimatedCoverage);
-
-					if(MSAFeatures.size() > 0){
-						for(const auto& msafeature : MSAFeatures){
-							featurestream << b.readId << '\t' << msafeature.position << '\n';
-							featurestream << msafeature << '\n';
+					float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
+					int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
+					
+					const int subjectColumnsBegin_incl = arrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl;
+					const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
+					const int columnsToCheck = arrays.h_msa_column_properties[subject_index].columnsToCheck;
+					
+					const int msa_rows = 1 + arrays.h_indices_per_subject[subject_index];
+					
+					const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
+					
+					std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columnsToCheck = " << columnsToCheck << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << std::endl;
+					std::cout << "MSA:" << std::endl;
+					for(int row = 0; row < msa_rows; row++){
+						for(int col = 0; col < columnsToCheck; col++){
+							char c = my_multiple_sequence_alignment[row * arrays.msa_pitch + col];
+							std::cout << (c == '\0' ? '0' : c);
+							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+								std::cout << " ";
 						}
-
+						if(row > 0){
+							const int queryIndex = indices_for_this_subject[row-1];
+							const int shift = arrays.h_alignment_shifts[queryIndex];
+							
+							std::cout << " shift " << shift;
+						}
+						std::cout << std::endl;
 					}
-				}*/
-				auto& correctionResult = res.first;
-
-				avgsupportfail += correctionResult.stats.failedAvgSupport;
-				minsupportfail += correctionResult.stats.failedMinSupport;
-				mincoveragefail += correctionResult.stats.failedMinCoverage;
-				verygoodalignment += correctionResult.stats.isHQ;
-
-				if(correctionResult.isCorrected){
-					write_read(b.readId, correctionResult.correctedSequence);
-					lock(b.readId);
-					(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
-					unlock(b.readId);
+					std::cout << std::endl;
+					
+					std::cout << "Consensus: "<< std::endl;					
+					for(int col = 0; col < columnsToCheck; col++){
+						char c = my_consensus[col];
+						std::cout << (c == '\0' ? '0' : c);
+						if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+								std::cout << " ";
+					}
+					std::cout << std::endl;
+					
+					std::cout << "MSA weights:" << std::endl;
+					for(int row = 0; row < msa_rows; row++){
+						for(int col = 0; col < columnsToCheck; col++){
+							float f = my_multiple_sequence_alignment_weight[row * arrays.msa_pitch + col];
+							std::cout << f << " ";
+							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+								std::cout << " ";
+						}
+						std::cout << std::endl;
+					}
+					std::cout << std::endl;
+					
+					std::cout << "Support: "<< std::endl;					
+					for(int col = 0; col < columnsToCheck; col++){
+						std::cout << my_support[col] << " ";
+					}
+					std::cout << std::endl;
+					
+					std::cout << "Coverage: "<< std::endl;					
+					for(int col = 0; col < columnsToCheck; col++){
+						std::cout << my_coverage[col] << " ";
+					}
+					std::cout << std::endl;
+					
+					std::cout << "Orig weights: "<< std::endl;					
+					for(int col = 0; col < columnsToCheck; col++){
+						std::cout << my_orig_weights[col] << " ";
+					}
+					std::cout << std::endl;
+					
+					std::cout << "Orig coverage: "<< std::endl;					
+					for(int col = 0; col < columnsToCheck; col++){
+						std::cout << my_orig_coverage[col] << " ";
+					}
+					std::cout << std::endl;
+					
+					
 				}
+				
+				for(std::size_t subject_index = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
+                    auto& task = correctionTasks[streamIndex][subject_index];
+                    auto& arrays = dataArrays[streamIndex];
+					
+					const char* const my_corrected_subject_data = arrays.h_corrected_subjects + subject_index * arrays.sequence_pitch;
+					const char* const my_corrected_candidates_data = arrays.h_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index] * arrays.sequence_pitch;
+					const int* const my_indices_of_corrected_candidates = arrays.h_indices_of_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index];
+					
+					const bool any_correction_candidates = arrays.h_indices_per_subject[subject_index] > 0;
+					
+					//has subject been corrected ? 
+					task.corrected = arrays.h_subject_is_corrected[subject_index] && any_correction_candidates;
+					//if corrected, copy corrected subject to task
+					if(task.corrected){
+						
+						const int subject_length = task.subject_sequence->length();
+						
+						task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+					}
+					
+					const int n_corrected_candidates = arrays.h_num_corrected_candidates[subject_index];
+					
+					assert((!any_correction_candidates && n_corrected_candidates == 0) || any_correction_candidates);
+					
+					for(int i = 0; i < n_corrected_candidates; ++i){
+						const int global_candidate_index = my_indices_of_corrected_candidates[i];
+						const int local_candidate_index = global_candidate_index - int(task.candidate_sequences.size());
+						
+						const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
+						const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
+						
+						task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
+						
+						task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
+					}
+                }
+                
+                //write result to file 
+                
+                for(std::size_t subject_index = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
+					const auto& task = correctionTasks[streamIndex][subject_index];
+					
+					if(task.corrected){
+						write_read(task.readId, task.corrected_subject);
+						lock(task.readId);
+						(*threadOpts.readIsCorrectedVector)[task.readId] = 1;
+						unlock(task.readId);
+					}
+					
+					for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index){
 
-				for(const auto& correctedCandidate : correctionResult.correctedCandidates){
-					const int count = 1;//b.candidateCounts[correctedCandidate.index];
-					for(int f = 0; f < count; f++){
-						//ReadId_t candidateId = b.candidateIds[b.candidateCountsPrefixSum[correctedCandidate.index] + f];
-                    ReadId_t candidateId = b.candidateIds[correctedCandidate.index];
+						ReadId_t candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
+						const std::string& corrected_candidate = task.corrected_candidates[corrected_candidate_index];
+						
 						bool savingIsOk = false;
 						if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
 							lock(candidateId);
@@ -935,23 +1187,15 @@ namespace gpu{
 							unlock(candidateId);
 						}
 						if (savingIsOk) {
-							//if (b.bestIsForward[correctedCandidate.index])
-                        if(b.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward)
-								write_read(candidateId, correctedCandidate.sequence);
-							else {
-								//correctedCandidate.sequence is reverse complement, make reverse complement again
-								//const std::string fwd = SequenceGeneral(correctedCandidate.sequence, false).reverseComplement().toString();
-                            const std::string fwd = SequenceString(correctedCandidate.sequence).reverseComplement().toString();
-								write_read(candidateId, fwd);
-							}
+							write_read(candidateId, corrected_candidate);
 						}
 					}
 				}
 
     			// update local progress
-    			//nProcessedReads += readIds.size();
+    			nProcessedReads += readIds.size();
 
-    			//readIds = threadOpts.batchGen->getNextReadIds();
+    			readIds = threadOpts.batchGen->getNextReadIds();
 
     		} // end batch processing
 
@@ -996,7 +1240,7 @@ namespace gpu{
     		}
     	#endif
 
-    	#if 1
+    	#if 0
     		{
     			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
 

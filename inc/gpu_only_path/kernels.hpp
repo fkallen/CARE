@@ -3,16 +3,35 @@
 
 #include "../hpc_helpers.cuh"
 #include "bestalignment.hpp"
+#include "msa.hpp"
 #include "../qualityscoreweights.hpp"
 
 #include <stdexcept>
+#include <cassert>
 
+#ifdef __NVCC__
+#include <cub/cub.cuh>
+#endif
 
 
 namespace care{
 namespace gpu{
 
 #ifdef __NVCC__
+	
+	void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                                        BestAlignment_t* d_alignment_best_alignment_flags,
+                                        const int* d_alignment_overlaps,
+                                        const int* d_alignment_nOps,
+                                        const int* d_indices,
+										const int* d_indices_per_subject,
+										const int* d_indices_per_subject_prefixsum,
+                                        int n_subjects,
+										int n_candidates,
+										const int* d_num_indices,
+										double binsize,
+										int min_remaining_candidates_per_subject,
+										cudaStream_t stream);
 
     void call_msa_init_kernel_async(
                         MSAColumnProperties* d_msa_column_properties,
@@ -35,7 +54,7 @@ namespace gpu{
                             int* const d_origCoverages,
                             const char* const d_multiple_sequence_alignments,
                             const float* const d_multiple_sequence_alignment_weights,
-                            const MSAColumnProperties* const d_msa_column_properties,
+                            const MSAColumnProperties* d_msa_column_properties,
                             const int* const d_candidates_per_subject_prefixsum,
                             const int* d_indices_per_subject,
                             const int* d_indices_per_subject_prefixsum,
@@ -47,16 +66,17 @@ namespace gpu{
                             int msa_max_column_count,
                             cudaStream_t stream);
 
-    void call_msa_correct_subject_kernel_async(
+void call_msa_correct_subject_kernel_async(
                             const char* d_consensus,
                             const float* d_support,
                             const int* d_coverage,
                             const int* d_origCoverages,
                             const char* d_multiple_sequence_alignments,
-                            const MSAColumnProperties* const d_msa_column_properties,
+                            const MSAColumnProperties* d_msa_column_properties,
                             const int* d_indices_per_subject_prefixsum,
                             bool* d_is_high_quality_subject,
                             char* d_corrected_subjects,
+							bool* d_subject_is_corrected,
                             int n_subjects,
                             int n_queries,
                             int n_indices,
@@ -98,13 +118,12 @@ namespace gpu{
                                     double min_overlap_ratio,
                                     Accessor getChar,
                                     RevCompl make_reverse_complement_inplace){
+		
+        using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
 
-        constexpr int WARPSIZE = 32;
-        constexpr int NWARPS = (BLOCKSIZE + WARPSIZE - 1) / WARPSIZE;
-
-        static_assert(sizeof(int2) == sizeof(unsigned long long), "sizeof(int2) != sizeof(unsigned long long)");
-        static_assert(BLOCKSIZE % WARPSIZE == 0,
-            "BLOCKSIZE must be multiple of WARPSIZE");
+        __shared__ union {
+            typename BlockReduceInt2::TempStorage reduce;
+        } temp_storage;
 
         extern __shared__ char smem[];
 
@@ -178,33 +197,14 @@ namespace gpu{
             // pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
             int2 myval = make_int2(bestScore, bestShift);
-
-            __shared__ unsigned long long blockreducetmp[NWARPS];
-
-            auto func = [](unsigned long long a, unsigned long long b){
-                return (*((int2*)&a)).x < (*((int2*)&b)).x ? a : b;
-            };
-
-            auto tile = tiled_partition<32>(this_thread_block());
-            unsigned long long tilereduced = reduceTile(tile,
-                                        *((unsigned long long*)&myval),
-                                        func);
-            int warp = threadIdx.x / WARPSIZE;
-            if(tile.thread_rank() == 0)
-                blockreducetmp[warp] = tilereduced;
-
-            __syncthreads();
+			
+			myval = BlockReduceInt2(temp_storage.reduce).Reduce(myval, [](auto a, auto b){return a.x < b.x ? a : b;});
+			__syncthreads();
 
             //make result
             if(threadIdx.x == 0){
-                //reduce warp results
-                unsigned long long reduced = blockreducetmp[0];
-                for(int i = 0; i < NWARPS; i++){
-                    reduced = func(reduced, blockreducetmp[i]);
-                }
-
-                bestScore = ((int2*)&reduced)->x;
-                bestShift = ((int2*)&reduced)->y;
+                bestScore = myval.x;
+                bestShift = myval.y;
 
                 const int queryoverlapbegin_incl = max(-bestShift, 0);
                 const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
@@ -238,7 +238,7 @@ namespace gpu{
                             int min_overlap,
                             double maxErrorRate,
                             double min_overlap_ratio,
-                            Accessor getChar,
+                            Accessor accessor,
                             RevCompl make_reverse_complement_inplace,
                             int n_queries,
                             int maxSubjectLength,
@@ -254,16 +254,16 @@ namespace gpu{
 
           #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)> \
                                       <<<grid, block, smem, stream>>>( \
-                                          d_alignment_scores,
-                                          d_alignment_overlaps,
-                                          d_alignment_shifts,
-                                          d_alignment_nOps,
-                                          d_alignment_isValid,
-                                          d_subject_sequences_data,
-                                          d_candidate_sequences_data,
-                                          d_subject_sequences_lengths,
-                                          d_candidate_sequences_lengths,
-                                          d_candidates_per_subject_prefixsum,
+                                          d_alignment_scores, \
+                                          d_alignment_overlaps, \
+                                          d_alignment_shifts, \
+                                          d_alignment_nOps, \
+                                          d_alignment_isValid, \
+                                          d_subject_sequences_data, \
+                                          d_candidate_sequences_data, \
+                                          d_subject_sequences_lengths, \
+                                          d_candidate_sequences_lengths, \
+                                          d_candidates_per_subject_prefixsum, \
                                           n_subjects, \
                                           max_sequence_bytes, \
                                           encodedsequencepitch, \
@@ -271,7 +271,7 @@ namespace gpu{
                                           maxErrorRate, \
                                           min_overlap_ratio, \
                                           accessor, \
-                                          make_reverse_complement); CUERR;
+                                          make_reverse_complement_inplace); CUERR;
 
           switch(block.x){
           case 32: mycall(32); break;
@@ -298,18 +298,20 @@ namespace gpu{
     __global__
     void cuda_find_best_alignment_kernel(
                                         BestAlignment_t* d_alignment_best_alignment_flags,
-                                        int* d_alignment_scores
+                                        int* d_alignment_scores,
                                         int* d_alignment_overlaps,
-                                        int* d_alignment_shifts
+                                        int* d_alignment_shifts,
                                         int* d_alignment_nOps,
                                         bool* d_alignment_isValid,
                                         const int* d_subject_sequences_lengths,
                                         const int* d_candidate_sequences_lengths,
                                         const int* d_candidates_per_subject_prefixsum,
                                         int n_subjects,
+										int n_queries,
+										double min_overlap_ratio,
+                                        int min_overlap,
+                                        double maxErrorRate,
                                         AlignmentComp comp){
-
-        const int n_queries = NqueriesPrefixSum[Nsubjects];
 
         for(unsigned resultIndex = threadIdx.x + blockDim.x * blockIdx.x; resultIndex < n_queries; resultIndex += gridDim.x * blockDim.x){
             const unsigned fwdIndex = resultIndex;
@@ -331,23 +333,35 @@ namespace gpu{
 
             //find subjectindex
             int subjectIndex = 0;
-            for(; subjectIndex < Nsubjects; subjectIndex++){
-                if(resultIndex < NqueriesPrefixSum[subjectIndex+1])
+            for(; subjectIndex < n_subjects; subjectIndex++){
+                if(resultIndex < d_candidates_per_subject_prefixsum[subjectIndex+1])
                     break;
             }
 
             const int subjectlength = d_subject_sequences_lengths[subjectIndex];
 
-            const BestAlignment_t flag = comp(fwd_alignment_overlap,
+            /*const BestAlignment_t flag = comp(fwd_alignment_overlap,
                                                 revc_alignment_overlap,
                                                 fwd_alignment_nops,
                                                 revc_alignment_nops,
                                                 fwd_alignment_isvalid,
                                                 revc_alignment_isvalid,
                                                 subjectlength,
-                                                querylength);
+                                                querylength);*/
+			
+			const BestAlignment_t flag = choose_best_alignment(fwd_alignment_overlap,
+																revc_alignment_overlap,
+																fwd_alignment_nops,
+																revc_alignment_nops,
+																fwd_alignment_isvalid,
+																revc_alignment_isvalid,
+																subjectlength,
+																querylength,
+																min_overlap_ratio,
+																min_overlap,
+																maxErrorRate);
 
-            bestAlignmentFlags[resultIndex] = flag;
+            d_alignment_best_alignment_flags[resultIndex] = flag;
 
             d_alignment_scores[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_score : revc_alignment_score;
             d_alignment_overlaps[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_overlap : revc_alignment_overlap;
@@ -360,15 +374,18 @@ namespace gpu{
     template<class AlignmentComp>
     void call_cuda_find_best_alignment_kernel_async(
                                         BestAlignment_t* d_alignment_best_alignment_flags,
-                                        int* d_alignment_scores
+                                        int* d_alignment_scores,
                                         int* d_alignment_overlaps,
-                                        int* d_alignment_shifts
+                                        int* d_alignment_shifts,
                                         int* d_alignment_nOps,
                                         bool* d_alignment_isValid,
                                         const int* d_subject_sequences_lengths,
                                         const int* d_candidate_sequences_lengths,
                                         const int* d_candidates_per_subject_prefixsum,
                                         int n_subjects,
+										double min_overlap_ratio,
+                                        int min_overlap,
+                                        double maxErrorRate,
                                         AlignmentComp d_comp,
                                         int n_queries,
                                         cudaStream_t stream){
@@ -378,18 +395,113 @@ namespace gpu{
 
         cuda_find_best_alignment_kernel<<<grid, block, 0, stream>>>(
                                                 d_alignment_best_alignment_flags,
-                                                d_alignment_scores
+                                                d_alignment_scores,
                                                 d_alignment_overlaps,
-                                                d_alignment_shifts
+                                                d_alignment_shifts,
                                                 d_alignment_nOps,
                                                 d_alignment_isValid,
                                                 d_subject_sequences_lengths,
                                                 d_candidate_sequences_lengths,
                                                 d_candidates_per_subject_prefixsum,
                                                 n_subjects,
+												n_queries,
+												min_overlap_ratio,
+												min_overlap,
+												maxErrorRate,
                                                 d_comp); CUERR;
 
     }
+    
+    /*
+	 * 
+	 */
+	
+	template<int BLOCKSIZE>
+    __global__
+    void cuda_filter_alignments_by_mismatchratio_kernel(
+                                        BestAlignment_t* d_alignment_best_alignment_flags,
+                                        const int* d_alignment_overlaps,
+                                        const int* d_alignment_nOps,
+                                        const int* d_indices,
+										const int* d_indices_per_subject,
+										const int* d_indices_per_subject_prefixsum,
+                                        int n_subjects,
+										int n_candidates,
+										const int* d_num_indices,
+										double binsize,
+										int min_remaining_candidates_per_subject){
+		
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceInt::TempStorage intreduce;
+			int broadcast[3];
+        } temp_storage;
+		
+        for(int subjectindex = blockDim.x; subjectindex < n_subjects; subjectindex += gridDim.x){
+			
+			const int my_n_indices = d_indices_per_subject[subjectindex];
+			const int* my_indices = d_indices + d_indices_per_subject_prefixsum[subjectindex];
+			
+			int counts[3]{0,0,0};
+			
+			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
+				const int candidate_index = my_indices[index];
+				const int alignment_overlap = d_alignment_overlaps[candidate_index];
+				const int alignment_nops = d_alignment_nOps[candidate_index];
+				
+				const double mismatchratio = double(alignment_nops) / alignment_overlap;
+				
+				assert(mismatchratio < 4 * binsize);
+				
+				#pragma unroll
+				for(int i = 2; i <= 4; i++){
+					counts[i-2] += (mismatchratio < i * binsize);
+				}
+			}
+			
+			//accumulate counts over block
+			#pragma unroll
+			for(int i = 0; i < 3; i++){
+				counts[i] = BlockReduceInt(temp_storage.intreduce).Sum(counts[i]);
+				__syncthreads();
+			}
+			
+			//broadcast accumulated counts to block
+			#pragma unroll
+			for(int i = 0; i < 3; i++){
+				if(threadIdx.x == 0){
+					temp_storage.broadcast[i] = counts[i];
+				}
+				__syncthreads();
+				counts[i] = temp_storage.broadcast[i];
+			}
+			
+			double mismatchratioThreshold = 0;
+			if (counts[0] >= min_remaining_candidates_per_subject) {
+				mismatchratioThreshold = 2 * binsize;
+			} else if (counts[1] >= min_remaining_candidates_per_subject) {
+				mismatchratioThreshold = 3 * binsize;
+			} else if (counts[2] >= min_remaining_candidates_per_subject) {
+				mismatchratioThreshold = 4 * binsize;
+			} else { 
+				mismatchratioThreshold = -1; //this will invalidate all alignments for subject
+			}
+			
+			// Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
+			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
+				const int candidate_index = my_indices[index];
+				const int alignment_overlap = d_alignment_overlaps[candidate_index];
+				const int alignment_nops = d_alignment_nOps[candidate_index];
+				
+				const double mismatchratio = double(alignment_nops) / alignment_overlap;
+				
+				const bool remove = mismatchratio >= mismatchratioThreshold;
+				if(remove)
+					d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
+			}
+        }
+    } 
 
 
     template<class Accessor>
@@ -415,7 +527,7 @@ namespace gpu{
                             int n_indices,
                             bool canUseQualityScores,
                             size_t encoded_sequence_pitch,
-                            size_t quality_pitch
+                            size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
                             Accessor get_as_nucleotide){
@@ -463,6 +575,8 @@ namespace gpu{
             const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
             const int localQueryIndex = queryIndex - d_candidates_per_subject_prefixsum[subjectIndex];
             const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+			
+			const int candidates_before_this_subject = d_indices_per_subject_prefixsum[subjectIndex];
 
             const unsigned offset1 = msa_row_pitch * (subjectIndex + candidates_before_this_subject);
             const unsigned offset2 = msa_weights_row_pitch_floats * (subjectIndex + candidates_before_this_subject);
@@ -470,7 +584,7 @@ namespace gpu{
             char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
-            const char* const query = d_candidate_sequences_data + queryIndex * sequencepitch;
+            const char* const query = d_candidate_sequences_data + queryIndex * encoded_sequence_pitch;
             const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
 
             assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
@@ -510,7 +624,7 @@ namespace gpu{
                             int n_indices,
                             bool canUseQualityScores,
                             size_t encoded_sequence_pitch,
-                            size_t quality_pitch
+                            size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
                             Accessor get_as_nucleotide,
@@ -536,13 +650,13 @@ namespace gpu{
                                                             d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
-                                                            n_indices
+                                                            n_indices,
                                                             canUseQualityScores,
                                                             encoded_sequence_pitch,
                                                             quality_pitch,
                                                             msa_row_pitch,
-                                                            msa_weights_row_pitch); CUERR;
-
+                                                            msa_weights_row_pitch,
+															get_as_nucleotide); CUERR;
     }
 
 
@@ -555,10 +669,11 @@ namespace gpu{
                             const int* __restrict__ d_coverage,
                             const int* __restrict__ d_origCoverages,
                             const char* __restrict__ d_multiple_sequence_alignments,
-                            const MSAColumnProperties* const __restrict__ d_msa_column_properties,
+                            const MSAColumnProperties* __restrict__ d_msa_column_properties,
                             const int* __restrict__ d_indices_per_subject_prefixsum,
                             bool* __restrict__ d_is_high_quality_subject,
                             char* __restrict__ d_corrected_subjects,
+							bool* __restrict__ d_subject_is_corrected,
                             int n_subjects,
                             int n_queries,
                             int n_indices,
@@ -621,9 +736,15 @@ namespace gpu{
             }
 
             avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
+			__syncthreads();
+			
             min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
+			__syncthreads();
+			
             //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
+			
             min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
+			__syncthreads();
 
             avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
 
@@ -639,7 +760,6 @@ namespace gpu{
 
             if(isHQ){
                 for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
                     my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                 }
                 if(threadIdx.x == 0){
@@ -657,16 +777,16 @@ namespace gpu{
                 const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
 
                 bool foundAColumn = false;
-                for(int i = 0; i < subjectlength; i++){
+                for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
                     const int globalIndex = subjectColumnsBegin_incl + i;
 
-                    if(my_support[globalIndex] > 0.5 && my_orig_coverage[globalIndex] < min_coverage_threshold){
+                    if(my_support[globalIndex] > 0.5 && my_orig_coverage[globalIndex] <= min_coverage_threshold){
                         double avgsupportkregion = 0;
                         int c = 0;
                         bool kregioncoverageisgood = true;
 
                         for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
-                            if(j != i && j >= 0 && j < subjectlength){
+                            if(j != i && j >= 0 && j < subjectLength){
                                 avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
                                 kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
                                 c++;
@@ -674,6 +794,10 @@ namespace gpu{
                         }
 
                         avgsupportkregion /= c;
+						
+						//if(i == 33 || i == 34){
+						//	printf("%d %f\n", i, avgsupportkregion);
+						//}
                         if(kregioncoverageisgood && avgsupportkregion >= 1.0-estimatedErrorrate){
                             my_corrected_subject[i] = my_consensus[globalIndex];
                             foundAColumn = true;
@@ -681,7 +805,9 @@ namespace gpu{
                     }
                 }
                 //perform block wide or-reduction on foundAColumn
-                foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b});
+                foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
+				__syncthreads();
+				
                 if(threadIdx.x == 0){
                     d_subject_is_corrected[subjectIndex] = foundAColumn;
                 }
@@ -689,74 +815,207 @@ namespace gpu{
         }
     }
 
-    void call_msa_correct_subject_kernel_async(
-                            const char* d_consensus,
-                            const float* d_support,
-                            const int* d_coverage,
-                            const int* d_origCoverages,
-                            const char* d_multiple_sequence_alignments,
-                            const MSAColumnProperties* const d_msa_column_properties,
-                            const int* d_indices_per_subject_prefixsum,
-                            bool* d_is_high_quality_subject,
-                            char* d_corrected_subjects,
+
+    template<int BLOCKSIZE, class RevCompl>
+    __global__
+    void msa_correct_candidates_kernel(
+                            const char* __restrict__ d_consensus,
+                            const float* __restrict__ d_support,
+                            const int* __restrict__ d_coverage,
+                            const int* __restrict__ d_origCoverages,
+                            const char* __restrict__ d_multiple_sequence_alignments,
+                            const MSAColumnProperties* __restrict__ d_msa_column_properties,
+							const int* __restrict__ d_indices,
+							const int* __restrict__ d_indices_per_subject,
+                            const int* __restrict__ d_indices_per_subject_prefixsum,
+                            const int* __restrict__ d_high_quality_subject_indices,
+							const int* __restrict__ d_num_high_quality_subject_indices,
+							const int* __restrict__ d_alignment_shifts,
+							const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+							const int* __restrict__ d_candidate_sequences_lengths,
+							int* __restrict__ d_num_corrected_candidates,
+							char* __restrict__ d_corrected_candidates,
+							int* __restrict__ d_indices_of_corrected_candidates,
                             int n_subjects,
                             int n_queries,
                             int n_indices,
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
-                            double estimatedErrorrate,
-                            double avg_support_threshold,
                             double min_support_threshold,
                             double min_coverage_threshold,
-                            int k_region,
-                            int maximum_sequence_length,
-                            cudaStream_t stream){
+                            int new_columns_to_correct,
+							RevCompl make_unpacked_reverse_complement_inplace){
 
-        const int max_block_size = 256;
-        const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+		const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
 
-        dim3 block(blocksize, 1, 1);
-        dim3 grid(n_subjects);
+        for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x){
+			const int subjectIndex = d_high_quality_subject_indices[index];
+			const int my_num_candidates = d_indices_per_subject[subjectIndex];
+			
+            const float* const my_support = d_support + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_coverage = d_coverage + msa_weights_pitch_floats * subjectIndex;
+            //const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
+            const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
+            char* const my_corrected_candidates = d_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
+			int* const my_indices_of_corrected_candidates = d_indices_of_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex];
 
-        #define mycall(blocksize) msa_correct_subject_kernel<(blocksize)> \
-                                <<<grid, block, 0, stream>>>( \
-                                    d_consensus, \
-                                    d_support, \
-                                    d_coverage, \
-                                    d_origCoverages, \
-                                    d_multiple_sequence_alignments, \
-                                    d_msa_column_properties, \
-                                    d_indices_per_subject_prefixsum, \
-                                    d_is_high_quality_subject, \
-                                    d_corrected_subjects, \
-                                    n_subjects, \
-                                    n_queries, \
-                                    n_indices, \
-                                    sequence_pitch, \
-                                    msa_pitch, \
-                                    msa_weights_pitch, \
-                                    estimatedErrorrate, \
-                                    avg_support_threshold, \
-                                    min_support_threshold, \
-                                    min_coverage_threshold, \
-                                    k_region); CUERR;
+            const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
+            const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+			
+			//const unsigned offset1 = msa_pitch * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
+			//const char* const my_multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
+			
+			int n_corrected_candidates = 0;
+						
+			for(int i = 0; i < my_num_candidates; ++i){
+				const int global_candidate_index = d_indices[index];
+				const int shift = d_alignment_shifts[global_candidate_index];
+				const int candidate_length = d_candidate_sequences_lengths[global_candidate_index];
+				const BestAlignment_t bestAlignmentFlag = d_alignment_best_alignment_flags[global_candidate_index];
+				const int queryColumnsBegin_incl = shift - properties.startindex;
+				const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidate_length;
+				
+				//check range condition and length condition
+				if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+					&& queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
+					&& queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
 
-        assert(blocksize > 0 && blocksize <= max_block_size);
+					double newColMinSupport = 1.0;
+					int newColMinCov = std::numeric_limits<int>::max();
+					//check new columns left of subject
+					for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
+						columnindex < subjectColumnsBegin_incl;
+						columnindex++){
 
-        switch(blocksize){
-            case 32: mycall(32); break;
-            case 64: mycall(64); break;
-            case 96: mycall(96); break;
-            case 128: mycall(128); break;
-            case 160: mycall(160); break;
-            case 192: mycall(192); break;
-            case 224: mycall(224); break;
-            case 256: mycall(256); break;
-            default: mycall(256); break;
+						assert(columnindex < properties.columnsToCheck);
+						if(queryColumnsBegin_incl <= columnindex){
+							newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
+							newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
+						}
+					}
+					//check new columns right of subject
+					for(int columnindex = subjectColumnsEnd_excl;
+						columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+						&& columnindex < properties.columnsToCheck;
+						columnindex++){
+
+						newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
+						newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
+					}
+
+					if(newColMinSupport >= min_support_threshold
+						&& newColMinCov >= min_coverage_threshold){
+						
+						for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE){
+							my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+						}
+					
+						if(threadIdx.x == 0){
+							//the forward strand will be returned -> make reverse complement again
+							if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+								make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + n_corrected_candidates * sequence_pitch), candidate_length);
+							}
+							my_indices_of_corrected_candidates[n_corrected_candidates] = global_candidate_index;
+						}
+						
+						++n_corrected_candidates;
+					}
+				}
+			}
+			
+			if(threadIdx.x == 0){
+				d_num_corrected_candidates[subjectIndex] = n_corrected_candidates;
+			}
         }
-
     }
+    
+    template<class RevCompl>
+    void call_msa_correct_candidates_kernel_async(
+                            const char* d_consensus,
+                            const float* d_support,
+                            const int* d_coverage,
+                            const int* d_origCoverages,
+                            const char* d_multiple_sequence_alignments,
+                            const MSAColumnProperties* d_msa_column_properties,
+							const int* d_indices,
+							const int* d_indices_per_subject,
+                            const int* d_indices_per_subject_prefixsum,
+                            const int* d_high_quality_subject_indices,
+							const int* d_num_high_quality_subject_indices,
+							const int* d_alignment_shifts,
+							const BestAlignment_t* d_alignment_best_alignment_flags,
+							const int* d_candidate_sequences_lengths,
+							int* d_num_corrected_candidates,
+							char* d_corrected_candidates,
+							int* d_indices_of_corrected_candidates,
+                            int n_subjects,
+                            int n_queries,
+                            int n_indices,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            double min_support_threshold,
+                            double min_coverage_threshold,
+                            int new_columns_to_correct,
+							RevCompl make_unpacked_reverse_complement_inplace,
+							int maximum_sequence_length,
+							cudaStream_t stream){
+		
+		const int max_block_size = 256;
+		const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+
+		dim3 block(blocksize, 1, 1);
+		dim3 grid(n_subjects);
+
+		#define mycall(blocksize) msa_correct_candidates_kernel<(blocksize)> \
+								<<<grid, block, 0, stream>>>( \
+									d_consensus, \
+									d_support, \
+									d_coverage, \
+									d_origCoverages, \
+									d_multiple_sequence_alignments, \
+									d_msa_column_properties, \
+									d_indices, \
+									d_indices_per_subject, \
+									d_indices_per_subject_prefixsum, \
+									d_high_quality_subject_indices, \
+									d_num_high_quality_subject_indices, \
+									d_alignment_shifts, \
+									d_alignment_best_alignment_flags, \
+									d_candidate_sequences_lengths, \
+									d_num_corrected_candidates, \
+									d_corrected_candidates, \
+									d_indices_of_corrected_candidates, \
+									n_subjects, \
+									n_queries, \
+									n_indices, \
+									sequence_pitch, \
+									msa_pitch, \
+									msa_weights_pitch, \
+									min_support_threshold, \
+									min_coverage_threshold, \
+									new_columns_to_correct, \
+									make_unpacked_reverse_complement_inplace); CUERR;
+
+		assert(blocksize > 0 && blocksize <= max_block_size);
+
+		switch(blocksize){
+			case 32: mycall(32); break;
+			case 64: mycall(64); break;
+			case 96: mycall(96); break;
+			case 128: mycall(128); break;
+			case 160: mycall(160); break;
+			case 192: mycall(192); break;
+			case 224: mycall(224); break;
+			case 256: mycall(256); break;
+			default: mycall(256); break;
+		}	
+		
+		#undef mycall
+	}
 
 
 
