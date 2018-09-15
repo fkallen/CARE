@@ -28,6 +28,10 @@
 #include <future>
 
 
+//EXPERIMENTAL
+#include "gpu_only_path/correct_only_gpu.hpp"
+
+
 
 #ifdef __NVCC__
 #include <cuda_profiler_api.h>
@@ -880,7 +884,8 @@ void correct(const MinhashOptions& minhashOptions,
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
-	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
+	//using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
+	using ErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, BatchGenerator<ReadId_t>>;
 
       // initialize qscore-to-weight lookup table
   	init_weights();
@@ -986,8 +991,8 @@ void correct(const MinhashOptions& minhashOptions,
         typename ErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-        threadOpts.gpuThresholdSHD = deviceIds.size() == 0 ? 0 : gpuThresholdsSHD[threadId % deviceIds.size()];
-        threadOpts.gpuThresholdSGA = deviceIds.size() == 0 ? 0 : gpuThresholdsSGA[threadId % deviceIds.size()];
+        //threadOpts.gpuThresholdSHD = deviceIds.size() == 0 ? 0 : gpuThresholdsSHD[threadId % deviceIds.size()];
+        //threadOpts.gpuThresholdSGA = deviceIds.size() == 0 ? 0 : gpuThresholdsSGA[threadId % deviceIds.size()];
         threadOpts.canUseGpu = runtimeOptions.canUseGpu;
         threadOpts.outputfile = tmpfiles[threadId];
         threadOpts.batchGen = &generators[threadId];
