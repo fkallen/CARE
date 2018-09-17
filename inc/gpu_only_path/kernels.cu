@@ -83,28 +83,7 @@ namespace gpu{
 
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
             MSAColumnProperties* const properties_ptr = msa_column_properties + subjectIndex;
-#if 0
 
-            const int queryIndexBegin = candidates_per_subject_prefixsum[subjectIndex];
-            const int queryIndexEnd = candidates_per_subject_prefixsum[subjectIndex+1];
-
-            const int subjectLength = subject_sequences_lengths[subjectIndex];
-            int startindex = 0;
-            int endindex = subject_sequences_lengths[subjectIndex];
-
-            for(int queryIndex = queryIndexBegin+threadIdx.x; queryIndex < queryIndexEnd; queryIndex += blockDim.x){
-                const int shift = alignment_shifts[queryIndex];
-                const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
-                const int queryLength = candidate_sequences_lengths[queryIndex];
-
-                if(flag != BestAlignment_t::None){
-                    const int shift = result.shift;
-                    const int queryEndsAt = queryLength + shift;
-                    startindex = min(startindex, shift);
-                    endindex = max(startindex, queryEndsAt);
-                }
-            }
-#else
             // We only want to consider the candidates with good alignments. the indices of those were determined in a previous step
             const int num_indices_for_this_subject = indices_per_subject[subjectIndex];
             const int* const indices_for_this_subject = indices + indices_per_subject_prefixsum[subjectIndex];
@@ -115,7 +94,7 @@ namespace gpu{
 
             for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
                 const int queryIndex = indices_for_this_subject[index];
-
+				
                 const int shift = alignment_shifts[queryIndex];
                 const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
                 const int queryLength = candidate_sequences_lengths[queryIndex];
@@ -123,11 +102,9 @@ namespace gpu{
                 if(flag != BestAlignment_t::None){
                     const int queryEndsAt = queryLength + shift;
                     startindex = min(startindex, shift);
-                    endindex = max(startindex, queryEndsAt);
+                    endindex = max(endindex, queryEndsAt);
                 }
             }
-
-#endif
 			
 			startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
 			__syncthreads();
@@ -179,6 +156,7 @@ namespace gpu{
                                                     n_subjects); CUERR;
 		
 		switch(blocksize){
+			case 1: mycall(1); break;
             case 32: mycall(32); break;
             case 64: mycall(64); break;
             case 96: mycall(96); break;
@@ -279,7 +257,9 @@ namespace gpu{
                     columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
                 }
 
-                //assert(columnCoverage > 0);
+				if(columnCoverage <= 0){
+					//assert(columnCoverage > 0);
+				}
 
                 const float columnWeight = Aw + Cw + Gw + Tw;
                 float consWeight = Aw;
@@ -296,6 +276,7 @@ namespace gpu{
 
                 my_consensus[column] = cons;
                 my_support[column] = consWeight / columnWeight;
+				//printf("subject %d, column %d, support %f\n", subjectIndex, column, my_support[column]);
                 my_coverage[column] = columnCoverage;
 
                 if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
@@ -339,7 +320,7 @@ namespace gpu{
                             cudaStream_t stream){
 
         const int blocksize = 128;
-        const int blocks_per_msa = SDIV(msa_max_column_count, blocksize);
+        const int blocks_per_msa = 2; //SDIV(msa_max_column_count, blocksize);
 
         dim3 block(blocksize, 1, 1);
         dim3 grid(n_subjects * blocks_per_msa, 1, 1);

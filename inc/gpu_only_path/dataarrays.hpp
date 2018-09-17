@@ -122,7 +122,7 @@ namespace gpu{
                 subject_indices_data_size = total_subject_indices_data_size;
             }
 
-            h_subject_indices = (int*)subject_indices_data_device;
+            h_subject_indices = (int*)subject_indices_data_host;
             h_high_quality_subject_indices = (int*)(((char*)h_subject_indices) + memSubjectIndices);
             h_is_high_quality_subject = (bool*)(((char*)h_high_quality_subject_indices) + memHQSubjectIndices);
             h_num_high_quality_subject_indices = (int*)(((char*)h_is_high_quality_subject) + memIsHQSubject);
@@ -176,30 +176,31 @@ namespace gpu{
             d_indices_per_subject_prefixsum = (int*)(((char*)d_indices_per_subject) + memIndicesPerSubject);
         }
 
-        void allocateCorrectionData(){
+        void allocateCorrectionData(bool useQualityScores){
             //qualities
 
-            std::size_t memCandidateQualities = n_indices * quality_pitch;
-            std::size_t memSubjectQualities = n_subjects * quality_pitch;
+			if(useQualityScores){
+				std::size_t memCandidateQualities = n_indices * quality_pitch;
+				std::size_t memSubjectQualities = n_subjects * quality_pitch;
 
-            std::size_t total_qualities_transfer_data_size = memCandidateQualities
-                                                            + memSubjectQualities;
+				std::size_t total_qualities_transfer_data_size = memCandidateQualities
+																+ memSubjectQualities;
 
-            if(total_qualities_transfer_data_size > qualities_transfer_data_size){
-                cudaFree(qualities_transfer_data_device); CUERR;
-                cudaMalloc(&qualities_transfer_data_device, std::size_t(total_qualities_transfer_data_size * allocfactor)); CUERR;
-                cudaFreeHost(qualities_transfer_data_host); CUERR;
-                cudaMallocHost(&qualities_transfer_data_host, std::size_t(total_qualities_transfer_data_size * allocfactor)); CUERR;
+				if(total_qualities_transfer_data_size > qualities_transfer_data_size){
+					cudaFree(qualities_transfer_data_device); CUERR;
+					cudaMalloc(&qualities_transfer_data_device, std::size_t(total_qualities_transfer_data_size * allocfactor)); CUERR;
+					cudaFreeHost(qualities_transfer_data_host); CUERR;
+					cudaMallocHost(&qualities_transfer_data_host, std::size_t(total_qualities_transfer_data_size * allocfactor)); CUERR;
 
-                qualities_transfer_data_size = std::size_t(total_qualities_transfer_data_size * allocfactor);
-            }
+					qualities_transfer_data_size = std::size_t(total_qualities_transfer_data_size * allocfactor);
+				}
 
-            h_candidate_qualities = (char*)qualities_transfer_data_host;
-            h_subject_qualities = (char*)(((char*)h_candidate_qualities) + memCandidateQualities);
+				h_candidate_qualities = (char*)qualities_transfer_data_host;
+				h_subject_qualities = (char*)(((char*)h_candidate_qualities) + memCandidateQualities);
 
-            d_candidate_qualities = (char*)qualities_transfer_data_device;
-            d_subject_qualities = (char*)(((char*)d_candidate_qualities) + memCandidateQualities);
-
+				d_candidate_qualities = (char*)qualities_transfer_data_device;
+				d_subject_qualities = (char*)(((char*)d_candidate_qualities) + memCandidateQualities);
+			}
 
             //correction results
 
@@ -235,6 +236,8 @@ namespace gpu{
             d_num_corrected_candidates = (int*)(((char*)d_corrected_candidates) + memCorrectedCandidates);
             d_subject_is_corrected = (bool*)(((char*)d_num_corrected_candidates) + memNumCorrectedCandidates);
 			d_indices_of_corrected_candidates = (int*)(((char*)d_subject_is_corrected) + memSubjectIsCorrected);
+			
+			
 
 
             //multiple sequence alignment
@@ -245,11 +248,11 @@ namespace gpu{
 
             std::size_t memMultipleSequenceAlignment = (n_subjects + n_indices) * msa_pitch;
             std::size_t memMultipleSequenceAlignmentWeights = (n_subjects + n_indices) * msa_weights_pitch;
-            std::size_t memConsensus = SDIV(msa_max_column_count * n_subjects * sizeof(char), padding_bytes) * padding_bytes;
-            std::size_t memSupport = SDIV(msa_max_column_count * n_subjects * sizeof(float), padding_bytes) * padding_bytes;
-            std::size_t memCoverage = SDIV(msa_max_column_count * n_subjects * sizeof(int), padding_bytes) * padding_bytes;
-            std::size_t memOrigWeights = SDIV(msa_max_column_count * n_subjects * sizeof(float), padding_bytes) * padding_bytes;
-            std::size_t memOrigCoverage = SDIV(msa_max_column_count * n_subjects * sizeof(int), padding_bytes) * padding_bytes;
+            std::size_t memConsensus = n_subjects * msa_pitch;
+            std::size_t memSupport = n_subjects * msa_weights_pitch;
+            std::size_t memCoverage = n_subjects * msa_weights_pitch;
+            std::size_t memOrigWeights = n_subjects * msa_weights_pitch;
+            std::size_t memOrigCoverage = n_subjects * msa_weights_pitch;
             std::size_t memMSAColumnProperties = SDIV(n_subjects * sizeof(MSAColumnProperties), padding_bytes) * padding_bytes;
             std::size_t memIsHighQualityMSA = SDIV(n_subjects *  sizeof(bool), padding_bytes) * padding_bytes;
 
@@ -298,6 +301,28 @@ namespace gpu{
                 tmp_storage_size = std::size_t(newsize * allocfactor);
             }
         }
+        
+        void zero_cpu(){
+			std::memset(msa_data_host, 0, msa_data_size); CUERR;
+			std::memset(correction_results_transfer_data_host, 0, correction_results_transfer_data_size); CUERR;
+			std::memset(qualities_transfer_data_host, 0, qualities_transfer_data_size); CUERR;
+			std::memset(indices_transfer_data_host, 0, indices_transfer_data_size); CUERR;
+			std::memset(h_num_indices, 0, sizeof(int)); CUERR;
+			std::memset(subject_indices_data_host, 0, subject_indices_data_size); CUERR;
+			std::memset(alignment_result_data_host, 0, alignment_result_data_size); CUERR;
+			std::memset(alignment_transfer_data_host, 0, alignment_transfer_data_size); CUERR;
+		}
+		
+		void zero_gpu(){
+			cudaMemset(msa_data_device, 0, msa_data_size); CUERR;
+			cudaMemset(correction_results_transfer_data_device, 0, correction_results_transfer_data_size); CUERR;
+			cudaMemset(qualities_transfer_data_device, 0, qualities_transfer_data_size); CUERR;
+			cudaMemset(indices_transfer_data_device, 0, indices_transfer_data_size); CUERR;
+			cudaMemset(d_num_indices, 0, sizeof(int)); CUERR;
+			cudaMemset(subject_indices_data_device, 0, subject_indices_data_size); CUERR;
+			cudaMemset(alignment_result_data_device, 0, alignment_result_data_size); CUERR;
+			cudaMemset(alignment_transfer_data_device, 0, alignment_transfer_data_size); CUERR;
+		}
 
         void reset(){
             auto& a = *this;

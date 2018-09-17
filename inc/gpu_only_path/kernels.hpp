@@ -18,7 +18,7 @@ namespace care{
 namespace gpu{
 
 #ifdef __NVCC__
-	
+
 	void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
                                         BestAlignment_t* d_alignment_best_alignment_flags,
                                         const int* d_alignment_overlaps,
@@ -118,7 +118,7 @@ void call_msa_correct_subject_kernel_async(
                                     double min_overlap_ratio,
                                     Accessor getChar,
                                     RevCompl make_reverse_complement_inplace){
-		
+
         using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
 
         __shared__ union {
@@ -197,7 +197,7 @@ void call_msa_correct_subject_kernel_async(
             // pack both score and shift into int2 and perform int2-reduction by only comparing the score
 
             int2 myval = make_int2(bestScore, bestShift);
-			
+
 			myval = BlockReduceInt2(temp_storage.reduce).Reduce(myval, [](auto a, auto b){return a.x < b.x ? a : b;});
 			__syncthreads();
 
@@ -348,7 +348,7 @@ void call_msa_correct_subject_kernel_async(
                                                 revc_alignment_isvalid,
                                                 subjectlength,
                                                 querylength);*/
-			
+
 			const BestAlignment_t flag = choose_best_alignment(fwd_alignment_overlap,
 																revc_alignment_overlap,
 																fwd_alignment_nops,
@@ -411,11 +411,11 @@ void call_msa_correct_subject_kernel_async(
                                                 d_comp); CUERR;
 
     }
-    
+
     /*
-	 * 
+	 *
 	 */
-	
+
 	template<int BLOCKSIZE>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
@@ -430,43 +430,43 @@ void call_msa_correct_subject_kernel_async(
 										const int* d_num_indices,
 										double binsize,
 										int min_remaining_candidates_per_subject){
-		
+
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
 
         __shared__ union {
             typename BlockReduceInt::TempStorage intreduce;
 			int broadcast[3];
         } temp_storage;
-		
+
         for(int subjectindex = blockDim.x; subjectindex < n_subjects; subjectindex += gridDim.x){
-			
+
 			const int my_n_indices = d_indices_per_subject[subjectindex];
 			const int* my_indices = d_indices + d_indices_per_subject_prefixsum[subjectindex];
-			
+
 			int counts[3]{0,0,0};
-			
+
 			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
 				const int candidate_index = my_indices[index];
 				const int alignment_overlap = d_alignment_overlaps[candidate_index];
 				const int alignment_nops = d_alignment_nOps[candidate_index];
-				
+
 				const double mismatchratio = double(alignment_nops) / alignment_overlap;
-				
+
 				assert(mismatchratio < 4 * binsize);
-				
+
 				#pragma unroll
 				for(int i = 2; i <= 4; i++){
 					counts[i-2] += (mismatchratio < i * binsize);
 				}
 			}
-			
+
 			//accumulate counts over block
 			#pragma unroll
 			for(int i = 0; i < 3; i++){
 				counts[i] = BlockReduceInt(temp_storage.intreduce).Sum(counts[i]);
 				__syncthreads();
 			}
-			
+
 			//broadcast accumulated counts to block
 			#pragma unroll
 			for(int i = 0; i < 3; i++){
@@ -476,7 +476,7 @@ void call_msa_correct_subject_kernel_async(
 				__syncthreads();
 				counts[i] = temp_storage.broadcast[i];
 			}
-			
+
 			double mismatchratioThreshold = 0;
 			if (counts[0] >= min_remaining_candidates_per_subject) {
 				mismatchratioThreshold = 2 * binsize;
@@ -484,27 +484,27 @@ void call_msa_correct_subject_kernel_async(
 				mismatchratioThreshold = 3 * binsize;
 			} else if (counts[2] >= min_remaining_candidates_per_subject) {
 				mismatchratioThreshold = 4 * binsize;
-			} else { 
+			} else {
 				mismatchratioThreshold = -1; //this will invalidate all alignments for subject
 			}
-			
+
 			// Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
 			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
 				const int candidate_index = my_indices[index];
 				const int alignment_overlap = d_alignment_overlaps[candidate_index];
 				const int alignment_nops = d_alignment_nOps[candidate_index];
-				
+
 				const double mismatchratio = double(alignment_nops) / alignment_overlap;
-				
+
 				const bool remove = mismatchratio >= mismatchratioThreshold;
 				if(remove)
 					d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
 			}
         }
-    } 
+    }
 
 
-    template<class Accessor>
+    template<class Accessor, class RevCompl>
     __global__
     void msa_add_sequences_kernel(
                             char* __restrict__ d_multiple_sequence_alignments,
@@ -530,7 +530,8 @@ void call_msa_correct_subject_kernel_async(
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
-                            Accessor get_as_nucleotide){
+                            Accessor get_as_nucleotide,
+                            RevCompl make_unpacked_reverse_complement_inplace){
 
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
@@ -559,6 +560,7 @@ void call_msa_correct_subject_kernel_async(
 
         // copy each query into the multiple sequence alignment of its subject
         for(unsigned index = blockIdx.x; index < n_indices; index += gridDim.x){
+
             const int queryIndex = d_indices[index];
 
             const int shift = d_alignment_shifts[queryIndex];
@@ -573,13 +575,16 @@ void call_msa_correct_subject_kernel_async(
             }
 
             const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int localQueryIndex = queryIndex - d_candidates_per_subject_prefixsum[subjectIndex];
+            const int localQueryIndex = index - d_indices_per_subject_prefixsum[subjectIndex];
             const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
-			
+
 			const int candidates_before_this_subject = d_indices_per_subject_prefixsum[subjectIndex];
+
+			//printf("index %d, subjectindex %d, queryindex %d, shift %d, defaultcolumnoffset %d, candidates_before_this_subject %d, localQueryIndex %d\n", index, subjectIndex, queryIndex, shift, defaultcolumnoffset, candidates_before_this_subject, localQueryIndex);
 
             const unsigned offset1 = msa_row_pitch * (subjectIndex + candidates_before_this_subject);
             const unsigned offset2 = msa_weights_row_pitch_floats * (subjectIndex + candidates_before_this_subject);
+			const int rowOffset = (subjectIndex + candidates_before_this_subject);
 
             char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
@@ -590,19 +595,40 @@ void call_msa_correct_subject_kernel_async(
             assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
 
             //copy query into msa
+			const int row = 1 + localQueryIndex;
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
                 const int globalIndex = defaultcolumnoffset + i;
-                const int row = 1 + localQueryIndex;
+
                 multiple_sequence_alignment[row * msa_row_pitch + globalIndex] = get_as_nucleotide(query, queryLength, i);
-                multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + i]
+                multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]
                                     = canUseQualityScores ?
                                         (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]]
                                         : 1.0f;
             }
+
+            if(threadIdx.x == 0 && flag == BestAlignment_t::ReverseComplement){
+                make_unpacked_reverse_complement_inplace((std::uint8_t*)multiple_sequence_alignment + row * msa_row_pitch + defaultcolumnoffset,
+                                                        queryLength);
+            }
+
+            /*printf("index %d, subjectindex %d, queryindex %d, shift %d, defaultcolumnoffset %d, candidates_before_this_subject %d, localQueryIndex %d, rowOffset %d, globalRow %d: ", index, subjectIndex, queryIndex, shift, defaultcolumnoffset, candidates_before_this_subject, localQueryIndex, rowOffset, rowOffset + row);
+			for(int i = 0; i < queryLength; i+= 1){
+				printf("%c", get_as_nucleotide(query, queryLength, i));
+			}
+			printf("\n");*/
         }
+
+        /*printf("from kernel\n");
+		for(int row = 0; row < n_indices && row < 50; ++row){
+			for(int col = 0; col < msa_row_pitch; col++){
+				char c = d_multiple_sequence_alignments[row * msa_row_pitch + col];
+				printf("%c", (c == '\0' ? '0' : c));
+			}
+			printf("\n");
+		}*/
     }
 
-    template<class Accessor>
+    template<class Accessor, class RevCompl>
     void call_msa_add_sequences_kernel_async(
                             char* d_multiple_sequence_alignments,
                             float* d_multiple_sequence_alignment_weights,
@@ -628,10 +654,16 @@ void call_msa_correct_subject_kernel_async(
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
                             Accessor get_as_nucleotide,
+                            RevCompl make_unpacked_reverse_complement_inplace,
                             cudaStream_t stream){
 
             dim3 block(128, 1, 1);
             dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
+
+			//dim3 block(1, 1, 1);
+            //dim3 grid(1, 1, 1); // one block per candidate which needs to be added to msa
+
+            //std::cout << "call_msa_add_sequences_kernel_async, grid: " << n_indices << std::endl;
 
             msa_add_sequences_kernel<<<grid, block, 0, stream>>>(d_multiple_sequence_alignments,
                                                             d_multiple_sequence_alignment_weights,
@@ -656,7 +688,8 @@ void call_msa_correct_subject_kernel_async(
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
-															get_as_nucleotide); CUERR;
+															get_as_nucleotide,
+                                                            make_unpacked_reverse_complement_inplace); CUERR;
     }
 
 
@@ -737,12 +770,12 @@ void call_msa_correct_subject_kernel_async(
 
             avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
 			__syncthreads();
-			
+
             min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
 			__syncthreads();
-			
+
             //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
-			
+
             min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
 			__syncthreads();
 
@@ -794,7 +827,7 @@ void call_msa_correct_subject_kernel_async(
                         }
 
                         avgsupportkregion /= c;
-						
+
 						//if(i == 33 || i == 34){
 						//	printf("%d %f\n", i, avgsupportkregion);
 						//}
@@ -807,7 +840,7 @@ void call_msa_correct_subject_kernel_async(
                 //perform block wide or-reduction on foundAColumn
                 foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
 				__syncthreads();
-				
+
                 if(threadIdx.x == 0){
                     d_subject_is_corrected[subjectIndex] = foundAColumn;
                 }
@@ -853,31 +886,32 @@ void call_msa_correct_subject_kernel_async(
         for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x){
 			const int subjectIndex = d_high_quality_subject_indices[index];
 			const int my_num_candidates = d_indices_per_subject[subjectIndex];
-			
+
             const float* const my_support = d_support + msa_weights_pitch_floats * subjectIndex;
             const int* const my_coverage = d_coverage + msa_weights_pitch_floats * subjectIndex;
             //const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
             const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
+            const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
             char* const my_corrected_candidates = d_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
 			int* const my_indices_of_corrected_candidates = d_indices_of_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex];
 
             const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
             const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
-			
+
 			//const unsigned offset1 = msa_pitch * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
 			//const char* const my_multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
-			
+
 			int n_corrected_candidates = 0;
-						
-			for(int i = 0; i < my_num_candidates; ++i){
-				const int global_candidate_index = d_indices[index];
+
+			for(int local_candidate_index = 0; local_candidate_index < my_num_candidates; ++local_candidate_index){
+				const int global_candidate_index = my_indices[local_candidate_index];
 				const int shift = d_alignment_shifts[global_candidate_index];
 				const int candidate_length = d_candidate_sequences_lengths[global_candidate_index];
 				const BestAlignment_t bestAlignmentFlag = d_alignment_best_alignment_flags[global_candidate_index];
 				const int queryColumnsBegin_incl = shift - properties.startindex;
 				const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidate_length;
-				
+
 				//check range condition and length condition
 				if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
 					&& queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
@@ -908,30 +942,34 @@ void call_msa_correct_subject_kernel_async(
 
 					if(newColMinSupport >= min_support_threshold
 						&& newColMinCov >= min_coverage_threshold){
-						
+
 						for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE){
 							my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
 						}
-					
+
 						if(threadIdx.x == 0){
 							//the forward strand will be returned -> make reverse complement again
 							if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
 								make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + n_corrected_candidates * sequence_pitch), candidate_length);
 							}
 							my_indices_of_corrected_candidates[n_corrected_candidates] = global_candidate_index;
+							//printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
 						}
-						
+
 						++n_corrected_candidates;
 					}
 				}
 			}
-			
+
+			//printf("%d %d\n", subjectIndex, n_corrected_candidates);
+
 			if(threadIdx.x == 0){
 				d_num_corrected_candidates[subjectIndex] = n_corrected_candidates;
+				//printf("%d %d\n", subjectIndex, n_corrected_candidates);
 			}
         }
     }
-    
+
     template<class RevCompl>
     void call_msa_correct_candidates_kernel_async(
                             const char* d_consensus,
@@ -963,7 +1001,7 @@ void call_msa_correct_subject_kernel_async(
 							RevCompl make_unpacked_reverse_complement_inplace,
 							int maximum_sequence_length,
 							cudaStream_t stream){
-		
+
 		const int max_block_size = 256;
 		const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
 
@@ -1012,8 +1050,8 @@ void call_msa_correct_subject_kernel_async(
 			case 224: mycall(224); break;
 			case 256: mycall(256); break;
 			default: mycall(256); break;
-		}	
-		
+		}
+
 		#undef mycall
 	}
 
