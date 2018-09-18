@@ -15,12 +15,17 @@ template<class T, size_t capacity_>
 struct ThreadsafeBuffer {
 	using Value_t = T;
 
-	const Value_t defaultValue;
+	struct PopResult{
+		Value_t value;
+		bool foreverEmpty;
+	};
+
+	Value_t defaultValue;
 	const size_t capacity = capacity_;
 
 	std::int64_t curIndex = 0;
 	size_t nElem = 0;
-	std::array<Value_t, capacity_> buffer;
+	std::vector<Value_t> buffer;
 
 	std::mutex mutex;
 	std::condition_variable condvar;
@@ -32,21 +37,48 @@ struct ThreadsafeBuffer {
 	std::uint64_t getWait = 0;
 	std::uint64_t getNoWait = 0;
 
-	ThreadsafeBuffer(){}
+	ThreadsafeBuffer(){
+        defaultValue = Value_t{};
+		buffer.resize(capacity_);
+	}
 
-	void add(Value_t data)
+	void printWaitStatistics(){
+		std::cout << "addWait: " << addWait << ' '
+				  << "addNoWait: " << addNoWait << ' '
+				  << "getWait: " << getWait << ' '
+				  << "getNoWait: " << getNoWait << std::endl;
+	}
+
+	void add(const Value_t& data)
 	{
 		std::unique_lock<std::mutex> lock(mutex);
 		if (nElem >= capacity_) {
 			addWait++;
-			condvar.wait(lock);
+			while(nElem >= capacity_)
+				condvar.wait(lock);
 		}else{
 			addNoWait++;
 		}
 		nElem++;
 		buffer[curIndex] = data;
 		curIndex = (curIndex + 1) % capacity_;
-		condvar.notify_all();
+		condvar.notify_one();
+	}
+
+	void add(Value_t&& data)
+	{
+		std::unique_lock<std::mutex> lock(mutex);
+		if (nElem >= capacity_) {
+			addWait++;
+			while(nElem >= capacity_)
+				condvar.wait(lock);
+		}else{
+			addNoWait++;
+		}
+		nElem++;
+		buffer[curIndex] = std::move(data);
+		curIndex = (curIndex + 1) % capacity_;
+		condvar.notify_one();
 	}
 
 	Value_t get()
@@ -54,7 +86,8 @@ struct ThreadsafeBuffer {
 		std::unique_lock<std::mutex> lock(mutex);
 		if (nElem == 0 && !noMoreInserts) {
 			getWait++;
-			condvar.wait(lock);
+			while(nElem == 0 && !noMoreInserts)
+				condvar.wait(lock);
 		}else{
 			getNoWait++;
 		}
@@ -63,9 +96,41 @@ struct ThreadsafeBuffer {
 		}else{
 			int index = (curIndex - nElem + capacity_) % capacity_;
 			const Value_t& retVal = buffer[index];
+			if(nElem == 0) std::cout << "error" << std::endl;
 			nElem--;
-			condvar.notify_all();
+
+			condvar.notify_one();
 			return retVal;
+		}
+	}
+
+	PopResult getNew()
+	{
+		std::unique_lock<std::mutex> lock(mutex);
+		if (nElem == 0 && !noMoreInserts) {
+			getWait++;
+			while(nElem == 0 && !noMoreInserts)
+				condvar.wait(lock);
+		}else{
+			getNoWait++;
+		}
+		if (nElem == 0 && noMoreInserts) {
+			PopResult result;
+			result.foreverEmpty = true;
+			return result;
+		}else{
+			PopResult result;
+			result.foreverEmpty = false;
+
+			int index = (curIndex - nElem + capacity_) % capacity_;
+			result.value = std::move(buffer[index]);
+
+			if(nElem == 0) std::cout << "error" << std::endl;
+
+			nElem--;
+
+			condvar.notify_one();
+			return result;
 		}
 	}
 
@@ -89,23 +154,10 @@ struct ThreadsafeBuffer {
 		getNoWait = 0;
 	}
 
-	ThreadsafeBuffer(const ThreadsafeBuffer &other){
-		*this = other;
-	}
-
-	ThreadsafeBuffer& operator=(const ThreadsafeBuffer& other)
-	{
-		curIndex = other.curIndex;
-		nElem = other.nElem;
-		buffer = other.buffer;
-		noMoreInserts = other.noMoreInserts;
-		addWait = other.addWait;
-		addNoWait = other.addNoWait;
-		getWait = other.getWait;
-		getNoWait = other.getNoWait;
-
-		return *this;
-	}
+	ThreadsafeBuffer(const ThreadsafeBuffer&) = default;
+	ThreadsafeBuffer(ThreadsafeBuffer&&) = default;
+	ThreadsafeBuffer& operator=(const ThreadsafeBuffer&) = default;
+	ThreadsafeBuffer& operator=(ThreadsafeBuffer&&) = default;
 
 
 };
