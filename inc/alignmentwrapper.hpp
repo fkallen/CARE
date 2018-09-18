@@ -226,6 +226,144 @@ call_shd_canonical_kernel_async(const shd::SHDdata& shddata,
 #endif
 
 
+template<class Handle, class SubjectIter, class QueryIter>
+void alignment_copy_to_device_async(Handle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                const std::vector<int>& queriesPerSubject,
+                                bool canUseGpu){
+
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+
+    auto& mybuffers = handle.buffers;
+    auto& timings = handle.timings;
+
+    int numberOfQueries = 0;
+    int numberOfSubjects = 0;
+#if 0
+    assert(subjectsbegin.size() == subjectsend.size());
+    assert(subjectsbegin.size() == queriesbegin.size());
+    assert(subjectsbegin.size() == queriesend.size());
+    assert(subjectsbegin.size() == alignmentsbegin.size());
+    assert(subjectsbegin.size() == alignmentsend.size());
+    assert(subjectsbegin.size() == flagsbegin.size());
+    assert(subjectsbegin.size() == flagsend.size());
+    assert(subjectsbegin.size() == bestSequenceStringsbegin.size());
+    assert(subjectsbegin.size() == bestSequenceStringsend.size());
+#endif
+    for(std::size_t i = 0; i < queriesbegin.size(); i++){
+        numberOfQueries += std::distance(queriesbegin[i], queriesend[i]);
+    }
+#if 0
+    assert(numberOfAlignments == numberOfQueries);
+    assert(numberOfAlignments == numberOfFlags);
+#endif
+    for(std::size_t i = 0; i < subjectsbegin.size(); i++){
+        numberOfSubjects += std::distance(subjectsbegin[i], subjectsend[i]);
+    }
+#if 0
+    assert(numberOfSubjects == (int)queriesPerSubject.size());
+#endif
+
+#ifdef __NVCC__
+
+    if(canUseGpu && numberOfQueries > 0){ // use gpu for alignment
+
+        timings.preprocessingBegin();
+
+        cudaSetDevice(mybuffers.deviceId); CUERR;
+
+        mybuffers.resize(numberOfSubjects, numberOfQueries, 2*numberOfQueries);
+
+        //cudaEvent_t start, stop;
+        //cudaEventCreateWithFlags(&start, cudaEventDisableTiming); CUERR;
+        //cudaEventCreateWithFlags(&stop, cudaEventDisableTiming); CUERR;
+        //cudaEventRecord(start, mybuffers.streams[0]); CUERR;
+
+        int maxSubjectLength = 0;
+
+        for(std::size_t i = 0, count = 0; i < subjectsbegin.size(); i++){
+
+            for(auto it = subjectsbegin[i]; it != subjectsend[i]; ++it, ++count){
+#if 0
+                assert((*it)->length() <= mybuffers.max_sequence_length);
+                assert((*it)->getNumBytes() <= mybuffers.max_sequence_bytes);
+#endif
+                std::memcpy(mybuffers.h_subjectsdata + count * mybuffers.sequencepitch,
+                            (*it)->begin(),
+                            (*it)->getNumBytes());
+
+                mybuffers.h_subjectlengths[count] = (*it)->length();
+                maxSubjectLength = std::max(int((*it)->length()), maxSubjectLength);
+            }
+
+        }
+
+        int maxQueryLength = 0;
+
+        for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
+
+            for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
+#if 0
+                assert((*it)->length() <= mybuffers.max_sequence_length);
+                assert((*it)->getNumBytes() <= mybuffers.max_sequence_bytes);
+#endif
+                std::memcpy(mybuffers.h_queriesdata + count * mybuffers.sequencepitch,
+                            (*it)->begin(),
+                            (*it)->getNumBytes());
+
+                mybuffers.h_querylengths[count] = (*it)->length();
+                maxQueryLength = std::max(int((*it)->length()), maxQueryLength);
+            }
+
+        }
+
+        mybuffers.h_NqueriesPrefixSum[0] = 0;
+        for(std::size_t i = 0; i < queriesPerSubject.size(); i++)
+            mybuffers.h_NqueriesPrefixSum[i+1] = mybuffers.h_NqueriesPrefixSum[i] + queriesPerSubject[i];
+
+        //cudaEventRecord(stop, mybuffers.streams[0]); CUERR;
+
+#if 0
+        assert(numberOfAlignments == mybuffers.h_NqueriesPrefixSum[queriesPerSubject.size()]);
+#endif
+        timings.preprocessingEnd();
+
+
+        timings.h2dBegin();
+
+        // copy data to gpu
+        std::size_t transfersizeH2D = mybuffers.memSubjects; // d_subjectsdata
+        transfersizeH2D += mybuffers.memSubjectLengths; // d_subjectlengths
+        transfersizeH2D += mybuffers.memNqueriesPrefixSum; // d_NqueriesPrefixSum
+        transfersizeH2D += mybuffers.memQueries; // d_queriesdata
+        transfersizeH2D += mybuffers.memQueryLengths; // d_querylengths
+
+        cudaMemcpyAsync(mybuffers.deviceptr,
+                        mybuffers.hostptr,
+                        transfersizeH2D,
+                        H2D,
+                        mybuffers.streams[0]); CUERR;
+
+        timings.h2dEnd();
+
+
+
+}else{
+
+#endif
+
+    // no data transfer on cpu
+
+#ifdef __NVCC__
+    }
+#endif
+
+}
+
+
 /*
     Calculates both subject/query alignment and subject/reversecomplementquery alignment
     and keeps only the better one according to choose_best_alignment(...).
@@ -321,11 +459,20 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
     if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
         device = AlignmentDevice::GPU;
 
-        timings.preprocessingBegin();
-
         cudaSetDevice(mybuffers.deviceId); CUERR;
 
+
+
+
+#if 0
         mybuffers.resize(numberOfSubjects, numberOfQueries, 2*numberOfAlignments);
+
+        timings.preprocessingBegin();
+
+        //cudaEvent_t start, stop;
+        //cudaEventCreateWithFlags(&start, cudaEventDisableTiming); CUERR;
+        //cudaEventCreateWithFlags(&stop, cudaEventDisableTiming); CUERR;
+        //cudaEventRecord(start, mybuffers.streams[0]); CUERR;
 
         int maxSubjectLength = 0;
 
@@ -368,6 +515,9 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
         mybuffers.h_NqueriesPrefixSum[0] = 0;
         for(std::size_t i = 0; i < queriesPerSubject.size(); i++)
             mybuffers.h_NqueriesPrefixSum[i+1] = mybuffers.h_NqueriesPrefixSum[i] + queriesPerSubject[i];
+
+        //cudaEventRecord(stop, mybuffers.streams[0]); CUERR;
+
 #if 0
         assert(numberOfAlignments == mybuffers.h_NqueriesPrefixSum[queriesPerSubject.size()]);
 #endif
@@ -390,6 +540,269 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
                         mybuffers.streams[0]); CUERR;
 
         timings.h2dEnd();
+#else
+
+    int maxSubjectLength = 0;
+    int maxQueryLength = 0;
+
+    for(std::size_t i = 0, count = 0; i < subjectsbegin.size(); i++){
+        for(auto it = subjectsbegin[i]; it != subjectsend[i]; ++it, ++count){
+            maxSubjectLength = std::max(int((*it)->length()), maxSubjectLength);
+        }
+    }
+
+    for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
+        for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
+            maxQueryLength = std::max(int((*it)->length()), maxQueryLength);
+        }
+    }
+
+    alignment_copy_to_device_async(handle,
+                                    subjectsbegin,
+                                    subjectsend,
+                                    queriesbegin,
+                                    queriesend,
+                                    queriesPerSubject,
+                                    canUseGpu);
+#endif
+        timings.executionBegin();
+
+        call_shd_canonical_kernel_async<Sequence_t>(mybuffers,
+                                    min_overlap,
+                                    maxErrorRate,
+                                    min_overlap_ratio,
+                                    maxSubjectLength,
+                                    maxQueryLength); CUERR;
+
+        timings.executionEnd();
+
+        timings.d2hBegin();
+
+        std::size_t transfersizeD2H = mybuffers.memResults; //d_results
+        transfersizeD2H += mybuffers.memBestAlignmentFlags; // d_bestAlignmentFlags
+        transfersizeD2H += mybuffers.memUnpackedSubjects; // d_unpacked_subjects
+        transfersizeD2H += mybuffers.memUnpackedQueries; // d_unpacked_queries
+
+        //copy results to host
+
+        cudaMemcpyAsync(mybuffers.h_results,
+            mybuffers.d_results,
+            transfersizeD2H,
+            D2H,
+            mybuffers.streams[0]); CUERR;
+
+        timings.d2hEnd();
+#if 0
+        cudaStreamSynchronize(mybuffers.streams[0]);
+
+        for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
+
+            for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
+                auto querystring = (*it)->toString();
+                auto rcquerystring = (*it)->reverseComplement().toString();
+
+                auto newstring = std::string{mybuffers.h_unpacked_queries + count * mybuffers.max_sequence_length,
+                                                    mybuffers.h_unpacked_queries + count * mybuffers.max_sequence_length + (*it)->length()};
+                auto flag = mybuffers.h_bestAlignmentFlags[count];
+                if((flag == BestAlignment_t::Forward && querystring != newstring) || (flag == BestAlignment_t::ReverseComplement && rcquerystring != newstring)){
+                    std::cout << (flag == BestAlignment_t::Forward ? "fwd" : "rc") << std::endl;
+                    std::cout << querystring << std::endl;
+                    std::cout << rcquerystring << std::endl;
+                    std::cout << newstring << std::endl;
+                    assert(false);
+                }
+            }
+        }
+#endif
+
+    }else{ // use cpu for alignment
+
+#endif
+        device = AlignmentDevice::CPU;
+
+        timings.executionBegin();
+
+        for(std::size_t i = 0, subjectcount = 0; i < subjectsbegin.size(); i++){
+
+            auto queryIt = queriesbegin[i];
+            auto alignmentsIt = alignmentsbegin[i];
+            auto flagsIt = flagsbegin[i];
+            auto bestSequenceStringsIt = bestSequenceStringsbegin[i];
+
+            for(auto subjectIt = subjectsbegin[i]; subjectIt != subjectsend[i]; ++subjectIt, ++subjectcount){
+#if 0
+                assert((*subjectIt)->length() <= mybuffers.max_sequence_length);
+                assert((*subjectIt)->getNumBytes() <= mybuffers.max_sequence_bytes);
+#endif
+                const char* const subject = (const char*)(*subjectIt)->begin();
+                const int subjectLength = (*subjectIt)->length();
+
+                const int nQueries = queriesPerSubject[subjectcount];
+
+                for(int i = 0; i < nQueries; i++){
+                    const char* query =  (const char*)(*queryIt)->begin();
+                    const int queryLength = (*queryIt)->length();
+
+                    Sequence_t revcomplsequence = (*queryIt)->reverseComplement();
+                    const char* const revcomplQuery = (const char*)revcomplsequence.begin();
+
+                    auto fwdAlignment = cpu_shifted_hamming_distance<Sequence_t>(subject, subjectLength, query, queryLength,
+                                                                            min_overlap,
+                                                                            maxErrorRate,
+                                                                            min_overlap_ratio);
+
+                    auto revComplAlignment = cpu_shifted_hamming_distance<Sequence_t>(subject, subjectLength, revcomplQuery, queryLength,
+                                                                            min_overlap,
+                                                                            maxErrorRate,
+                                                                            min_overlap_ratio);
+
+                    BestAlignment_t bestAlignmentFlag = choose_best_alignment(fwdAlignment,
+                                                                              revComplAlignment,
+                                                                              subjectLength,
+                                                                              queryLength,
+                                                                              min_overlap_ratio,
+                                                                              min_overlap,
+                                                                              maxErrorRate);
+
+
+                    *flagsIt = bestAlignmentFlag;
+
+                    if(bestAlignmentFlag == BestAlignment_t::Forward){
+                        *alignmentsIt = fwdAlignment;
+                        *bestSequenceStringsIt = std::move((*queryIt)->toString());
+                    }else if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                        *alignmentsIt = revComplAlignment;
+                        *bestSequenceStringsIt = std::move(revcomplsequence.toString());
+                    }else
+                        ; //BestAlignment_t::None
+
+                    ++queryIt;
+                    ++alignmentsIt;
+                    ++flagsIt;
+                    ++bestSequenceStringsIt;
+                }
+            }
+        }
+
+        timings.executionEnd();
+
+#ifdef __NVCC__
+    }
+#endif
+
+    return device;
+}
+
+
+
+
+
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter, class StringIter,
+    typename std::enable_if<!std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int>::type = 0>
+AlignmentDevice shifted_hamming_distance_canonical_batched_async_withoutH2D(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+    return AlignmentDevice::None;
+}
+
+template<class Sequence_t, class SubjectIter, class QueryIter, class AlignmentIter, class FlagsIter, class StringIter,
+    typename std::enable_if<std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, int*>::type = nullptr>
+AlignmentDevice shifted_hamming_distance_canonical_batched_async_withoutH2D(SHDhandle& handle,
+                                const std::vector<SubjectIter>& subjectsbegin,
+                                const std::vector<SubjectIter>& subjectsend,
+                                const std::vector<QueryIter>& queriesbegin,
+                                const std::vector<QueryIter>& queriesend,
+                                std::vector<AlignmentIter>& alignmentsbegin,
+                                std::vector<AlignmentIter>& alignmentsend,
+                                std::vector<FlagsIter>& flagsbegin,
+                                std::vector<FlagsIter>& flagsend,
+                                std::vector<StringIter>& bestSequenceStringsbegin,
+                                std::vector<StringIter>& bestSequenceStringsend,
+                                const std::vector<int>& queriesPerSubject,
+                                int min_overlap,
+                                double maxErrorRate,
+                                double min_overlap_ratio,
+                                bool canUseGpu){
+
+    //static_assert(std::is_same<typename AlignmentIter::value_type, shd::Result_t>::value, "shifted hamming distance unexpected Alignment type");
+
+    auto& mybuffers = handle.buffers;
+    auto& timings = handle.timings;
+
+    AlignmentDevice device = AlignmentDevice::None;
+
+    int numberOfFlags = 0;
+    int numberOfAlignments = 0;
+    int numberOfQueries = 0;
+    int numberOfSubjects = 0;
+#if 0
+    assert(subjectsbegin.size() == subjectsend.size());
+    assert(subjectsbegin.size() == queriesbegin.size());
+    assert(subjectsbegin.size() == queriesend.size());
+    assert(subjectsbegin.size() == alignmentsbegin.size());
+    assert(subjectsbegin.size() == alignmentsend.size());
+    assert(subjectsbegin.size() == flagsbegin.size());
+    assert(subjectsbegin.size() == flagsend.size());
+    assert(subjectsbegin.size() == bestSequenceStringsbegin.size());
+    assert(subjectsbegin.size() == bestSequenceStringsend.size());
+#endif
+    for(std::size_t i = 0; i < flagsbegin.size(); i++){
+        numberOfFlags += std::distance(flagsbegin[i], flagsend[i]);
+    }
+    for(std::size_t i = 0; i < alignmentsbegin.size(); i++){
+        numberOfAlignments += std::distance(alignmentsbegin[i], alignmentsend[i]);
+    }
+    for(std::size_t i = 0; i < queriesbegin.size(); i++){
+        numberOfQueries += std::distance(queriesbegin[i], queriesend[i]);
+    }
+#if 0
+    assert(numberOfAlignments == numberOfQueries);
+    assert(numberOfAlignments == numberOfFlags);
+#endif
+    for(std::size_t i = 0; i < subjectsbegin.size(); i++){
+        numberOfSubjects += std::distance(subjectsbegin[i], subjectsend[i]);
+    }
+#if 0
+    assert(numberOfSubjects == (int)queriesPerSubject.size());
+#endif
+    //nothing to do here
+    if(numberOfAlignments == 0)
+        return device;
+#ifdef __NVCC__
+
+    if(canUseGpu && numberOfAlignments >= mybuffers.gpuThreshold){ // use gpu for alignment
+        device = AlignmentDevice::GPU;
+
+        cudaSetDevice(mybuffers.deviceId); CUERR;
+
+        int maxSubjectLength = 0;
+        int maxQueryLength = 0;
+
+        for(std::size_t i = 0, count = 0; i < subjectsbegin.size(); i++){
+            for(auto it = subjectsbegin[i]; it != subjectsend[i]; ++it, ++count){
+                maxSubjectLength = std::max(int((*it)->length()), maxSubjectLength);
+            }
+        }
+
+        for(std::size_t i = 0, count = 0; i < queriesbegin.size(); i++){
+            for(auto it = queriesbegin[i]; it != queriesend[i]; ++it, ++count){
+                maxQueryLength = std::max(int((*it)->length()), maxQueryLength);
+            }
+        }
 
         timings.executionBegin();
 
@@ -518,6 +931,10 @@ AlignmentDevice shifted_hamming_distance_canonical_batched_async(SHDhandle& hand
 
     return device;
 }
+
+
+
+
 
 
 /*
