@@ -22,11 +22,11 @@ deviceIds="--deviceIds=0"
 datapath=/home/fekallen/arbeit/evaluationtool
 
 #input file
-#inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
-#coverage=21
+inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
+coverage=21
 
-inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
-coverage=255
+#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
+#coverage=255
 
 #inputfile=$datapath/datasets/E.coli_SRR490124.fastq
 #coverage=465
@@ -78,10 +78,10 @@ classicMode=--classicMode=true
 fileformat=fastq
 
 #only valid for fastq fileformat
-useQualityScores=--useQualityScores=true
+useQualityScores=--useQualityScores=false
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=true
+candidateCorrection=--candidateCorrection=false
 
 #if indels should be corrected, too
 indels=--indels=false
@@ -102,7 +102,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=10
+batchsize=1
 
 #properties of good alignment
 maxmismatchratio=0.20
@@ -117,7 +117,9 @@ minalignmentoverlapratio=0.30
 xx=$(echo 'scale=2; 12/10' | bc)
 aa=$(echo 'scale=2; 10/10' | bc)
 
+progress="--progress=true"
 
-echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates
 
-time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates
+echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress
+
+time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress
