@@ -3,6 +3,10 @@
 
 #include "hpc_helpers.cuh"
 
+#ifdef __NVCC__
+#include <cub/cub.cuh>
+#endif
+
 enum class BestAlignment_t {Forward, ReverseComplement, None};
 
 /*
@@ -403,6 +407,151 @@ void call_cuda_find_best_alignment_and_unpack_good_sequences_kernel_async(
 
 }
 
+
+
+
+
+
+
+
+
+
+#if 0
+template<int BLOCKSIZE, class Alignment>
+__global__
+void cuda_filter_alignments_by_mismatchratio_kernel(
+                                    BestAlignment_t* d_alignment_best_alignment_flags,
+                                    const Alignment* d_alignments;
+                                    const int* d_indices,
+                                    const int* d_indices_per_subject,
+                                    const int* d_indices_per_subject_prefixsum,
+                                    int n_subjects,
+                                    int n_candidates,
+                                    const int* d_num_indices,
+                                    double binsize,
+                                    int min_remaining_candidates_per_subject){
+
+    using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+    __shared__ union {
+        typename BlockReduceInt::TempStorage intreduce;
+        int broadcast[3];
+    } temp_storage;
+
+    for(int subjectindex = blockDim.x; subjectindex < n_subjects; subjectindex += gridDim.x){
+
+        const int my_n_indices = d_indices_per_subject[subjectindex];
+        const int* my_indices = d_indices + d_indices_per_subject_prefixsum[subjectindex];
+
+        int counts[3]{0,0,0};
+
+        for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
+            const int candidate_index = my_indices[index];
+            const int alignment_overlap = d_alignments[candidate_index].overlap;
+            const int alignment_nops = d_alignments[candidate_index].nOps;
+
+            const double mismatchratio = double(alignment_nops) / alignment_overlap;
+
+            assert(mismatchratio < 4 * binsize);
+
+            #pragma unroll
+            for(int i = 2; i <= 4; i++){
+                counts[i-2] += (mismatchratio < i * binsize);
+            }
+        }
+
+        //accumulate counts over block
+        #pragma unroll
+        for(int i = 0; i < 3; i++){
+            counts[i] = BlockReduceInt(temp_storage.intreduce).Sum(counts[i]);
+            __syncthreads();
+        }
+
+        //broadcast accumulated counts to block
+        #pragma unroll
+        for(int i = 0; i < 3; i++){
+            if(threadIdx.x == 0){
+                temp_storage.broadcast[i] = counts[i];
+            }
+            __syncthreads();
+            counts[i] = temp_storage.broadcast[i];
+        }
+
+        double mismatchratioThreshold = 0;
+        if (counts[0] >= min_remaining_candidates_per_subject) {
+            mismatchratioThreshold = 2 * binsize;
+        } else if (counts[1] >= min_remaining_candidates_per_subject) {
+            mismatchratioThreshold = 3 * binsize;
+        } else if (counts[2] >= min_remaining_candidates_per_subject) {
+            mismatchratioThreshold = 4 * binsize;
+        } else {
+            mismatchratioThreshold = -1; //this will invalidate all alignments for subject
+        }
+
+        // Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
+        for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
+            const int candidate_index = my_indices[index];
+            const int alignment_overlap = d_alignment_overlaps[candidate_index];
+            const int alignment_nops = d_alignment_nOps[candidate_index];
+
+            const double mismatchratio = double(alignment_nops) / alignment_overlap;
+
+            const bool remove = mismatchratio >= mismatchratioThreshold;
+            if(remove)
+                d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
+        }
+    }
+}
+
+
+template<class Alignment>
+void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
+                                    BestAlignment_t* d_alignment_best_alignment_flags,
+                                    const Alignment* d_alignments,
+                                    const int* d_indices,
+                                    const int* d_indices_per_subject,
+                                    const int* d_indices_per_subject_prefixsum,
+                                    int n_subjects,
+                                    int n_candidates,
+                                    const int* d_num_indices,
+                                    double binsize,
+                                    int min_remaining_candidates_per_subject,
+                                    cudaStream_t stream){
+
+    const int blocksize = 128;
+
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(n_subjects);
+
+    #define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
+                            <<<grid, block, 0, stream>>>( \
+                                d_alignment_best_alignment_flags, \
+                                d_alignment_overlaps, \
+                                d_alignment_nOps, \
+                                d_indices, \
+                                d_indices_per_subject, \
+                                d_indices_per_subject_prefixsum, \
+                                n_subjects, \
+                                n_candidates, \
+                                d_num_indices, \
+                                binsize, \
+                                min_remaining_candidates_per_subject); CUERR;
+
+    switch(blocksize){
+        case 32: mycall(32); break;
+        case 64: mycall(64); break;
+        case 96: mycall(96); break;
+        case 128: mycall(128); break;
+        case 160: mycall(160); break;
+        case 192: mycall(192); break;
+        case 224: mycall(224); break;
+        case 256: mycall(256); break;
+        default: mycall(256); break;
+    }
+
+    #undef mycall
+}
+#endif
 
 #endif
 
