@@ -504,6 +504,80 @@ void call_msa_correct_subject_kernel_async(
     }
 
 
+
+
+
+
+    template<int BLOCKSIZE>
+    __global__
+    void cuda_filter_alignments_by_mismatchratio_kernel_new(
+                                        void* d_temp_storage,
+                                        BestAlignment_t* d_alignment_best_alignment_flags,
+                                        const int* d_alignment_overlaps,
+                                        const int* d_alignment_nOps,
+                                        const int* d_indices,
+                                        const int* d_indices_per_subject,
+                                        const int* d_indices_per_subject_prefixsum,
+                                        const int* d_candidates_per_subject_prefixsum,
+                                        int* d_candidate_ranges_counts_per_subject,
+
+                                        int n_subjects,
+                                        int n_candidates,
+                                        const int* d_num_indices,
+                                        double binsize,
+                                        int min_remaining_candidates_per_subject){
+
+        struct Counts{
+            int counts[3]{0,0,0};
+            int subject_index = 0;
+        };
+
+        //Counts shared_counts[BLOCKSIZE];
+
+        Counts* my_counts = (Counts*)(((char*)d_temp_storage) + n_subjects * sizeof(Counts));
+
+        const int n_indices = *d_num_indices;
+        Counts local_counts;
+        for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < n_indices; index += blockDim.x * gridDim.x){
+            const int candidate_index = d_indices[index];
+
+            //find subjectindex
+            int subject_index = 0;
+            for(; subject_index < n_subjects; subject_index++){
+                if(candidate_index < d_candidates_per_subject_prefixsum[subject_index+1])
+                    break;
+            }
+
+            assert(subject_index >= local_counts.subject_index);
+
+            //if subjectIndex changed, save local_counts to gmem;
+            if(subject_index != local_counts.subject_index){
+                my_counts[local_counts.subject_index] = local_counts;
+            }
+
+            const int alignment_overlap = d_alignment_overlaps[candidate_index];
+            const int alignment_nops = d_alignment_nOps[candidate_index];
+
+            const double mismatchratio = double(alignment_nops) / alignment_overlap;
+
+            assert(mismatchratio < 4 * binsize);
+
+            #pragma unroll
+            for(int i = 2; i <= 4; i++){
+                local_counts.counts[i-2] += (mismatchratio < i * binsize);
+            }
+        }
+
+    }
+
+
+
+
+
+
+
+
+
     template<class Accessor, class RevCompl>
     __global__
     void msa_add_sequences_kernel(

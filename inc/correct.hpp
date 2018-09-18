@@ -41,7 +41,7 @@
 
 
 #if defined USE_NVTX && defined __NVCC__
-#include "nvToolsExt.h"
+#include <nvToolsExt.h>
 
 const uint32_t colors[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff, 0xdeadbeef };
 const int num_colors = sizeof(colors)/sizeof(uint32_t);
@@ -2666,7 +2666,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
 #if 0
-#if 0
+#if 1
 	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 #else
 
