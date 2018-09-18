@@ -97,7 +97,7 @@ namespace args{
 		result.threads = pr["threads"].as<int>();
 		result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
-        result.showProgress = true;
+        result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
