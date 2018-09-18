@@ -17,7 +17,7 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
 
 
 
-LDFLAGSGPU = -lpthread -lgomp -lstdc++fs
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs
 
 SOURCES = $(wildcard src/*.cpp)
@@ -68,7 +68,7 @@ buildcpu/%.o : src/%.cpp | makedir
 buildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
-	
+
 buildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
@@ -80,10 +80,10 @@ debugbuildcpu/%.o : src/%.cpp | makedir
 debugbuildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
-	
+
 debugbuildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@	
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 minhashertest:
 	@echo Building minhashertest
