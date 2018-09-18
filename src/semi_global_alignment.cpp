@@ -168,11 +168,11 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     n_queries = n_quer;
     n_results = n_res;
 
-    const std::size_t memSubjects = n_sub * sequencepitch;
-    const std::size_t memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
-    const std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
-    const std::size_t memQueries = n_quer * sequencepitch;
-    const std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
+    memSubjects = n_sub * sequencepitch;
+    memSubjectLengths = SDIV(n_sub * sizeof(int), sequencepitch) * sequencepitch;
+    memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), sequencepitch) * sequencepitch;
+    memQueries = n_quer * sequencepitch;
+    memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
     const std::size_t memResults = SDIV(sizeof(Attributes_t) * n_results, sequencepitch) * sequencepitch;
     const std::size_t memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
     const std::size_t memOps = SDIV(sizeof(Op_t) * n_results * max_ops_per_alignment, sequencepitch) * sequencepitch;
