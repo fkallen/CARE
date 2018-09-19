@@ -52,6 +52,7 @@ const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);
 #endif
 
 //#define CARE_GPU_DEBUG
+//#define CARE_GPU_DEBUG_MEMCOPY
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
@@ -341,9 +342,6 @@ struct BatchGenerator{
         std::vector<ReadId_t> corrected_candidates_read_ids;
     };
 
-
-
-
     template<class minhasher_t,
     		 class readStorage_t,
 			 class batchgenerator_t>
@@ -457,11 +455,6 @@ struct BatchGenerator{
     			threadOpts.locksForProcessedFlags[index].unlock();
     		};
 
-            // device lambdas for sequence functions
-            /*auto getNumBytes = [] __device__ (int length){
-                return Sequence_t::getNumBytes(length);
-            };*/
-
             auto accessor = [] __device__ (const char* data, int length, int index){
                 return Sequence_t::get(data, length, index);
             };
@@ -501,8 +494,8 @@ struct BatchGenerator{
             };
 
     		constexpr int nStreams = 1;
-
 			cudaSetDevice(threadOpts.deviceId);
+            std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
     		std::vector<DataArrays<Sequence_t>> dataArrays;
             std::array<std::vector<CorrectionTask_t>, nStreams> correctionTasks;
@@ -511,9 +504,13 @@ struct BatchGenerator{
             for(int i = 0; i < nStreams; i++){
                 dataArrays.emplace_back(threadOpts.deviceId);
                 cudaStreamCreate(&streams[i]); CUERR;
+                dataArrays[i].set_problem_dimensions(readIds.size(),
+                                                            max_candidates * readIds.size(),
+                                                            fileProperties.maxSequenceLength,
+                                                            goodAlignmentProperties.min_overlap,
+                                                            goodAlignmentProperties.min_overlap_ratio,
+                                                            correctionOptions.useQualityScores); CUERR;
             }
-
-    		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
             const auto& readStorage = threadOpts.readStorage;
             const auto& minhasher = threadOpts.minhasher;
@@ -523,8 +520,8 @@ struct BatchGenerator{
 			// coverage is always >= 1
             const double min_coverage_threshold = std::max(1.0,
 														correctionOptions.m_coverage / 6.0 * correctionOptions.estimatedCoverage);
-			const int new_columns_to_correct = 2;
-
+			const int new_columns_to_correct = correctionOptions.new_columns_to_correct;
+            const float desiredAlignmentMaxErrorRate = goodAlignmentProperties.maxErrorRate;
 			//std::uint64_t itercounter = 0;
 
     		while(!stopAndAbort && !readIds.empty()){
@@ -615,10 +612,10 @@ struct BatchGenerator{
                 //allocate data arrays
 
                 PUSH_RANGE_2("set_problem_dimensions", 7);
-                dataArrays[streamIndex].set_problem_dimensions(//int(correctionTasks[streamIndex].size()),
-                                                            readIds.size(),
-                                                            //nTotalCandidates,
-                                                            max_candidates * readIds.size(),
+                dataArrays[streamIndex].set_problem_dimensions(int(correctionTasks[streamIndex].size()),
+                                                            //readIds.size(),
+                                                            nTotalCandidates,
+                                                            //max_candidates * readIds.size(),
                                                             fileProperties.maxSequenceLength,
                                                             goodAlignmentProperties.min_overlap,
                                                             goodAlignmentProperties.min_overlap_ratio,
@@ -626,9 +623,9 @@ struct BatchGenerator{
                 POP_RANGE_2;
 
                 //dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
-//PUSH_RANGE_2("zero_cpu", 4);
-				//dataArrays[streamIndex].zero_cpu();
-//POP_RANGE_2;
+PUSH_RANGE_2("zero_cpu", 4);
+				dataArrays[streamIndex].zero_cpu();
+POP_RANGE_2;
 PUSH_RANGE_2("zero_gpu", 5);
 				dataArrays[streamIndex].zero_gpu(streams[streamIndex]);
 POP_RANGE_2;
@@ -680,6 +677,10 @@ POP_RANGE_2;
                                 H2D,
                                 streams[streamIndex]); CUERR;
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
                 //Step 4. Perform Alignment. Produces 2*M alignments, M alignments for forward sequences, M alignments for reverse complement sequences
 
 
@@ -698,7 +699,7 @@ POP_RANGE_2;
                                         Sequence_t::getNumBytes(dataArrays[streamIndex].maximum_sequence_length),
                                         dataArrays[streamIndex].encoded_sequence_pitch,
                                         goodAlignmentProperties.min_overlap,
-                                        correctionOptions.estimatedErrorrate * 4.0,
+                                        goodAlignmentProperties.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0,
                                         goodAlignmentProperties.min_overlap_ratio,
                                         accessor,
                                         make_reverse_complement_inplace,
@@ -707,6 +708,18 @@ POP_RANGE_2;
                                         maxQueryLength,
                                         streams[streamIndex]);
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
+                                        cudaMemcpyAsync(dataArrays[streamIndex].alignment_result_data_host,
+                        								dataArrays[streamIndex].alignment_result_data_device,
+                        								dataArrays[streamIndex].alignment_result_data_size,
+                        								D2H,
+                        								streams[streamIndex]); CUERR;
+                        				cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
                 //Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
                 //    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
 
@@ -723,10 +736,23 @@ POP_RANGE_2;
                                                     dataArrays[streamIndex].n_subjects,
 													goodAlignmentProperties.min_overlap_ratio,
 													goodAlignmentProperties.min_overlap,
-													correctionOptions.estimatedErrorrate * 4.0,
+													goodAlignmentProperties.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0,
                                                     best_alignment_comp,
                                                     dataArrays[streamIndex].n_queries,
                                                     streams[streamIndex]);
+
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
+                                        cudaMemcpyAsync(dataArrays[streamIndex].alignment_result_data_host,
+                        								dataArrays[streamIndex].alignment_result_data_device,
+                        								dataArrays[streamIndex].alignment_result_data_size,
+                        								D2H,
+                        								streams[streamIndex]); CUERR;
+                        				cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
 
                 //Step 6. Determine alignments which should be used for correction
 #if 0
@@ -934,10 +960,23 @@ POP_RANGE_2;
         //Determine indices i < M where d_alignment_best_alignment_flags[i] != BestAlignment_t::None. this selects all good alignments
         select_alignments_by_flag();
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
         cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
         PUSH_RANGE_2("wait_for_num_indices_1", 3);
         cudaStreamSynchronize(streams[streamIndex]); CUERR; // need h_num_indices before continuing
         POP_RANGE_2;
+
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
+                cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
+                                dataArrays[streamIndex].indices_transfer_data_device,
+                                dataArrays[streamIndex].indices_transfer_data_size,
+                                D2H,
+                                streams[streamIndex]); CUERR;
+                cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
+#endif
 
         if(*dataArrays[streamIndex].h_num_indices == 0){
             nProcessedReads += readIds.size();
@@ -968,6 +1007,10 @@ POP_RANGE_2;
                                             *dataArrays[streamIndex].h_num_indices,
                                             streams[streamIndex]); CUERR;
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
         //Make prefix sum
         cub::DeviceScan::ExclusiveSum(nullptr,
                                         temp_storage_bytes,
@@ -985,6 +1028,11 @@ POP_RANGE_2;
                                         dataArrays[streamIndex].n_subjects,
                                         streams[streamIndex]); CUERR;
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
+//std::cout << "call_cuda_filter_alignments_by_mismatchratio_kernel_async " << correctionTasks[0][0].readId << std::endl;;
         //choose the most appropriate subset of alignments from the good alignments.
         //This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
         call_cuda_filter_alignments_by_mismatchratio_kernel_async(
@@ -1001,13 +1049,30 @@ POP_RANGE_2;
                                 correctionOptions.estimatedCoverage * correctionOptions.m_coverage,
                                 streams[streamIndex]);
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
         //determine indices of remaining alignments
         select_alignments_by_flag();
+
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
 
         cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
         PUSH_RANGE_2("wait_for_num_indices_2", 4);
         cudaStreamSynchronize(streams[streamIndex]); CUERR; // need h_num_indices before continuing
         POP_RANGE_2;
+
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
+                cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
+                                dataArrays[streamIndex].indices_transfer_data_device,
+                                dataArrays[streamIndex].indices_transfer_data_size,
+                                D2H,
+                                streams[streamIndex]); CUERR;
+                cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
+#endif
 
         if(*dataArrays[streamIndex].h_num_indices == 0){
             nProcessedReads += readIds.size();
@@ -1016,7 +1081,7 @@ POP_RANGE_2;
         }
 
         //dataArrays[streamIndex].set_n_indices(*dataArrays[streamIndex].h_num_indices);
-
+        //determine indices of remaining alignments per subject
         cub::DeviceHistogram::HistogramRange(nullptr,
                                             temp_storage_bytes,
                                             dataArrays[streamIndex].d_indices,
@@ -1037,6 +1102,10 @@ POP_RANGE_2;
                                             *dataArrays[streamIndex].h_num_indices,
                                             streams[streamIndex]); CUERR;
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
+
         //Make prefix sum
         cub::DeviceScan::ExclusiveSum(nullptr,
                                         temp_storage_bytes,
@@ -1054,6 +1123,9 @@ POP_RANGE_2;
                                         dataArrays[streamIndex].n_subjects,
                                         streams[streamIndex]); CUERR;
 
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
 
 #endif
                 //Step 8. Copy d_indices, d_indices_per_subject, d_indices_per_subject_prefixsum to host
@@ -1063,6 +1135,10 @@ POP_RANGE_2;
                                 dataArrays[streamIndex].indices_transfer_data_size,
                                 D2H,
                                 streams[streamIndex]); CUERR;
+
+#ifdef CARE_GPU_DEBUG
+                cudaStreamSynchronize(streams[streamIndex]); CUERR;
+#endif
 
                 // Step 9. Allocate quality score data and correction data
 
@@ -1168,6 +1244,8 @@ POP_RANGE_2;
                                 dataArrays[streamIndex].d_candidate_sequences_lengths,
                                 dataArrays[streamIndex].d_subject_qualities,
                                 dataArrays[streamIndex].d_candidate_qualities,
+                                dataArrays[streamIndex].d_alignment_overlaps,
+                                dataArrays[streamIndex].d_alignment_nOps,
                                 dataArrays[streamIndex].d_msa_column_properties,
                                 dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
                                 dataArrays[streamIndex].d_indices,
@@ -1178,6 +1256,7 @@ POP_RANGE_2;
                                 //dataArrays[streamIndex].n_indices,
                                 *dataArrays[streamIndex].h_num_indices,
                                 correctionOptions.useQualityScores,
+                                desiredAlignmentMaxErrorRate,
                                 dataArrays[streamIndex].encoded_sequence_pitch,
                                 dataArrays[streamIndex].quality_pitch,
                                 dataArrays[streamIndex].msa_pitch,
@@ -1325,8 +1404,8 @@ POP_RANGE_2;
 				cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
                 POP_RANGE_2;
 
-				//unpack results
-#ifdef CARE_GPU_DEBUG
+
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
 				//DEBUGGING
 				cudaMemcpyAsync(dataArrays[streamIndex].msa_data_host,
 								dataArrays[streamIndex].msa_data_device,
@@ -1351,6 +1430,12 @@ POP_RANGE_2;
 								streams[streamIndex]); CUERR;
 				cudaStreamSynchronize(streams[streamIndex]); CUERR;
 #endif
+
+/*std::cout << "h_is_high_quality_subject" << std::endl;
+for(int i = 0; i< dataArrays[streamIndex].n_subjects; i++){
+    std::cout << dataArrays[streamIndex].h_is_high_quality_subject[i] << "\t";
+}
+std::cout << std::endl;*/
 
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
 				//DEBUGGING
@@ -1479,7 +1564,12 @@ POP_RANGE_2;
 					}
 				}
 #endif
+
+#endif
+
+
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_MSA
+
 				//DEBUGGING
 				for(std::size_t subject_index = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
 					auto& task = correctionTasks[streamIndex][subject_index];
@@ -1517,6 +1607,7 @@ POP_RANGE_2;
 						for(int col = 0; col < columnsToCheck; col++){
 							//multiple_sequence_alignment[row * msa_row_pitch + globalIndex]
 							char c = my_multiple_sequence_alignment[row * arrays.msa_pitch + col];
+                            assert(c != 'F');
 							std::cout << (c == '\0' ? '0' : c);
 							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
 								std::cout << " ";
@@ -1544,7 +1635,7 @@ POP_RANGE_2;
 					for(int row = 0; row < msa_rows; row++){
 						for(int col = 0; col < columnsToCheck; col++){
 							float f = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + col];
-							std::cout << f;//<< " ";
+							std::cout << f << " ";
 							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
 								std::cout << " ";
 						}
@@ -1579,7 +1670,8 @@ POP_RANGE_2;
 
 				}
 #endif
-#endif
+
+                //unpack results
                 PUSH_RANGE_2("unpack_results", 7);
 				for(std::size_t subject_index = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
                     auto& task = correctionTasks[streamIndex][subject_index];
@@ -1621,6 +1713,7 @@ POP_RANGE_2;
                 }
                 POP_RANGE_2;
 
+
                 //write result to file
 
                 for(std::size_t subject_index = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
@@ -1661,9 +1754,9 @@ POP_RANGE_2;
 
     			readIds = threadOpts.batchGen->getNextReadIds();
 
-#ifdef CARE_GPU_DEBUG
+//#ifdef CARE_GPU_DEBUG
 				//stopAndAbort = true; //remove
-#endif
+//#endif
 
 
     		} // end batch processing

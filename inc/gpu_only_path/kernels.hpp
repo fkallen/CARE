@@ -612,6 +612,8 @@ void call_msa_correct_subject_kernel_async(
                             const int* __restrict__ d_candidate_sequences_lengths,
                             const char* __restrict__ d_subject_qualities,
                             const char* __restrict__ d_candidate_qualities,
+                            const int* __restrict__ d_alignment_overlaps,
+                            const int* __restrict__ d_alignment_nOps,
                             const MSAColumnProperties*  __restrict__ d_msa_column_properties,
                             const int* __restrict__ d_candidates_per_subject_prefixsum,
                             const int* __restrict__ d_indices,
@@ -621,12 +623,27 @@ void call_msa_correct_subject_kernel_async(
                             int n_queries,
                             int n_indices,
                             bool canUseQualityScores,
+                            float desiredAlignmentMaxErrorRate,
                             size_t encoded_sequence_pitch,
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
                             Accessor get_as_nucleotide,
                             RevCompl make_unpacked_reverse_complement_inplace){
+
+        auto reverse_float = [](float* sequence, int length){
+
+            for(int i = 0; i < length/2; i++){
+                const float front = sequence[i];
+                const float back = sequence[length - 1 - i];
+                sequence[i] = back;
+                sequence[length - 1 - i] = front;
+            }
+
+            if(length % 2 == 1){
+                ; // when sequencelength is odd, the center remains unchanged
+            }
+        };
 
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
@@ -685,7 +702,15 @@ void call_msa_correct_subject_kernel_async(
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
             const char* const query = d_candidate_sequences_data + queryIndex * encoded_sequence_pitch;
-            const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
+
+            //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
+            const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
+
+            const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
+            const int query_alignment_nops = d_alignment_nOps[queryIndex];
+
+            const double defaultweight = 1.0 - sqrtf(query_alignment_nops
+                                                        / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
 
             assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
 
@@ -698,25 +723,46 @@ void call_msa_correct_subject_kernel_async(
 
                 multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]
                                     = canUseQualityScores ?
-                                        (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]]
+                                        (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight
                                         : 1.0f;
             }
 
-            /*for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
-                const int globalIndex = defaultcolumnoffset + i;
+            //__syncthreads(); //remove
 
-                if(multiple_sequence_alignment[row * msa_row_pitch + globalIndex] == 'F'){
-                    printf("error row %d, globalIndex %d, defaultcolumnoffset %d, i %d\n", row, globalIndex, defaultcolumnoffset, i);
-                    assert(false);
+            /*if(threadIdx.x == 0){
+                printf("query %d\n", queryIndex);
+                for(int i = 0; i < queryLength; i+= 1){
+                    printf("%c", queryQualityScore[i]);
                 }
+                printf("\n");
+
+                for(int i = 0; i < queryLength; i+= 1){
+                    const int globalIndex = defaultcolumnoffset + i;
+                    printf("%f ", multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]);
+                }
+                printf("\n");
             }*/
+
 
             __syncthreads(); // need to wait until current row is written by all threads
 
             if(threadIdx.x == 0 && flag == BestAlignment_t::ReverseComplement){
                 make_unpacked_reverse_complement_inplace((std::uint8_t*)multiple_sequence_alignment + row * msa_row_pitch + defaultcolumnoffset,
                                                         queryLength);
+                //reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
+                if(canUseQualityScores){
+                    reverse_float(multiple_sequence_alignment_weight + row * msa_weights_row_pitch_floats + defaultcolumnoffset, queryLength);
+                    /*if(threadIdx.x == 0){
+                        for(int i = 0; i < queryLength; i+= 1){
+                            const int globalIndex = defaultcolumnoffset + i;
+                            printf("%f ", multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]);
+                        }
+                        printf("\n");
+                    }*/
+                }
             }
+
+            //__syncthreads(); //remove
 
             //__syncthreads();
 
@@ -744,6 +790,8 @@ void call_msa_correct_subject_kernel_async(
                             const int* d_candidate_sequences_lengths,
                             const char* d_subject_qualities,
                             const char* d_candidate_qualities,
+                            const int* d_alignment_overlaps,
+                            const int* d_alignment_nOps,
                             const MSAColumnProperties*  d_msa_column_properties,
                             const int* d_candidates_per_subject_prefixsum,
                             const int* d_indices,
@@ -753,6 +801,7 @@ void call_msa_correct_subject_kernel_async(
                             int n_queries,
                             int n_indices,
                             bool canUseQualityScores,
+                            float desiredAlignmentMaxErrorRate,
                             size_t encoded_sequence_pitch,
                             size_t quality_pitch,
                             size_t msa_row_pitch,
@@ -763,6 +812,7 @@ void call_msa_correct_subject_kernel_async(
 
             dim3 block(128, 1, 1);
             dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
+            //dim3 grid(1,1,1);
 
 			//dim3 block(1, 1, 1);
             //dim3 grid(1, 1, 1); // one block per candidate which needs to be added to msa
@@ -779,6 +829,8 @@ void call_msa_correct_subject_kernel_async(
                                                             d_candidate_sequences_lengths,
                                                             d_subject_qualities,
                                                             d_candidate_qualities,
+                                                            d_alignment_overlaps,
+                                                            d_alignment_nOps,
                                                             d_msa_column_properties,
                                                             d_candidates_per_subject_prefixsum,
                                                             d_indices,
@@ -788,6 +840,7 @@ void call_msa_correct_subject_kernel_async(
                                                             n_queries,
                                                             n_indices,
                                                             canUseQualityScores,
+                                                            desiredAlignmentMaxErrorRate,
                                                             encoded_sequence_pitch,
                                                             quality_pitch,
                                                             msa_row_pitch,
