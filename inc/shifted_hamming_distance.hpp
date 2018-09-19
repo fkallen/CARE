@@ -191,7 +191,7 @@ cpu_shifted_hamming_distance(const char* subject,
     int bestScore = totalbases; // score is number of mismatches
     int bestShift = -querylength; // shift of query relative to subject. shift < 0 if query begins before subject
 
-    for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap; shift++){
+    for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap + 1; shift++){
         const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
         const int max_errors = int(double(overlapsize) * maxErrorRate);
         int score = 0;
@@ -479,7 +479,7 @@ cpu_shifted_hamming_distance_popcount(const char* subject,
     //load query again from memory since it has been modified by calculations with shift < 0
     std::copy(query, query + querybytes, querydata.begin());
 
-    for(int shift = 1; shift < subjectlength - minoverlap; ++shift){
+    for(int shift = 1; shift < subjectlength - minoverlap + 1; ++shift){
         const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
         const int max_errors = int(double(overlapsize) * maxErrorRate);
 
@@ -915,7 +915,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel_new(Result_t* results,
         int bestScore = totalbases; // score is number of mismatches
         int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
 
-        for(int shift = -querybases + minoverlap; shift < subjectbases - minoverlap; shift += 1){
+        for(int shift = -querybases + minoverlap; shift < subjectbases - minoverlap + 1; shift += 1){
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
             const int max_errors = int(double(overlapsize) * maxErrorRate);
             int score = 0;
@@ -1104,7 +1104,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel_new2(Result_t* results,
         #pragma unroll 4
         for(int shift = -SEQUENCELENGTH; shift < SEQUENCELENGTH; shift += 1){
 
-            if(shift >= -SEQUENCELENGTH + minoverlap && shift < SEQUENCELENGTH - minoverlap){
+            if(shift >= -SEQUENCELENGTH + minoverlap && shift < SEQUENCELENGTH - minoverlap + 1){
 
                 const int overlapsize = min(SEQUENCELENGTH, SEQUENCELENGTH - shift) - max(-shift, 0);
                 const int max_errors = int(double(overlapsize) * maxErrorRate);
@@ -1433,7 +1433,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(Result_t* results,
 
         int previousShift = -querybases + minoverlap + localTileId;
 
-        for(int shift = -querybases + minoverlap + localTileId; shift < subjectbases - minoverlap; shift += tiles_per_block){
+        for(int shift = -querybases + minoverlap + localTileId; shift < subjectbases - minoverlap + 1; shift += tiles_per_block){
             if(shift == -querybases + minoverlap + localTileId){
         		//save subject in shared memory
         		for(int lane = 0; lane < max_sequence_ints; lane += 1){
