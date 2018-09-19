@@ -29,8 +29,8 @@ namespace gpu{
                                         int n_subjects,
 										int n_candidates,
 										const int* d_num_indices,
-										double binsize,
-										int min_remaining_candidates_per_subject,
+										double mismatchratioBaseFactor,
+										double goodAlignmentsCountThreshold,
 										cudaStream_t stream);
 
     void call_msa_init_kernel_async(
@@ -175,7 +175,7 @@ void call_msa_correct_subject_kernel_async(
             int bestScore = totalbases; // score is number of mismatches
             int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
 
-            for(int shift = -querybases + minoverlap + threadIdx.x; shift < subjectbases - minoverlap; shift += BLOCKSIZE){
+            for(int shift = -querybases + minoverlap + threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE){
                 const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
                 const int max_errors = int(double(overlapsize) * maxErrorRate);
                 int score = 0;
@@ -428,8 +428,8 @@ void call_msa_correct_subject_kernel_async(
                                         int n_subjects,
 										int n_candidates,
 										const int* d_num_indices,
-										double binsize,
-										int min_remaining_candidates_per_subject){
+										double mismatchratioBaseFactor,
+										double goodAlignmentsCountThreshold){
 
         using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
 
@@ -438,12 +438,24 @@ void call_msa_correct_subject_kernel_async(
 			int broadcast[3];
         } temp_storage;
 
-        for(int subjectindex = blockDim.x; subjectindex < n_subjects; subjectindex += gridDim.x){
+        /*if(threadIdx.x == 0){
+            printf("n_subjects %d\n", n_subjects);
+        }
+
+        printf("blockIdx.x %d\n", blockIdx.x);*/
+
+        for(int subjectindex = blockIdx.x; subjectindex < n_subjects; subjectindex += gridDim.x){
 
 			const int my_n_indices = d_indices_per_subject[subjectindex];
 			const int* my_indices = d_indices + d_indices_per_subject_prefixsum[subjectindex];
 
+            //printf("subjectindex %d\n", subjectindex);
+
 			int counts[3]{0,0,0};
+
+            //if(threadIdx.x == 0){
+            //    printf("my_n_indices %d\n", my_n_indices);
+            //}
 
 			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
 				const int candidate_index = my_indices[index];
@@ -451,13 +463,15 @@ void call_msa_correct_subject_kernel_async(
 				const int alignment_nops = d_alignment_nOps[candidate_index];
 
 				const double mismatchratio = double(alignment_nops) / alignment_overlap;
+                if(mismatchratio >= 4 * mismatchratioBaseFactor){
+                    d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
+                }else{
 
-				assert(mismatchratio < 4 * binsize);
-
-				#pragma unroll
-				for(int i = 2; i <= 4; i++){
-					counts[i-2] += (mismatchratio < i * binsize);
-				}
+    				#pragma unroll
+    				for(int i = 2; i <= 4; i++){
+    					counts[i-2] += (mismatchratio < i * mismatchratioBaseFactor);
+    				}
+                }
 			}
 
 			//accumulate counts over block
@@ -468,22 +482,29 @@ void call_msa_correct_subject_kernel_async(
 			}
 
 			//broadcast accumulated counts to block
-			#pragma unroll
-			for(int i = 0; i < 3; i++){
-				if(threadIdx.x == 0){
-					temp_storage.broadcast[i] = counts[i];
-				}
-				__syncthreads();
-				counts[i] = temp_storage.broadcast[i];
+            if(threadIdx.x == 0){
+    			#pragma unroll
+    			for(int i = 0; i < 3; i++){
+                    temp_storage.broadcast[i] = counts[i];
+                    //printf("count[%d] = %d\n", i, counts[i]);
+    			}
+                //printf("mismatchratioBaseFactor %f, goodAlignmentsCountThreshold %f\n", mismatchratioBaseFactor, goodAlignmentsCountThreshold);
 			}
 
+            __syncthreads();
+
+            #pragma unroll
+            for(int i = 0; i < 3; i++){
+                counts[i] = temp_storage.broadcast[i];
+            }
+
 			double mismatchratioThreshold = 0;
-			if (counts[0] >= min_remaining_candidates_per_subject) {
-				mismatchratioThreshold = 2 * binsize;
-			} else if (counts[1] >= min_remaining_candidates_per_subject) {
-				mismatchratioThreshold = 3 * binsize;
-			} else if (counts[2] >= min_remaining_candidates_per_subject) {
-				mismatchratioThreshold = 4 * binsize;
+			if (counts[0] >= goodAlignmentsCountThreshold) {
+				mismatchratioThreshold = 2 * mismatchratioBaseFactor;
+			} else if (counts[1] >= goodAlignmentsCountThreshold) {
+				mismatchratioThreshold = 3 * mismatchratioBaseFactor;
+			} else if (counts[2] >= goodAlignmentsCountThreshold) {
+				mismatchratioThreshold = 4 * mismatchratioBaseFactor;
 			} else {
 				mismatchratioThreshold = -1; //this will invalidate all alignments for subject
 			}
@@ -674,32 +695,41 @@ void call_msa_correct_subject_kernel_async(
                 const int globalIndex = defaultcolumnoffset + i;
 
                 multiple_sequence_alignment[row * msa_row_pitch + globalIndex] = get_as_nucleotide(query, queryLength, i);
+
                 multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]
                                     = canUseQualityScores ?
                                         (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]]
                                         : 1.0f;
             }
 
+            /*for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                const int globalIndex = defaultcolumnoffset + i;
+
+                if(multiple_sequence_alignment[row * msa_row_pitch + globalIndex] == 'F'){
+                    printf("error row %d, globalIndex %d, defaultcolumnoffset %d, i %d\n", row, globalIndex, defaultcolumnoffset, i);
+                    assert(false);
+                }
+            }*/
+
+            __syncthreads(); // need to wait until current row is written by all threads
+
             if(threadIdx.x == 0 && flag == BestAlignment_t::ReverseComplement){
                 make_unpacked_reverse_complement_inplace((std::uint8_t*)multiple_sequence_alignment + row * msa_row_pitch + defaultcolumnoffset,
                                                         queryLength);
             }
 
-            /*printf("index %d, subjectindex %d, queryindex %d, shift %d, defaultcolumnoffset %d, candidates_before_this_subject %d, localQueryIndex %d, rowOffset %d, globalRow %d: ", index, subjectIndex, queryIndex, shift, defaultcolumnoffset, candidates_before_this_subject, localQueryIndex, rowOffset, rowOffset + row);
-			for(int i = 0; i < queryLength; i+= 1){
-				printf("%c", get_as_nucleotide(query, queryLength, i));
-			}
-			printf("\n");*/
-        }
+            //__syncthreads();
 
-        /*printf("from kernel\n");
-		for(int row = 0; row < n_indices && row < 50; ++row){
-			for(int col = 0; col < msa_row_pitch; col++){
-				char c = d_multiple_sequence_alignments[row * msa_row_pitch + col];
-				printf("%c", (c == '\0' ? '0' : c));
-			}
-			printf("\n");
-		}*/
+            /*for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                const int globalIndex = defaultcolumnoffset + i;
+
+                if(multiple_sequence_alignment[row * msa_row_pitch + globalIndex] == 'F'){
+                    printf("error row %d, globalIndex %d, defaultcolumnoffset %d, i %d\n", row, globalIndex, defaultcolumnoffset, i);
+                    assert(false);
+                }
+            }*/
+
+        }
     }
 
     template<class Accessor, class RevCompl>

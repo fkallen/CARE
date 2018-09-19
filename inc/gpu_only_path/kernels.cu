@@ -13,7 +13,7 @@ namespace care{
 namespace gpu{
 
 #ifdef __NVCC__
-	
+
 	void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
                                         BestAlignment_t* d_alignment_best_alignment_flags,
                                         const int* d_alignment_overlaps,
@@ -24,12 +24,12 @@ namespace gpu{
                                         int n_subjects,
 										int n_candidates,
 										const int* d_num_indices,
-										double binsize,
-										int min_remaining_candidates_per_subject,
+                                        double mismatchratioBaseFactor,
+										double goodAlignmentsCountThreshold,
 										cudaStream_t stream){
 
 		const int blocksize = 128;
-		
+
         dim3 block(blocksize, 1, 1);
         dim3 grid(n_subjects);
 
@@ -44,8 +44,8 @@ namespace gpu{
                                     n_subjects, \
                                     n_candidates, \
                                     d_num_indices, \
-                                    binsize, \
-                                    min_remaining_candidates_per_subject); CUERR;
+                                    mismatchratioBaseFactor, \
+                                    goodAlignmentsCountThreshold); CUERR;
 
         switch(blocksize){
             case 32: mycall(32); break;
@@ -58,7 +58,9 @@ namespace gpu{
             case 256: mycall(256); break;
             default: mycall(256); break;
         }
-        
+
+        //cudaDeviceSynchronize(); CUERR;
+
 		#undef mycall
     }
 
@@ -94,7 +96,7 @@ namespace gpu{
 
             for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
                 const int queryIndex = indices_for_this_subject[index];
-				
+
                 const int shift = alignment_shifts[queryIndex];
                 const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
                 const int queryLength = candidate_sequences_lengths[queryIndex];
@@ -105,13 +107,13 @@ namespace gpu{
                     endindex = max(endindex, queryEndsAt);
                 }
             }
-			
+
 			startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
 			__syncthreads();
-			
-			endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());			
+
+			endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());
 			__syncthreads();
-			
+
 			if(threadIdx.x == 0){
 				MSAColumnProperties my_columnproperties;
 
@@ -141,10 +143,10 @@ namespace gpu{
                         cudaStream_t stream){
 
 		const int blocksize = 128;
-		
+
         dim3 block(blocksize, 1, 1);
         dim3 grid(n_subjects, 1, 1);
-		
+
 		#define mycall(blocksize) msa_init_kernel<(blocksize)><<<grid, block, 0, stream>>>(d_msa_column_properties, \
                                                     d_alignment_shifts, \
                                                     d_alignment_best_alignment_flags, \
@@ -154,7 +156,7 @@ namespace gpu{
                                                     d_indices_per_subject, \
                                                     d_indices_per_subject_prefixsum, \
                                                     n_subjects); CUERR;
-		
+
 		switch(blocksize){
 			case 1: mycall(1); break;
             case 32: mycall(32); break;
@@ -167,10 +169,10 @@ namespace gpu{
             case 256: mycall(256); break;
             default: mycall(256); break;
         }
-        
+
 		#undef mycall
 
-        
+
     }
 
 
@@ -345,7 +347,7 @@ namespace gpu{
                                                             blocks_per_msa); CUERR;
 
     }
-    
+
     void call_msa_correct_subject_kernel_async(
                             const char* d_consensus,
                             const float* d_support,
@@ -418,7 +420,7 @@ namespace gpu{
     }
 
 
-    
+
 
 
 #endif
