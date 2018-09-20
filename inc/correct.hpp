@@ -324,8 +324,8 @@ private:
 		std::ofstream outputstream(threadOpts.outputfile);
 
         std::ofstream featurestream(threadOpts.outputfile + "_features");
-
 		auto write_read = [&](const ReadId_t readId, const auto& sequence){
+            //std::cout << readId << " " << sequence << std::endl;
 			auto& stream = outputstream;
 			stream << readId << '\n';
 			stream << sequence << '\n';
@@ -346,7 +346,7 @@ private:
         //std::uint64_t savedAlignments = 0;
         //std::uint64_t performedAlignments = 0;
 
-		constexpr int nStreams = 2;
+		constexpr int nStreams = 1;
         const bool canUseGpu = threadOpts.canUseGpu;
 
 		std::vector<SHDhandle> shdhandles(nStreams);
@@ -399,6 +399,8 @@ private:
 
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
+                PUSH_RANGE("init_batch", 0);
+
                 tpc = std::chrono::system_clock::now();
 				//fit vector size to actual batch size
 				if (batchElems[streamIndex].size() != readIds.size()) {
@@ -426,6 +428,12 @@ private:
                 tpd = std::chrono::system_clock::now();
                 initIdTimeTotal += tpd - tpc;
 
+                POP_RANGE;
+
+
+                PUSH_RANGE("find_candidates", 1);
+
+
 				tpa = std::chrono::system_clock::now();
 
 				for(auto& b : batchElems[streamIndex]){
@@ -446,9 +454,13 @@ private:
 				tpb = std::chrono::system_clock::now();
 				mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
+                POP_RANGE;
+
+                PUSH_RANGE("perform_alignments", 3);
+
 				tpa = std::chrono::system_clock::now();
 
-				auto activeBatchElementsEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+				auto activeBatchElementsEnd = std::stable_partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
 				if(std::distance(batchElems[streamIndex].begin(), activeBatchElementsEnd) > 0){
 
@@ -552,12 +564,17 @@ private:
 
 				tpb = std::chrono::system_clock::now();
 				getAlignmentsTimeTotal += tpb - tpa;
+
+                POP_RANGE;
 			}
 
 
 #if 1
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
+
+
+                PUSH_RANGE("wait_for_alignments" , 4);
 
 				tpa = std::chrono::system_clock::now();
 
@@ -577,7 +594,7 @@ private:
                 bestSequenceStringsbegin.reserve(batchElems[streamIndex].size());
 				bestSequenceStringsend.reserve(batchElems[streamIndex].size());
 
-				auto activeBatchElementsEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+				auto activeBatchElementsEnd = std::stable_partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
 				//for(auto& b : batchElems[streamIndex]){
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
@@ -618,6 +635,8 @@ private:
 
 				tpb = std::chrono::system_clock::now();
 				getAlignmentsTimeTotal += tpb - tpa;
+
+                POP_RANGE;
 	#if 1
 				//check quality of alignments
 				tpc = std::chrono::system_clock::now();
@@ -652,6 +671,8 @@ private:
 
                 tpd = std::chrono::system_clock::now();
                 fetchgoodcandidatesTime += tpd - tpc;
+
+                PUSH_RANGE("correct_batch" , 5);
 
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 					auto& b = *it;
@@ -755,6 +776,8 @@ private:
 						}
 					}
 				}
+
+                POP_RANGE;
 
 #endif
 			}
@@ -2670,12 +2693,25 @@ void correct(const MinhashOptions& minhashOptions,
 	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 #else
 
-    using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedSplitTasks<Minhasher_t, ReadStorage_t, indels>;
-    //using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedThisThat<Minhasher_t, ReadStorage_t, indels>;
+    //using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedSplitTasks<Minhasher_t, ReadStorage_t, indels>;
+    using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedThisThat<Minhasher_t, ReadStorage_t, indels>;
 #endif
 #else
 	using ErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, BatchGenerator<ReadId_t>>;
 #endif
+
+//#define DO_PROFILE
+
+#if 0
+    const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
+                        : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
+#else
+	const int nCorrectorThreads = 1;
+#endif
+
+	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
+
+
 
       // initialize qscore-to-weight lookup table
   	init_weights();
@@ -2732,17 +2768,6 @@ void correct(const MinhashOptions& minhashOptions,
     /*
         Spawn correction threads
     */
-
-//#define DO_PROFILE
-
-#if 1
-    const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
-                        : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
-#else
-	const int nCorrectorThreads = 1;
-#endif
-
-	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < nCorrectorThreads; i++){

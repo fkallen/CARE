@@ -493,29 +493,44 @@ struct BatchGenerator{
                                             correctionOptions.estimatedErrorrate * 4.0);
             };
 
-    		constexpr int nStreams = 1;
-			cudaSetDevice(threadOpts.deviceId);
+    		constexpr int nStreams = 2;
+
+			cudaSetDevice(threadOpts.deviceId); CUERR;
+
             std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
             using Batch = std::vector<CorrectionTask_t>;
 
+            enum class BatchState{
+                Unprepared,
+                SubjectsPresent,
+                CandidatesPresent,
+                DataOnGPU,
+            };
+
+
+
     		std::vector<DataArrays<Sequence_t>> dataArrays;
             std::array<Batch, nStreams> correctionTasks;
             std::array<cudaStream_t, nStreams> streams;
-
+            std::array<BatchState, nStreams> batchStates;
 
             //determine maximum temp storage size for cub
 
 
             for(int i = 0; i < nStreams; i++){
                 dataArrays.emplace_back(threadOpts.deviceId);
+
                 cudaStreamCreate(&streams[i]); CUERR;
+
                 dataArrays[i].set_problem_dimensions(readIds.size(),
                                                             max_candidates * readIds.size(),
                                                             fileProperties.maxSequenceLength,
                                                             goodAlignmentProperties.min_overlap,
                                                             goodAlignmentProperties.min_overlap_ratio,
-                                                            correctionOptions.useQualityScores); CUERR;
+                                                            correctionOptions.useQualityScores);
+
+                batchStates[i] = BatchState::Unprepared;
             }
 
 
@@ -581,103 +596,162 @@ struct BatchGenerator{
                 }
             };
 
-            auto nextStreamIndex = [](int currentStreamIndex){
+            auto nextStreamIndex = [](int currentStreamIndex, int nStreams){
+                if(nStreams > 1)
                     return currentStreamIndex == 0 ? 1 : 0;
+                else
+                    assert(false);
+                    return currentStreamIndex;
             };
 
             int streamIndex = 0;
 
+            /*enum class BatchState{
+                Unprepared,
+                SubjectsPresent,
+                CandidatesPresent,
+                DataOnGPU,
+            };*/
     		while(!stopAndAbort && !readIds.empty()){
 
-				//std::cout << "iter " << itercounter << std::endl;
-				//++itercounter;
+                if(batchStates[streamIndex] == BatchState::Unprepared){
+                    correctionTasks[streamIndex].clear();
 
-                correctionTasks[streamIndex].clear();
+                    PUSH_RANGE_2("get_subjects_own", 0);
 
-                // Step 1 and 2: Get subject sequence and its candidate read ids from hash map
-                // Get candidate sequences from read storage
+                    get_subjects(correctionTasks[streamIndex], readIds);
 
-                PUSH_RANGE_2("get_subjects", 0);
+                    nProcessedReads += readIds.size();
+                    readIds = threadOpts.batchGen->getNextReadIds();
 
-                get_subjects(correctionTasks[streamIndex], readIds);
+                    POP_RANGE_2;
 
-                nProcessedReads += readIds.size();
-                readIds = threadOpts.batchGen->getNextReadIds();
-
-                POP_RANGE_2;
-
-                PUSH_RANGE_2("get_candidates", 1);
-
-                get_candidates(correctionTasks[streamIndex]);
-
-                POP_RANGE_2;
-
-                std::remove_if(correctionTasks[streamIndex].begin(),
-                                correctionTasks[streamIndex].end(),
-                                [](const auto& t){return !t.active;});
-
-                int nTotalCandidates = std::accumulate(correctionTasks[streamIndex].begin(),
-                                                        correctionTasks[streamIndex].end(),
-                                                        int(0),
-                                                        [](const auto& l, const auto& r){
-                                                            return l + int(r.candidate_read_ids.size());
-                                                        });
-
-                if(nTotalCandidates == 0){
-                    continue;
+                    batchStates[streamIndex] = BatchState::SubjectsPresent;
                 }
 
+                if(batchStates[streamIndex] == BatchState::SubjectsPresent){
+                    PUSH_RANGE_2("get_candidates_own", 1);
 
-                //Step 3. Copy subject sequences, subject sequence lengths, candidate sequences,
-                //candidate sequence lengths, candidates_per_subject_prefixsum to GPU
+                    get_candidates(correctionTasks[streamIndex]);
 
-                //allocate data arrays
+                    POP_RANGE_2;
 
-                PUSH_RANGE_2("set_problem_dimensions", 7);
-                dataArrays[streamIndex].set_problem_dimensions(int(correctionTasks[streamIndex].size()),
-                                                            nTotalCandidates,
-                                                            fileProperties.maxSequenceLength,
-                                                            goodAlignmentProperties.min_overlap,
-                                                            goodAlignmentProperties.min_overlap_ratio,
-                                                            correctionOptions.useQualityScores); CUERR;
+                    std::remove_if(correctionTasks[streamIndex].begin(),
+                                    correctionTasks[streamIndex].end(),
+                                    [](const auto& t){return !t.active;});
 
-                std::size_t temp_storage_bytes = 0;
-                std::size_t max_temp_storage_bytes = 0;
-                cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
-                                                    (int*)nullptr, (int*)nullptr,
-                                                    dataArrays[streamIndex].n_subjects+1,
-                                                    (int*)nullptr,
-                                                    dataArrays[streamIndex].n_queries,
-                                                    streams[streamIndex]); CUERR;
+                    int nTotalCandidates = std::accumulate(correctionTasks[streamIndex].begin(),
+                                                            correctionTasks[streamIndex].end(),
+                                                            int(0),
+                                                            [](const auto& l, const auto& r){
+                                                                return l + int(r.candidate_read_ids.size());
+                                                            });
 
-                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+                    if(nTotalCandidates == 0){
+                        batchStates[streamIndex] = BatchState::Unprepared;
+                        continue;
+                    }
 
-                cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                            (bool*)nullptr, (int*)nullptr, (int*)nullptr,
-                                            nTotalCandidates,
-                                            streams[streamIndex]); CUERR;
+                    //allocate data arrays
 
-                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+                    PUSH_RANGE_2("set_problem_dimensions_firstiter", 7);
+                    dataArrays[streamIndex].set_problem_dimensions(int(correctionTasks[streamIndex].size()),
+                                                                nTotalCandidates,
+                                                                fileProperties.maxSequenceLength,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.min_overlap_ratio,
+                                                                correctionOptions.useQualityScores); CUERR;
 
-                cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                                (int*)nullptr,
-                                                dataArrays[streamIndex].n_subjects,
+                    std::size_t temp_storage_bytes = 0;
+                    std::size_t max_temp_storage_bytes = 0;
+                    cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
+                                                        (int*)nullptr, (int*)nullptr,
+                                                        dataArrays[streamIndex].n_subjects+1,
+                                                        (int*)nullptr,
+                                                        dataArrays[streamIndex].n_queries,
+                                                        streams[streamIndex]); CUERR;
+
+                    max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                    cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                                                (bool*)nullptr, (int*)nullptr, (int*)nullptr,
+                                                nTotalCandidates,
                                                 streams[streamIndex]); CUERR;
 
-                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-                temp_storage_bytes = max_temp_storage_bytes;
+                    max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
 
-                dataArrays[streamIndex].set_tmp_storage_size(max_temp_storage_bytes);
+                    cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                                                    (int*)nullptr,
+                                                    dataArrays[streamIndex].n_subjects,
+                                                    streams[streamIndex]); CUERR;
 
-                POP_RANGE_2;
+                    max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+                    temp_storage_bytes = max_temp_storage_bytes;
 
-                //dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
-//PUSH_RANGE_2("zero_cpu", 4);
-				//dataArrays[streamIndex].zero_cpu();
-//POP_RANGE_2;
-PUSH_RANGE_2("zero_gpu", 5);
-				dataArrays[streamIndex].zero_gpu(streams[streamIndex]);
-POP_RANGE_2;
+                    dataArrays[streamIndex].set_tmp_storage_size(max_temp_storage_bytes);
+
+                    POP_RANGE_2;
+
+                    //dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
+    //PUSH_RANGE_2("zero_cpu", 4);
+    				//dataArrays[streamIndex].zero_cpu();
+    //POP_RANGE_2;
+                    PUSH_RANGE_2("zero_gpu_firstiter", 5);
+    				dataArrays[streamIndex].zero_gpu(streams[streamIndex]);
+                    POP_RANGE_2;
+
+                    batchStates[streamIndex] = BatchState::CandidatesPresent;
+                }
+
+                if(batchStates[streamIndex] == BatchState::CandidatesPresent){
+                    //fill data arrays
+                    dataArrays[streamIndex].h_candidates_per_subject_prefixsum[0] = 0;
+
+                    int maxSubjectLength = 0;
+                    int maxQueryLength = 0;
+
+                    PUSH_RANGE_2("copy_to_buffer", 2);
+
+                    for(std::size_t i = 0, count = 0; i < correctionTasks[streamIndex].size(); ++i){
+                        const auto& task = correctionTasks[streamIndex][i];
+                        auto& arrays = dataArrays[streamIndex];
+
+                        //fill subject
+                        std::memcpy(arrays.h_subject_sequences_data + i * arrays.encoded_sequence_pitch,
+                                    task.subject_sequence->begin(),
+                                    task.subject_sequence->getNumBytes());
+                        arrays.h_subject_sequences_lengths[i] = task.subject_sequence->length();
+                        maxSubjectLength = std::max(int(task.subject_sequence->length()), maxSubjectLength);
+
+                        //fill candidates
+                        for(const Sequence_t* candidate_sequence : task.candidate_sequences){
+
+                            std::memcpy(arrays.h_candidate_sequences_data + count * arrays.encoded_sequence_pitch,
+                                        candidate_sequence->begin(),
+                                        candidate_sequence->getNumBytes());
+
+                            arrays.h_candidate_sequences_lengths[count] = candidate_sequence->length();
+                            maxQueryLength = std::max(int(candidate_sequence->length()), maxQueryLength);
+
+                            ++count;
+                        }
+
+                        //make prefix sum
+                        arrays.h_candidates_per_subject_prefixsum[i+1]
+                            = arrays.h_candidates_per_subject_prefixsum[i] + int(task.candidate_read_ids.size());
+                    }
+
+                    POP_RANGE_2;
+
+                    //data required for alignment is now ready for transfer
+
+                    cudaMemcpyAsync(dataArrays[streamIndex].alignment_transfer_data_device,
+                                    dataArrays[streamIndex].alignment_transfer_data_host,
+                                    dataArrays[streamIndex].alignment_transfer_data_usable_size,
+                                    H2D,
+                                    streams[streamIndex]); CUERR;
+                    batchStates[streamIndex] = BatchState::DataOnGPU;
+                }
 
                 //fill data arrays
                 dataArrays[streamIndex].h_candidates_per_subject_prefixsum[0] = 0;
@@ -867,10 +941,7 @@ POP_RANGE_2;
                         cudaStreamSynchronize(streams[streamIndex]); CUERR;
         #endif
 
-                /*cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
-                PUSH_RANGE_2("wait_for_num_indices_1", 3);
-                cudaStreamSynchronize(streams[streamIndex]); CUERR; // need h_num_indices before continuing
-                POP_RANGE_2;*/
+
 
         #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
                         cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
@@ -892,7 +963,6 @@ POP_RANGE_2;
                                                     dataArrays[streamIndex].d_indices_per_subject,
                                                     dataArrays[streamIndex].n_subjects+1,
                                                     dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
-                                                    // *dataArrays[streamIndex].h_num_indices,
                                                     dataArrays[streamIndex].n_queries,
                                                     streams[streamIndex]); CUERR;
 
@@ -980,6 +1050,33 @@ POP_RANGE_2;
 #ifdef CARE_GPU_DEBUG
                 cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
 #endif
+
+
+                /*
+                    Prepare subjects and candidates of next batch while waiting for the previous gpu work to finish
+                */
+                {
+                    correctionTasks[nextStreamIndex(streamIndex, nStreams)].clear();
+
+                    // Step 1 and 2: Get subject sequence and its candidate read ids from hash map
+                    // Get candidate sequences from read storage
+
+                    PUSH_RANGE_2("get_subjects_next", 0);
+
+                    get_subjects(correctionTasks[nextStreamIndex(streamIndex, nStreams)], readIds);
+
+                    nProcessedReads += readIds.size();
+                    readIds = threadOpts.batchGen->getNextReadIds();
+
+                    POP_RANGE_2;
+
+                    PUSH_RANGE_2("get_candidates_next", 1);
+
+                    get_candidates(correctionTasks[nextStreamIndex(streamIndex, nStreams)]);
+
+                    POP_RANGE_2;
+                }
+
 
                 cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
                 PUSH_RANGE_2("wait_for_num_indices_2", 4);
@@ -1202,6 +1299,83 @@ POP_RANGE_2;
 								dataArrays[streamIndex].correction_results_transfer_data_usable_size,
 								D2H,
 								streams[streamIndex]); CUERR;
+
+
+                /*
+                    Continue preparation of next batch while waiting for correction results
+                */
+
+                {
+                    std::remove_if(correctionTasks[nextStreamIndex(streamIndex, nStreams)].begin(),
+                                    correctionTasks[nextStreamIndex(streamIndex, nStreams)].end(),
+                                    [](const auto& t){return !t.active;});
+
+                    int nTotalCandidates = std::accumulate(correctionTasks[nextStreamIndex(streamIndex, nStreams)].begin(),
+                                                            correctionTasks[nextStreamIndex(streamIndex, nStreams)].end(),
+                                                            int(0),
+                                                            [](const auto& l, const auto& r){
+                                                                return l + int(r.candidate_read_ids.size());
+                                                            });
+
+                    if(nTotalCandidates == 0){
+                        firstIter = true; // no batch prepared for next iter
+                        continue;
+                    }
+
+
+                    //Step 3. Copy subject sequences, subject sequence lengths, candidate sequences,
+                    //candidate sequence lengths, candidates_per_subject_prefixsum to GPU
+
+                    //allocate data arrays
+
+                    PUSH_RANGE_2("set_problem_dimensions_firstiter", 7);
+                    dataArrays[nextStreamIndex(streamIndex, nStreams)].set_problem_dimensions(int(correctionTasks[nextStreamIndex(streamIndex, nStreams)].size()),
+                                                                nTotalCandidates,
+                                                                fileProperties.maxSequenceLength,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.min_overlap_ratio,
+                                                                correctionOptions.useQualityScores); CUERR;
+
+                    std::size_t temp_storage_bytes = 0;
+                    std::size_t max_temp_storage_bytes = 0;
+                    cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
+                                                        (int*)nullptr, (int*)nullptr,
+                                                        dataArrays[nextStreamIndex(streamIndex, nStreams)].n_subjects+1,
+                                                        (int*)nullptr,
+                                                        dataArrays[nextStreamIndex(streamIndex, nStreams)].n_queries,
+                                                        streams[nextStreamIndex(streamIndex, nStreams)]); CUERR;
+
+                    max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                    cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                                                (bool*)nullptr, (int*)nullptr, (int*)nullptr,
+                                                nTotalCandidates,
+                                                streams[nextStreamIndex(streamIndex, nStreams)]); CUERR;
+
+                    max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                    cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                                                    (int*)nullptr,
+                                                    dataArrays[nextStreamIndex(streamIndex, nStreams)].n_subjects,
+                                                    streams[nextStreamIndex(streamIndex, nStreams)]); CUERR;
+
+                    max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+                    temp_storage_bytes = max_temp_storage_bytes;
+
+                    dataArrays[nextStreamIndex(streamIndex, nStreams)].set_tmp_storage_size(max_temp_storage_bytes);
+
+                    POP_RANGE_2;
+
+                    //dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
+                    //PUSH_RANGE_2("zero_cpu", 4);
+                    //dataArrays[streamIndex].zero_cpu();
+                    //POP_RANGE_2;
+                    PUSH_RANGE_2("zero_gpu_firstiter", 5);
+                    dataArrays[nextStreamIndex(streamIndex, nStreams)].zero_gpu(streams[nextStreamIndex(streamIndex, nStreams)]);
+                    POP_RANGE_2;
+                }
+
+
                 PUSH_RANGE_2("wait_for_results", 6);
 				cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
                 POP_RANGE_2;
