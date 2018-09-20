@@ -501,6 +501,10 @@ struct BatchGenerator{
             std::array<std::vector<CorrectionTask_t>, nStreams> correctionTasks;
             std::array<cudaStream_t, nStreams> streams;
 
+
+            //determine maximum temp storage size for cub
+
+
             for(int i = 0; i < nStreams; i++){
                 dataArrays.emplace_back(threadOpts.deviceId);
                 cudaStreamCreate(&streams[i]); CUERR;
@@ -511,6 +515,10 @@ struct BatchGenerator{
                                                             goodAlignmentProperties.min_overlap_ratio,
                                                             correctionOptions.useQualityScores); CUERR;
             }
+
+
+
+
 
             const auto& readStorage = threadOpts.readStorage;
             const auto& minhasher = threadOpts.minhasher;
@@ -620,6 +628,35 @@ struct BatchGenerator{
                                                             goodAlignmentProperties.min_overlap,
                                                             goodAlignmentProperties.min_overlap_ratio,
                                                             correctionOptions.useQualityScores); CUERR;
+
+                std::size_t temp_storage_bytes = 0;
+                std::size_t max_temp_storage_bytes = 0;
+                cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
+                                                    (int*)nullptr, (int*)nullptr,
+                                                    dataArrays[streamIndex].n_subjects+1,
+                                                    (int*)nullptr,
+                                                    dataArrays[streamIndex].n_queries,
+                                                    streams[streamIndex]); CUERR;
+
+                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                                            (bool*)nullptr, (int*)nullptr, (int*)nullptr,
+                                            nTotalCandidates,
+                                            streams[streamIndex]); CUERR;
+
+                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                                                (int*)nullptr,
+                                                dataArrays[streamIndex].n_subjects,
+                                                streams[streamIndex]); CUERR;
+
+                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+                temp_storage_bytes = max_temp_storage_bytes;
+
+                dataArrays[streamIndex].set_tmp_storage_size(max_temp_storage_bytes);
+
                 POP_RANGE_2;
 
                 //dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
@@ -756,8 +793,6 @@ POP_RANGE_2;
 
                 //Step 6. Determine alignments which should be used for correction
 
-        std::size_t temp_storage_bytes = 0;
-
         /*
             Writes indices of candidates with alignmentflag != None to dataArrays[streamIndex].d_indices
             Writes number of writen indices to dataArrays[streamIndex].d_num_indices
@@ -772,20 +807,8 @@ POP_RANGE_2;
                         d_isGoodAlignment(dataArrays[streamIndex].d_alignment_best_alignment_flags,
                                           select_alignment_op);
 
-
-            cub::DeviceSelect::Flagged(nullptr,
-                                        temp_storage_bytes,
-                                        cub::CountingInputIterator<int>(0),
-                                        d_isGoodAlignment,
-                                        dataArrays[streamIndex].d_indices,
-                                        dataArrays[streamIndex].d_num_indices,
-                                        nTotalCandidates,
-                                        streams[streamIndex]); CUERR;
-
-            dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
-
             cub::DeviceSelect::Flagged(dataArrays[streamIndex].d_temp_storage,
-                                        temp_storage_bytes,
+                                        dataArrays[streamIndex].tmp_storage_allocation_size,
                                         cub::CountingInputIterator<int>(0),
                                         d_isGoodAlignment,
                                         dataArrays[streamIndex].d_indices,
@@ -797,35 +820,9 @@ POP_RANGE_2;
         //Determine indices i < M where d_alignment_best_alignment_flags[i] != BestAlignment_t::None. this selects all good alignments
         select_alignments_by_flag();
 
-        //Step 10. Copy quality scores of candidates referenced by h_indices to gpu
+        //Step 10. Copy quality scores to gpu. This overlaps with alignment kernel
         PUSH_RANGE_2("get_quality_scores", 5);
         if(correctionOptions.useQualityScores){
-
-            //cudaStreamSynchronize(streams[streamIndex]); CUERR; // need indices on host before continuing
-
-            /*
-                assume task 0 has candidates q0, q1, q2
-                assume task 1 has candidates w0, w1, w2
-                h_candidates_per_subject_prefixsum = [0, 3, 6]
-
-                assume selected candidates q0, q2, w2
-                h_indices = [0, 2, 5]
-                h_indices_per_subject = [2, 1]
-                h_indices_per_subject_prefixsum = [0, 2]
-                ----------------------------
-
-                task 0:
-                num_indices_for_this_task = 2
-                indices_for_this_task = h_indices + 0
-                num_candidates_before_this_task = 0
-                copy candidates 0-0 = q0, 2-0 = q2
-
-                task 1:
-                num_indices_for_this_task = 1
-                indices_for_this_task = h_indices + 2
-                num_candidates_before_this_task = 2
-                copy candidates 5-3 = w2
-            */
 
             for(std::size_t subject_index = 0, count = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
                 const auto& task = correctionTasks[streamIndex][subject_index];
@@ -856,10 +853,10 @@ POP_RANGE_2;
                 cudaStreamSynchronize(streams[streamIndex]); CUERR;
 #endif
 
-        cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
+        /*cudaMemcpyAsync(dataArrays[streamIndex].h_num_indices, dataArrays[streamIndex].d_num_indices, sizeof(int), D2H, streams[streamIndex]); CUERR;
         PUSH_RANGE_2("wait_for_num_indices_1", 3);
         cudaStreamSynchronize(streams[streamIndex]); CUERR; // need h_num_indices before continuing
-        POP_RANGE_2;
+        POP_RANGE_2;*/
 
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
                 cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
@@ -870,51 +867,34 @@ POP_RANGE_2;
                 cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
 #endif
 
-        if(*dataArrays[streamIndex].h_num_indices == 0){
+        /*if(*dataArrays[streamIndex].h_num_indices == 0){
             nProcessedReads += readIds.size();
             readIds = threadOpts.batchGen->getNextReadIds();
             continue;
-        }
+        }*/
 
         //Step 7. Determine number of indices per subject and the corresponding prefix sum
 
-        //Get number of indices per subject by creating histrogram
-        cub::DeviceHistogram::HistogramRange(nullptr,
-                                            temp_storage_bytes,
-                                            dataArrays[streamIndex].d_indices,
-                                            dataArrays[streamIndex].d_indices_per_subject,
-                                            dataArrays[streamIndex].n_subjects+1,
-                                            dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
-                                            *dataArrays[streamIndex].h_num_indices,
-                                            streams[streamIndex]); CUERR;
-
-        dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
-
+        //Get number of indices per subject by creating histrogram.
+        //The elements d_indices[d_num_indices] to d_indices[n_queries - 1] will be -1.
+        //Thus, they will not be accounted for by the histrogram, since the histrogram bins (d_candidates_per_subject_prefixsum) are >= 0.
         cub::DeviceHistogram::HistogramRange(dataArrays[streamIndex].d_temp_storage,
-                                            temp_storage_bytes,
+                                            dataArrays[streamIndex].tmp_storage_allocation_size,
                                             dataArrays[streamIndex].d_indices,
                                             dataArrays[streamIndex].d_indices_per_subject,
                                             dataArrays[streamIndex].n_subjects+1,
                                             dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
-                                            *dataArrays[streamIndex].h_num_indices,
+                                            // *dataArrays[streamIndex].h_num_indices,
+                                            dataArrays[streamIndex].n_queries,
                                             streams[streamIndex]); CUERR;
+
 
 #ifdef CARE_GPU_DEBUG
                 cudaStreamSynchronize(streams[streamIndex]); CUERR;
 #endif
-
-        //Make prefix sum
-        cub::DeviceScan::ExclusiveSum(nullptr,
-                                        temp_storage_bytes,
-                                        dataArrays[streamIndex].d_indices_per_subject,
-                                        dataArrays[streamIndex].d_indices_per_subject_prefixsum,
-                                        dataArrays[streamIndex].n_subjects,
-                                        streams[streamIndex]); CUERR;
-
-        dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
 
         cub::DeviceScan::ExclusiveSum(dataArrays[streamIndex].d_temp_storage,
-                                        temp_storage_bytes,
+                                        dataArrays[streamIndex].tmp_storage_allocation_size,
                                         dataArrays[streamIndex].d_indices_per_subject,
                                         dataArrays[streamIndex].d_indices_per_subject_prefixsum,
                                         dataArrays[streamIndex].n_subjects,
@@ -924,7 +904,6 @@ POP_RANGE_2;
                 cudaStreamSynchronize(streams[streamIndex]); CUERR;
 #endif
 
-//std::cout << "call_cuda_filter_alignments_by_mismatchratio_kernel_async " << correctionTasks[0][0].readId << std::endl;;
         //choose the most appropriate subset of alignments from the good alignments.
         //This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
         call_cuda_filter_alignments_by_mismatchratio_kernel_async(
@@ -972,21 +951,8 @@ POP_RANGE_2;
             continue;
         }
 
-        //dataArrays[streamIndex].set_n_indices(*dataArrays[streamIndex].h_num_indices);
-        //determine indices of remaining alignments per subject
-        cub::DeviceHistogram::HistogramRange(nullptr,
-                                            temp_storage_bytes,
-                                            dataArrays[streamIndex].d_indices,
-                                            dataArrays[streamIndex].d_indices_per_subject,
-                                            dataArrays[streamIndex].n_subjects+1,
-                                            dataArrays[streamIndex].d_candidates_per_subject_prefixsum,
-                                            *dataArrays[streamIndex].h_num_indices,
-                                            streams[streamIndex]); CUERR;
-
-        dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
-
         cub::DeviceHistogram::HistogramRange(dataArrays[streamIndex].d_temp_storage,
-                                            temp_storage_bytes,
+                                            dataArrays[streamIndex].tmp_storage_allocation_size,
                                             dataArrays[streamIndex].d_indices,
                                             dataArrays[streamIndex].d_indices_per_subject,
                                             dataArrays[streamIndex].n_subjects+1,
@@ -999,17 +965,8 @@ POP_RANGE_2;
 #endif
 
         //Make prefix sum
-        cub::DeviceScan::ExclusiveSum(nullptr,
-                                        temp_storage_bytes,
-                                        dataArrays[streamIndex].d_indices_per_subject,
-                                        dataArrays[streamIndex].d_indices_per_subject_prefixsum,
-                                        dataArrays[streamIndex].n_subjects,
-                                        streams[streamIndex]); CUERR;
-
-        dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
-
         cub::DeviceScan::ExclusiveSum(dataArrays[streamIndex].d_temp_storage,
-                                        temp_storage_bytes,
+                                        dataArrays[streamIndex].tmp_storage_allocation_size,
                                         dataArrays[streamIndex].d_indices_per_subject,
                                         dataArrays[streamIndex].d_indices_per_subject_prefixsum,
                                         dataArrays[streamIndex].n_subjects,
@@ -1034,71 +991,6 @@ POP_RANGE_2;
 
                 // Step 9. Allocate quality score data and correction data
 
-                //dataArrays[streamIndex].allocateCorrectionData(correctionOptions.useQualityScores);
-
-
-#if 0
-                //Step 10. Copy quality scores of candidates referenced by h_indices to gpu
-                PUSH_RANGE_2("get_quality_scores", 5);
-                if(correctionOptions.useQualityScores){
-
-                    cudaStreamSynchronize(streams[streamIndex]); CUERR; // need indices on host before continuing
-
-					/*
-						assume task 0 has candidates q0, q1, q2
-						assume task 1 has candidates w0, w1, w2
-						h_candidates_per_subject_prefixsum = [0, 3, 6]
-
-						assume selected candidates q0, q2, w2
-						h_indices = [0, 2, 5]
-						h_indices_per_subject = [2, 1]
-						h_indices_per_subject_prefixsum = [0, 2]
-						----------------------------
-
-						task 0:
-						num_indices_for_this_task = 2
-						indices_for_this_task = h_indices + 0
-						num_candidates_before_this_task = 0
-						copy candidates 0-0 = q0, 2-0 = q2
-
-						task 1:
-						num_indices_for_this_task = 1
-						indices_for_this_task = h_indices + 2
-						num_candidates_before_this_task = 2
-						copy candidates 5-3 = w2
-					*/
-
-					for(std::size_t subject_index = 0, count = 0; subject_index < correctionTasks[streamIndex].size(); ++subject_index){
-						const auto& task = correctionTasks[streamIndex][subject_index];
-						auto& arrays = dataArrays[streamIndex];
-
-						const int num_indices_for_this_task = arrays.h_indices_per_subject[subject_index];
-						const int* const indices_for_this_task = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
-						const int num_candidates_before_this_task = arrays.h_candidates_per_subject_prefixsum[subject_index];
-
-						std::memcpy(arrays.h_subject_qualities + subject_index * arrays.quality_pitch,
-									task.subject_quality->c_str(),
-									task.subject_quality->length());
-
-						for(int j = 0; j < num_indices_for_this_task; ++j, ++count){
-							//calculate task local index
-							const int candidate_index = indices_for_this_task[j] - num_candidates_before_this_task;
-
-							std::memcpy(arrays.h_candidate_qualities + count * arrays.quality_pitch,
-										task.candidate_qualities[candidate_index]->c_str(),
-										task.candidate_qualities[candidate_index]->length());
-						}
-					}
-
-					cudaMemcpyAsync(dataArrays[streamIndex].qualities_transfer_data_device,
-									dataArrays[streamIndex].qualities_transfer_data_host,
-									dataArrays[streamIndex].qualities_transfer_data_usable_size,
-									H2D,
-									streams[streamIndex]); CUERR;
-
-				}
-                POP_RANGE_2;
-#endif
 
 #ifdef CARE_GPU_DEBUG
 				cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
@@ -1226,19 +1118,9 @@ POP_RANGE_2;
 
 
                     // find subject ids of subjects with high quality multiple sequence alignment
-                    cub::DeviceSelect::Flagged(nullptr,
-    								temp_storage_bytes,
-    								cub::CountingInputIterator<int>(0),
-    								dataArrays[streamIndex].d_is_high_quality_subject,
-    								dataArrays[streamIndex].d_high_quality_subject_indices,
-    								dataArrays[streamIndex].d_num_high_quality_subject_indices,
-    								dataArrays[streamIndex].n_subjects,
-    								streams[streamIndex]); CUERR;
-
-                    dataArrays[streamIndex].set_tmp_storage_size(temp_storage_bytes);
 
                     cub::DeviceSelect::Flagged(dataArrays[streamIndex].d_temp_storage,
-    								temp_storage_bytes,
+    								dataArrays[streamIndex].tmp_storage_allocation_size,
     								cub::CountingInputIterator<int>(0),
     								dataArrays[streamIndex].d_is_high_quality_subject,
     								dataArrays[streamIndex].d_high_quality_subject_indices,
