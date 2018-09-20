@@ -438,8 +438,8 @@ struct BatchGenerator{
     		std::ofstream outputstream(threadOpts.outputfile);
 
             std::ofstream featurestream(threadOpts.outputfile + "_features");
-
     		auto write_read = [&](const ReadId_t readId, const auto& sequence){
+                //std::cout << readId << " " << sequence << std::endl;
     			auto& stream = outputstream;
     			stream << readId << '\n';
     			stream << sequence << '\n';
@@ -623,9 +623,9 @@ struct BatchGenerator{
                 POP_RANGE_2;
 
                 //dataArrays[streamIndex].set_n_indices(nTotalCandidates); CUERR;
-PUSH_RANGE_2("zero_cpu", 4);
-				dataArrays[streamIndex].zero_cpu();
-POP_RANGE_2;
+//PUSH_RANGE_2("zero_cpu", 4);
+				//dataArrays[streamIndex].zero_cpu();
+//POP_RANGE_2;
 PUSH_RANGE_2("zero_gpu", 5);
 				dataArrays[streamIndex].zero_gpu(streams[streamIndex]);
 POP_RANGE_2;
@@ -673,7 +673,7 @@ POP_RANGE_2;
 
                 cudaMemcpyAsync(dataArrays[streamIndex].alignment_transfer_data_device,
                                 dataArrays[streamIndex].alignment_transfer_data_host,
-                                dataArrays[streamIndex].alignment_transfer_data_size,
+                                dataArrays[streamIndex].alignment_transfer_data_usable_size,
                                 H2D,
                                 streams[streamIndex]); CUERR;
 
@@ -715,7 +715,7 @@ POP_RANGE_2;
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
                                         cudaMemcpyAsync(dataArrays[streamIndex].alignment_result_data_host,
                         								dataArrays[streamIndex].alignment_result_data_device,
-                        								dataArrays[streamIndex].alignment_result_data_size,
+                        								dataArrays[streamIndex].alignment_result_data_usable_size,
                         								D2H,
                         								streams[streamIndex]); CUERR;
                         				cudaStreamSynchronize(streams[streamIndex]); CUERR;
@@ -748,7 +748,7 @@ POP_RANGE_2;
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
                                         cudaMemcpyAsync(dataArrays[streamIndex].alignment_result_data_host,
                         								dataArrays[streamIndex].alignment_result_data_device,
-                        								dataArrays[streamIndex].alignment_result_data_size,
+                        								dataArrays[streamIndex].alignment_result_data_usable_size,
                         								D2H,
                         								streams[streamIndex]); CUERR;
                         				cudaStreamSynchronize(streams[streamIndex]); CUERR;
@@ -972,7 +972,7 @@ POP_RANGE_2;
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
                 cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
                                 dataArrays[streamIndex].indices_transfer_data_device,
-                                dataArrays[streamIndex].indices_transfer_data_size,
+                                dataArrays[streamIndex].indices_transfer_data_usable_size,
                                 D2H,
                                 streams[streamIndex]); CUERR;
                 cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
@@ -1068,7 +1068,7 @@ POP_RANGE_2;
 #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
                 cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
                                 dataArrays[streamIndex].indices_transfer_data_device,
-                                dataArrays[streamIndex].indices_transfer_data_size,
+                                dataArrays[streamIndex].indices_transfer_data_usable_size,
                                 D2H,
                                 streams[streamIndex]); CUERR;
                 cudaStreamSynchronize(streams[streamIndex]); CUERR; //remove
@@ -1132,7 +1132,7 @@ POP_RANGE_2;
 
                 cudaMemcpyAsync(dataArrays[streamIndex].indices_transfer_data_host,
                                 dataArrays[streamIndex].indices_transfer_data_device,
-                                dataArrays[streamIndex].indices_transfer_data_size,
+                                dataArrays[streamIndex].indices_transfer_data_usable_size,
                                 D2H,
                                 streams[streamIndex]); CUERR;
 
@@ -1200,7 +1200,7 @@ POP_RANGE_2;
 
 					cudaMemcpyAsync(dataArrays[streamIndex].qualities_transfer_data_device,
 									dataArrays[streamIndex].qualities_transfer_data_host,
-									dataArrays[streamIndex].qualities_transfer_data_size,
+									dataArrays[streamIndex].qualities_transfer_data_usable_size,
 									H2D,
 									streams[streamIndex]); CUERR;
 
@@ -1397,7 +1397,7 @@ POP_RANGE_2;
 				//copy correction results to host
 				cudaMemcpyAsync(dataArrays[streamIndex].correction_results_transfer_data_host,
 								dataArrays[streamIndex].correction_results_transfer_data_device,
-								dataArrays[streamIndex].correction_results_transfer_data_size,
+								dataArrays[streamIndex].correction_results_transfer_data_usable_size,
 								D2H,
 								streams[streamIndex]); CUERR;
                 PUSH_RANGE_2("wait_for_results", 6);
@@ -1409,7 +1409,7 @@ POP_RANGE_2;
 				//DEBUGGING
 				cudaMemcpyAsync(dataArrays[streamIndex].msa_data_host,
 								dataArrays[streamIndex].msa_data_device,
-								dataArrays[streamIndex].msa_data_size,
+								dataArrays[streamIndex].msa_data_usable_size,
 								D2H,
 								streams[streamIndex]); CUERR;
 				cudaStreamSynchronize(streams[streamIndex]); CUERR;
@@ -1417,7 +1417,7 @@ POP_RANGE_2;
 				//DEBUGGING
 				cudaMemcpyAsync(dataArrays[streamIndex].alignment_result_data_host,
 								dataArrays[streamIndex].alignment_result_data_device,
-								dataArrays[streamIndex].alignment_result_data_size,
+								dataArrays[streamIndex].alignment_result_data_usable_size,
 								D2H,
 								streams[streamIndex]); CUERR;
 				cudaStreamSynchronize(streams[streamIndex]); CUERR;
@@ -1425,7 +1425,7 @@ POP_RANGE_2;
 				//DEBUGGING
 				cudaMemcpyAsync(dataArrays[streamIndex].subject_indices_data_host,
 								dataArrays[streamIndex].subject_indices_data_device,
-								dataArrays[streamIndex].subject_indices_data_size,
+								dataArrays[streamIndex].subject_indices_data_usable_size,
 								D2H,
 								streams[streamIndex]); CUERR;
 				cudaStreamSynchronize(streams[streamIndex]); CUERR;
