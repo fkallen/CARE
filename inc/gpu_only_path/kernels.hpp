@@ -730,7 +730,7 @@ void call_msa_correct_subject_kernel_async(
 
             const unsigned offset1 = msa_row_pitch * (subjectIndex + candidates_before_this_subject);
             const unsigned offset2 = msa_weights_row_pitch_floats * (subjectIndex + candidates_before_this_subject);
-			const int rowOffset = (subjectIndex + candidates_before_this_subject);
+			//const int rowOffset = (subjectIndex + candidates_before_this_subject);
 
             char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
