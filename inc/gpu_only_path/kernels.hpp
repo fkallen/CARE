@@ -704,9 +704,9 @@ void call_msa_correct_subject_kernel_async(
             const char* const query = d_candidate_sequences_data + queryIndex * encoded_sequence_pitch;
 
             //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
-            const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
+            //const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
 
-            //const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
+            const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
 
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
             const int query_alignment_nops = d_alignment_nOps[queryIndex];
