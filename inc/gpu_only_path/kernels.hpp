@@ -245,35 +245,68 @@ void call_msa_correct_subject_kernel_async(
                             int maxQueryLength,
                             cudaStream_t stream){
 
+        #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)> \
+                                    <<<grid, block, smem, stream>>>( \
+                                        d_alignment_scores, \
+                                        d_alignment_overlaps, \
+                                        d_alignment_shifts, \
+                                        d_alignment_nOps, \
+                                        d_alignment_isValid, \
+                                        d_subject_sequences_data, \
+                                        d_candidate_sequences_data, \
+                                        d_subject_sequences_lengths, \
+                                        d_candidate_sequences_lengths, \
+                                        d_candidates_per_subject_prefixsum, \
+                                        n_subjects, \
+                                        max_sequence_bytes, \
+                                        encodedsequencepitch, \
+                                        min_overlap, \
+                                        maxErrorRate, \
+                                        min_overlap_ratio, \
+                                        accessor, \
+                                        make_reverse_complement_inplace); CUERR;
+
+/*
+#define getsms(blocksize) {\
+                        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
+                                                                        cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)>, \
+                                                                        blocksize, smem); CUERR;}
+*/
+
+#define getsms(blocksize) {max_blocks_per_SM = 12;}
+
           const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
           const int maxShiftsToCheck = maxSubjectLength + maxQueryLength - 2*minoverlap;
-          dim3 block(std::min(256, 32 * SDIV(maxShiftsToCheck, 32)), 1, 1);
-          dim3 grid(n_queries*2, 1, 1); // one block per (query and its reverse complement)
-
           const std::size_t smem = sizeof(char) * 2 * max_sequence_bytes;
 
-          #define mycall(blocksize) cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)> \
-                                      <<<grid, block, smem, stream>>>( \
-                                          d_alignment_scores, \
-                                          d_alignment_overlaps, \
-                                          d_alignment_shifts, \
-                                          d_alignment_nOps, \
-                                          d_alignment_isValid, \
-                                          d_subject_sequences_data, \
-                                          d_candidate_sequences_data, \
-                                          d_subject_sequences_lengths, \
-                                          d_candidate_sequences_lengths, \
-                                          d_candidates_per_subject_prefixsum, \
-                                          n_subjects, \
-                                          max_sequence_bytes, \
-                                          encodedsequencepitch, \
-                                          min_overlap, \
-                                          maxErrorRate, \
-                                          min_overlap_ratio, \
-                                          accessor, \
-                                          make_reverse_complement_inplace); CUERR;
+          const int blocksize = std::min(256, 32 * SDIV(maxShiftsToCheck, 32));
 
-          switch(block.x){
+          int deviceId;
+          cudaGetDevice(&deviceId); CUERR;
+
+          int SMs;
+          cudaDeviceGetAttribute(&SMs, cudaDevAttrMultiProcessorCount, deviceId); CUERR;
+
+          int max_blocks_per_SM = 1;
+
+          switch(blocksize){
+          case 32: getsms(32); break;
+          case 64: getsms(64); break;
+          case 96: getsms(96); break;
+          case 128: getsms(128); break;
+          case 160: getsms(160); break;
+          case 192: getsms(192); break;
+          case 224: getsms(224); break;
+          case 256: getsms(256); break;
+          default: throw std::runtime_error("Want to call shd kernel with 0 threads due to a bug.");
+          }
+
+          int max_blocks_per_device = SMs * max_blocks_per_SM;
+
+          dim3 block(blocksize, 1, 1);
+          dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1); // one block per (query and its reverse complement)
+
+          switch(blocksize){
           case 32: mycall(32); break;
           case 64: mycall(64); break;
           case 96: mycall(96); break;
@@ -286,6 +319,7 @@ void call_msa_correct_subject_kernel_async(
           }
 
           #undef mycall
+          #undef getsms
     }
 
 

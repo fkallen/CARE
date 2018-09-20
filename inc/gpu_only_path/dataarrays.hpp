@@ -333,7 +333,8 @@ namespace gpu{
 			std::memset(msa_data_host, 0, msa_data_usable_size);
 			std::memset(correction_results_transfer_data_host, 0, correction_results_transfer_data_usable_size);
 			std::memset(qualities_transfer_data_host, 0, qualities_transfer_data_usable_size);
-			std::fill((int*)indices_transfer_data_host, (int*)(((char*)indices_transfer_data_host) + indices_transfer_data_usable_size), -1);
+            std::memset(indices_transfer_data_host, 0, indices_transfer_data_usable_size);
+			//std::fill((int*)indices_transfer_data_host, (int*)(((char*)indices_transfer_data_host) + indices_transfer_data_usable_size), -1);
 			std::memset(h_num_indices, 0, sizeof(int));
 			std::memset(subject_indices_data_host, 0, subject_indices_data_usable_size);
 			std::memset(alignment_result_data_host, 0, alignment_result_data_usable_size);
@@ -345,15 +346,22 @@ namespace gpu{
 			cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
 			cudaMemsetAsync(qualities_transfer_data_device, 0, qualities_transfer_data_usable_size, stream); CUERR;
 			//cudaMemsetAsync(indices_transfer_data_device, 0, indices_transfer_data_usable_size, stream); CUERR;
-            thrust::fill(thrust::cuda::par.on(stream),
+            /*thrust::fill(thrust::cuda::par.on(stream),
                         thrust::device_ptr<int>((int*)indices_transfer_data_device),
                         thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
-                        -1);
+                        -1);*/
 			cudaMemsetAsync(d_num_indices, 0, sizeof(int), stream); CUERR;
 			cudaMemsetAsync(subject_indices_data_device, 0, subject_indices_data_usable_size, stream); CUERR;
 			cudaMemsetAsync(alignment_result_data_device, 0, alignment_result_data_usable_size, stream); CUERR;
 			cudaMemsetAsync(alignment_transfer_data_device, 0, alignment_transfer_data_usable_size, stream); CUERR;
 		}
+
+        void fill_d_indices(int val, cudaStream_t stream){
+            thrust::fill(thrust::cuda::par.on(stream),
+                        thrust::device_ptr<int>((int*)indices_transfer_data_device),
+                        thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
+                        val);
+        }
 
         void reset(){
             auto& a = *this;
