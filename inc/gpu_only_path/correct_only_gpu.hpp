@@ -453,7 +453,7 @@ struct BatchGenerator{
 
     public:
 
-        BatchState advance_one_step(Batch& sideBatch,
+        BatchState advance_one_step(Batch& batch,
                                 const std::vector<ReadId_t>& readIds,
                                 DataArrays<Sequence_t>& dataArrays,
                                 std::array<cudaStream_t, nStreamsPerBatch>& streams,
@@ -525,9 +525,9 @@ struct BatchGenerator{
                                             stream); CUERR;
             };
 
-            BatchState oldState = sideBatch.state;
+            BatchState oldState = batch.state;
 
-            switch(sideBatch.state){
+            switch(batch.state){
                 case BatchState::Finished:{
                     //do nothing;
                     break;
@@ -536,11 +536,11 @@ struct BatchGenerator{
                 case BatchState::Unprepared:{
                     PUSH_RANGE_2("get_subjects_next", 0);
 
-                    get_subjects(sideBatch, readIds);
+                    get_subjects(batch, readIds);
 
                     POP_RANGE_2;
 
-                    sideBatch.state = BatchState::SubjectsPresent;
+                    batch.state = BatchState::SubjectsPresent;
 
                     break;
                 }
@@ -548,16 +548,16 @@ struct BatchGenerator{
                 case BatchState::SubjectsPresent:{
                     PUSH_RANGE_2("get_candidates_next", 1);
 
-                    get_candidates(sideBatch);
+                    get_candidates(batch);
 
                     POP_RANGE_2;
 
-                    std::remove_if(sideBatch.tasks.begin(),
-                                    sideBatch.tasks.end(),
+                    std::remove_if(batch.tasks.begin(),
+                                    batch.tasks.end(),
                                     [](const auto& t){return !t.active;});
 
-                    int nTotalCandidates = std::accumulate(sideBatch.tasks.begin(),
-                                                            sideBatch.tasks.end(),
+                    int nTotalCandidates = std::accumulate(batch.tasks.begin(),
+                                                            batch.tasks.end(),
                                                             int(0),
                                                             [](const auto& l, const auto& r){
                                                                 return l + int(r.candidate_read_ids.size());
@@ -565,13 +565,13 @@ struct BatchGenerator{
 
                     if(nTotalCandidates == 0){
                         if(!readIds.empty()){
-                            //reset sideBatch state and start over with the next chunk of read ids
-                            sideBatch.state = BatchState::Unprepared;
+                            //reset batch state and start over with the next chunk of read ids
+                            batch.state = BatchState::Unprepared;
                         }
                     }else{
                         //allocate data arrays
                         PUSH_RANGE_2("set_problem_dimensions_next", 7);
-                        dataArrays.set_problem_dimensions(int(sideBatch.tasks.size()),
+                        dataArrays.set_problem_dimensions(int(batch.tasks.size()),
                                                                     nTotalCandidates,
                                                                     fileProperties.maxSequenceLength,
                                                                     goodAlignmentProperties.min_overlap,
@@ -612,7 +612,7 @@ struct BatchGenerator{
                         dataArrays.zero_gpu(streams[0]);
                         POP_RANGE_2;
 
-                        sideBatch.state = BatchState::CandidatesPresent;
+                        batch.state = BatchState::CandidatesPresent;
                     }
 
                     break;
@@ -624,55 +624,55 @@ struct BatchGenerator{
                     PUSH_RANGE_2("copy_to_buffer_next", 2);
 
                     //copy one task
-                    if(sideBatch.copiedTasks < int(sideBatch.tasks.size())){
-                        const auto& task = sideBatch.tasks[sideBatch.copiedTasks];
+                    if(batch.copiedTasks < int(batch.tasks.size())){
+                        const auto& task = batch.tasks[batch.copiedTasks];
                         auto& arrays = dataArrays;
 
                         //fill subject
-                        std::memcpy(arrays.h_subject_sequences_data + sideBatch.copiedTasks * arrays.encoded_sequence_pitch,
+                        std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
                                     task.subject_sequence->begin(),
                                     task.subject_sequence->getNumBytes());
-                        arrays.h_subject_sequences_lengths[sideBatch.copiedTasks] = task.subject_sequence->length();
-                        sideBatch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
-                                                                        sideBatch.maxSubjectLength);
+                        arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
+                        batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
+                                                                        batch.maxSubjectLength);
 
                         //fill candidates
                         for(const Sequence_t* candidate_sequence : task.candidate_sequences){
 
                             std::memcpy(arrays.h_candidate_sequences_data
-                                            + sideBatch.copiedCandidates * arrays.encoded_sequence_pitch,
+                                            + batch.copiedCandidates * arrays.encoded_sequence_pitch,
                                         candidate_sequence->begin(),
                                         candidate_sequence->getNumBytes());
 
-                            arrays.h_candidate_sequences_lengths[sideBatch.copiedCandidates] = candidate_sequence->length();
-                            sideBatch.maxQueryLength = std::max(int(candidate_sequence->length()),
-                                                                        sideBatch.maxQueryLength);
+                            arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
+                            batch.maxQueryLength = std::max(int(candidate_sequence->length()),
+                                                                        batch.maxQueryLength);
 
-                            ++sideBatch.copiedCandidates;
+                            ++batch.copiedCandidates;
                         }
 
                         //make prefix sum
-                        arrays.h_candidates_per_subject_prefixsum[sideBatch.copiedTasks+1]
-                                        = arrays.h_candidates_per_subject_prefixsum[sideBatch.copiedTasks]
+                        arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+                                        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
                                             + int(task.candidate_read_ids.size());
                     }
 
-                    ++sideBatch.copiedTasks;
+                    ++batch.copiedTasks;
 
                     POP_RANGE_2;
 
-                    //if sidebatch is fully copied, transfer to gpu
-                    if(sideBatch.copiedTasks == int(sideBatch.tasks.size())){
+                    //if batch is fully copied, transfer to gpu
+                    if(batch.copiedTasks == int(batch.tasks.size())){
                         cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
                                         dataArrays.alignment_transfer_data_host,
                                         dataArrays.alignment_transfer_data_usable_size,
                                         H2D,
                                         streams[0]); CUERR;
 
-                        sideBatch.copiedTasks = 0;
-                        sideBatch.copiedCandidates = 0;
+                        batch.copiedTasks = 0;
+                        batch.copiedCandidates = 0;
 
-                        sideBatch.state = BatchState::DataOnGPU;
+                        batch.state = BatchState::DataOnGPU;
                     }
 
                     break;
@@ -699,8 +699,8 @@ struct BatchGenerator{
                                             accessor,
                                             make_reverse_complement_inplace,
                                             dataArrays.n_queries,
-                                            sideBatch.maxSubjectLength,
-                                            sideBatch.maxQueryLength,
+                                            batch.maxSubjectLength,
+                                            batch.maxQueryLength,
                                             streams[0]);
 
                     //Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
@@ -802,7 +802,7 @@ struct BatchGenerator{
                                     dataArrays.n_queries,
                                     streams[0]);
 
-                    sideBatch.state = BatchState::RunningAlignmentWork;
+                    batch.state = BatchState::RunningAlignmentWork;
 
                     break;
                 }
@@ -813,27 +813,27 @@ struct BatchGenerator{
                     if(correctionOptions.useQualityScores){
                         PUSH_RANGE_2("get_quality_scores", 5);
 
-                        if(sideBatch.copiedTasks < int(sideBatch.tasks.size())){
-                            const auto& task = sideBatch.tasks[sideBatch.copiedTasks];
+                        if(batch.copiedTasks < int(batch.tasks.size())){
+                            const auto& task = batch.tasks[batch.copiedTasks];
                             auto& arrays = dataArrays;
 
                             //fill subject
-                            std::memcpy(arrays.h_subject_qualities + sideBatch.copiedTasks * arrays.quality_pitch,
+                            std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
                                         task.subject_quality->c_str(),
                                         task.subject_quality->length());
 
                             for(const std::string* qual : task.candidate_qualities){
-                                std::memcpy(arrays.h_candidate_qualities + sideBatch.copiedCandidates * arrays.quality_pitch,
+                                std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
                                             qual->c_str(),
                                             qual->length());
-                                ++sideBatch.copiedCandidates;
+                                ++batch.copiedCandidates;
                             }
                         }
 
-                        ++sideBatch.copiedTasks;
+                        ++batch.copiedTasks;
 
-                        //if sidebatch is fully copied, transfer to gpu
-                        if(sideBatch.copiedTasks == int(sideBatch.tasks.size())){
+                        //if batch is fully copied, transfer to gpu
+                        if(batch.copiedTasks == int(batch.tasks.size())){
                             cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
                                             dataArrays.qualities_transfer_data_host,
                                             dataArrays.qualities_transfer_data_usable_size,
@@ -842,16 +842,16 @@ struct BatchGenerator{
 
                             cudaEventRecord(events[1], streams[1]); CUERR;
 
-                            sideBatch.copiedTasks = 0;
-                            sideBatch.copiedCandidates = 0;
+                            batch.copiedTasks = 0;
+                            batch.copiedCandidates = 0;
 
-                            sideBatch.state = BatchState::TransferingQualityScores;
+                            batch.state = BatchState::TransferingQualityScores;
                         }
 
                         POP_RANGE_2;
                     }else{
                         // indicate state progress in case no quality scores are used
-                        sideBatch.state = BatchState::TransferingQualityScores;
+                        batch.state = BatchState::TransferingQualityScores;
                     }
 
                     break;
@@ -883,7 +883,7 @@ struct BatchGenerator{
                     POP_RANGE_2;
 
                     if(*dataArrays.h_num_indices == 0){
-                        sideBatch.state == BatchState::Unprepared;
+                        batch.state == BatchState::Unprepared;
                         break;
                     }
 
@@ -1048,7 +1048,7 @@ struct BatchGenerator{
 
                     cudaEventRecord(events[1], streams[0]); CUERR;
 
-                    sideBatch.state = BatchState::RunningCorrectionWork;
+                    batch.state = BatchState::RunningCorrectionWork;
 
                     break;
                 }
@@ -1078,8 +1078,8 @@ struct BatchGenerator{
 
                     //unpack results
                     PUSH_RANGE_2("unpack_results", 7);
-                    for(std::size_t subject_index = 0; subject_index < sideBatch.tasks.size(); ++subject_index){
-                        auto& task = sideBatch.tasks[subject_index];
+                    for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
+                        auto& task = batch.tasks[subject_index];
                         auto& arrays = dataArrays;
 
                         const char* const my_corrected_subject_data = arrays.h_corrected_subjects + subject_index * arrays.sequence_pitch;
@@ -1119,7 +1119,7 @@ struct BatchGenerator{
                     POP_RANGE_2;
 
                     // results are present in batch
-                    sideBatch.state = BatchState::Finished;
+                    batch.state = BatchState::Finished;
 
                     break;
                 }
