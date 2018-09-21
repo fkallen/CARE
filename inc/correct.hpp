@@ -2700,7 +2700,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using ErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, BatchGenerator<ReadId_t>>;
 #endif
 
-#define DO_PROFILE
+//#define DO_PROFILE
 
 #if 0
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
