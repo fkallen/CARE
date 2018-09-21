@@ -346,7 +346,7 @@ private:
         //std::uint64_t savedAlignments = 0;
         //std::uint64_t performedAlignments = 0;
 
-		constexpr int nStreams = 1;
+		constexpr int nStreams = 2;
         const bool canUseGpu = threadOpts.canUseGpu;
 
 		std::vector<SHDhandle> shdhandles(nStreams);
