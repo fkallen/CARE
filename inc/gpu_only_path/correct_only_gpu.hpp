@@ -22,8 +22,7 @@ const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);
     eventAttrib.message.ascii = name; \
     nvtxRangePushEx(&eventAttrib); \
 }
-    //std::cout << name << std::endl; \
-//}
+
 #define POP_RANGE_2 nvtxRangePop();
 #else
 #define PUSH_RANGE_2(name,cid)
@@ -63,6 +62,33 @@ const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);
 
 namespace care{
 namespace gpu{
+
+template<class ReadId_t>
+struct BatchGenerator{
+    BatchGenerator(){}
+    
+    BatchGenerator(ReadId_t firstId, ReadId_t lastIdExcl)
+            : firstId(firstId), lastIdExcl(lastIdExcl), currentId(firstId){
+                if(firstId >= lastIdExcl) throw std::runtime_error("BatchGenerator: firstId >= lastIdExcl");
+	}
+
+    std::vector<ReadId_t> getNextReadIds(int maxnumreadIds){
+        std::vector<ReadId_t> result;
+    	while(int(result.size()) < maxnumreadIds && currentId < lastIdExcl){
+    		result.push_back(currentId);
+    		currentId++;
+    	}
+        return result;
+    }
+    
+    bool empty() const{
+		return currentId == lastIdExcl;
+	}
+
+    ReadId_t firstId;
+    ReadId_t lastIdExcl;
+    ReadId_t currentId;
+};
 
 
     /*
@@ -248,6 +274,8 @@ namespace gpu{
             readId(other.readId),
             subject_sequence(other.subject_sequence),
             subject_quality(other.subject_quality),
+            candidate_read_ids(other.candidate_read_ids),
+            candidate_sequences(other.candidate_sequences),
             candidate_qualities(other.candidate_qualities),
             corrected_subject(other.corrected_subject),
             corrected_candidates(other.corrected_candidates),
@@ -319,18 +347,27 @@ namespace gpu{
 			RunningAlignmentWork = 4,
             TransferingQualityScores = 5,
 			RunningCorrectionWork = 6,
-			Finished = 7,
-			Aborted = 8,
+			FinishedCorrectionWork = 7,
+			FinishedUnpackingResults = 8,
+			Aborted = 9,
 		};
 
 		struct Batch{
 			std::vector<CorrectionTask_t> tasks;
 			int maxSubjectLength = 0;
 			int maxQueryLength = 0;
+			int initialNumberOfCandidates = 0;
 			BatchState state = BatchState::Unprepared;
 
 			int copiedTasks = 0; // used if state == CandidatesPresent
 			int copiedCandidates = 0; // used if state == CandidatesPresent
+		};
+		
+		struct AdvanceResult{
+			BatchState oldState;
+			BatchState newState;
+			bool noProgressBlocking;
+			bool noProgressLaunching;
 		};
 
 
@@ -401,6 +438,10 @@ namespace gpu{
         std::chrono::duration<double> da, db, dc;
 
         TaskTimings detailedCorrectionTimings;
+		
+		BatchGenerator<ReadId_t> mybatchgen;		
+		int num_ids_per_add_tasks = 30;
+		int minimum_candidates_per_batch = 1000;
 
         std::thread thread;
         bool isRunning = false;
@@ -419,16 +460,13 @@ namespace gpu{
 
     public:
 
-        BatchState advance_one_step(Batch& batch,
-                                const std::vector<ReadId_t>& readIds,
+        AdvanceResult advance_one_step(Batch& batch,
                                 DataArrays<Sequence_t>& dataArrays,
                                 std::array<cudaStream_t, nStreamsPerBatch>& streams,
                                 std::array<cudaEvent_t, nEventsPerBatch>& events,
                                 bool canBlock,
                                 bool canLaunchKernel){
-
-            //std::cout << "canBlock = " << canBlock << ", canLaunchKernel = " << canLaunchKernel << std::endl;
-
+			
             auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
                 return Sequence_t::get_as_nucleotide(data, length, index);
             };
@@ -436,13 +474,17 @@ namespace gpu{
             auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
                 return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
             };
-
-            BatchState oldState = batch.state;
+			
+			AdvanceResult advanceResult;
+			
+			advanceResult.oldState = batch.state;
+			advanceResult.noProgressBlocking = false;
+			advanceResult.noProgressLaunching = false;
 
             switch(batch.state){
 
 
-                case BatchState::Unprepared:{
+                /*case BatchState::Unprepared:{
                     PUSH_RANGE_2("get_subjects_next", 0);
 
                     get_subjects(batch, readIds);
@@ -488,7 +530,40 @@ namespace gpu{
                     }
 
                     break;
-                }
+                }*/
+				
+				case BatchState::Unprepared: {
+					assert(batch.tasks.empty());
+					
+					PUSH_RANGE_2("get_subjects_and_candidates", 1);
+					
+					while(batch.initialNumberOfCandidates < minimum_candidates_per_batch && !mybatchgen.empty()){
+						add_tasks(batch, mybatchgen.getNextReadIds(num_ids_per_add_tasks));
+					}
+					
+					//if(mybatchgen.empty()){
+					//	std::cout << "EMPTY!!! " << batch.initialNumberOfCandidates << ", canLaunchKernel : " << canLaunchKernel << std::endl;
+					//}
+					
+					if(batch.initialNumberOfCandidates == 0){
+						batch.state = BatchState::Aborted;
+					}else{					
+						std::remove_if(batch.tasks.begin(),
+										batch.tasks.end(),
+										[](const auto& t){return !t.active;});
+						
+						//allocate data arrays
+						PUSH_RANGE_2("set_problem_dimensions_next", 7);
+						allocate_data(batch, dataArrays, batch.initialNumberOfCandidates, streams[primary_stream_index]);
+						POP_RANGE_2;
+
+						batch.state = BatchState::CandidatesPresent;
+					}
+					
+					POP_RANGE_2;
+					
+					break;
+				}
 
                 case BatchState::CandidatesPresent:{
                     dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
@@ -523,7 +598,8 @@ namespace gpu{
                     if(!canLaunchKernel){
                         //since gathering quality scores does not depend on the batch state being RunningAlignmentWork
                         //we can gather the quality scores of one task, instead of doing nothing
-                        gather_quality_scores_of_next_task(batch, dataArrays);
+						bool success = gather_quality_scores_of_next_task(batch, dataArrays);
+						advanceResult.noProgressLaunching = !success;
                         break;
                     }
 
@@ -569,12 +645,16 @@ namespace gpu{
 
                 case BatchState::TransferingQualityScores: {
 
-                    if(!canLaunchKernel) break;
+                    if(!canLaunchKernel){
+						advanceResult.noProgressLaunching = true;
+						break;
+					}
 
                     if(!canBlock){
                         cudaError_t querystatus = cudaEventQuery(events[alignments_finished_event_index]); CUERR;
                         if(querystatus == cudaErrorNotReady){
                             //we cannot continue yet and cannot block either. do nothing
+							advanceResult.noProgressBlocking = true;
                             break;
                         }
 
@@ -583,6 +663,7 @@ namespace gpu{
                         querystatus = cudaEventQuery(events[quality_transfer_finished_event_index]); CUERR;
                         if(querystatus == cudaErrorNotReady){
                             //we cannot continue yet and cannot block either. do nothing
+							advanceResult.noProgressBlocking = true;
                             break;
                         }
 
@@ -595,6 +676,8 @@ namespace gpu{
 
                     if(*dataArrays.h_num_indices == 0){
                         //std::cout << "nothing left" << std::endl;
+						cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+						cudaStreamSynchronize(streams[secondary_stream_index]); CUERR;
                         batch.state = BatchState::Aborted;
                         break;
                     }
@@ -645,6 +728,7 @@ namespace gpu{
                                     *dataArrays.h_num_indices,
                                     correctionOptions.useQualityScores,
                                     desiredAlignmentMaxErrorRate,
+									dataArrays.maximum_sequence_length,
                                     dataArrays.encoded_sequence_pitch,
                                     dataArrays.quality_pitch,
                                     dataArrays.msa_pitch,
@@ -775,6 +859,7 @@ namespace gpu{
                         cudaError_t querystatus = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
                         if(querystatus == cudaErrorNotReady){
                             //we cannot continue yet and cannot block either. do nothing
+							advanceResult.noProgressBlocking = true;
                             break;
                         }
 
@@ -783,6 +868,7 @@ namespace gpu{
                         querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
                         if(querystatus == cudaErrorNotReady){
                             //we cannot continue yet and cannot block either. do nothing
+							advanceResult.noProgressBlocking = true;
                             break;
                         }
 
@@ -793,6 +879,13 @@ namespace gpu{
 					cudaEventSynchronize(events[result_transfer_finished_event_index]); CUERR; //wait for result transfer to host to finish
                     cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR; //wait for index transfer to host to finish
                     POP_RANGE_2;
+					
+					batch.state = BatchState::FinishedCorrectionWork;
+					
+					break;
+				}
+				
+				case BatchState::FinishedCorrectionWork: {
 
                     //unpack results
                     PUSH_RANGE_2("unpack_results", 7);
@@ -837,12 +930,12 @@ namespace gpu{
                     POP_RANGE_2;
 
                     // results are present in batch
-                    batch.state = BatchState::Finished;
+                    batch.state = BatchState::FinishedUnpackingResults;
 
                     break;
                 }
                 
-                case BatchState::Finished:{
+                case BatchState::FinishedUnpackingResults:{
                     //do nothing;
                     break;
                 }
@@ -856,11 +949,13 @@ namespace gpu{
                     assert(false); // Every State should be handled above
                     break;
             }
+            
+            advanceResult.newState = batch.state;
 
-            return oldState;
+            return advanceResult;
         }
 
-        void get_subjects(Batch& batch, const std::vector<ReadId_t>& readIds){
+        /*void get_subjects(Batch& batch, const std::vector<ReadId_t>& readIds){
 
             const auto& readStorage = threadOpts.readStorage;
 
@@ -913,7 +1008,57 @@ namespace gpu{
                     }
                 }
             }
-        }
+        }*/
+        
+        void add_tasks(Batch& batch, const std::vector<ReadId_t>& readIds){
+			const auto& readStorage = threadOpts.readStorage;
+			const auto& minhasher = threadOpts.minhasher;
+			
+			for(ReadId_t id : readIds){
+                bool ok = false;
+                lock(id);
+                if ((*threadOpts.readIsCorrectedVector)[id] == 0) {
+                    (*threadOpts.readIsCorrectedVector)[id] = 1;
+                    ok = true;
+                }else{
+                }
+                unlock(id);
+
+                if(ok){
+                    const Sequence_t* sequenceptr = readStorage->fetchSequence_ptr(id);
+                    const std::string* qualityptr = nullptr;
+
+                    if(correctionOptions.useQualityScores)
+                        qualityptr = readStorage->fetchQuality_ptr(id);
+
+                    batch.tasks.emplace_back(id, sequenceptr, qualityptr);
+					
+					auto& task = batch.tasks.back();
+					
+					const std::string sequencestring = task.subject_sequence->toString();
+					task.candidate_read_ids = minhasher->getCandidates(sequencestring, max_candidates);
+
+					//remove self from candidates
+					auto readIdPos = std::find(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+					if(readIdPos != task.candidate_read_ids.end())
+						task.candidate_read_ids.erase(readIdPos);
+
+					if(task.candidate_read_ids.size() == 0){
+						//no need for further processing without candidates
+						task.active = false;
+					}else{
+						for(auto candidate_read_id : task.candidate_read_ids){
+							task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
+							if(correctionOptions.useQualityScores)
+								task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
+						}
+					}
+					
+					batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
+                }
+            }
+
+		}
 
         void allocate_data(Batch& batch, DataArrays<Sequence_t>& dataArrays, int nTotalCandidates, cudaStream_t stream){
             dataArrays.set_problem_dimensions(int(batch.tasks.size()),
@@ -953,12 +1098,14 @@ namespace gpu{
             dataArrays.zero_gpu(stream);
         }
 
-        void gather_candidates_of_next_task(Batch& batch, DataArrays<Sequence_t>& dataArrays) const{
+        bool gather_candidates_of_next_task(Batch& batch, DataArrays<Sequence_t>& dataArrays) const{
             dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
-            //copy one task
             assert(batch.copiedTasks <= int(batch.tasks.size()));
+			
+			bool success = false;
 
+			//copy one task
             if(batch.copiedTasks < int(batch.tasks.size())){
                 const auto& task = batch.tasks[batch.copiedTasks];
                 auto& arrays = dataArrays;
@@ -992,10 +1139,16 @@ namespace gpu{
                                     + int(task.candidate_read_ids.size());
 
                 ++batch.copiedTasks;
+				
+				success = true;
             }
+            
+            return success;
         }
 
-        void gather_quality_scores_of_next_task(Batch& batch, DataArrays<Sequence_t>& dataArrays) const{
+        bool gather_quality_scores_of_next_task(Batch& batch, DataArrays<Sequence_t>& dataArrays) const{
+			bool success = false;
+			
             if(batch.copiedTasks < int(batch.tasks.size())){
                 PUSH_RANGE_2("get_quality_scores", 5);
                 const auto& task = batch.tasks[batch.copiedTasks];
@@ -1015,7 +1168,11 @@ namespace gpu{
 
                 ++batch.copiedTasks;
                 POP_RANGE_2;
+				
+				success = true;
             }
+            
+            return success;
         }
 
         void launch_alignment_kernels(Batch& batch, DataArrays<Sequence_t>& dataArrays, cudaStream_t stream, cudaEvent_t event) const{
@@ -1216,6 +1373,8 @@ namespace gpu{
     		isRunning = true;
 
 			assert(threadOpts.canUseGpu);
+			
+			mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
 
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
@@ -1238,7 +1397,7 @@ namespace gpu{
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
 
-            std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
+            //std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
     		std::vector<DataArrays<Sequence_t>> dataArrays;
             //std::array<Batch, nParallelBatches> batches;
@@ -1258,12 +1417,12 @@ namespace gpu{
                     cudaEventCreateWithFlags(&cudaevents[i][j], cudaEventDisableTiming); CUERR;
                 }
 
-                dataArrays[i].set_problem_dimensions(readIds.size(),
+                /*dataArrays[i].set_problem_dimensions(readIds.size(),
                                                             max_candidates * readIds.size(),
                                                             fileProperties.maxSequenceLength,
                                                             goodAlignmentProperties.min_overlap,
                                                             goodAlignmentProperties.min_overlap_ratio,
-                                                            correctionOptions.useQualityScores);
+                                                            correctionOptions.useQualityScores);*/
 
             }
 
@@ -1280,7 +1439,7 @@ namespace gpu{
             //int num_finished_batches = 0;
 
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
-			while(!stopAndAbort && !(batchQueue.empty() && readIds.empty())){
+			while(!stopAndAbort && !(batchQueue.empty() && mybatchgen.empty())){
 
 				Batch mainBatch;
 
@@ -1293,19 +1452,14 @@ namespace gpu{
 
 
 
-                while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)){
-                    BatchState oldState = advance_one_step(mainBatch,
-                                                            readIds,
+                while(!(mainBatch.state == BatchState::FinishedUnpackingResults || mainBatch.state == BatchState::Aborted)){
+					
+                    AdvanceResult mainBatchAdvanceResult = advance_one_step(mainBatch,
                                                             dataArrays[batchIndex],
                                                             streams[batchIndex],
                                                             cudaevents[batchIndex],
                                                             true, //can block
                                                             true); //can launch kernels
-
-                    if(oldState == BatchState::Unprepared){
-                        nProcessedReads += readIds.size();
-                        readIds = threadOpts.batchGen->getNextReadIds();
-                    }
 
                     if(mainBatch.state == BatchState::TransferingQualityScores
                         || mainBatch.state == BatchState::RunningCorrectionWork){
@@ -1313,6 +1467,7 @@ namespace gpu{
                             Prepare next batch while waiting for the mainBatch gpu work to finish
                         */
                         if(nParallelBatches > 1){
+							PUSH_RANGE_2("sidework",3);
                             do{
                                 const int nextBatchId = nextBatchIndex(batchIndex, nParallelBatches);
                                 assert(nextBatchId != batchIndex);
@@ -1322,49 +1477,90 @@ namespace gpu{
                                     sideBatch = std::move(batchQueue.front());
                                     batchQueue.pop();
 
-                                    assert(sideBatch.state != BatchState::Unprepared);
+                                    //assert(sideBatch.state != BatchState::Unprepared);
                                 }else{
-                                    if(readIds.empty()){
+                                    if(mybatchgen.empty()){
                                         break; //no next batch to prepare
                                     }
                                 }
 
                                 cudaError_t eventquerystatus = cudaSuccess;
                                 cudaEvent_t eventToWaitFor = mainBatch.state == BatchState::TransferingQualityScores ?
-                                                             cudaevents[batchIndex][quality_transfer_finished_event_index]
+                                                             cudaevents[batchIndex][alignments_finished_event_index]
                                                              : cudaevents[batchIndex][result_transfer_finished_event_index];
                                 //while mainBatch is not ready for next step...
                                 //this condition is checked after each step of sideBatch
                                 while((eventquerystatus = cudaEventQuery(eventToWaitFor)) == cudaErrorNotReady){
 
-                                    BatchState oldState = advance_one_step(sideBatch,
-                                                                            readIds,
+                                    AdvanceResult sideBatchAdvanceResult = advance_one_step(sideBatch,
                                                                             dataArrays[nextBatchId],
                                                                             streams[nextBatchId],
                                                                             cudaevents[nextBatchId],
                                                                             false, //must not block
-                                                                            false); //cannot launch kernels
-
-                                    if(oldState == BatchState::Unprepared){
-                                        nProcessedReads += readIds.size();
-                                        readIds = threadOpts.batchGen->getNextReadIds();
-                                    }
+																		    false); //cannot launch kernels
+									
+									/*if((sideBatchAdvanceResult.noProgressBlocking || sideBatchAdvanceResult.noProgressLaunching) && batchQueue.size() < 2){
+										//the current side batch cannot make progress. switch it with a second side batch
+										int queuesize = batchQueue.size();
+										
+										batchQueue.push(std::move(sideBatch));
+										
+										if(queuesize == 0){
+											sideBatch = Batch{};
+										}else{
+											sideBatch = std::move(batchQueue.front());
+											batchQueue.pop();
+										}
+									}*/
                                 }
 
                                 assert(eventquerystatus == cudaSuccess);
 
-                                if(sideBatch.state != BatchState::Unprepared){
-                                    batchQueue.push(std::move(sideBatch));
-                                }
+                                //if(sideBatch.state != BatchState::Unprepared){
+								batchQueue.push(std::move(sideBatch));
+                                //}
                             }while(0);
+							POP_RANGE_2;
                         }
+                    }
+                    
+                    if(mainBatch.state == BatchState::FinishedCorrectionWork){
+						/*
+						Launch alignment kernels of side batch
+						*/
+						if(nParallelBatches > 1){
+							PUSH_RANGE_2("sidework",3);
+							const int nextBatchId = nextBatchIndex(batchIndex, nParallelBatches);
+							assert(nextBatchId != batchIndex);
+							Batch sideBatch;
+
+							if(!batchQueue.empty()){
+								sideBatch = std::move(batchQueue.front());
+								batchQueue.pop();
+
+								assert(sideBatch.state != BatchState::Unprepared);
+								
+								if(sideBatch.state == BatchState::DataOnGPU){
+									advance_one_step(sideBatch,
+													dataArrays[nextBatchId],
+													streams[nextBatchId],
+													cudaevents[nextBatchId],
+													false, //must not block
+													true); //can launch kernels
+								}
+								
+								batchQueue.push(std::move(sideBatch));
+							}
+							
+							POP_RANGE_2;
+						}
                     }
 
                 }
 
-                assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted); 
+                assert(mainBatch.state == BatchState::FinishedUnpackingResults || mainBatch.state == BatchState::Aborted); 
 				
-				if(mainBatch.state == BatchState::Finished){
+				if(mainBatch.state == BatchState::FinishedUnpackingResults){
 
 					//write result to file
 					PUSH_RANGE_2("write_results", 8);
@@ -1409,6 +1605,8 @@ namespace gpu{
 				if(nParallelBatches > 1){
 					batchIndex = nextBatchIndex(batchIndex, nParallelBatches);
 				}
+				
+				nProcessedReads = mybatchgen.currentId;
 
 
 
