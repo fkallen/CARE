@@ -601,26 +601,7 @@ struct BatchGenerator{
 				default: assert(false); return {false, -1};
 			}
 		}
-#if 0		
-		void makeTransitionFunctionTable(){
-			transitionFunctionTable[BatchState::Unprepared] = &ErrorCorrectionThreadOnlyGPU::state_unprepared_func;
-			transitionFunctionTable[BatchState::CopyReads] = &ErrorCorrectionThreadOnlyGPU::state_copyreads_func;
-			transitionFunctionTable[BatchState::TransferReads] = &ErrorCorrectionThreadOnlyGPU::state_transferreads_func;
-			transitionFunctionTable[BatchState::StartAlignment] = &ErrorCorrectionThreadOnlyGPU::state_startalignment_func;
-			transitionFunctionTable[BatchState::WaitForAlignment] = &ErrorCorrectionThreadOnlyGPU::state_waitforalignment_func;
-			transitionFunctionTable[BatchState::TransferIndices] = &ErrorCorrectionThreadOnlyGPU::state_transferindices_func;
-			transitionFunctionTable[BatchState::WaitForIndices] = &ErrorCorrectionThreadOnlyGPU::state_waitforindices_func;
-			transitionFunctionTable[BatchState::CopyQualities] = &ErrorCorrectionThreadOnlyGPU::state_copyqualities_func;
-			transitionFunctionTable[BatchState::TransferQualities] = &ErrorCorrectionThreadOnlyGPU::state_transferqualities_func;
-			transitionFunctionTable[BatchState::WaitForQualities] = &ErrorCorrectionThreadOnlyGPU::state_waitforqualities_func;
-			transitionFunctionTable[BatchState::StartCorrection] = &ErrorCorrectionThreadOnlyGPU::state_startcorrection_func;
-			transitionFunctionTable[BatchState::WaitForCorrection] = &ErrorCorrectionThreadOnlyGPU::state_waitforcorrection_func;
-			transitionFunctionTable[BatchState::UnpackResults] = &ErrorCorrectionThreadOnlyGPU::state_unpackresults_func;
-			transitionFunctionTable[BatchState::WriteResults] = &ErrorCorrectionThreadOnlyGPU::state_writeresults_func;
-			transitionFunctionTable[BatchState::Finished] = &ErrorCorrectionThreadOnlyGPU::state_finished_func;
-			transitionFunctionTable[BatchState::Aborted] = &ErrorCorrectionThreadOnlyGPU::state_aborted_func;
-		}		
-#else
+
 		void makeTransitionFunctionTable(){
 			transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
 			transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
@@ -639,7 +620,7 @@ struct BatchGenerator{
 			transitionFunctionTable[BatchState::Finished] = state_finished_func;
 			transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
 		}
-#endif
+
 		static BatchState state_unprepared_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
@@ -1565,20 +1546,14 @@ struct BatchGenerator{
 			advanceResult.oldState = batch.state;
 			advanceResult.noProgressBlocking = false;
 			advanceResult.noProgressLaunching = false;
-#if 1			
-			#define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember))
-			
+#if 1						
 			auto iter = transitionFunctionTable.find(batch.state);
 			if(iter != transitionFunctionTable.end()){
-				//batch.state = CALL_MEMBER_FN(*this, iter->second)(batch, dataArrays, streams, events, canBlock, canLaunchKernel, transFuncData);
 				batch.state = iter->second(batch, dataArrays, streams, events, canBlock, canLaunchKernel, transFuncData);
 			}else{
 					std::cout << nameOf(batch.state) << std::endl;
                     assert(false); // Every State should be handled above	
-			}
-			
-			#undef CALL_MEMBER_FN
-			
+			}		
 			
 #else
             switch(batch.state){
@@ -1691,199 +1666,6 @@ struct BatchGenerator{
             return advanceResult;
         }
 
-        /*void get_subjects(Batch& batch, const std::vector<ReadId_t>& readIds){
-
-            const auto& readStorage = threadOpts.readStorage;
-
-            batch.tasks.clear();
-            // Get subject sequence
-            for(ReadId_t id : readIds){
-                bool ok = false;
-                lock(id);
-                if ((*threadOpts.readIsCorrectedVector)[id] == 0) {
-                    (*threadOpts.readIsCorrectedVector)[id] = 1;
-                    ok = true;
-                }else{
-                }
-                unlock(id);
-
-                if(ok){
-                    const Sequence_t* sequenceptr = readStorage->fetchSequence_ptr(id);
-                    const std::string* qualityptr = nullptr;
-
-                    if(correctionOptions.useQualityScores)
-                        qualityptr = readStorage->fetchQuality_ptr(id);
-
-                    batch.tasks.emplace_back(id, sequenceptr, qualityptr);
-                }
-            }
-        }
-
-        void get_candidates(Batch& batch) const{
-
-            const auto& readStorage = threadOpts.readStorage;
-            const auto& minhasher = threadOpts.minhasher;
-
-            for(auto& task : batch.tasks){
-                const std::string sequencestring = task.subject_sequence->toString();
-                task.candidate_read_ids = minhasher->getCandidates(sequencestring, max_candidates);
-
-                //remove self from candidates
-                auto readIdPos = std::find(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-                if(readIdPos != task.candidate_read_ids.end())
-                    task.candidate_read_ids.erase(readIdPos);
-
-                if(task.candidate_read_ids.size() == 0){
-                    //no need for further processing without candidates
-                    task.active = false;
-                }else{
-                    for(auto candidate_read_id : task.candidate_read_ids){
-                        task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-                        if(correctionOptions.useQualityScores)
-                            task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
-                    }
-                }
-            }
-        }*/
-#if 0        
-        void add_tasks(Batch& batch, const std::vector<ReadId_t>& readIds){
-			const auto& readStorage = threadOpts.readStorage;
-			const auto& minhasher = threadOpts.minhasher;
-			
-			for(ReadId_t id : readIds){
-                bool ok = false;
-                lock(id);
-                if ((*threadOpts.readIsCorrectedVector)[id] == 0) {
-                    (*threadOpts.readIsCorrectedVector)[id] = 1;
-                    ok = true;
-                }else{
-                }
-                unlock(id);
-
-                if(ok){
-                    const Sequence_t* sequenceptr = readStorage->fetchSequence_ptr(id);
-                    const std::string* qualityptr = nullptr;
-
-                    if(correctionOptions.useQualityScores)
-                        qualityptr = readStorage->fetchQuality_ptr(id);
-
-                    batch.tasks.emplace_back(id, sequenceptr, qualityptr);
-					
-					auto& task = batch.tasks.back();
-					
-					const std::string sequencestring = task.subject_sequence->toString();
-					task.candidate_read_ids = minhasher->getCandidates(sequencestring, max_candidates);
-
-					//remove self from candidates
-					auto readIdPos = std::find(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-					if(readIdPos != task.candidate_read_ids.end())
-						task.candidate_read_ids.erase(readIdPos);
-
-					if(task.candidate_read_ids.size() == 0){
-						//no need for further processing without candidates
-						task.active = false;
-					}else{
-						for(auto candidate_read_id : task.candidate_read_ids){
-							task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-							if(correctionOptions.useQualityScores)
-								task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
-						}
-					}
-					
-					batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
-                }
-            }
-
-		}
-#endif		
-#if 0
-        void allocate_data(Batch& batch, DataArrays<Sequence_t>& dataArrays, int nTotalCandidates, cudaStream_t stream){
-            dataArrays.set_problem_dimensions(int(batch.tasks.size()),
-                                                        nTotalCandidates,
-                                                        fileProperties.maxSequenceLength,
-                                                        goodAlignmentProperties.min_overlap,
-                                                        goodAlignmentProperties.min_overlap_ratio,
-                                                        correctionOptions.useQualityScores); CUERR;
-
-            std::size_t temp_storage_bytes = 0;
-            std::size_t max_temp_storage_bytes = 0;
-            cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
-                                                (int*)nullptr, (int*)nullptr,
-                                                dataArrays.n_subjects+1,
-                                                (int*)nullptr,
-                                                dataArrays.n_queries,
-                                                stream); CUERR;
-
-            max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-            cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                        (bool*)nullptr, (int*)nullptr, (int*)nullptr,
-                                        nTotalCandidates,
-                                        stream); CUERR;
-
-            max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-            cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                            (int*)nullptr,
-                                            dataArrays.n_subjects,
-                                            stream); CUERR;
-
-            max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-            temp_storage_bytes = max_temp_storage_bytes;
-
-            dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
-            dataArrays.zero_gpu(stream);
-        }
-#endif
-#if 0
-        bool gather_candidates_of_next_task(Batch& batch, DataArrays<Sequence_t>& dataArrays) const{
-            dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
-
-            assert(batch.copiedTasks <= int(batch.tasks.size()));
-			
-			bool success = false;
-
-			//copy one task
-            if(batch.copiedTasks < int(batch.tasks.size())){
-                const auto& task = batch.tasks[batch.copiedTasks];
-                auto& arrays = dataArrays;
-
-                //fill subject
-                std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
-                            task.subject_sequence->begin(),
-                            task.subject_sequence->getNumBytes());
-                arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
-                batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
-                                                                batch.maxSubjectLength);
-
-                //fill candidates
-                for(const Sequence_t* candidate_sequence : task.candidate_sequences){
-
-                    std::memcpy(arrays.h_candidate_sequences_data
-                                    + batch.copiedCandidates * arrays.encoded_sequence_pitch,
-                                candidate_sequence->begin(),
-                                candidate_sequence->getNumBytes());
-
-                    arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
-                    batch.maxQueryLength = std::max(int(candidate_sequence->length()),
-                                                                batch.maxQueryLength);
-
-                    ++batch.copiedCandidates;
-                }
-
-                //make prefix sum
-                arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
-                                = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-                                    + int(task.candidate_read_ids.size());
-
-                ++batch.copiedTasks;
-				
-				success = true;
-            }
-            
-            return success;
-        }
-#endif
 
     	void execute() {
     		isRunning = true;
@@ -1905,7 +1687,7 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 1;
+    		constexpr int nParallelBatches = 2;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
 
@@ -2036,14 +1818,13 @@ struct BatchGenerator{
                                                             true, //can block
                                                             true, //can launch kernels
 															transFuncData);
-#if 0
+#if 1
 					IsWaitingResult isWaitingResult = isWaiting(mainBatch.state);
-                    if(isWaitingResults.isWaiting){
+                    if(isWaitingResult.isWaiting){
                         /*
                             Prepare next batch while waiting for the mainBatch gpu work to finish
                         */
                         if(nParallelBatches > 1){
-							PUSH_RANGE_2("sidework",3);
                             do{
                                 const int nextBatchId = nextBatchIndex(batchIndex, nParallelBatches);
                                 assert(nextBatchId != batchIndex);
@@ -2061,7 +1842,7 @@ struct BatchGenerator{
                                 }
 
                                 cudaError_t eventquerystatus = cudaSuccess;
-                                cudaEvent_t eventToWaitFor = cudaevents[batchIndex][isWaitingResults.eventIndexToWaitFor];
+                                cudaEvent_t eventToWaitFor = cudaevents[batchIndex][isWaitingResult.eventIndexToWaitFor];
 															 
 								AdvanceResult sideBatchAdvanceResult;
 								bool firstSideIter = true;
@@ -2090,7 +1871,8 @@ struct BatchGenerator{
                                                                             streams[nextBatchId],
                                                                             cudaevents[nextBatchId],
                                                                             false, //must not block
-																		    false); //cannot launch kernels
+																		    false, //cannot launch kernels
+																			transFuncData); 
 									
 									/*if((sideBatchAdvanceResult.noProgressBlocking || sideBatchAdvanceResult.noProgressLaunching) && batchQueue.size() < 2){
 										//the current side batch cannot make progress. switch it with a second side batch
@@ -2127,7 +1909,7 @@ struct BatchGenerator{
 								batchQueue.push(std::move(sideBatch));
                                 //}
                             }while(0);
-							POP_RANGE_2;
+
                         }
                     }
 #endif
