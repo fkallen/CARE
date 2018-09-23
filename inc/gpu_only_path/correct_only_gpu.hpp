@@ -446,6 +446,7 @@ struct BatchGenerator{
 			int kmerlength;
 			int num_ids_per_add_tasks;
 			int minimum_candidates_per_batch;
+			int max_candidates;
 			int maxSequenceLength;
 			const ReadStorage_t* readStorage;
 			const Minhasher_t* minhasher;
@@ -490,7 +491,7 @@ struct BatchGenerator{
 
         SequenceFileProperties fileProperties;
 
-        std::uint64_t max_candidates;
+        std::uint64_t max_candidates = 0;
 
         std::uint64_t nProcessedReads = 0;
 
@@ -530,7 +531,7 @@ struct BatchGenerator{
 		int minimum_candidates_per_batch = 25000;
 		
 
-		using FuncTableEntry = BatchState (ErrorCorrectionThreadOnlyGPU::*)(Batch& batch,
+		using FuncTableEntry = BatchState (*)(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -600,7 +601,7 @@ struct BatchGenerator{
 				default: assert(false); return {false, -1};
 			}
 		}
-		
+#if 0		
 		void makeTransitionFunctionTable(){
 			transitionFunctionTable[BatchState::Unprepared] = &ErrorCorrectionThreadOnlyGPU::state_unprepared_func;
 			transitionFunctionTable[BatchState::CopyReads] = &ErrorCorrectionThreadOnlyGPU::state_copyreads_func;
@@ -619,8 +620,27 @@ struct BatchGenerator{
 			transitionFunctionTable[BatchState::Finished] = &ErrorCorrectionThreadOnlyGPU::state_finished_func;
 			transitionFunctionTable[BatchState::Aborted] = &ErrorCorrectionThreadOnlyGPU::state_aborted_func;
 		}		
-		
-		BatchState state_unprepared_func(Batch& batch,
+#else
+		void makeTransitionFunctionTable(){
+			transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
+			transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
+			transitionFunctionTable[BatchState::TransferReads] = state_transferreads_func;
+			transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
+			transitionFunctionTable[BatchState::WaitForAlignment] = state_waitforalignment_func;
+			transitionFunctionTable[BatchState::TransferIndices] = state_transferindices_func;
+			transitionFunctionTable[BatchState::WaitForIndices] = state_waitforindices_func;
+			transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
+			transitionFunctionTable[BatchState::TransferQualities] = state_transferqualities_func;
+			transitionFunctionTable[BatchState::WaitForQualities] = state_waitforqualities_func;
+			transitionFunctionTable[BatchState::StartCorrection] = state_startcorrection_func;
+			transitionFunctionTable[BatchState::WaitForCorrection] = state_waitforcorrection_func;
+			transitionFunctionTable[BatchState::UnpackResults] = state_unpackresults_func;
+			transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
+			transitionFunctionTable[BatchState::Finished] = state_finished_func;
+			transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
+		}
+#endif
+		static BatchState state_unprepared_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -651,7 +671,7 @@ struct BatchGenerator{
 						const Sequence_t* sequenceptr = readStorage->fetchSequence_ptr(id);
 						const std::string* qualityptr = nullptr;
 
-						if(correctionOptions.useQualityScores)
+						if(transFuncData.useQualityScores)
 							qualityptr = readStorage->fetchQuality_ptr(id);
 
 						batch.tasks.emplace_back(id, sequenceptr, qualityptr);
@@ -659,7 +679,7 @@ struct BatchGenerator{
 						auto& task = batch.tasks.back();
 						
 						const std::string sequencestring = task.subject_sequence->toString();
-						task.candidate_read_ids = minhasher->getCandidates(sequencestring, max_candidates);
+						task.candidate_read_ids = minhasher->getCandidates(sequencestring, transFuncData.max_candidates);
 
 						//remove self from candidates
 						auto readIdPos = std::find(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
@@ -672,7 +692,7 @@ struct BatchGenerator{
 						}else{
 							for(auto candidate_read_id : task.candidate_read_ids){
 								task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-								if(correctionOptions.useQualityScores)
+								if(transFuncData.useQualityScores)
 									task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
 							}
 						}
@@ -735,7 +755,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_copyreads_func(Batch& batch,
+		static BatchState state_copyreads_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -793,7 +813,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_transferreads_func(Batch& batch,
+		static BatchState state_transferreads_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -816,7 +836,7 @@ struct BatchGenerator{
 			return BatchState::StartAlignment;
 		}
 		
-		BatchState state_startalignment_func(Batch& batch,
+		static BatchState state_startalignment_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1019,7 +1039,7 @@ struct BatchGenerator{
 			return BatchState::WaitForAlignment;
 		}
 		
-		BatchState state_waitforalignment_func(Batch& batch,
+		static BatchState state_waitforalignment_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1040,7 +1060,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_transferindices_func(Batch& batch,
+		static BatchState state_transferindices_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1063,7 +1083,7 @@ struct BatchGenerator{
 			return BatchState::WaitForIndices;
 		}
 		
-		BatchState state_waitforindices_func(Batch& batch,
+		static BatchState state_waitforindices_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1095,7 +1115,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_copyqualities_func(Batch& batch,
+		static BatchState state_copyqualities_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1151,7 +1171,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_transferqualities_func(Batch& batch,
+		static BatchState state_transferqualities_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1160,7 +1180,7 @@ struct BatchGenerator{
 										const TransitionFunctionData& transFuncData){
 			
 			assert(batch.state == BatchState::TransferQualities);
-			assert(correctionOptions.useQualityScores);
+			assert(transFuncData.useQualityScores);
 			assert(batch.copiedTasks == int(batch.tasks.size()));
 			
 			cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
@@ -1179,7 +1199,7 @@ struct BatchGenerator{
 			return BatchState::WaitForQualities;
 		}
 		
-		BatchState state_waitforqualities_func(Batch& batch,
+		static BatchState state_waitforqualities_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1200,7 +1220,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_startcorrection_func(Batch& batch,
+		static BatchState state_startcorrection_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1376,7 +1396,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_waitforcorrection_func(Batch& batch,
+		static BatchState state_waitforcorrection_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1397,7 +1417,7 @@ struct BatchGenerator{
 			}
 		}
 		
-		BatchState state_unpackresults_func(Batch& batch,
+		static BatchState state_unpackresults_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1450,7 +1470,7 @@ struct BatchGenerator{
 			return BatchState::WriteResults;
 		}
 		
-		BatchState state_writeresults_func(Batch& batch,
+		static BatchState state_writeresults_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1486,7 +1506,7 @@ struct BatchGenerator{
 						if((*transFuncData.readIsCorrectedVector)[candidateId]== 0) {
 							(*transFuncData.readIsCorrectedVector)[candidateId] = 1; // we will process this read
 							savingIsOk = true;
-							nCorrectedCandidates++;
+							//nCorrectedCandidates++;
 						}
 						transFuncData.unlock(candidateId);
 					}
@@ -1499,7 +1519,7 @@ struct BatchGenerator{
 			return BatchState::Finished;
 		}
 		
-		BatchState state_finished_func(Batch& batch,
+		static BatchState state_finished_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1514,7 +1534,7 @@ struct BatchGenerator{
 			return BatchState::Finished;
 		}
 		
-		BatchState state_aborted_func(Batch& batch,
+		static BatchState state_aborted_func(Batch& batch,
 										DataArrays<Sequence_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
@@ -1550,7 +1570,8 @@ struct BatchGenerator{
 			
 			auto iter = transitionFunctionTable.find(batch.state);
 			if(iter != transitionFunctionTable.end()){
-				batch.state = CALL_MEMBER_FN(*this, iter->second)(batch, dataArrays, streams, events, canBlock, canLaunchKernel, transFuncData);
+				//batch.state = CALL_MEMBER_FN(*this, iter->second)(batch, dataArrays, streams, events, canBlock, canLaunchKernel, transFuncData);
+				batch.state = iter->second(batch, dataArrays, streams, events, canBlock, canLaunchKernel, transFuncData);
 			}else{
 					std::cout << nameOf(batch.state) << std::endl;
                     assert(false); // Every State should be handled above	
@@ -1868,6 +1889,7 @@ struct BatchGenerator{
     		isRunning = true;
 
 			assert(threadOpts.canUseGpu);
+			assert(max_candidates > 0);
 			
 			mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
 			makeTransitionFunctionTable();
@@ -1943,6 +1965,7 @@ struct BatchGenerator{
 			transFuncData.kmerlength = correctionOptions.kmerlength;
 			transFuncData.num_ids_per_add_tasks = num_ids_per_add_tasks;
 			transFuncData.minimum_candidates_per_batch = minimum_candidates_per_batch;
+			transFuncData.max_candidates = max_candidates;
 			transFuncData.maxSequenceLength = fileProperties.maxSequenceLength;
 			transFuncData.locksForProcessedFlags = threadOpts.locksForProcessedFlags;
 			transFuncData.nLocksForProcessedFlags = threadOpts.nLocksForProcessedFlags;
