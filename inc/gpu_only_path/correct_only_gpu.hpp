@@ -1,7 +1,7 @@
 #ifndef CARE_CORRECT_ONLY_GPU_HPP
 #define CARE_CORRECT_ONLY_GPU_HPP
 
-#define USE_NVTX2
+//#define USE_NVTX2
 
 
 #if defined USE_NVTX2 && defined __NVCC__
@@ -23,12 +23,62 @@ const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);
     nvtxRangePushEx(&eventAttrib); \
 }
 
+
+
 #define POP_RANGE_2 nvtxRangePop();
 #else
 #define PUSH_RANGE_2(name,cid)
 #define POP_RANGE_2
 #endif
 
+
+#ifdef __NVCC__
+#include <nvToolsExt.h>
+#endif
+
+#ifdef __NVCC__
+
+__inline__
+void push_range(const std::string& name, int cid){
+	const uint32_t colors_[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff, 0xdeadbeef, 0x12345678, 0xabcdef42 };
+	const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);	
+	
+    int color_id = cid; 
+    color_id = color_id%num_colors_;
+    nvtxEventAttributes_t eventAttrib = {0}; 
+    eventAttrib.version = NVTX_VERSION; 
+    eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE; 
+    eventAttrib.colorType = NVTX_COLOR_ARGB; 
+    eventAttrib.color = colors_[color_id]; 
+    eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII; 
+    eventAttrib.message.ascii = name.c_str(); 
+    nvtxRangePushEx(&eventAttrib); 
+	//std::cout << "push " << name << std::endl;
+}
+
+__inline__
+void pop_range(const std::string& name){
+	nvtxRangePop();
+	//std::cout << "pop " << name << std::endl;
+}
+
+void pop_range(){
+	nvtxRangePop();
+	//std::cout << "pop " << std::endl;
+}
+
+#else 
+
+__inline__
+void push_range(const std::string& name, int cid){
+}
+
+__inline__
+void pop_range(){
+}
+
+
+#endif
 
 #include "../hpc_helpers.cuh"
 #include "../options.hpp"
@@ -364,10 +414,10 @@ struct BatchGenerator{
 		};
 		
 		struct AdvanceResult{
-			BatchState oldState;
-			BatchState newState;
-			bool noProgressBlocking;
-			bool noProgressLaunching;
+			BatchState oldState = BatchState::Unprepared;
+			BatchState newState = BatchState::Unprepared;
+			bool noProgressBlocking = false;
+			bool noProgressLaunching = false;
 		};
 
 
@@ -441,7 +491,7 @@ struct BatchGenerator{
 		
 		BatchGenerator<ReadId_t> mybatchgen;		
 		int num_ids_per_add_tasks = 30;
-		int minimum_candidates_per_batch = 1000;
+		int minimum_candidates_per_batch = 25000;
 
         std::thread thread;
         bool isRunning = false;
@@ -459,6 +509,22 @@ struct BatchGenerator{
         }
 
     public:
+		
+		std::string nameOf(BatchState state) const{
+			switch(state){
+				case BatchState::Unprepared: return "Unprepared";
+				case BatchState::SubjectsPresent: return "SubjectsPresent";
+				case BatchState::CandidatesPresent: return "CandidatesPresent";
+				case BatchState::DataOnGPU: return "DataOnGPU";
+				case BatchState::RunningAlignmentWork: return "RunningAlignmentWork";
+				case BatchState::TransferingQualityScores: return "TransferingQualityScores";
+				case BatchState::RunningCorrectionWork: return "RunningCorrectionWork";
+				case BatchState::FinishedCorrectionWork: return "FinishedCorrectionWork";
+				case BatchState::FinishedUnpackingResults: return "FinishedUnpackingResults";
+				case BatchState::Aborted: return "Aborted";
+				default: return "None";
+			}		
+		}
 
         AdvanceResult advance_one_step(Batch& batch,
                                 DataArrays<Sequence_t>& dataArrays,
@@ -1437,9 +1503,14 @@ struct BatchGenerator{
             int batchIndex = 0; // the main stream we are working on in the current loop iteration
 
             //int num_finished_batches = 0;
+            
+            int stacksize = 0;
 
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
 			while(!stopAndAbort && !(batchQueue.empty() && mybatchgen.empty())){
+				
+				if(stacksize != 0)
+						assert(stacksize == 0);
 
 				Batch mainBatch;
 
@@ -1451,10 +1522,29 @@ struct BatchGenerator{
 				}
 
 
-
+				AdvanceResult mainBatchAdvanceResult;
+				bool firstMainIter = true;
+				bool popMain = false;
+				
+				
+				
                 while(!(mainBatch.state == BatchState::FinishedUnpackingResults || mainBatch.state == BatchState::Aborted)){
+	
+					if(firstMainIter){
+						assert(popMain == false);
+						push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
+						++stacksize;
+						popMain = true;
+					}else{
+						if(mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState){
+							assert(popMain == false);
+							push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
+							++stacksize;
+							popMain = true;
+						}
+					}
 					
-                    AdvanceResult mainBatchAdvanceResult = advance_one_step(mainBatch,
+                    mainBatchAdvanceResult = advance_one_step(mainBatch,
                                                             dataArrays[batchIndex],
                                                             streams[batchIndex],
                                                             cudaevents[batchIndex],
@@ -1488,11 +1578,30 @@ struct BatchGenerator{
                                 cudaEvent_t eventToWaitFor = mainBatch.state == BatchState::TransferingQualityScores ?
                                                              cudaevents[batchIndex][alignments_finished_event_index]
                                                              : cudaevents[batchIndex][result_transfer_finished_event_index];
+															 
+								AdvanceResult sideBatchAdvanceResult;
+								bool firstSideIter = true;
+								bool popSide = false;
+								
                                 //while mainBatch is not ready for next step...
                                 //this condition is checked after each step of sideBatch
                                 while((eventquerystatus = cudaEventQuery(eventToWaitFor)) == cudaErrorNotReady){
+									
+									if(firstSideIter){
+										assert(popSide == false);
+										push_range("sideBatch"+nameOf(sideBatch.state)+"first", int(sideBatch.state));
+										++stacksize;
+										popSide = true;
+									}else{
+										if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
+											assert(popSide == false);
+											push_range("sideBatch"+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
+											++stacksize;
+											popSide = true;
+										}
+									}
 
-                                    AdvanceResult sideBatchAdvanceResult = advance_one_step(sideBatch,
+                                    sideBatchAdvanceResult = advance_one_step(sideBatch,
                                                                             dataArrays[nextBatchId],
                                                                             streams[nextBatchId],
                                                                             cudaevents[nextBatchId],
@@ -1512,7 +1621,21 @@ struct BatchGenerator{
 											batchQueue.pop();
 										}
 									}*/
+									
+									if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
+										pop_range("side inner");
+										popSide = false;
+										--stacksize;
+									}
+									
+									firstSideIter = false;
                                 }
+                                
+                                if(popSide){
+									pop_range("side outer");
+									popSide = false;
+									--stacksize;
+								}
 
                                 assert(eventquerystatus == cudaSuccess);
 
@@ -1541,12 +1664,18 @@ struct BatchGenerator{
 								assert(sideBatch.state != BatchState::Unprepared);
 								
 								if(sideBatch.state == BatchState::DataOnGPU){
+									push_range("sideBatch"+nameOf(sideBatch.state), int(sideBatch.state));
+									++stacksize;
+									
 									advance_one_step(sideBatch,
 													dataArrays[nextBatchId],
 													streams[nextBatchId],
 													cudaevents[nextBatchId],
 													false, //must not block
 													true); //can launch kernels
+									
+									pop_range("side");
+									--stacksize;
 								}
 								
 								batchQueue.push(std::move(sideBatch));
@@ -1555,14 +1684,31 @@ struct BatchGenerator{
 							POP_RANGE_2;
 						}
                     }
+                    
+                    
+                    if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)){
+						pop_range("main inner");
+						popMain = false;
+						--stacksize;
+					}
 
+					firstMainIter = false;
                 }
+                
+                if(popMain){
+					pop_range("main outer");
+					popMain = false;
+					--stacksize;
+				}
 
                 assert(mainBatch.state == BatchState::FinishedUnpackingResults || mainBatch.state == BatchState::Aborted); 
 				
 				if(mainBatch.state == BatchState::FinishedUnpackingResults){
 
 					//write result to file
+					push_range("mainBatch"+nameOf(mainBatch.state), int(mainBatch.state));
+					++stacksize;
+					
 					PUSH_RANGE_2("write_results", 8);
 					for(std::size_t subject_index = 0; subject_index < mainBatch.tasks.size(); ++subject_index){
 
@@ -1599,6 +1745,8 @@ struct BatchGenerator{
 						}
 					}
 					POP_RANGE_2;
+					pop_range("main");
+					--stacksize;
 				
 				}
 
@@ -1606,7 +1754,7 @@ struct BatchGenerator{
 					batchIndex = nextBatchIndex(batchIndex, nParallelBatches);
 				}
 				
-				nProcessedReads = mybatchgen.currentId;
+				nProcessedReads = mybatchgen.currentId - mybatchgen.firstId;
 
 
 
@@ -1889,6 +2037,8 @@ std::cout << std::endl;*/
 
             outputstream.flush();
             featurestream.flush();
+			
+			std::cout << "new gpu thread finished" << std::endl;
 
     	#if 0
     		{

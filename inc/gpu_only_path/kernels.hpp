@@ -266,12 +266,12 @@ void call_msa_correct_subject_kernel_async(
                                         accessor, \
                                         make_reverse_complement_inplace); CUERR;
 
-/*
-#define getsms(blocksize) {\
-                        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
-                                                                        cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize)>, \
-                                                                        blocksize, smem); CUERR;}
-*/
+
+//#define getsms(blocksize) {\
+//                        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
+//                                                                        cuda_shifted_hamming_distance_with_revcompl_kernel<(blocksize), Accessor, RevCompl>, \
+//                                                                        blocksize, smem); CUERR;}
+
 
 #define getsms(blocksize) {max_blocks_per_SM = 12;}
 
