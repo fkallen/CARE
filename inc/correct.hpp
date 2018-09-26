@@ -1004,7 +1004,7 @@ private:
             std::vector<BatchElem_t> batchElems;
 #ifdef __NVCC__
             cudaStream_t stream;
-#endif			
+#endif
         };
 
 		isRunning = true;
@@ -2666,7 +2666,7 @@ private:
 
 
 
-#if 0
+#if 1
 
 template<class minhasher_t,
 		 class readStorage_t,
@@ -2690,7 +2690,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
-#if 1
+#if 0
 #if 1
 	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 #else
@@ -2902,6 +2902,11 @@ void correct(const MinhashOptions& minhashOptions,
                 ecthreads[threadId].join();
             }
 
+            for(int deviceId : deviceIds){
+				cudaSetDevice(deviceId); CUERR;
+				cudaDeviceReset(); CUERR;
+			}
+
             std::exit(0);
         }
         #endif
@@ -2956,7 +2961,7 @@ TIMERSTOPCPU(correction);
 
 
 
-#else 
+#else
 
 
 template<class minhasher_t,
@@ -2975,7 +2980,7 @@ void correct(const MinhashOptions& minhashOptions,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 				  std::size_t nLocksForProcessedFlags,
 				  const std::vector<int>& deviceIds){
-	
+
 	assert(indels == false);
 
 	using Minhasher_t = minhasher_t;
@@ -3062,25 +3067,25 @@ void correct(const MinhashOptions& minhashOptions,
     for(int i = 0; i < nCorrectorThreads; i++){
         tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
     }
-    
+
     int nGpuThreads = std::min(nCorrectorThreads, 2 * int(deviceIds.size()));
 	int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
     std::vector<BatchGenerator<ReadId_t>> cpubatchgenerators(nCpuThreads);
 	std::vector<care::gpu::BatchGenerator<ReadId_t>> gpubatchgenerators(nGpuThreads);
-	
+
     std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
 	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
-	
+
 	std::uint64_t ncpuReads = std::uint64_t(props.nReads / 7.0);
 	std::uint64_t ngpuReads = props.nReads - ncpuReads;
 	std::uint64_t nReadsPerGPU = SDIV(ngpuReads, nGpuThreads);
-	
+
 	std::cout << "nCpuThreads: " << nCpuThreads << ", nGpuThreads: " << nGpuThreads << std::endl;
 	std::cout << "ncpuReads: " << ncpuReads << ", ngpuReads: " << ngpuReads << std::endl;
-	
+
 	for(int threadId = 0; threadId < nCpuThreads; threadId++){
 
         cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, correctionOptions.batchsize, threadId, nCpuThreads);
@@ -3108,7 +3113,7 @@ void correct(const MinhashOptions& minhashOptions,
         cpucorrectorThreads[threadId].run();
     }
 
-   
+
     for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
         gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPU, std::min(props.nReads, ncpuReads + (threadId+1) * nReadsPerGPU));
@@ -3158,7 +3163,7 @@ void correct(const MinhashOptions& minhashOptions,
             for(int i = 0; i < nCpuThreads; i++){
                 correctorProgress += cpucorrectorThreads[i].nProcessedReads;
             }
-            
+
             for(int i = 0; i < nGpuThreads; i++){
                 correctorProgress += gpucorrectorThreads[i].nProcessedReads;
             }
@@ -3205,17 +3210,17 @@ void correct(const MinhashOptions& minhashOptions,
         #ifdef __NVCC__
         if(sleepiter == sleepiterend){
             cudaProfilerStop(); CUERR;
-			
+
 			for(int i = 0; i < nCpuThreads; i++){
                 cpucorrectorThreads[i].stopAndAbort = true;
 				cpucorrectorThreads[i].join();
             }
-            
+
             for(int i = 0; i < nGpuThreads; i++){
                 gpucorrectorThreads[i].stopAndAbort = true;
 				gpucorrectorThreads[i].join();
             }
-            
+
             std::exit(0);
         }
         #endif
@@ -3230,7 +3235,7 @@ TIMERSTARTCPU(correction);
 
 	for (auto& thread : gpucorrectorThreads)
         thread.join();
-	
+
 #ifndef DO_PROFILE
     showProgress = false;
     progressThread.join();

@@ -261,6 +261,312 @@ struct BatchGenerator{
 	};
 
 
+    template<class Sequence_t, class ReadId_t>
+    struct ShiftedHammingDistanceChooser2;
+
+	template<class ReadId_t>
+    struct ShiftedHammingDistanceChooser2<Sequence2Bit, ReadId_t>{
+        using GPUReadStorage_t = GPUReadStorage;
+
+		static void callKernelAsync(int* d_alignment_scores,
+                            int* d_alignment_overlaps,
+                            int* d_alignment_shifts,
+                            int* d_alignment_nOps,
+                            bool* d_alignment_isValid,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const char* d_subject_sequences_data,
+                            const char* d_candidate_sequences_data,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            const int* d_candidates_per_subject_prefixsum,
+                            int n_subjects,
+							int n_queries,
+                            int max_sequence_bytes,
+                            size_t encodedsequencepitch,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double min_overlap_ratio,
+                            int maxSubjectLength,
+                            int maxQueryLength,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+			auto accessor = [] __device__ (const char* data, int length, int index){
+                return Sequence2Bit::get(data, length, index);
+            };
+
+            auto make_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+                return Sequence2Bit::make_reverse_complement_inplace(sequence, sequencelength);
+            };
+
+            if(!useGpuReadStorage){
+    			call_shd_with_revcompl_kernel_async(d_alignment_scores,
+    						d_alignment_overlaps,
+    						d_alignment_shifts,
+    						d_alignment_nOps,
+    						d_alignment_isValid,
+    						d_subject_sequences_data,
+    						d_candidate_sequences_data,
+    						d_subject_sequences_lengths,
+    						d_candidate_sequences_lengths,
+    						d_candidates_per_subject_prefixsum,
+    						n_subjects,
+    						n_queries,
+    						max_sequence_bytes,
+    						encodedsequencepitch,
+    						min_overlap,
+    						maxErrorRate,
+    						min_overlap_ratio,
+    						accessor,
+    						make_reverse_complement_inplace,
+    						maxSubjectLength,
+    						maxQueryLength,
+    						stream);
+            }else{
+                call_shd_with_revcompl_kernel_rs_async(d_alignment_scores,
+    						d_alignment_overlaps,
+    						d_alignment_shifts,
+    						d_alignment_nOps,
+    						d_alignment_isValid,
+                            gpuReadStorage->d_sequence_data,
+                            d_subject_read_ids,
+                            d_candidate_read_ids,
+    						d_subject_sequences_lengths,
+    						d_candidate_sequences_lengths,
+    						d_candidates_per_subject_prefixsum,
+    						n_subjects,
+    						n_queries,
+    						max_sequence_bytes,
+    						encodedsequencepitch,
+    						min_overlap,
+    						maxErrorRate,
+    						min_overlap_ratio,
+    						accessor,
+    						make_reverse_complement_inplace,
+    						maxSubjectLength,
+    						maxQueryLength,
+    						stream);
+            }
+		}
+	};
+
+	template<class ReadId_t>
+    struct ShiftedHammingDistanceChooser2<Sequence2BitHiLo, ReadId_t>{
+        using GPUReadStorage_t = GPUReadStorage;
+
+		static void callKernelAsync(int* d_alignment_scores,
+                            int* d_alignment_overlaps,
+                            int* d_alignment_shifts,
+                            int* d_alignment_nOps,
+                            bool* d_alignment_isValid,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const char* d_subject_sequences_data,
+                            const char* d_candidate_sequences_data,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            const int* d_candidates_per_subject_prefixsum,
+                            int n_subjects,
+							int n_queries,
+                            int max_sequence_bytes,
+                            size_t encodedsequencepitch,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double min_overlap_ratio,
+                            int maxSubjectLength,
+                            int maxQueryLength,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+			auto getNumBytes = [] __device__ (int sequencelength){
+                return Sequence2BitHiLo::getNumBytes(sequencelength);
+            };
+
+            if(!useGpuReadStorage){
+
+    			call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(d_alignment_scores,
+    						d_alignment_overlaps,
+    						d_alignment_shifts,
+    						d_alignment_nOps,
+    						d_alignment_isValid,
+    						d_subject_sequences_data,
+    						d_candidate_sequences_data,
+    						d_subject_sequences_lengths,
+    						d_candidate_sequences_lengths,
+    						d_candidates_per_subject_prefixsum,
+    						n_subjects,
+    						n_queries,
+    						max_sequence_bytes,
+    						encodedsequencepitch,
+    						min_overlap,
+    						maxErrorRate,
+    						min_overlap_ratio,
+    						getNumBytes,
+    						maxSubjectLength,
+    						maxQueryLength,
+    						stream);
+            }else{
+
+                call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_async(d_alignment_scores,
+    						d_alignment_overlaps,
+    						d_alignment_shifts,
+    						d_alignment_nOps,
+    						d_alignment_isValid,
+                            gpuReadStorage->d_sequence_data,
+                            d_subject_read_ids,
+                            d_candidate_read_ids,
+                            //
+                            //d_subject_sequences_data,
+                            //d_candidate_sequences_data,
+                            //
+    						d_subject_sequences_lengths,
+    						d_candidate_sequences_lengths,
+    						d_candidates_per_subject_prefixsum,
+    						n_subjects,
+    						n_queries,
+    						max_sequence_bytes,
+    						encodedsequencepitch,
+    						min_overlap,
+    						maxErrorRate,
+    						min_overlap_ratio,
+    						getNumBytes,
+    						maxSubjectLength,
+    						maxQueryLength,
+    						stream);
+            }
+		}
+	};
+
+
+    template<class Sequence_t, class ReadId_t>
+    struct MSAAddSequencesChooser{
+        using GPUReadStorage_t = GPUReadStorage;
+
+        static void callKernelAsync(
+                            char* d_multiple_sequence_alignments,
+                            float* d_multiple_sequence_alignment_weights,
+                            const int* d_alignment_shifts,
+                            const BestAlignment_t* d_alignment_best_alignment_flags,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const char* d_subject_sequences_data,
+                            const char* d_candidate_sequences_data,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            const char* d_subject_qualities,
+                            const char* d_candidate_qualities,
+                            const int* d_alignment_overlaps,
+                            const int* d_alignment_nOps,
+                            const MSAColumnProperties*  d_msa_column_properties,
+                            const int* d_candidates_per_subject_prefixsum,
+                            const int* d_indices,
+                            const int* d_indices_per_subject,
+                            const int* d_indices_per_subject_prefixsum,
+                            int n_subjects,
+                            int n_queries,
+                            int n_indices,
+                            bool canUseQualityScores,
+                            float desiredAlignmentMaxErrorRate,
+                            int maximum_sequence_length,
+                            int max_sequence_bytes,
+                            size_t encoded_sequence_pitch,
+                            size_t quality_pitch,
+                            size_t msa_row_pitch,
+                            size_t msa_weights_row_pitch,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+            auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+                return Sequence_t::get_as_nucleotide(data, length, index);
+            };
+
+            auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+                return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+            };
+
+            if(!useGpuReadStorage){
+
+                call_msa_add_sequences_kernel_async(
+                                d_multiple_sequence_alignments,
+                                d_multiple_sequence_alignment_weights,
+                                d_alignment_shifts,
+                                d_alignment_best_alignment_flags,
+                                d_subject_sequences_data,
+                                d_candidate_sequences_data,
+                                d_subject_sequences_lengths,
+                                d_candidate_sequences_lengths,
+                                d_subject_qualities,
+                                d_candidate_qualities,
+                                d_alignment_overlaps,
+                                d_alignment_nOps,
+                                d_msa_column_properties,
+                                d_candidates_per_subject_prefixsum,
+                                d_indices,
+                                d_indices_per_subject,
+                                d_indices_per_subject_prefixsum,
+                                n_subjects,
+                                n_queries,
+                                n_indices,
+                                canUseQualityScores,
+                                desiredAlignmentMaxErrorRate,
+                                maximum_sequence_length,
+                                max_sequence_bytes,
+                                quality_pitch,
+                                msa_row_pitch,
+                                msa_weights_row_pitch,
+                                nucleotide_accessor,
+                                make_unpacked_reverse_complement_inplace,
+                                stream);
+            }else{
+                call_msa_add_sequences_kernel_rs_async(
+                                d_multiple_sequence_alignments,
+                                d_multiple_sequence_alignment_weights,
+                                d_alignment_shifts,
+                                d_alignment_best_alignment_flags,
+                                gpuReadStorage->d_sequence_data,
+                                d_subject_read_ids,
+                                d_candidate_read_ids,
+                                d_subject_sequences_lengths,
+                                d_candidate_sequences_lengths,
+                                d_subject_qualities,
+                                d_candidate_qualities,
+                                d_alignment_overlaps,
+                                d_alignment_nOps,
+                                d_msa_column_properties,
+                                d_candidates_per_subject_prefixsum,
+                                d_indices,
+                                d_indices_per_subject,
+                                d_indices_per_subject_prefixsum,
+                                n_subjects,
+                                n_queries,
+                                n_indices,
+                                canUseQualityScores,
+                                desiredAlignmentMaxErrorRate,
+                                maximum_sequence_length,
+                                max_sequence_bytes,
+                                quality_pitch,
+                                msa_row_pitch,
+                                msa_weights_row_pitch,
+                                nucleotide_accessor,
+                                make_unpacked_reverse_complement_inplace,
+                                stream);
+            }
+        }
+    };
+
 
 
     template<class Sequence_t, class ReadId_t>
@@ -502,7 +808,7 @@ struct BatchGenerator{
 
 		BatchGenerator<ReadId_t> mybatchgen;
 		int num_ids_per_add_tasks = 30;
-		int minimum_candidates_per_batch = 10000;
+		int minimum_candidates_per_batch = 20000;
 
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
@@ -691,6 +997,8 @@ struct BatchGenerator{
 												transFuncData.min_overlap_ratio,
 												transFuncData.useQualityScores); CUERR;
 
+                    //std::cout << "batch.initialNumberOfCandidates " << batch.initialNumberOfCandidates << std::endl;
+
 					std::size_t temp_storage_bytes = 0;
 					std::size_t max_temp_storage_bytes = 0;
 					cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
@@ -744,41 +1052,80 @@ struct BatchGenerator{
             if(batch.copiedTasks < int(batch.tasks.size())){
                 const auto& task = batch.tasks[batch.copiedTasks];
                 auto& arrays = dataArrays;
-
-                //fill subject
-                std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
-                            task.subject_sequence->begin(),
-                            task.subject_sequence->getNumBytes());
-                arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
-                batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
+				
+				if(transFuncData.useGpuReadStorage){
+					//copy read Ids
+					arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
+					std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
+					
+					//copy subject length
+					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
+					batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
                                                                 batch.maxSubjectLength);
+					
+					//copy candidate lengths
+					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
+						arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
+						
+						batch.maxQueryLength = std::max(int(candidate_sequence->length()),
+																	batch.maxQueryLength);
 
-                //fill candidates
-                for(const Sequence_t* candidate_sequence : task.candidate_sequences){
+						++batch.copiedCandidates;
+					}
+					
+					//update prefix sum
+					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
+										+ int(task.candidate_read_ids.size());
 
-                    std::memcpy(arrays.h_candidate_sequences_data
-                                    + batch.copiedCandidates * arrays.encoded_sequence_pitch,
-                                candidate_sequence->begin(),
-                                candidate_sequence->getNumBytes());
+					++batch.copiedTasks;
+				
+				}else{
+					//copy subject data
+					std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
+								task.subject_sequence->begin(),
+								task.subject_sequence->getNumBytes());
+					
+					//copy subject length
+					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
+					batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
+																	batch.maxSubjectLength);
 
-                    arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
-                    batch.maxQueryLength = std::max(int(candidate_sequence->length()),
-                                                                batch.maxQueryLength);
+					
+					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
 
-                    ++batch.copiedCandidates;
-                }
+						//copy candidate data
+						std::memcpy(arrays.h_candidate_sequences_data
+										+ batch.copiedCandidates * arrays.encoded_sequence_pitch,
+									candidate_sequence->begin(),
+									candidate_sequence->getNumBytes());
 
-                //make prefix sum
-                arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
-                                = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-                                    + int(task.candidate_read_ids.size());
+						//copy candidate length
+						arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
+						batch.maxQueryLength = std::max(int(candidate_sequence->length()),
+																	batch.maxQueryLength);
 
-                ++batch.copiedTasks;
+						++batch.copiedCandidates;
+					}
+
+					//update prefix sum
+					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
+										+ int(task.candidate_read_ids.size());
+
+					++batch.copiedTasks;					
+				}
+
+
 
             }
 
 			//if batch is fully copied, transfer to gpu
 			if(batch.copiedTasks == int(batch.tasks.size())){
+                //for(int i = 0; i < batch.copiedCandidates; i++){
+                //    std::cout << dataArrays.h_candidate_read_ids[i] << std::endl;
+//
+                //}
 				return BatchState::TransferReads;
 			}else{
 				return BatchState::CopyReads;
@@ -875,12 +1222,14 @@ struct BatchGenerator{
                                             stream); CUERR;
             };
 
-			ShiftedHammingDistanceChooser<Sequence_t>::callKernelAsync(
+			ShiftedHammingDistanceChooser2<Sequence_t, ReadId_t>::callKernelAsync(
                                     dataArrays.d_alignment_scores,
                                     dataArrays.d_alignment_overlaps,
                                     dataArrays.d_alignment_shifts,
                                     dataArrays.d_alignment_nOps,
                                     dataArrays.d_alignment_isValid,
+                                    dataArrays.d_subject_read_ids,
+                                    dataArrays.d_candidate_read_ids,
                                     dataArrays.d_subject_sequences_data,
                                     dataArrays.d_candidate_sequences_data,
                                     dataArrays.d_subject_sequences_lengths,
@@ -895,6 +1244,8 @@ struct BatchGenerator{
                                     transFuncData.min_overlap_ratio,
                                     batch.maxSubjectLength,
                                     batch.maxQueryLength,
+                                    transFuncData.gpuReadStorage,
+                                    transFuncData.useGpuReadStorage,
                                     streams[primary_stream_index]);
 
             //Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
@@ -1196,10 +1547,6 @@ struct BatchGenerator{
 				return BatchState::StartCorrection;
 			}else{
 
-				auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
-					return Sequence_t::get_as_nucleotide(data, length, index);
-				};
-
 				auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
 					return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
 				};
@@ -1212,37 +1559,40 @@ struct BatchGenerator{
 				const int new_columns_to_correct = transFuncData.new_columns_to_correct;
 				const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
 
-				call_msa_add_sequences_kernel_async(
-								dataArrays.d_multiple_sequence_alignments,
-								dataArrays.d_multiple_sequence_alignment_weights,
-								dataArrays.d_alignment_shifts,
-								dataArrays.d_alignment_best_alignment_flags,
-								dataArrays.d_subject_sequences_data,
-								dataArrays.d_candidate_sequences_data,
-								dataArrays.d_subject_sequences_lengths,
-								dataArrays.d_candidate_sequences_lengths,
-								dataArrays.d_subject_qualities,
-								dataArrays.d_candidate_qualities,
-								dataArrays.d_alignment_overlaps,
-								dataArrays.d_alignment_nOps,
-								dataArrays.d_msa_column_properties,
-								dataArrays.d_candidates_per_subject_prefixsum,
-								dataArrays.d_indices,
-								dataArrays.d_indices_per_subject,
-								dataArrays.d_indices_per_subject_prefixsum,
-								dataArrays.n_subjects,
-								dataArrays.n_queries,
-								*dataArrays.h_num_indices,
-								transFuncData.useQualityScores,
-								desiredAlignmentMaxErrorRate,
-								dataArrays.maximum_sequence_length,
-								dataArrays.encoded_sequence_pitch,
-								dataArrays.quality_pitch,
-								dataArrays.msa_pitch,
-								dataArrays.msa_weights_pitch,
-								nucleotide_accessor,
-								make_unpacked_reverse_complement_inplace,
-								streams[primary_stream_index]);
+                MSAAddSequencesChooser<Sequence_t, ReadId_t>::callKernelAsync(
+                                        dataArrays.d_multiple_sequence_alignments,
+                                        dataArrays.d_multiple_sequence_alignment_weights,
+                                        dataArrays.d_alignment_shifts,
+                                        dataArrays.d_alignment_best_alignment_flags,
+                                        dataArrays.d_subject_read_ids,
+                                        dataArrays.d_candidate_read_ids,
+                                        dataArrays.d_subject_sequences_data,
+        								dataArrays.d_candidate_sequences_data,
+                                        dataArrays.d_subject_sequences_lengths,
+        								dataArrays.d_candidate_sequences_lengths,
+        								dataArrays.d_subject_qualities,
+        								dataArrays.d_candidate_qualities,
+        								dataArrays.d_alignment_overlaps,
+        								dataArrays.d_alignment_nOps,
+        								dataArrays.d_msa_column_properties,
+        								dataArrays.d_candidates_per_subject_prefixsum,
+        								dataArrays.d_indices,
+        								dataArrays.d_indices_per_subject,
+        								dataArrays.d_indices_per_subject_prefixsum,
+        								dataArrays.n_subjects,
+        								dataArrays.n_queries,
+        								*dataArrays.h_num_indices,
+        								transFuncData.useQualityScores,
+        								desiredAlignmentMaxErrorRate,
+        								dataArrays.maximum_sequence_length,
+                                        Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+        								dataArrays.encoded_sequence_pitch,
+        								dataArrays.quality_pitch,
+        								dataArrays.msa_pitch,
+        								dataArrays.msa_weights_pitch,
+                                        transFuncData.gpuReadStorage,
+                                        transFuncData.useGpuReadStorage,
+                                        streams[primary_stream_index]);
 
 				//Step 13. Determine consensus in multiple sequence alignment
 
@@ -1517,6 +1867,8 @@ struct BatchGenerator{
 				}
 			}
 
+
+
 			return BatchState::Finished;
 		}
 
@@ -1646,15 +1998,19 @@ struct BatchGenerator{
             };
 
             GPUReadStorage_t gpuReadStorage;
-            bool canUseGPUReadStorage = GPUReadStorage_t::isEnoughMemoryAvailable(*threadOpts.readStorage,
+            GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
                                                                                     Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
                                                                                     0.8f,
                                                                                     threadOpts.deviceId);
 
-            if(canUseGPUReadStorage){
+			bool canUseGPUReadStorage = false;
+            if(bestGPUReadStorageType != GPUReadStorageType::None){
                 gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
+																bestGPUReadStorageType,
                                                                 Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
                                                                 threadOpts.deviceId);
+				
+				canUseGPUReadStorage = true;
                 std::cout << "Using gpu read storage" << std::endl;
             }
 
@@ -1736,20 +2092,6 @@ struct BatchGenerator{
 				popMain = true;
 
                 while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)){
-
-					/*if(firstMainIter){
-						assert(popMain == false);
-						push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
-						++stacksize;
-						popMain = true;
-					}else{
-						if(mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState){
-							assert(popMain == false);
-							push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
-							++stacksize;
-							popMain = true;
-						}
-					}*/
 
                     mainBatchAdvanceResult = advance_one_step(mainBatch,
                                                             dataArrays[batchIndex],
@@ -1933,6 +2275,284 @@ struct BatchGenerator{
 				assert(stacksize == 0);
 
 				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
+
+
+                #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
+                				//DEBUGGING
+                				cudaMemcpyAsync(dataArrays[batchIndex].msa_data_host,
+                								dataArrays[batchIndex].msa_data_device,
+                								dataArrays[batchIndex].msa_data_usable_size,
+                								D2H,
+                								streams[batchIndex][0]); CUERR;
+                				cudaStreamSynchronize(streams[batchIndex][0]); CUERR;
+
+                				//DEBUGGING
+                				cudaMemcpyAsync(dataArrays[batchIndex].alignment_result_data_host,
+                								dataArrays[batchIndex].alignment_result_data_device,
+                								dataArrays[batchIndex].alignment_result_data_usable_size,
+                								D2H,
+                								streams[batchIndex][0]); CUERR;
+                				cudaStreamSynchronize(streams[batchIndex][0]); CUERR;
+
+                				//DEBUGGING
+                				cudaMemcpyAsync(dataArrays[batchIndex].subject_indices_data_host,
+                								dataArrays[batchIndex].subject_indices_data_device,
+                								dataArrays[batchIndex].subject_indices_data_usable_size,
+                								D2H,
+                								streams[batchIndex][0]); CUERR;
+                				cudaStreamSynchronize(streams[batchIndex][0]); CUERR;
+                #endif
+
+                /*std::cout << "h_is_high_quality_subject" << std::endl;
+                for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                    std::cout << dataArrays[batchIndex].h_is_high_quality_subject[i] << "\t";
+                }
+                std::cout << std::endl;*/
+
+                #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
+                				//DEBUGGING
+                				std::cout << "alignment scores" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                					std::cout << dataArrays[batchIndex].h_alignment_scores[i] << "\t";
+                				}
+                				std::cout << std::endl;
+                				//DEBUGGING
+                				std::cout << "alignment overlaps" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                					std::cout << dataArrays[batchIndex].h_alignment_overlaps[i] << "\t";
+                				}
+                				std::cout << std::endl;
+                				//DEBUGGING
+                				std::cout << "alignment shifts" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                					std::cout << dataArrays[batchIndex].h_alignment_shifts[i] << "\t";
+                				}
+                				std::cout << std::endl;
+                				//DEBUGGING
+                				std::cout << "alignment nOps" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                					std::cout << dataArrays[batchIndex].h_alignment_nOps[i] << "\t";
+                				}
+                				std::cout << std::endl;
+                				//DEBUGGING
+                				std::cout << "alignment isvalid" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                					std::cout << dataArrays[batchIndex].h_alignment_isValid[i] << "\t";
+                				}
+                				std::cout << std::endl;
+                				//DEBUGGING
+                				std::cout << "alignment flags" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                					std::cout << int(dataArrays[batchIndex].h_alignment_best_alignment_flags[i]) << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_candidates_per_subject_prefixsum" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects +1; i++){
+                					std::cout << dataArrays[batchIndex].h_candidates_per_subject_prefixsum[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_num_indices" << std::endl;
+                				for(int i = 0; i< 1; i++){
+                					std::cout << dataArrays[batchIndex].h_num_indices[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_indices" << std::endl;
+                				for(int i = 0; i< *dataArrays[batchIndex].h_num_indices; i++){
+                					std::cout << dataArrays[batchIndex].h_indices[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_indices_per_subject" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                					std::cout << dataArrays[batchIndex].h_indices_per_subject[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_indices_per_subject_prefixsum" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                					std::cout << dataArrays[batchIndex].h_indices_per_subject_prefixsum[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_high_quality_subject_indices" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                					std::cout << dataArrays[batchIndex].h_high_quality_subject_indices[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_is_high_quality_subject" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                					std::cout << dataArrays[batchIndex].h_is_high_quality_subject[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                				//DEBUGGING
+                				std::cout << "h_num_high_quality_subject_indices" << std::endl;
+                				for(int i = 0; i< 1; i++){
+                					std::cout << dataArrays[batchIndex].h_num_high_quality_subject_indices[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                                //DEBUGGING
+                				std::cout << "h_num_corrected_candidates" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                					std::cout << dataArrays[batchIndex].h_num_corrected_candidates[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                                //DEBUGGING
+                                std::cout << "h_subject_is_corrected" << std::endl;
+                				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                					std::cout << dataArrays[batchIndex].h_subject_is_corrected[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                                //DEBUGGING
+                				std::cout << "h_indices_of_corrected_candidates" << std::endl;
+                				for(int i = 0; i< *dataArrays[batchIndex].h_num_indices; i++){
+                					std::cout << dataArrays[batchIndex].h_indices_of_corrected_candidates[i] << "\t";
+                				}
+                				std::cout << std::endl;
+
+                #if 0
+                				{
+                					auto& arrays = dataArrays[batchIndex];
+                					for(int row = 0; row < *arrays[batchIndex].h_num_indices+1 && row < 50; ++row){
+                						for(int col = 0; col < arrays.msa_pitch; col++){
+                							char c = arrays.h_multiple_sequence_alignments[row * arrays.msa_pitch + col];
+                							std::cout << (c == '\0' ? '0' : c);
+                						}
+                						std::cout << std::endl;
+                					}
+                				}
+                #endif
+
+                #endif
+
+
+                #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_MSA
+
+                				//DEBUGGING
+                				for(std::size_t subject_index = 0; subject_index < mainBatch.tasks.size(); ++subject_index){
+                					auto& task = mainBatch.tasks[subject_index];
+                					auto& arrays = dataArrays[batchIndex];
+
+                					const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
+
+                					const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
+                					const unsigned offset2 = msa_weights_pitch_floats * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
+
+                					const char* const my_multiple_sequence_alignment = arrays.h_multiple_sequence_alignments + offset1;
+                					const float* const my_multiple_sequence_alignment_weight = arrays.h_multiple_sequence_alignment_weights + offset2;
+
+                					char* const my_consensus = arrays.h_consensus + subject_index * arrays.msa_pitch;
+                					float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
+                					int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
+
+                					float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
+                					int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
+
+                					const int subjectColumnsBegin_incl = arrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl;
+                					const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
+                					const int columnsToCheck = arrays.h_msa_column_properties[subject_index].columnsToCheck;
+
+                					           // const unsigned offset1 = msa_row_pitch * (subjectIndex + candidates_before_this_subject);
+                                               // char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
+
+                					const int msa_rows = 1 + arrays.h_indices_per_subject[subject_index];
+
+                					const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
+
+                					std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columnsToCheck = " << columnsToCheck << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << std::endl;
+                					std::cout << "MSA:" << std::endl;
+                					for(int row = 0; row < msa_rows; row++){
+                						for(int col = 0; col < columnsToCheck; col++){
+                							//multiple_sequence_alignment[row * msa_row_pitch + globalIndex]
+                							char c = my_multiple_sequence_alignment[row * arrays.msa_pitch + col];
+                                            assert(c != 'F');
+                							std::cout << (c == '\0' ? '0' : c);
+                							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+                								std::cout << " ";
+                						}
+                						if(row > 0){
+                							const int queryIndex = indices_for_this_subject[row-1];
+                							const int shift = arrays.h_alignment_shifts[queryIndex];
+
+                							std::cout << " shift " << shift;
+                						}
+                						std::cout << std::endl;
+                					}
+                					std::cout << std::endl;
+
+                					std::cout << "Consensus: "<< std::endl;
+                					for(int col = 0; col < columnsToCheck; col++){
+                						char c = my_consensus[col];
+                						std::cout << (c == '\0' ? '0' : c);
+                						if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+                								std::cout << " ";
+                					}
+                					std::cout << std::endl;
+
+                					std::cout << "MSA weights:" << std::endl;
+                					for(int row = 0; row < msa_rows; row++){
+                						for(int col = 0; col < columnsToCheck; col++){
+                							float f = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + col];
+                							std::cout << f << " ";
+                							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+                								std::cout << " ";
+                						}
+                						std::cout << std::endl;
+                					}
+                					std::cout << std::endl;
+
+                					std::cout << "Support: "<< std::endl;
+                					for(int col = 0; col < columnsToCheck; col++){
+                						std::cout << my_support[col] << " ";
+                					}
+                					std::cout << std::endl;
+
+                					std::cout << "Coverage: "<< std::endl;
+                					for(int col = 0; col < columnsToCheck; col++){
+                						std::cout << my_coverage[col] << " ";
+                					}
+                					std::cout << std::endl;
+
+                					std::cout << "Orig weights: "<< std::endl;
+                					for(int col = 0; col < columnsToCheck; col++){
+                						std::cout << my_orig_weights[col] << " ";
+                					}
+                					std::cout << std::endl;
+
+                					std::cout << "Orig coverage: "<< std::endl;
+                					for(int col = 0; col < columnsToCheck; col++){
+                						std::cout << my_orig_coverage[col] << " ";
+                					}
+                					std::cout << std::endl;
+
+
+                				}
+                #endif
+
+
+
+
+
+
+
+
+
+
+
 
 				if(nParallelBatches > 1){
 					batchIndex = nextBatchIndex(batchIndex, nParallelBatches);
@@ -3844,271 +4464,7 @@ template<class minhasher_t,
 
 
 
-#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY && 0
-				//DEBUGGING
-				cudaMemcpyAsync(dataArrays[batchIndex].msa_data_host,
-								dataArrays[batchIndex].msa_data_device,
-								dataArrays[batchIndex].msa_data_usable_size,
-								D2H,
-								streams[batchIndex][0]); CUERR;
-				cudaStreamSynchronize(streams[batchIndex][0]); CUERR;
 
-				//DEBUGGING
-				cudaMemcpyAsync(dataArrays[batchIndex].alignment_result_data_host,
-								dataArrays[batchIndex].alignment_result_data_device,
-								dataArrays[batchIndex].alignment_result_data_usable_size,
-								D2H,
-								streams[batchIndex][0]); CUERR;
-				cudaStreamSynchronize(streams[batchIndex][0]); CUERR;
-
-				//DEBUGGING
-				cudaMemcpyAsync(dataArrays[batchIndex].subject_indices_data_host,
-								dataArrays[batchIndex].subject_indices_data_device,
-								dataArrays[batchIndex].subject_indices_data_usable_size,
-								D2H,
-								streams[batchIndex][0]); CUERR;
-				cudaStreamSynchronize(streams[batchIndex][0]); CUERR;
-#endif
-
-/*std::cout << "h_is_high_quality_subject" << std::endl;
-for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-    std::cout << dataArrays[batchIndex].h_is_high_quality_subject[i] << "\t";
-}
-std::cout << std::endl;*/
-
-#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS && 0
-				//DEBUGGING
-				std::cout << "alignment scores" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
-					std::cout << dataArrays[batchIndex].h_alignment_scores[i] << "\t";
-				}
-				std::cout << std::endl;
-				//DEBUGGING
-				std::cout << "alignment overlaps" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
-					std::cout << dataArrays[batchIndex].h_alignment_overlaps[i] << "\t";
-				}
-				std::cout << std::endl;
-				//DEBUGGING
-				std::cout << "alignment shifts" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
-					std::cout << dataArrays[batchIndex].h_alignment_shifts[i] << "\t";
-				}
-				std::cout << std::endl;
-				//DEBUGGING
-				std::cout << "alignment nOps" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
-					std::cout << dataArrays[batchIndex].h_alignment_nOps[i] << "\t";
-				}
-				std::cout << std::endl;
-				//DEBUGGING
-				std::cout << "alignment isvalid" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
-					std::cout << dataArrays[batchIndex].h_alignment_isValid[i] << "\t";
-				}
-				std::cout << std::endl;
-				//DEBUGGING
-				std::cout << "alignment flags" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
-					std::cout << int(dataArrays[batchIndex].h_alignment_best_alignment_flags[i]) << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_candidates_per_subject_prefixsum" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects +1; i++){
-					std::cout << dataArrays[batchIndex].h_candidates_per_subject_prefixsum[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_num_indices" << std::endl;
-				for(int i = 0; i< 1; i++){
-					std::cout << dataArrays[batchIndex].h_num_indices[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_indices" << std::endl;
-				for(int i = 0; i< *dataArrays[batchIndex].h_num_indices; i++){
-					std::cout << dataArrays[batchIndex].h_indices[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_indices_per_subject" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-					std::cout << dataArrays[batchIndex].h_indices_per_subject[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_indices_per_subject_prefixsum" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-					std::cout << dataArrays[batchIndex].h_indices_per_subject_prefixsum[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_high_quality_subject_indices" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-					std::cout << dataArrays[batchIndex].h_high_quality_subject_indices[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_is_high_quality_subject" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-					std::cout << dataArrays[batchIndex].h_is_high_quality_subject[i] << "\t";
-				}
-				std::cout << std::endl;
-
-				//DEBUGGING
-				std::cout << "h_num_high_quality_subject_indices" << std::endl;
-				for(int i = 0; i< 1; i++){
-					std::cout << dataArrays[batchIndex].h_num_high_quality_subject_indices[i] << "\t";
-				}
-				std::cout << std::endl;
-
-                //DEBUGGING
-				std::cout << "h_num_corrected_candidates" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-					std::cout << dataArrays[batchIndex].h_num_corrected_candidates[i] << "\t";
-				}
-				std::cout << std::endl;
-
-                //DEBUGGING
-                std::cout << "h_subject_is_corrected" << std::endl;
-				for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
-					std::cout << dataArrays[batchIndex].h_subject_is_corrected[i] << "\t";
-				}
-				std::cout << std::endl;
-
-                //DEBUGGING
-				std::cout << "h_indices_of_corrected_candidates" << std::endl;
-				for(int i = 0; i< *dataArrays[batchIndex].h_num_indices; i++){
-					std::cout << dataArrays[batchIndex].h_indices_of_corrected_candidates[i] << "\t";
-				}
-				std::cout << std::endl;
-
-#if 0
-				{
-					auto& arrays = dataArrays[batchIndex];
-					for(int row = 0; row < *arrays[batchIndex].h_num_indices+1 && row < 50; ++row){
-						for(int col = 0; col < arrays.msa_pitch; col++){
-							char c = arrays.h_multiple_sequence_alignments[row * arrays.msa_pitch + col];
-							std::cout << (c == '\0' ? '0' : c);
-						}
-						std::cout << std::endl;
-					}
-				}
-#endif
-
-#endif
-
-
-#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_MSA && 0
-
-				//DEBUGGING
-				for(std::size_t subject_index = 0; subject_index < correctionTasks[batchIndex].size(); ++subject_index){
-					auto& task = correctionTasks[batchIndex][subject_index];
-					auto& arrays = dataArrays[batchIndex];
-
-					const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
-
-					const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
-					const unsigned offset2 = msa_weights_pitch_floats * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
-
-					const char* const my_multiple_sequence_alignment = arrays.h_multiple_sequence_alignments + offset1;
-					const float* const my_multiple_sequence_alignment_weight = arrays.h_multiple_sequence_alignment_weights + offset2;
-
-					char* const my_consensus = arrays.h_consensus + subject_index * arrays.msa_pitch;
-					float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
-					int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
-
-					float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
-					int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
-
-					const int subjectColumnsBegin_incl = arrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl;
-					const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
-					const int columnsToCheck = arrays.h_msa_column_properties[subject_index].columnsToCheck;
-
-					           // const unsigned offset1 = msa_row_pitch * (subjectIndex + candidates_before_this_subject);
-                               // char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
-
-					const int msa_rows = 1 + arrays.h_indices_per_subject[subject_index];
-
-					const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
-
-					std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columnsToCheck = " << columnsToCheck << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << std::endl;
-					std::cout << "MSA:" << std::endl;
-					for(int row = 0; row < msa_rows; row++){
-						for(int col = 0; col < columnsToCheck; col++){
-							//multiple_sequence_alignment[row * msa_row_pitch + globalIndex]
-							char c = my_multiple_sequence_alignment[row * arrays.msa_pitch + col];
-                            assert(c != 'F');
-							std::cout << (c == '\0' ? '0' : c);
-							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-								std::cout << " ";
-						}
-						if(row > 0){
-							const int queryIndex = indices_for_this_subject[row-1];
-							const int shift = arrays.h_alignment_shifts[queryIndex];
-
-							std::cout << " shift " << shift;
-						}
-						std::cout << std::endl;
-					}
-					std::cout << std::endl;
-
-					std::cout << "Consensus: "<< std::endl;
-					for(int col = 0; col < columnsToCheck; col++){
-						char c = my_consensus[col];
-						std::cout << (c == '\0' ? '0' : c);
-						if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-								std::cout << " ";
-					}
-					std::cout << std::endl;
-
-					std::cout << "MSA weights:" << std::endl;
-					for(int row = 0; row < msa_rows; row++){
-						for(int col = 0; col < columnsToCheck; col++){
-							float f = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + col];
-							std::cout << f << " ";
-							if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-								std::cout << " ";
-						}
-						std::cout << std::endl;
-					}
-					std::cout << std::endl;
-
-					std::cout << "Support: "<< std::endl;
-					for(int col = 0; col < columnsToCheck; col++){
-						std::cout << my_support[col] << " ";
-					}
-					std::cout << std::endl;
-
-					std::cout << "Coverage: "<< std::endl;
-					for(int col = 0; col < columnsToCheck; col++){
-						std::cout << my_coverage[col] << " ";
-					}
-					std::cout << std::endl;
-
-					std::cout << "Orig weights: "<< std::endl;
-					for(int col = 0; col < columnsToCheck; col++){
-						std::cout << my_orig_weights[col] << " ";
-					}
-					std::cout << std::endl;
-
-					std::cout << "Orig coverage: "<< std::endl;
-					for(int col = 0; col < columnsToCheck; col++){
-						std::cout << my_orig_coverage[col] << " ";
-					}
-					std::cout << std::endl;
-
-
-				}
-#endif
 
 
 

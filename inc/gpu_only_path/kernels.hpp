@@ -1146,6 +1146,7 @@ void call_msa_correct_subject_kernel_async(
             }
 
             //save subject in shared memory
+#if 1
             const int subjectbases = subject_sequences_lengths[subjectIndex];
             const ReadId_t subjectReadId = subject_read_ids[subjectIndex];
 
@@ -1155,11 +1156,29 @@ void call_msa_correct_subject_kernel_async(
 
             //save query in shared memory
             const int querybases = candidate_sequences_lengths[queryIndex];
-            const ReadId_t candidateReadId = candidate_read_ids[subjectIndex];
+            const ReadId_t candidateReadId = candidate_read_ids[queryIndex];
 
             for(int lane = threadIdx.x; lane < max_sequence_ints; lane += blockDim.x){
                 queryBackup[lane] = ((unsigned int*)(sequence_data + candidateReadId * max_sequence_bytes))[lane];
             }
+
+#else
+
+            const int subjectbases = subject_sequences_lengths[subjectIndex];
+            const ReadId_t subjectReadId = subject_read_ids[subjectIndex];
+
+            for(int threadid = threadIdx.x; threadid < max_sequence_bytes; threadid += BLOCKSIZE){
+                ((char*)subjectBackup)[threadid] = sequence_data[subjectReadId * max_sequence_bytes + threadid];
+            }
+
+            //save query in shared memory
+            const int querybases = candidate_sequences_lengths[queryIndex];
+            const ReadId_t candidateReadId = candidate_read_ids[subjectIndex];
+
+            for(int threadid = threadIdx.x; threadid < max_sequence_bytes; threadid += BLOCKSIZE){
+                ((char*)queryBackup)[threadid] = sequence_data[candidateReadId * max_sequence_bytes + threadid];
+            }
+#endif
 
             //queryIndex != resultIndex -> reverse complement
             if(threadIdx.x == 0 && queryIndex != resultIndex){
@@ -1374,6 +1393,441 @@ void call_msa_correct_subject_kernel_async(
           #undef getsms
     }
 
+
+
+
+    template<int BLOCKSIZE, class ReadId_t, class B>
+    __global__
+    void
+    cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_test(
+                                        int* alignment_scores,
+                                        int* alignment_overlaps,
+                                        int* alignment_shifts,
+                                        int* alignment_nOps,
+                                        bool* alignment_isValid,
+                                        const char* sequence_data,
+                                        const ReadId_t* subject_read_ids,
+                                        const ReadId_t* candidate_read_ids,
+                                        const char* subject_sequences_data,
+										const char* candidate_sequences_data,
+                                        const int* subject_sequences_lengths,
+                                        const int* candidate_sequences_lengths,
+                                        const int* candidates_per_subject_prefixsum,
+                                        int n_subjects,
+                                        int n_candidates,
+                                        int max_sequence_bytes,
+                                        size_t sequencepitch,
+                                        int min_overlap,
+                                        double maxErrorRate,
+                                        double min_overlap_ratio,
+                                        B getNumBytes){
+
+        auto no_bank_conflict_index = [&](int logical_index)->int{
+            return logical_index * blockDim.x;
+        };
+
+        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength){
+
+            auto reverse_complement_int = [](auto n) {
+                n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+                n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+                n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+                n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+                n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+                return ~n;
+            };
+
+            const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
+            const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
+
+            unsigned int* const hi = sequence;
+            unsigned int* const lo = sequence + ints/2;
+
+            const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
+            for(int i = 0; i < intsPerHalf/2; ++i){
+                const unsigned int hifront = reverse_complement_int(hi[i]);
+                const unsigned int hiback = reverse_complement_int(hi[intsPerHalf - 1 - i]);
+                hi[i] = hiback;
+                hi[intsPerHalf - 1 - i] = hifront;
+
+                const unsigned int lofront = reverse_complement_int(lo[i]);
+                const unsigned int loback = reverse_complement_int(lo[intsPerHalf - 1 - i]);
+                lo[i] = loback;
+                lo[intsPerHalf - 1 - i] = lofront;
+            }
+            if(intsPerHalf % 2 == 1){
+                const int middleindex = intsPerHalf/2;
+                hi[middleindex] = reverse_complement_int(hi[middleindex]);
+                lo[middleindex] = reverse_complement_int(lo[middleindex]);
+            }
+
+            if(unusedBitsInt != 0){
+                for(int i = 0; i < intsPerHalf - 1; ++i){
+                    hi[i] = (hi[i] >> unusedBitsInt) | (hi[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                    lo[i] = (lo[i] >> unusedBitsInt) | (lo[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                }
+
+                hi[intsPerHalf - 1] >>= unusedBitsInt;
+                lo[intsPerHalf - 1] >>= unusedBitsInt;
+            }
+        };
+
+        //use threads in tile to shift bit-array array by shiftamounts bits to the left
+        auto shiftEncodedBasesLeftBy = [&](unsigned int* array, int size, int shiftamount){
+            const int completeInts = shiftamount / (8 * sizeof(unsigned int));
+
+            for(int i = 0; i < size - completeInts; i += 1){
+                array[no_bank_conflict_index(i)] = array[no_bank_conflict_index(completeInts + i)];
+            }
+
+            for(int i = size - completeInts; i < size; i += 1){
+                array[no_bank_conflict_index(i)] = 0;
+            }
+
+            shiftamount -= completeInts * 8 * sizeof(unsigned int);
+
+            for(int i = 0; i < size - completeInts - 1; i += 1){
+                const unsigned int a = array[no_bank_conflict_index(i)];
+                const unsigned int b = array[no_bank_conflict_index(i+1)];
+
+                array[no_bank_conflict_index(i)] = (a >> shiftamount) | (b << (8 * sizeof(unsigned int) - shiftamount));
+            }
+
+            array[no_bank_conflict_index(size - completeInts - 1)] >>= shiftamount;
+        };
+
+        auto hammingdistanceHiLo = [&](
+                                    const unsigned int* lhi,
+                                    const unsigned int* llo,
+                                    const unsigned int* rhi,
+                                    const unsigned int* rlo,
+                                    int lhi_bitcount,
+                                    int rhi_bitcount,
+                                    int max_errors){
+
+            const int overlap_bitcount = lhi_bitcount < rhi_bitcount ? lhi_bitcount : rhi_bitcount;
+            const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
+            const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
+
+            int result = 0;
+
+            for(int i = 0; i < partitions - 1 && result < max_errors; i += 1){
+                const unsigned int hixor = lhi[no_bank_conflict_index(i)] ^ rhi[no_bank_conflict_index(i)];
+                const unsigned int loxor = llo[no_bank_conflict_index(i)] ^ rlo[no_bank_conflict_index(i)];
+                const unsigned int bits = hixor | loxor;
+                result += __popc(bits);
+            }
+
+            if(result >= max_errors)
+                return result;
+
+            // i == partitions - 1
+
+            const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
+            const unsigned int hixor = lhi[no_bank_conflict_index(partitions - 1)] ^ rhi[no_bank_conflict_index(partitions - 1)];
+            const unsigned int loxor = llo[no_bank_conflict_index(partitions - 1)] ^ rlo[no_bank_conflict_index(partitions - 1)];
+            const unsigned int bits = hixor | loxor;
+            result += __popc(bits & mask);
+
+            return result;
+        };
+
+        using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceInt2::TempStorage reduce;
+        } temp_storage;
+
+        // max_sequence_bytes * tiles_per_block * 3
+        extern __shared__ unsigned int sharedmemory[];
+
+        const int tiles_per_block = blockDim.x;
+        const int localTileId = threadIdx.x;
+
+        //set up shared memory pointers
+        char* const sharedSubject = (char*)(sharedmemory);
+        char* const sharedQuery = (char*)(((char*)sharedSubject) + max_sequence_bytes * tiles_per_block);
+
+        unsigned int* const subjectBackup = (unsigned int*)(((char*)sharedQuery) + max_sequence_bytes * tiles_per_block);
+        unsigned int* const queryBackup = (unsigned int*)(((char*)subjectBackup) + max_sequence_bytes);
+
+        //set up shared memory per tile
+        unsigned int* const myTileSubject = (unsigned int*)(sharedSubject) + localTileId;
+        unsigned int* const myTileQuery = (unsigned int*)(sharedQuery) + localTileId;
+
+        const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
+
+        for(unsigned resultIndex = blockIdx.x; resultIndex < n_candidates * 2; resultIndex += gridDim.x){
+
+            const int queryIndex = resultIndex < n_candidates ? resultIndex : resultIndex - n_candidates;
+
+            //find subjectindex
+            int subjectIndex = 0;
+            for(; subjectIndex < n_subjects; subjectIndex++){
+                if(queryIndex < candidates_per_subject_prefixsum[subjectIndex+1])
+                    break;
+            }
+
+            //save subject in shared memory
+#if 1
+            const int subjectbases = subject_sequences_lengths[subjectIndex];
+            const ReadId_t subjectReadId = subject_read_ids[subjectIndex];
+
+            for(int lane = threadIdx.x; lane < max_sequence_ints; lane += blockDim.x){
+                subjectBackup[lane] = ((unsigned int*)(sequence_data + subjectReadId * max_sequence_bytes))[lane];
+            }
+
+            //save query in shared memory
+            const int querybases = candidate_sequences_lengths[queryIndex];
+            const ReadId_t candidateReadId = candidate_read_ids[queryIndex];
+
+            for(int lane = threadIdx.x; lane < max_sequence_ints; lane += blockDim.x){
+                queryBackup[lane] = ((unsigned int*)(sequence_data + candidateReadId * max_sequence_bytes))[lane];
+            }
+
+            __syncthreads();
+
+            for(int lane = threadIdx.x; lane < max_sequence_ints; lane += blockDim.x){
+                assert(subjectBackup[lane] == ((unsigned int*)(subject_sequences_data + subjectIndex * sequencepitch))[lane]);
+            }
+            for(int lane = threadIdx.x; lane < max_sequence_ints; lane += blockDim.x){
+                assert(queryBackup[lane] == ((unsigned int*)(candidate_sequences_data + queryIndex * sequencepitch))[lane]);
+            }
+
+#else
+
+            const int subjectbases = subject_sequences_lengths[subjectIndex];
+            const ReadId_t subjectReadId = subject_read_ids[subjectIndex];
+
+            for(int threadid = threadIdx.x; threadid < max_sequence_bytes; threadid += BLOCKSIZE){
+                ((char*)subjectBackup)[threadid] = sequence_data[subjectReadId * max_sequence_bytes + threadid];
+            }
+
+            //save query in shared memory
+            const int querybases = candidate_sequences_lengths[queryIndex];
+            const ReadId_t candidateReadId = candidate_read_ids[subjectIndex];
+
+            for(int threadid = threadIdx.x; threadid < max_sequence_bytes; threadid += BLOCKSIZE){
+                ((char*)queryBackup)[threadid] = sequence_data[candidateReadId * max_sequence_bytes + threadid];
+            }
+#endif
+
+            //queryIndex != resultIndex -> reverse complement
+            if(threadIdx.x == 0 && queryIndex != resultIndex){
+                make_reverse_complement_inplace(queryBackup, querybases);
+            }
+
+            __syncthreads();
+
+            //begin SHD algorithm
+
+            unsigned int* const query = myTileQuery;
+
+            const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
+            const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
+            const int totalbases = subjectbases + querybases;
+            const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+
+            //will only be valid for tile.thread_rank() == 0
+            int bestScore = totalbases; // score is number of mismatches
+            int bestShift = -querybases; // shift of query relative to subject. shift < 0 if query begins before subject
+
+            unsigned int* subjectdata_hi = myTileSubject;
+            unsigned int* subjectdata_lo = myTileSubject + subjectints / 2 * blockDim.x;
+            unsigned int* querydata_hi = query;
+            unsigned int* querydata_lo = query + queryints / 2 * blockDim.x;
+
+            int previousShift = -querybases + minoverlap + localTileId;
+
+            for(int shift = -querybases + minoverlap + localTileId; shift < subjectbases - minoverlap + 1; shift += tiles_per_block){
+                if(shift == -querybases + minoverlap + localTileId){
+                    //save subject in shared memory
+                    for(int lane = 0; lane < max_sequence_ints; lane += 1){
+                        myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
+                    }
+
+                    //save query in shared memory
+                    for(int lane = 0; lane < max_sequence_ints; lane += 1){
+                        myTileQuery[no_bank_conflict_index(lane)] = queryBackup[lane];
+                    }
+                }else{
+                    unsigned int* storeptr = previousShift > 0 ? myTileSubject : myTileQuery;
+                    const unsigned int* loadptr = previousShift > 0 ? subjectBackup : queryBackup;
+
+                    for(int lane = 0; lane < max_sequence_ints; lane += 1){
+                        storeptr[no_bank_conflict_index(lane)] = loadptr[lane];
+                    }
+                }
+                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+                const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+                unsigned int* const shiftptr_hi = shift > 0 ? subjectdata_hi : querydata_hi;
+                unsigned int* const shiftptr_lo = shift > 0 ? subjectdata_lo : querydata_lo;
+                const int size = shift > 0 ? subjectints / 2 : queryints / 2;
+                const int shiftamount = abs(shift);
+
+                shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
+                shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
+
+                int score = hammingdistanceHiLo(
+                                    subjectdata_hi,
+                                    subjectdata_lo,
+                                    querydata_hi,
+                                    querydata_lo,
+                                    subjectbases - abs(shift),
+                                    querybases - abs(shift),
+                                    max_errors);
+
+                score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
+
+                if(score < bestScore){
+                    bestScore = score;
+                    bestShift = shift;
+                }
+
+                previousShift = shift;
+            }
+
+            int2 myval = make_int2(bestScore, bestShift);
+
+            myval = BlockReduceInt2(temp_storage.reduce).Reduce(myval, [](auto a, auto b){return a.x < b.x ? a : b;});
+            __syncthreads();
+
+            //make result
+            if(threadIdx.x == 0){
+                bestScore = myval.x;
+                bestShift = myval.y;
+
+                const int queryoverlapbegin_incl = max(-bestShift, 0);
+                const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+                const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+                const int opnr = bestScore - totalbases + 2*overlapsize;
+
+                alignment_scores[resultIndex] = bestScore;
+                alignment_overlaps[resultIndex] = overlapsize;
+                alignment_shifts[resultIndex] = bestShift;
+                alignment_nOps[resultIndex] = opnr;
+                alignment_isValid[resultIndex] = (bestShift != -querybases);
+            }
+        }
+    }
+
+
+
+    template<class ReadId_t, class B>
+    void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_test_async(
+                            int* d_alignment_scores,
+                            int* d_alignment_overlaps,
+                            int* d_alignment_shifts,
+                            int* d_alignment_nOps,
+                            bool* d_alignment_isValid,
+                            const char* d_sequence_data,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const char* subject_sequences_data,
+                            const char* candidate_sequences_data,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            const int* d_candidates_per_subject_prefixsum,
+                            int n_subjects,
+                            int n_queries,
+                            int max_sequence_bytes,
+                            size_t encodedsequencepitch,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double min_overlap_ratio,
+                            B getNumBytes,
+                            int maxSubjectLength,
+                            int maxQueryLength,
+                            cudaStream_t stream){
+
+        #define mycall(blocksize) cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_test<(blocksize), ReadId_t> \
+                                    <<<grid, block, smem, stream>>>( \
+                                        d_alignment_scores, \
+                                        d_alignment_overlaps, \
+                                        d_alignment_shifts, \
+                                        d_alignment_nOps, \
+                                        d_alignment_isValid, \
+                                        d_sequence_data, \
+                                        d_subject_read_ids, \
+                                        d_candidate_read_ids, \
+                                        subject_sequences_data, \
+                                        candidate_sequences_data, \
+                                        d_subject_sequences_lengths, \
+                                        d_candidate_sequences_lengths, \
+                                        d_candidates_per_subject_prefixsum, \
+                                        n_subjects, \
+                                        n_queries, \
+                                        max_sequence_bytes, \
+                                        encodedsequencepitch, \
+                                        min_overlap, \
+                                        maxErrorRate, \
+                                        min_overlap_ratio, \
+                                        getNumBytes); CUERR;
+
+    #if 0
+    #define getsms(blocksize) {\
+                        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
+                                                                        cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs<(blocksize), ReadId_t, B>, \
+                                                                        blocksize, smem); CUERR;}
+
+    #else
+
+
+    #define getsms(blocksize) {max_blocks_per_SM = 32;}
+
+    #endif
+
+            const int minoverlap = std::max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
+            const int maxSequenceLength = std::max(maxSubjectLength, maxQueryLength);
+
+            const int blocksize = 32;
+
+            const std::size_t smem = sizeof(char) * (2 * max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
+
+
+          int deviceId;
+          cudaGetDevice(&deviceId); CUERR;
+
+          int SMs;
+          cudaDeviceGetAttribute(&SMs, cudaDevAttrMultiProcessorCount, deviceId); CUERR;
+
+          int max_blocks_per_SM = 1;
+
+          switch(blocksize){
+          case 32: getsms(32); break;
+          case 64: getsms(64); break;
+          case 96: getsms(96); break;
+          case 128: getsms(128); break;
+          case 160: getsms(160); break;
+          case 192: getsms(192); break;
+          case 224: getsms(224); break;
+          case 256: getsms(256); break;
+          default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel with 0 threads due to a bug.");
+          }
+
+          int max_blocks_per_device = SMs * max_blocks_per_SM;
+
+          dim3 block(blocksize, 1, 1);
+          dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1); // one block per candidate
+
+          switch(blocksize){
+          case 32: mycall(32); break;
+          case 64: mycall(64); break;
+          case 96: mycall(96); break;
+          case 128: mycall(128); break;
+          case 160: mycall(160); break;
+          case 192: mycall(192); break;
+          case 224: mycall(224); break;
+          case 256: mycall(256); break;
+          default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel with 0 threads due to a bug.");
+          }
+
+          #undef mycall
+          #undef getsms
+    }
 
 
 
@@ -1951,9 +2405,6 @@ void call_msa_correct_subject_kernel_async(
     }
 
 
-
-
-
     template<class ReadId_t, class Accessor, class RevCompl>
     __global__
     void msa_add_sequences_kernel_rs(
@@ -1982,7 +2433,6 @@ void call_msa_correct_subject_kernel_async(
                             float desiredAlignmentMaxErrorRate,
 							int maximum_sequence_length,
                             int max_sequence_bytes,
-                            size_t encoded_sequence_pitch,
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
@@ -2183,7 +2633,6 @@ void call_msa_correct_subject_kernel_async(
                             float desiredAlignmentMaxErrorRate,
 							int maximum_sequence_length,
                             int max_sequence_bytes,
-                            size_t encoded_sequence_pitch,
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
@@ -2226,7 +2675,7 @@ void call_msa_correct_subject_kernel_async(
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
 															maximum_sequence_length,
-                                                            encoded_sequence_pitch,
+                                                            max_sequence_bytes,
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,

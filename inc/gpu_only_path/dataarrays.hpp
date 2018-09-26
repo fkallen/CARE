@@ -410,11 +410,15 @@ namespace gpu{
 			a.h_subject_sequences_lengths = nullptr;
 			a.h_candidate_sequences_lengths = nullptr;
 			a.h_candidates_per_subject_prefixsum = nullptr;
+            a.h_subject_read_ids = nullptr;
+            a.h_candidate_read_ids = nullptr;
 			a.d_subject_sequences_data = nullptr;
 			a.d_candidate_sequences_data = nullptr;
 			a.d_subject_sequences_lengths = nullptr;
 			a.d_candidate_sequences_lengths = nullptr;
 			a.d_candidates_per_subject_prefixsum = nullptr;
+            a.d_subject_read_ids = nullptr;
+            a.d_candidate_read_ids = nullptr;
 			a.indices_transfer_data_host = nullptr;
 			a.indices_transfer_data_device = nullptr;
 			a.h_indices = nullptr;
