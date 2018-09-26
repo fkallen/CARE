@@ -41,18 +41,18 @@ const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);
 __inline__
 void push_range(const std::string& name, int cid){
 	const uint32_t colors_[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff, 0xdeadbeef, 0x12345678, 0xabcdef42 };
-	const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);	
-	
-    int color_id = cid; 
+	const int num_colors_ = sizeof(colors_)/sizeof(uint32_t);
+
+    int color_id = cid;
     color_id = color_id%num_colors_;
-    nvtxEventAttributes_t eventAttrib = {0}; 
-    eventAttrib.version = NVTX_VERSION; 
-    eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE; 
-    eventAttrib.colorType = NVTX_COLOR_ARGB; 
-    eventAttrib.color = colors_[color_id]; 
-    eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII; 
-    eventAttrib.message.ascii = name.c_str(); 
-    nvtxRangePushEx(&eventAttrib); 
+    nvtxEventAttributes_t eventAttrib = {0};
+    eventAttrib.version = NVTX_VERSION;
+    eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+    eventAttrib.colorType = NVTX_COLOR_ARGB;
+    eventAttrib.color = colors_[color_id];
+    eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII;
+    eventAttrib.message.ascii = name.c_str();
+    nvtxRangePushEx(&eventAttrib);
 	//std::cout << "push " << name << std::endl;
 }
 
@@ -67,7 +67,7 @@ void pop_range(){
 	//std::cout << "pop " << std::endl;
 }
 
-#else 
+#else
 
 __inline__
 void push_range(const std::string& name, int cid){
@@ -87,6 +87,7 @@ void pop_range(){
 
 #include "kernels.hpp"
 #include "dataarrays.hpp"
+#include "readstorage_gpu.hpp"
 
 #include <thread>
 #include <vector>
@@ -117,7 +118,7 @@ namespace gpu{
 template<class ReadId_t>
 struct BatchGenerator{
     BatchGenerator(){}
-    
+
     BatchGenerator(ReadId_t firstId, ReadId_t lastIdExcl)
             : firstId(firstId), lastIdExcl(lastIdExcl), currentId(firstId){
                 if(firstId >= lastIdExcl) throw std::runtime_error("BatchGenerator: firstId >= lastIdExcl");
@@ -131,7 +132,7 @@ struct BatchGenerator{
     	}
         return result;
     }
-    
+
     bool empty() const{
 		return currentId == lastIdExcl;
 	}
@@ -151,7 +152,7 @@ struct BatchGenerator{
 
 	template<class Sequence_t>
     struct ShiftedHammingDistanceChooser;
-	
+
 	template<>
     struct ShiftedHammingDistanceChooser<Sequence2Bit>{
 		static void callKernelAsync(int* d_alignment_scores,
@@ -170,11 +171,11 @@ struct BatchGenerator{
                             size_t encodedsequencepitch,
                             int min_overlap,
                             double maxErrorRate,
-                            double min_overlap_ratio,                         
+                            double min_overlap_ratio,
                             int maxSubjectLength,
                             int maxQueryLength,
                             cudaStream_t stream){
-			
+
 			auto accessor = [] __device__ (const char* data, int length, int index){
                 return Sequence2Bit::get(data, length, index);
             };
@@ -182,7 +183,7 @@ struct BatchGenerator{
             auto make_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
                 return Sequence2Bit::make_reverse_complement_inplace(sequence, sequencelength);
             };
-			
+
 			call_shd_with_revcompl_kernel_async(d_alignment_scores,
 						d_alignment_overlaps,
 						d_alignment_shifts,
@@ -201,13 +202,13 @@ struct BatchGenerator{
 						maxErrorRate,
 						min_overlap_ratio,
 						accessor,
-						make_reverse_complement_inplace,                            
+						make_reverse_complement_inplace,
 						maxSubjectLength,
 						maxQueryLength,
 						stream);
 		}
-	};	
-	
+	};
+
 	template<>
     struct ShiftedHammingDistanceChooser<Sequence2BitHiLo>{
 		static void callKernelAsync(int* d_alignment_scores,
@@ -226,15 +227,15 @@ struct BatchGenerator{
 						size_t encodedsequencepitch,
 						int min_overlap,
 						double maxErrorRate,
-						double min_overlap_ratio,                          
+						double min_overlap_ratio,
 						int maxSubjectLength,
 						int maxQueryLength,
 						cudaStream_t stream){
-			
+
 			auto getNumBytes = [] __device__ (int sequencelength){
                 return Sequence2BitHiLo::getNumBytes(sequencelength);
             };
-			
+
 			call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(d_alignment_scores,
 						d_alignment_overlaps,
 						d_alignment_shifts,
@@ -252,15 +253,15 @@ struct BatchGenerator{
 						min_overlap,
 						maxErrorRate,
 						min_overlap_ratio,
-						getNumBytes,                           
+						getNumBytes,
 						maxSubjectLength,
 						maxQueryLength,
 						stream);
-		}	
+		}
 	};
-	
-	
-	
+
+
+
 
     template<class Sequence_t, class ReadId_t>
     struct CorrectionTask{
@@ -338,7 +339,8 @@ struct BatchGenerator{
         std::vector<std::string> corrected_candidates;
         std::vector<ReadId_t> corrected_candidates_read_ids;
     };
-#if 0
+
+#if 1
     template<class minhasher_t,
     		 class readStorage_t,
 			 class batchgenerator_t>
@@ -349,6 +351,7 @@ struct BatchGenerator{
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
 		using BatchGenerator_t = batchgenerator_t;
+        using GPUReadStorage_t = GPUReadStorage;
 
 		enum class BatchState {
 			Unprepared,
@@ -370,7 +373,7 @@ struct BatchGenerator{
 			Finished,
 			Aborted,
 		};
-		
+
 		enum class BatchStatePriority{
 			Low,
 			Medium,
@@ -387,19 +390,19 @@ struct BatchGenerator{
 			int copiedTasks = 0; // used if state == CandidatesPresent
 			int copiedCandidates = 0; // used if state == CandidatesPresent
 		};
-		
+
 		struct AdvanceResult{
 			BatchState oldState = BatchState::Unprepared;
 			BatchState newState = BatchState::Unprepared;
 			bool noProgressBlocking = false;
 			bool noProgressLaunching = false;
 		};
-		
+
 		struct IsWaitingResult{
 			bool isWaiting;
 			int eventIndexToWaitFor;
 		};
-				
+
 		struct TransitionFunctionData{
 			BatchGenerator<ReadId_t>* mybatchgen;
 			double min_overlap_ratio;
@@ -418,6 +421,8 @@ struct BatchGenerator{
 			int maxSequenceLength;
 			const ReadStorage_t* readStorage;
 			const Minhasher_t* minhasher;
+            const GPUReadStorage_t* gpuReadStorage;
+            bool useGpuReadStorage;
 			std::mutex* locksForProcessedFlags;
     		std::size_t nLocksForProcessedFlags;
 			std::vector<char>* readIsCorrectedVector;
@@ -494,20 +499,20 @@ struct BatchGenerator{
         std::chrono::duration<double> da, db, dc;
 
         TaskTimings detailedCorrectionTimings;
-		
-		BatchGenerator<ReadId_t> mybatchgen;		
+
+		BatchGenerator<ReadId_t> mybatchgen;
 		int num_ids_per_add_tasks = 30;
 		int minimum_candidates_per_batch = 10000;
-		
+
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData&);
-		
+
 		std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
 
         std::thread thread;
@@ -526,7 +531,7 @@ struct BatchGenerator{
         }
 
     public:
-		
+
 		std::string nameOf(BatchState state) const{
 			switch(state){
 				case BatchState::Unprepared: return "Unprepared";
@@ -550,7 +555,7 @@ struct BatchGenerator{
 				default: assert(false); return "None";
 			}
 		}
-				
+
 		IsWaitingResult isWaiting(BatchState state) const{
 			switch(state){
 				case BatchState::Unprepared: return {false, -1};
@@ -597,22 +602,22 @@ struct BatchGenerator{
 		}
 
 		static BatchState state_unprepared_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::Unprepared);
-			assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
-			
+            assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
+
 			//while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
 			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
 				const auto& readStorage = transFuncData.readStorage;
 				const auto& minhasher = transFuncData.minhasher;
 				const auto readIds = transFuncData.mybatchgen->getNextReadIds(transFuncData.num_ids_per_add_tasks);
-				
+
 				for(ReadId_t id : readIds){
 					bool ok = false;
 					transFuncData.lock(id);
@@ -631,9 +636,9 @@ struct BatchGenerator{
 							qualityptr = readStorage->fetchQuality_ptr(id);
 
 						batch.tasks.emplace_back(id, sequenceptr, qualityptr);
-						
+
 						auto& task = batch.tasks.back();
-						
+
 						const std::string sequencestring = task.subject_sequence->toString();
 						task.candidate_read_ids = minhasher->getCandidates(sequencestring, transFuncData.max_candidates);
 
@@ -652,24 +657,31 @@ struct BatchGenerator{
 									task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
 							}
 						}
-						
+
 						batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
+
+                        assert(!task.active || batch.initialNumberOfCandidates > 0);
+                        assert(!task.active || int(task.candidate_read_ids.size()) > 0);
 					}
 				}
 			}
-			
+
+            auto new_end = std::remove_if(batch.tasks.begin(),
+                            batch.tasks.end(),
+                            [](const auto& t){return !t.active;});
+
+            batch.tasks.erase(new_end, batch.tasks.end());
+
 			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
 				//still more read ids to add
+
 				return BatchState::Unprepared;
 			}else{
-						
+
 				if(batch.initialNumberOfCandidates == 0){
 					return BatchState::Aborted;
-				}else{					
-					std::remove_if(batch.tasks.begin(),
-									batch.tasks.end(),
-									[](const auto& t){return !t.active;});
-					
+				}else{
+
 					//allocate data arrays
 
 					dataArrays.set_problem_dimensions(int(batch.tasks.size()),
@@ -707,25 +719,25 @@ struct BatchGenerator{
 
 					dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
 					dataArrays.zero_gpu(streams[primary_stream_index]);
-					
-					batch.initialNumberOfCandidates = 0;
-					
+
+					batch.initialNumberOfCandidates = -1;
+
 					return BatchState::CopyReads;
 				}
 			}
 		}
-		
+
 		static BatchState state_copyreads_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::CopyReads);
 			assert(batch.copiedTasks <= int(batch.tasks.size()));
-			
+
 			dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
 			//copy one task
@@ -766,24 +778,24 @@ struct BatchGenerator{
             }
 
 			//if batch is fully copied, transfer to gpu
-			if(batch.copiedTasks == int(batch.tasks.size())){	
+			if(batch.copiedTasks == int(batch.tasks.size())){
 				return BatchState::TransferReads;
 			}else{
 				return BatchState::CopyReads;
 			}
 		}
-		
+
 		static BatchState state_transferreads_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::TransferReads);
 			assert(batch.copiedTasks == int(batch.tasks.size()));
-			
+
 			cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
 							dataArrays.alignment_transfer_data_host,
 							dataArrays.alignment_transfer_data_usable_size,
@@ -795,17 +807,17 @@ struct BatchGenerator{
 
 			return BatchState::StartAlignment;
 		}
-		
+
 		static BatchState state_startalignment_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::StartAlignment);
-			
+
 			if(!canLaunchKernel){
 				//since gathering quality scores does not depend on the batch state being RunningAlignmentWork
 				//we can gather the quality scores of one task, instead of doing nothing
@@ -862,7 +874,7 @@ struct BatchGenerator{
                                             dataArray.n_queries,
                                             stream); CUERR;
             };
-			
+
 			ShiftedHammingDistanceChooser<Sequence_t>::callKernelAsync(
                                     dataArrays.d_alignment_scores,
                                     dataArrays.d_alignment_overlaps,
@@ -880,7 +892,7 @@ struct BatchGenerator{
                                     dataArrays.encoded_sequence_pitch,
                                     transFuncData.min_overlap,
                                     transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0,
-                                    transFuncData.min_overlap_ratio,                                  
+                                    transFuncData.min_overlap_ratio,
                                     batch.maxSubjectLength,
                                     batch.maxQueryLength,
                                     streams[primary_stream_index]);
@@ -971,7 +983,7 @@ struct BatchGenerator{
             assert(cudaSuccess == cudaEventQuery(events[alignments_finished_event_index])); CUERR;
 
             cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-			
+
             //Determine multiple sequence alignment properties
             call_msa_init_kernel_async(
                             dataArrays.d_msa_column_properties,
@@ -988,65 +1000,65 @@ struct BatchGenerator{
 
 			return BatchState::WaitForAlignment;
 		}
-		
+
 		static BatchState state_waitforalignment_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::WaitForAlignment);
-			
+
 			cudaError_t querystatus = cudaEventQuery(events[alignments_finished_event_index]); CUERR;
-			
+
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-			
+
 			if(querystatus == cudaSuccess){
 				return BatchState::TransferIndices;
 			}else{
 				return BatchState::WaitForAlignment;
 			}
 		}
-		
+
 		static BatchState state_transferindices_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::TransferIndices);
-			
+
 			cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
 							dataArrays.indices_transfer_data_device,
 							dataArrays.indices_transfer_data_usable_size,
 							D2H,
 							streams[secondary_stream_index]); CUERR;
-							
+
 			assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
-									
+
 			cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-			
+
 			return BatchState::WaitForIndices;
 		}
-		
+
 		static BatchState state_waitforindices_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::WaitForIndices);
-			
+
 			cudaError_t querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-			
+
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-			
+
 			if(querystatus == cudaSuccess){
 				if(*dataArrays.h_num_indices == 0){
                         if(canBlock){
@@ -1064,27 +1076,27 @@ struct BatchGenerator{
 				return BatchState::WaitForIndices;
 			}
 		}
-		
+
 		static BatchState state_copyqualities_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::CopyQualities);
-			
+
 			if(transFuncData.useQualityScores){
-				
+
 				assert(batch.copiedTasks <= int(batch.tasks.size()));
-				
+
 				if(batch.copiedTasks < int(batch.tasks.size())){
-							
+
 					const int my_num_indices = dataArrays.h_indices_per_subject[batch.copiedTasks];
 					const int* my_indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[batch.copiedTasks];
 					const int candidatesOfPreviousTasks = dataArrays.h_candidates_per_subject_prefixsum[batch.copiedTasks];
-					
+
 					const auto& task = batch.tasks[batch.copiedTasks];
 					auto& arrays = dataArrays;
 
@@ -1092,12 +1104,12 @@ struct BatchGenerator{
 					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
 								task.subject_quality->c_str(),
 								task.subject_quality->length());
-					
+
 					for(int i = 0; i < my_num_indices; ++i){
 						const int candidate_index = my_indices[i];
 						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
 						const std::string* qual = task.candidate_qualities[local_candidate_index];
-						
+
 						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
 									qual->c_str(),
 									qual->length());
@@ -1120,19 +1132,19 @@ struct BatchGenerator{
 				return BatchState::StartCorrection;
 			}
 		}
-		
+
 		static BatchState state_transferqualities_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::TransferQualities);
 			assert(transFuncData.useQualityScores);
 			assert(batch.copiedTasks == int(batch.tasks.size()));
-			
+
 			cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
 							dataArrays.qualities_transfer_data_host,
 							dataArrays.qualities_transfer_data_usable_size,
@@ -1148,42 +1160,42 @@ struct BatchGenerator{
 
 			return BatchState::WaitForQualities;
 		}
-		
+
 		static BatchState state_waitforqualities_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::WaitForQualities);
-			
+
 			cudaError_t querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-			
+
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-			
+
 			if(querystatus == cudaSuccess){
 				return BatchState::StartCorrection;
 			}else{
 				return BatchState::WaitForQualities;
 			}
 		}
-		
+
 		static BatchState state_startcorrection_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::StartCorrection);
-			
+
 			if(!canLaunchKernel){
 				return BatchState::StartCorrection;
 			}else{
-				
+
 				auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
 					return Sequence_t::get_as_nucleotide(data, length, index);
 				};
@@ -1191,7 +1203,7 @@ struct BatchGenerator{
 				auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
 					return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
 				};
-			
+
 				const double avg_support_threshold = 1.0-1.0*transFuncData.estimatedErrorrate;
 				const double min_support_threshold = 1.0-3.0*transFuncData.estimatedErrorrate;
 				// coverage is always >= 1
@@ -1333,43 +1345,43 @@ struct BatchGenerator{
 
 				assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
 
-				cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;		
+				cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
 				return BatchState::WaitForCorrection;
 			}
 		}
-		
+
 		static BatchState state_waitforcorrection_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::WaitForCorrection);
-			
+
 			cudaError_t querystatus = cudaEventQuery(events[correction_finished_event_index]); CUERR;
-			
+
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-			
+
 			if(querystatus == cudaSuccess){
 				return BatchState::TransferResults;
 			}else{
 				return BatchState::WaitForCorrection;
 			}
 		}
-		
+
 		static BatchState state_transferresults_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::TransferResults);
-			
+
 			//copy correction results to host
 			cudaMemcpyAsync(dataArrays.correction_results_transfer_data_host,
 							dataArrays.correction_results_transfer_data_device,
@@ -1379,44 +1391,44 @@ struct BatchGenerator{
 
 			assert(cudaSuccess == cudaEventQuery(events[result_transfer_finished_event_index])); CUERR;
 
-			cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;	
+			cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
 			return BatchState::WaitForResults;
 
 		}
-		
+
 		static BatchState state_waitforresults_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::WaitForResults);
-			
+
 			cudaError_t querystatus = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
-			
+
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-			
+
 			if(querystatus == cudaSuccess){
 				return BatchState::UnpackResults;
 			}else{
 				return BatchState::WaitForResults;
 			}
 		}
-		
+
 		static BatchState state_unpackresults_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::UnpackResults);			
+
+			assert(batch.state == BatchState::UnpackResults);
 			assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
-			
+
 			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
 				auto& task = batch.tasks[subject_index];
 				auto& arrays = dataArrays;
@@ -1454,21 +1466,21 @@ struct BatchGenerator{
 						task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
 					}
 				}
-			}		
+			}
 
 			return BatchState::WriteResults;
 		}
-		
+
 		static BatchState state_writeresults_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::WriteResults);			
-			
+
+			assert(batch.state == BatchState::WriteResults);
+
 			//write result to file
 			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
 
@@ -1507,40 +1519,40 @@ struct BatchGenerator{
 
 			return BatchState::Finished;
 		}
-		
+
 		static BatchState state_finished_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::Finished);			
-			
+
+			assert(batch.state == BatchState::Finished);
+
 			assert(false); //Finished is end node
 
 			return BatchState::Finished;
 		}
-		
+
 		static BatchState state_aborted_func(Batch& batch,
-										DataArrays<Sequence_t>& dataArrays,
+										DataArrays<Sequence_t, ReadId_t>& dataArrays,
 										std::array<cudaStream_t, nStreamsPerBatch>& streams,
 										std::array<cudaEvent_t, nEventsPerBatch>& events,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::Aborted);			
-			
+
+			assert(batch.state == BatchState::Aborted);
+
 			assert(false); //Aborted is end node
 
 			return BatchState::Aborted;
 		}
-		
+
 
         AdvanceResult advance_one_step(Batch& batch,
-                                DataArrays<Sequence_t>& dataArrays,
+                                DataArrays<Sequence_t, ReadId_t>& dataArrays,
                                 std::array<cudaStream_t, nStreamsPerBatch>& streams,
                                 std::array<cudaEvent_t, nEventsPerBatch>& events,
                                 bool canBlock,
@@ -1548,19 +1560,19 @@ struct BatchGenerator{
 								const TransitionFunctionData& transFuncData){
 
 			AdvanceResult advanceResult;
-			
+
 			advanceResult.oldState = batch.state;
 			advanceResult.noProgressBlocking = false;
 			advanceResult.noProgressLaunching = false;
-					
+
 			auto iter = transitionFunctionTable.find(batch.state);
 			if(iter != transitionFunctionTable.end()){
 				batch.state = iter->second(batch, dataArrays, streams, events, canBlock, canLaunchKernel, transFuncData);
 			}else{
 					std::cout << nameOf(batch.state) << std::endl;
-                    assert(false); // Every State should be handled above	
-			}		
-          
+                    assert(false); // Every State should be handled above
+			}
+
             advanceResult.newState = batch.state;
 
             return advanceResult;
@@ -1572,7 +1584,7 @@ struct BatchGenerator{
 
 			assert(threadOpts.canUseGpu);
 			assert(max_candidates > 0);
-			
+
 			mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
 			makeTransitionFunctionTable();
 
@@ -1587,14 +1599,14 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 1;
+    		constexpr int nParallelBatches = 2;
 			constexpr int sideBatchStepsPerWaitIter = 1;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
 
             //std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-    		std::vector<DataArrays<Sequence_t>> dataArrays;
+    		std::vector<DataArrays<Sequence_t, ReadId_t>> dataArrays;
             //std::array<Batch, nParallelBatches> batches;
             std::array<std::array<cudaStream_t, nStreamsPerBatch>, nParallelBatches> streams;
 			std::array<std::array<cudaEvent_t, nEventsPerBatch>, nParallelBatches> cudaevents;
@@ -1607,7 +1619,7 @@ struct BatchGenerator{
                 dataArrays.emplace_back(threadOpts.deviceId);
 
 				streams[i][0] = computeStream;
-				
+
                 for(int j = 1; j < nStreamsPerBatch; ++j){
                     cudaStreamCreate(&streams[i][j]); CUERR;
                 }
@@ -1632,14 +1644,28 @@ struct BatchGenerator{
                     assert(false);
                     return currentBatchIndex;
             };
-			
-		
-		
+
+            GPUReadStorage_t gpuReadStorage;
+            bool canUseGPUReadStorage = GPUReadStorage_t::isEnoughMemoryAvailable(*threadOpts.readStorage,
+                                                                                    Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+                                                                                    0.8f,
+                                                                                    threadOpts.deviceId);
+
+            if(canUseGPUReadStorage){
+                gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
+                                                                Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+                                                                threadOpts.deviceId);
+                std::cout << "Using gpu read storage" << std::endl;
+            }
+
+
 			TransitionFunctionData transFuncData;
-			
+
 			transFuncData.mybatchgen = &mybatchgen;
 			transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
+            transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
+            transFuncData.useGpuReadStorage = canUseGPUReadStorage;
 			transFuncData.min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
 			transFuncData.min_overlap = goodAlignmentProperties.min_overlap;
 			transFuncData.estimatedErrorrate = correctionOptions.estimatedErrorrate;
@@ -1675,13 +1701,13 @@ struct BatchGenerator{
             int batchIndex = 0; // the main stream we are working on in the current loop iteration
 
             //int num_finished_batches = 0;
-            
+
             int stacksize = 0;
 			float batchsizefactor = 1.0f;
 
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
 			while(!stopAndAbort && !(batchQueue.empty() && mybatchgen.empty())){
-				
+
 				if(stacksize != 0)
 						assert(stacksize == 0);
 
@@ -1695,22 +1721,22 @@ struct BatchGenerator{
 				}else{
 					//batchsizefactor = batchsizefactor == 1.0f ? 0.5f : 1.0f;
 				}
-				
+
 				transFuncData.minimum_candidates_per_batch = int(minimum_candidates_per_batch * batchsizefactor);
 
 
 				AdvanceResult mainBatchAdvanceResult;
 				bool popMain = false;
-				
 
-				
+
+
 				assert(popMain == false);
 				push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
 				++stacksize;
 				popMain = true;
-				
+
                 while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)){
-	
+
 					/*if(firstMainIter){
 						assert(popMain == false);
 						push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
@@ -1724,7 +1750,7 @@ struct BatchGenerator{
 							popMain = true;
 						}
 					}*/
-					
+
                     mainBatchAdvanceResult = advance_one_step(mainBatch,
                                                             dataArrays[batchIndex],
                                                             streams[batchIndex],
@@ -1732,19 +1758,19 @@ struct BatchGenerator{
                                                             true, //can block
                                                             true, //can launch kernels
 															transFuncData);
-					
+
 					if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)){
 						pop_range("main inner");
 						popMain = false;
 						--stacksize;
-						
+
 						assert(popMain == false);
 						push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
 						++stacksize;
 						popMain = true;
 					}
-					
-					
+
+
 #if 1
 					IsWaitingResult isWaitingResult = isWaiting(mainBatch.state);
                     if(isWaitingResult.isWaiting){
@@ -1769,22 +1795,22 @@ struct BatchGenerator{
 										//batchsizefactor = batchsizefactor == 1.0f ? 0.5f : 1.0f;
 									}
                                 }
-                                
+
                                 transFuncData.minimum_candidates_per_batch = int(minimum_candidates_per_batch * batchsizefactor);
 
                                 cudaError_t eventquerystatus = cudaSuccess;
                                 cudaEvent_t eventToWaitFor = cudaevents[batchIndex][isWaitingResult.eventIndexToWaitFor];
-															 
+
 								AdvanceResult sideBatchAdvanceResult;
 								bool firstSideIter = true;
 								bool popSide = false;
-								
+
                                 //while mainBatch is not ready for next step...
                                 //this condition is checked after each step of sideBatch
                                 while((eventquerystatus = cudaEventQuery(eventToWaitFor)) == cudaErrorNotReady){
-									
+
 									for(int i = 0; i < sideBatchStepsPerWaitIter; ++i){
-										
+
 										if(firstSideIter){
 											assert(popSide == false);
 											push_range("sideBatch"+nameOf(sideBatch.state)+"first", int(sideBatch.state));
@@ -1804,16 +1830,16 @@ struct BatchGenerator{
 																				streams[nextBatchId],
 																				cudaevents[nextBatchId],
 																				false, //must not block
-																				//mainBatch.state == BatchState::WaitForCorrection, 
+																				//mainBatch.state == BatchState::WaitForCorrection,
 																				false, //cannot launch kernels
-																				transFuncData); 
-										
+																				transFuncData);
+
 										/*if((sideBatchAdvanceResult.noProgressBlocking || sideBatchAdvanceResult.noProgressLaunching) && batchQueue.size() < 2){
 											//the current side batch cannot make progress. switch it with a second side batch
 											int queuesize = batchQueue.size();
-											
+
 											batchQueue.push(std::move(sideBatch));
-											
+
 											if(queuesize == 0){
 												sideBatch = Batch{};
 											}else{
@@ -1821,25 +1847,25 @@ struct BatchGenerator{
 												batchQueue.pop();
 											}
 										}*/
-										
+
 										if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
 											pop_range("side inner");
 											popSide = false;
 											--stacksize;
 										}
-										
+
 										firstSideIter = false;
 									}
-									
+
 									/*if(popSide){
 										pop_range("side outer");
 										popSide = false;
 										--stacksize;
 									}*/
-									
-									
+
+
                                 }
-                                
+
                                 if(popSide){
 									pop_range("side outer");
 									popSide = false;
@@ -1872,46 +1898,46 @@ struct BatchGenerator{
 								batchQueue.pop();
 
 								assert(sideBatch.state != BatchState::Unprepared);
-								
+
 								if(sideBatch.state == BatchState::DataOnGPU){
 									push_range("sideBatch"+nameOf(sideBatch.state), int(sideBatch.state));
 									++stacksize;
-									
+
 									advance_one_step(sideBatch,
 													dataArrays[nextBatchId],
 													streams[nextBatchId],
 													cudaevents[nextBatchId],
 													false, //must not block
 													true); //can launch kernels
-									
+
 									pop_range("side");
 									--stacksize;
 								}
-								
+
 								batchQueue.push(std::move(sideBatch));
 							}
-							
+
 							POP_RANGE_2;
 						}
                     }
-#endif                    
-                    
+#endif
+
                 }
-                
+
                 if(popMain){
 					pop_range("main outer");
 					popMain = false;
 					--stacksize;
 				}
-				
+
 				assert(stacksize == 0);
-				
-				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted); 
+
+				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
 				if(nParallelBatches > 1){
 					batchIndex = nextBatchIndex(batchIndex, nParallelBatches);
 				}
-				
+
 				nProcessedReads = mybatchgen.currentId - mybatchgen.firstId;
 
 
@@ -1928,7 +1954,7 @@ struct BatchGenerator{
 
             outputstream.flush();
             featurestream.flush();
-			
+
 			std::cout << "new gpu thread finished" << std::endl;
 
     	#if 0
@@ -2017,12 +2043,16 @@ struct BatchGenerator{
     		}
     	#endif
 
+            if(canUseGPUReadStorage){
+                GPUReadStorage_t::destroy(gpuReadStorage);
+            }
+
             for(auto& array : dataArrays){
                 array.reset();
             }
 
             cudaStreamDestroy(computeStream); CUERR;
-			
+
             for(auto& streamarray : streams){
 				for(int i = 1; i < nStreamsPerBatch; ++i)
                     cudaStreamDestroy(streamarray[i]); CUERR;
@@ -2034,10 +2064,10 @@ struct BatchGenerator{
             }
     	}
     };
-	
-	
-	
-#else 
+
+
+
+#else
 
 
 
@@ -2072,13 +2102,13 @@ template<class minhasher_t,
 			Finished,
 			Aborted,
 		};
-		
+
 		enum class BatchStatePriority{
 			Low,
 			Medium,
 			High,
 		};
-		
+
 		static constexpr int nStreamsPerBatch = 2;
         static constexpr int primary_stream_index = 0;
         static constexpr int secondary_stream_index = 1;
@@ -2089,7 +2119,7 @@ template<class minhasher_t,
         static constexpr int indices_transfer_finished_event_index = 2;
         static constexpr int correction_finished_event_index = 3;
 		static constexpr int result_transfer_finished_event_index = 4;
-		
+
 		struct TaskGroup{
 			std::vector<CorrectionTask_t> tasks;
 			int maxSubjectLength = 0;
@@ -2099,7 +2129,7 @@ template<class minhasher_t,
 			int copiedTasks = 0;
 			int copiedCandidates = 0;
 			bool active = true;
-			
+
 			void reset(){
 				tasks.clear();
 				maxSubjectLength = 0;
@@ -2111,42 +2141,42 @@ template<class minhasher_t,
 				active = true;
 			}
 		};
-		
+
 		struct Batch{
 			BatchState state = BatchState::Unprepared;
 
 			std::vector<TaskGroup> taskGroups;
-			std::vector<DataArrays<Sequence_t>> dataArrays;
+			std::vector<DataArrays<Sequence_t, ReadId_t>> dataArrays;
             std::vector<std::array<cudaStream_t, nStreamsPerBatch>> streams;
 			std::vector<std::array<cudaEvent_t, nEventsPerBatch>> cudaevents;
-			
+
 			int nTaskGroups = -1;
-			
+
 			Batch(int nTaskGroups, int deviceId) : nTaskGroups(nTaskGroups){
 				assert(nTaskGroups > 0);
-				
+
 				taskGroups.resize(nTaskGroups);
 				streams.resize(nTaskGroups);
 				cudaevents.resize(nTaskGroups);
-				
+
 				for(int i = 0; i < nTaskGroups; i++){
 					dataArrays.emplace_back(deviceId);
-					
+
 					for(int j = 0; j < nStreamsPerBatch; ++j){
 						cudaStreamCreate(&streams[i][j]); CUERR;
 					}
 
 					for(int j = 0; j < nEventsPerBatch; ++j){
 						cudaEventCreateWithFlags(&cudaevents[i][j], cudaEventDisableTiming); CUERR;
-					}	
+					}
 				}
 			}
-			
+
 			~Batch(){
 				for(auto& array : dataArrays){
 					array.reset();
 				}
-				
+
 				for(auto& streamarray : streams){
 					for(auto& stream : streamarray)
 						cudaStreamDestroy(stream); CUERR;
@@ -2157,28 +2187,28 @@ template<class minhasher_t,
 						cudaEventDestroy(event); CUERR;
 				}
 			}
-			
+
 			void reset(){
 				state = BatchState::Unprepared;
-				
+
 				for(auto& taskgroup : taskGroups){
 					taskgroup.reset();
-				}	
+				}
 			}
 		};
-		
+
 		struct AdvanceResult{
 			BatchState oldState = BatchState::Unprepared;
 			BatchState newState = BatchState::Unprepared;
 			bool noProgressBlocking = false;
 			bool noProgressLaunching = false;
 		};
-		
+
 		struct IsWaitingResult{
 			bool isWaiting;
 			int eventIndexToWaitFor;
 		};
-				
+
 		struct TransitionFunctionData{
 			BatchGenerator<ReadId_t>* mybatchgen;
 			double min_overlap_ratio;
@@ -2265,14 +2295,14 @@ template<class minhasher_t,
         std::chrono::duration<double> da, db, dc;
 
         TaskTimings detailedCorrectionTimings;
-		
-		BatchGenerator<ReadId_t> mybatchgen;		
+
+		BatchGenerator<ReadId_t> mybatchgen;
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData&);
-		
+
 		std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
 
         std::thread thread;
@@ -2291,7 +2321,7 @@ template<class minhasher_t,
         }
 
     public:
-		
+
 		std::string nameOf(BatchState state) const{
 			switch(state){
 				case BatchState::Unprepared: return "Unprepared";
@@ -2315,7 +2345,7 @@ template<class minhasher_t,
 				default: assert(false); return "None";
 			}
 		}
-				
+
 		IsWaitingResult isWaiting(BatchState state) const{
 			switch(state){
 				case BatchState::Unprepared: return {false, -1};
@@ -2356,20 +2386,20 @@ template<class minhasher_t,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::Unprepared);
-			
+
 			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
 				auto& taskGroup = batch.taskGroups[taskGroupId];
 				auto& dataArrays = batch.dataArrays[taskGroupId];
 				auto& streams = batch.streams[taskGroupId];
 				auto& events = batch.cudaevents[taskGroupId];
-				
+
 				while(taskGroup.initialNumberOfCandidates < transFuncData.minimum_candidates_per_taskgroup && !transFuncData.mybatchgen->empty()){
 					const auto& readStorage = transFuncData.readStorage;
 					const auto& minhasher = transFuncData.minhasher;
 					const auto readIds = transFuncData.mybatchgen->getNextReadIds(transFuncData.num_ids_per_add_tasks);
-					
+
 					for(ReadId_t id : readIds){
 						bool ok = false;
 						transFuncData.lock(id);
@@ -2388,9 +2418,9 @@ template<class minhasher_t,
 								qualityptr = readStorage->fetchQuality_ptr(id);
 
 							taskGroup.tasks.emplace_back(id, sequenceptr, qualityptr);
-							
+
 							auto& task = taskGroup.tasks.back();
-							
+
 							const std::string sequencestring = task.subject_sequence->toString();
 							task.candidate_read_ids = minhasher->getCandidates(sequencestring, transFuncData.max_candidates);
 
@@ -2409,22 +2439,24 @@ template<class minhasher_t,
 										task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
 								}
 							}
-							
+
 							taskGroup.initialNumberOfCandidates += int(task.candidate_read_ids.size());
 						}
 					}
 				}
-							
+
 				if(taskGroup.initialNumberOfCandidates == 0){
 					taskGroup.active = false;
 					continue;
 				}
-				
-				std::remove_if(taskGroup.tasks.begin(),
+
+                auto new_end = std::remove_if(taskGroup.tasks.begin(),
 								taskGroup.tasks.end(),
 								[](const auto& t){return !t.active;});
-				
-				
+
+                taskGroup.tasks.erase(new_end, taskGroup.tasks.end());
+
+
 				//allocate data arrays
 
 				dataArrays.set_problem_dimensions(int(taskGroup.tasks.size()),
@@ -2462,12 +2494,12 @@ template<class minhasher_t,
 
 				dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
 				dataArrays.zero_gpu(streams[primary_stream_index]);
-				
+
 				dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
 				//copy taskgroup to gpu
 				while(taskGroup.copiedTasks < int(taskGroup.tasks.size())){
-					
+
 					const auto& task = taskGroup.tasks[taskGroup.copiedTasks];
 					//fill subject
 					std::memcpy(dataArrays.h_subject_sequences_data + taskGroup.copiedTasks * dataArrays.encoded_sequence_pitch,
@@ -2500,8 +2532,8 @@ template<class minhasher_t,
 					++taskGroup.copiedTasks;
 
 				}
-				
-				
+
+
 				cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
 							dataArrays.alignment_transfer_data_host,
 							dataArrays.alignment_transfer_data_usable_size,
@@ -2511,7 +2543,7 @@ template<class minhasher_t,
 				taskGroup.copiedTasks = 0;
 				taskGroup.copiedCandidates = 0;
 
-				
+
 				auto best_alignment_comp = [=] __device__ (int fwd_alignment_overlap,
                                         int revc_alignment_overlap,
                                         int fwd_alignment_nops,
@@ -2560,7 +2592,7 @@ template<class minhasher_t,
 												dataArray.n_queries,
 												stream); CUERR;
 				};
-				
+
 				ShiftedHammingDistanceChooser<Sequence_t>::callKernelAsync(
 										dataArrays.d_alignment_scores,
 										dataArrays.d_alignment_overlaps,
@@ -2578,7 +2610,7 @@ template<class minhasher_t,
 										dataArrays.encoded_sequence_pitch,
 										transFuncData.min_overlap,
 										transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0,
-										transFuncData.min_overlap_ratio,                                  
+										transFuncData.min_overlap_ratio,
 										taskGroup.maxSubjectLength,
 										taskGroup.maxQueryLength,
 										streams[primary_stream_index]);
@@ -2669,26 +2701,18 @@ template<class minhasher_t,
 				assert(cudaSuccess == cudaEventQuery(events[alignments_finished_event_index])); CUERR;
 
 				cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-				
-				//Determine multiple sequence alignment properties
-				call_msa_init_kernel_async(
-								dataArrays.d_msa_column_properties,
-								dataArrays.d_alignment_shifts,
-								dataArrays.d_alignment_best_alignment_flags,
-								dataArrays.d_subject_sequences_lengths,
-								dataArrays.d_candidate_sequences_lengths,
-								dataArrays.d_indices,
-								dataArrays.d_indices_per_subject,
-								dataArrays.d_indices_per_subject_prefixsum,
-								dataArrays.n_subjects,
-								dataArrays.n_queries,
-								streams[primary_stream_index]);
-				
-				
-						
-				
+
+				cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+						dataArrays.indices_transfer_data_device,
+						dataArrays.indices_transfer_data_usable_size,
+						D2H,
+						streams[primary_stream_index]); CUERR;
+
+				assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
+
+				cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 			}
-			
+
 			int activeTaskGroups = std::count_if(batch.taskGroups.begin(),
 												batch.taskGroups.end(),
 												 [](const auto& taskGroup){
@@ -2700,49 +2724,39 @@ template<class minhasher_t,
 				return BatchState::WaitForAlignment;
 			}
 		}
-		
+
 		static BatchState state_waitforalignment_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::WaitForAlignment);
-			
+
 			/*cudaError_t querystatus = cudaEventQuery(events[alignments_finished_event_index]); CUERR;
-			
+
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-			
+
 			if(querystatus == cudaSuccess){
 				return BatchState::TransferIndices;
 			}else{
 				return BatchState::WaitForAlignment;
 			}*/
-			
+
 			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
 				auto& taskGroup = batch.taskGroups[taskGroupId];
 				auto& dataArrays = batch.dataArrays[taskGroupId];
 				auto& streams = batch.streams[taskGroupId];
 				auto& events = batch.cudaevents[taskGroupId];
-				
+
 				if(taskGroup.active){
 					cudaEventSynchronize(events[alignments_finished_event_index]); CUERR;
-					
+
 					if(*dataArrays.h_num_indices == 0){
                         taskGroup.active = false;
-					}else{					
-						cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
-								dataArrays.indices_transfer_data_device,
-								dataArrays.indices_transfer_data_usable_size,
-								D2H,
-								streams[secondary_stream_index]); CUERR;
-								
-						assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
-												
-						cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 					}
 				}
 			}
-						
+
 			int activeTaskGroups = std::count_if(batch.taskGroups.begin(),
 									batch.taskGroups.end(),
 										[](const auto& taskGroup){
@@ -2754,46 +2768,46 @@ template<class minhasher_t,
 				return BatchState::CopyQualities;
 			}
 		}
-		
-		
+
+
 		static BatchState state_copyqualities_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
+
 			assert(batch.state == BatchState::CopyQualities);
-						
+
 			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
 				auto& taskGroup = batch.taskGroups[taskGroupId];
 				auto& dataArrays = batch.dataArrays[taskGroupId];
 				auto& streams = batch.streams[taskGroupId];
 				auto& events = batch.cudaevents[taskGroupId];
-				
-				if(taskGroup.active){		
-					
+
+				if(taskGroup.active){
+
 					cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
-					
+
 					if(transFuncData.useQualityScores){
 
 						//copy quality scores to gpu
 						while(taskGroup.copiedTasks < int(taskGroup.tasks.size())){
-									
+
 							const int my_num_indices = dataArrays.h_indices_per_subject[taskGroup.copiedTasks];
 							const int* my_indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[taskGroup.copiedTasks];
 							const int candidatesOfPreviousTasks = dataArrays.h_candidates_per_subject_prefixsum[taskGroup.copiedTasks];
-							
+
 							const auto& task = taskGroup.tasks[taskGroup.copiedTasks];
 
 							//fill subject
 							std::memcpy(dataArrays.h_subject_qualities + taskGroup.copiedTasks * dataArrays.quality_pitch,
 										task.subject_quality->c_str(),
 										task.subject_quality->length());
-							
+
 							for(int i = 0; i < my_num_indices; ++i){
 								const int candidate_index = my_indices[i];
 								const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
 								const std::string* qual = task.candidate_qualities[local_candidate_index];
-								
+
 								std::memcpy(dataArrays.h_candidate_qualities + taskGroup.copiedCandidates * dataArrays.quality_pitch,
 											qual->c_str(),
 											qual->length());
@@ -2802,45 +2816,21 @@ template<class minhasher_t,
 
 							++taskGroup.copiedTasks;
 						}
-						
+
 						cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
 							dataArrays.qualities_transfer_data_host,
 							dataArrays.qualities_transfer_data_usable_size,
 							H2D,
-							streams[secondary_stream_index]); CUERR;
+							streams[primary_stream_index]); CUERR;
 
-						assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+						//assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
-						cudaEventRecord(events[quality_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+						//cudaEventRecord(events[quality_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
 						taskGroup.copiedTasks = 0;
 						taskGroup.copiedCandidates = 0;
 					}
-				}
-			}
 
-			return BatchState::StartCorrection;
-		}
-		
-		static BatchState state_startcorrection_func(Batch& batch,
-										bool canBlock,
-										bool canLaunchKernel,
-										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::StartCorrection);
-			
-			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
-				auto& taskGroup = batch.taskGroups[taskGroupId];
-				auto& dataArrays = batch.dataArrays[taskGroupId];
-				auto& streams = batch.streams[taskGroupId];
-				auto& events = batch.cudaevents[taskGroupId];
-				
-				if(taskGroup.active){
-				
-					if(transFuncData.useQualityScores){
-						cudaEventSynchronize(events[quality_transfer_finished_event_index]);
-					}
-					
 					auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
 						return Sequence_t::get_as_nucleotide(data, length, index);
 					};
@@ -2848,7 +2838,7 @@ template<class minhasher_t,
 					auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
 						return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
 					};
-				
+
 					const double avg_support_threshold = 1.0-1.0*transFuncData.estimatedErrorrate;
 					const double min_support_threshold = 1.0-3.0*transFuncData.estimatedErrorrate;
 					// coverage is always >= 1
@@ -2856,6 +2846,20 @@ template<class minhasher_t,
 																transFuncData.m_coverage / 6.0 * transFuncData.estimatedCoverage);
 					const int new_columns_to_correct = transFuncData.new_columns_to_correct;
 					const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
+
+					//Determine multiple sequence alignment properties
+					call_msa_init_kernel_async(
+									dataArrays.d_msa_column_properties,
+									dataArrays.d_alignment_shifts,
+									dataArrays.d_alignment_best_alignment_flags,
+									dataArrays.d_subject_sequences_lengths,
+									dataArrays.d_candidate_sequences_lengths,
+									dataArrays.d_indices,
+									dataArrays.d_indices_per_subject,
+									dataArrays.d_indices_per_subject_prefixsum,
+									dataArrays.n_subjects,
+									dataArrays.n_queries,
+									streams[primary_stream_index]);
 
 					call_msa_add_sequences_kernel_async(
 									dataArrays.d_multiple_sequence_alignments,
@@ -2990,61 +2994,262 @@ template<class minhasher_t,
 
 					assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
 
-					cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;	
-				}
-				
-			}			
+					cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
-			return BatchState::TransferResults;
-		}
-		
-		
-		static BatchState state_transferresults_func(Batch& batch,
-										bool canBlock,
-										bool canLaunchKernel,
-										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::TransferResults);
-			
-			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
-				auto& taskGroup = batch.taskGroups[taskGroupId];
-				auto& dataArrays = batch.dataArrays[taskGroupId];
-				auto& streams = batch.streams[taskGroupId];
-				auto& events = batch.cudaevents[taskGroupId];
-				
-				if(taskGroup.active){
-					cudaEventSynchronize(events[correction_finished_event_index]); CUERR;
-					
 					cudaMemcpyAsync(dataArrays.correction_results_transfer_data_host,
 							dataArrays.correction_results_transfer_data_device,
 							dataArrays.correction_results_transfer_data_usable_size,
 							D2H,
-							streams[secondary_stream_index]); CUERR;
-							
+							streams[primary_stream_index]); CUERR;
+
 					assert(cudaSuccess == cudaEventQuery(events[result_transfer_finished_event_index])); CUERR;
 
-					cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+					cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+
 				}
 			}
-			
-			return BatchState::UnpackResults;
 
+			//return BatchState::StartCorrection;
+			return BatchState::UnpackResults;
 		}
-		
-		
-		static BatchState state_unpackresults_func(Batch& batch,
+
+		static BatchState state_startcorrection_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::UnpackResults);			
+
+			assert(batch.state == BatchState::StartCorrection);
 
 			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
 				auto& taskGroup = batch.taskGroups[taskGroupId];
 				auto& dataArrays = batch.dataArrays[taskGroupId];
 				auto& streams = batch.streams[taskGroupId];
 				auto& events = batch.cudaevents[taskGroupId];
-				
+
+				if(taskGroup.active){
+
+					//if(transFuncData.useQualityScores){
+					//	cudaEventSynchronize(events[quality_transfer_finished_event_index]);
+					//}
+
+					auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+						return Sequence_t::get_as_nucleotide(data, length, index);
+					};
+
+					auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+						return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+					};
+
+					const double avg_support_threshold = 1.0-1.0*transFuncData.estimatedErrorrate;
+					const double min_support_threshold = 1.0-3.0*transFuncData.estimatedErrorrate;
+					// coverage is always >= 1
+					const double min_coverage_threshold = std::max(1.0,
+																transFuncData.m_coverage / 6.0 * transFuncData.estimatedCoverage);
+					const int new_columns_to_correct = transFuncData.new_columns_to_correct;
+					const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
+
+					//Determine multiple sequence alignment properties
+					call_msa_init_kernel_async(
+									dataArrays.d_msa_column_properties,
+									dataArrays.d_alignment_shifts,
+									dataArrays.d_alignment_best_alignment_flags,
+									dataArrays.d_subject_sequences_lengths,
+									dataArrays.d_candidate_sequences_lengths,
+									dataArrays.d_indices,
+									dataArrays.d_indices_per_subject,
+									dataArrays.d_indices_per_subject_prefixsum,
+									dataArrays.n_subjects,
+									dataArrays.n_queries,
+									streams[primary_stream_index]);
+
+					call_msa_add_sequences_kernel_async(
+									dataArrays.d_multiple_sequence_alignments,
+									dataArrays.d_multiple_sequence_alignment_weights,
+									dataArrays.d_alignment_shifts,
+									dataArrays.d_alignment_best_alignment_flags,
+									dataArrays.d_subject_sequences_data,
+									dataArrays.d_candidate_sequences_data,
+									dataArrays.d_subject_sequences_lengths,
+									dataArrays.d_candidate_sequences_lengths,
+									dataArrays.d_subject_qualities,
+									dataArrays.d_candidate_qualities,
+									dataArrays.d_alignment_overlaps,
+									dataArrays.d_alignment_nOps,
+									dataArrays.d_msa_column_properties,
+									dataArrays.d_candidates_per_subject_prefixsum,
+									dataArrays.d_indices,
+									dataArrays.d_indices_per_subject,
+									dataArrays.d_indices_per_subject_prefixsum,
+									dataArrays.n_subjects,
+									dataArrays.n_queries,
+									*dataArrays.h_num_indices,
+									transFuncData.useQualityScores,
+									desiredAlignmentMaxErrorRate,
+									dataArrays.maximum_sequence_length,
+									dataArrays.encoded_sequence_pitch,
+									dataArrays.quality_pitch,
+									dataArrays.msa_pitch,
+									dataArrays.msa_weights_pitch,
+									nucleotide_accessor,
+									make_unpacked_reverse_complement_inplace,
+									streams[primary_stream_index]);
+
+					//Step 13. Determine consensus in multiple sequence alignment
+
+					call_msa_find_consensus_kernel_async(
+									dataArrays.d_consensus,
+									dataArrays.d_support,
+									dataArrays.d_coverage,
+									dataArrays.d_origWeights,
+									dataArrays.d_origCoverages,
+									dataArrays.d_multiple_sequence_alignments,
+									dataArrays.d_multiple_sequence_alignment_weights,
+									dataArrays.d_msa_column_properties,
+									dataArrays.d_candidates_per_subject_prefixsum,
+									dataArrays.d_indices_per_subject,
+									dataArrays.d_indices_per_subject_prefixsum,
+									dataArrays.n_subjects,
+									dataArrays.n_queries,
+									*dataArrays.h_num_indices,
+									dataArrays.msa_pitch,
+									dataArrays.msa_weights_pitch,
+									3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,
+									streams[primary_stream_index]);
+
+					// Step 14. Correction
+
+					// correct subjects
+					call_msa_correct_subject_kernel_async(
+									dataArrays.d_consensus,
+									dataArrays.d_support,
+									dataArrays.d_coverage,
+									dataArrays.d_origCoverages,
+									dataArrays.d_multiple_sequence_alignments,
+									dataArrays.d_msa_column_properties,
+									dataArrays.d_indices_per_subject_prefixsum,
+									dataArrays.d_is_high_quality_subject,
+									dataArrays.d_corrected_subjects,
+									dataArrays.d_subject_is_corrected,
+									dataArrays.n_subjects,
+									dataArrays.n_queries,
+									*dataArrays.h_num_indices,
+									dataArrays.sequence_pitch,
+									dataArrays.msa_pitch,
+									dataArrays.msa_weights_pitch,
+									transFuncData.estimatedErrorrate,
+									avg_support_threshold,
+									min_support_threshold,
+									min_coverage_threshold,
+									transFuncData.kmerlength,
+									dataArrays.maximum_sequence_length,
+									streams[primary_stream_index]);
+
+					if(transFuncData.correctCandidates){
+
+
+						// find subject ids of subjects with high quality multiple sequence alignment
+
+						cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
+										dataArrays.tmp_storage_allocation_size,
+										cub::CountingInputIterator<int>(0),
+										dataArrays.d_is_high_quality_subject,
+										dataArrays.d_high_quality_subject_indices,
+										dataArrays.d_num_high_quality_subject_indices,
+										dataArrays.n_subjects,
+										streams[primary_stream_index]); CUERR;
+
+						// correct candidates
+						call_msa_correct_candidates_kernel_async(
+										dataArrays.d_consensus,
+										dataArrays.d_support,
+										dataArrays.d_coverage,
+										dataArrays.d_origCoverages,
+										dataArrays.d_multiple_sequence_alignments,
+										dataArrays.d_msa_column_properties,
+										dataArrays.d_indices,
+										dataArrays.d_indices_per_subject,
+										dataArrays.d_indices_per_subject_prefixsum,
+										dataArrays.d_high_quality_subject_indices,
+										dataArrays.d_num_high_quality_subject_indices,
+										dataArrays.d_alignment_shifts,
+										dataArrays.d_alignment_best_alignment_flags,
+										dataArrays.d_candidate_sequences_lengths,
+										dataArrays.d_num_corrected_candidates,
+										dataArrays.d_corrected_candidates,
+										dataArrays.d_indices_of_corrected_candidates,
+										dataArrays.n_subjects,
+										dataArrays.n_queries,
+										//dataArrays.n_indices,
+										*dataArrays.h_num_indices,
+										dataArrays.sequence_pitch,
+										dataArrays.msa_pitch,
+										dataArrays.msa_weights_pitch,
+										min_support_threshold,
+										min_coverage_threshold,
+										new_columns_to_correct,
+										make_unpacked_reverse_complement_inplace,
+										dataArrays.maximum_sequence_length,
+										streams[primary_stream_index]);
+
+					}
+
+					assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
+
+					cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+				}
+
+			}
+
+			return BatchState::TransferResults;
+		}
+
+
+		static BatchState state_transferresults_func(Batch& batch,
+										bool canBlock,
+										bool canLaunchKernel,
+										const TransitionFunctionData& transFuncData){
+
+			assert(batch.state == BatchState::TransferResults);
+
+			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
+				auto& taskGroup = batch.taskGroups[taskGroupId];
+				auto& dataArrays = batch.dataArrays[taskGroupId];
+				auto& streams = batch.streams[taskGroupId];
+				auto& events = batch.cudaevents[taskGroupId];
+
+				if(taskGroup.active){
+					cudaEventSynchronize(events[correction_finished_event_index]); CUERR;
+
+					cudaMemcpyAsync(dataArrays.correction_results_transfer_data_host,
+							dataArrays.correction_results_transfer_data_device,
+							dataArrays.correction_results_transfer_data_usable_size,
+							D2H,
+							streams[primary_stream_index]); CUERR;
+
+					assert(cudaSuccess == cudaEventQuery(events[result_transfer_finished_event_index])); CUERR;
+
+					cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+				}
+			}
+
+			return BatchState::UnpackResults;
+
+		}
+
+
+		static BatchState state_unpackresults_func(Batch& batch,
+										bool canBlock,
+										bool canLaunchKernel,
+										const TransitionFunctionData& transFuncData){
+
+			assert(batch.state == BatchState::UnpackResults);
+
+			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
+				auto& taskGroup = batch.taskGroups[taskGroupId];
+				auto& dataArrays = batch.dataArrays[taskGroupId];
+				auto& streams = batch.streams[taskGroupId];
+				auto& events = batch.cudaevents[taskGroupId];
+
 				if(taskGroup.active){
 					cudaEventSynchronize(events[result_transfer_finished_event_index]); CUERR;
 
@@ -3084,26 +3289,26 @@ template<class minhasher_t,
 								task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
 							}
 						}
-					}	
+					}
 				}
 			}
 
 			return BatchState::WriteResults;
 		}
-		
+
 		static BatchState state_writeresults_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::WriteResults);		
-			
+
+			assert(batch.state == BatchState::WriteResults);
+
 			for(std::size_t taskGroupId = 0; taskGroupId < batch.taskGroups.size(); ++taskGroupId){
 				auto& taskGroup = batch.taskGroups[taskGroupId];
 				auto& dataArrays = batch.dataArrays[taskGroupId];
 				auto& streams = batch.streams[taskGroupId];
 				auto& events = batch.cudaevents[taskGroupId];
-				
+
 				if(taskGroup.active){
 					for(std::size_t subject_index = 0; subject_index < taskGroup.tasks.size(); ++subject_index){
 
@@ -3138,37 +3343,37 @@ template<class minhasher_t,
 								transFuncData.write_read_to_stream(candidateId, corrected_candidate);
 							}
 						}
-					}					
+					}
 				}
 			}
 
 			return BatchState::Finished;
 		}
-		
+
 		static BatchState state_finished_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::Finished);			
-			
+
+			assert(batch.state == BatchState::Finished);
+
 			assert(false); //Finished is end node
 
 			return BatchState::Finished;
 		}
-		
+
 		static BatchState state_aborted_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
 										const TransitionFunctionData& transFuncData){
-			
-			assert(batch.state == BatchState::Aborted);			
-			
+
+			assert(batch.state == BatchState::Aborted);
+
 			assert(false); //Aborted is end node
 
 			return BatchState::Aborted;
 		}
-		
+
 
         AdvanceResult advance_one_step(Batch& batch,
                                 bool canBlock,
@@ -3176,31 +3381,31 @@ template<class minhasher_t,
 								const TransitionFunctionData& transFuncData){
 
 			AdvanceResult advanceResult;
-			
+
 			advanceResult.oldState = batch.state;
 			advanceResult.noProgressBlocking = false;
 			advanceResult.noProgressLaunching = false;
-					
+
 			auto iter = transitionFunctionTable.find(batch.state);
 			if(iter != transitionFunctionTable.end()){
 				batch.state = iter->second(batch, canBlock, canLaunchKernel, transFuncData);
 			}else{
 					std::cout << nameOf(batch.state) << std::endl;
-                    assert(false); // Every State should be handled above	
-			}		
-          
+                    assert(false); // Every State should be handled above
+			}
+
             advanceResult.newState = batch.state;
 
             return advanceResult;
         }
-        
+
 
     	void execute() {
     		isRunning = true;
 
 			assert(threadOpts.canUseGpu);
 			assert(max_candidates > 0);
-			
+
 			mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
 			makeTransitionFunctionTable();
 
@@ -3219,7 +3424,7 @@ template<class minhasher_t,
 			constexpr int sideBatchStepsPerWaitIter = 1;
 			constexpr int num_ids_per_add_tasks = 30;
 			constexpr int minimum_candidates_per_batch = 20000;
-			constexpr int minimum_candidates_per_taskgroup = 500;
+			constexpr int minimum_candidates_per_taskgroup = 5000;
 			constexpr int taskgroups_per_batch = 4;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
@@ -3227,7 +3432,7 @@ template<class minhasher_t,
 
 
 			std::queue<Batch> batchQueue;
-			
+
 
             auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){
                 if(nParallelBatches > 1)
@@ -3236,11 +3441,11 @@ template<class minhasher_t,
                     assert(false);
                     return currentBatchIndex;
             };
-			
-		
-		
+
+
+
 			TransitionFunctionData transFuncData;
-			
+
 			transFuncData.mybatchgen = &mybatchgen;
 			transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
@@ -3280,37 +3485,37 @@ template<class minhasher_t,
             int batchIndex = 0; // the main stream we are working on in the current loop iteration
 
             //int num_finished_batches = 0;
-            
+
             int stacksize = 0;
 			float batchsizefactor = 1.0f;
 
 			Batch mainBatch(taskgroups_per_batch, threadOpts.deviceId);
-			
+
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
 			while(!stopAndAbort && !(batchQueue.empty() && mybatchgen.empty())){
-				
+
 				if(stacksize != 0)
 						assert(stacksize == 0);
 
-				
-				
+
+
 				mainBatch.reset();
-				
+
 				transFuncData.minimum_candidates_per_batch = int(minimum_candidates_per_batch * batchsizefactor);
 
 
 				AdvanceResult mainBatchAdvanceResult;
 				bool popMain = false;
-				
 
-				
+
+
 				assert(popMain == false);
 				push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
 				++stacksize;
 				popMain = true;
-				
+
                 while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)){
-	
+
 					/*if(firstMainIter){
 						assert(popMain == false);
 						push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
@@ -3324,24 +3529,24 @@ template<class minhasher_t,
 							popMain = true;
 						}
 					}*/
-					
+
                     mainBatchAdvanceResult = advance_one_step(mainBatch,
                                                             true, //can block
                                                             true, //can launch kernels
 															transFuncData);
-					
+
 					if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)){
 						pop_range("main inner");
 						popMain = false;
 						--stacksize;
-						
+
 						assert(popMain == false);
 						push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
 						++stacksize;
 						popMain = true;
 					}
-					
-					
+
+
 #if 0
 					IsWaitingResult isWaitingResult = isWaiting(mainBatch.state);
                     if(isWaitingResult.isWaiting){
@@ -3366,22 +3571,22 @@ template<class minhasher_t,
 										//batchsizefactor = batchsizefactor == 1.0f ? 0.5f : 1.0f;
 									}
                                 }
-                                
+
                                 transFuncData.minimum_candidates_per_batch = int(minimum_candidates_per_batch * batchsizefactor);
 
                                 cudaError_t eventquerystatus = cudaSuccess;
                                 cudaEvent_t eventToWaitFor = cudaevents[batchIndex][isWaitingResult.eventIndexToWaitFor];
-															 
+
 								AdvanceResult sideBatchAdvanceResult;
 								bool firstSideIter = true;
 								bool popSide = false;
-								
+
                                 //while mainBatch is not ready for next step...
                                 //this condition is checked after each step of sideBatch
                                 while((eventquerystatus = cudaEventQuery(eventToWaitFor)) == cudaErrorNotReady){
-									
+
 									for(int i = 0; i < sideBatchStepsPerWaitIter; ++i){
-										
+
 										if(firstSideIter){
 											assert(popSide == false);
 											push_range("sideBatch"+nameOf(sideBatch.state)+"first", int(sideBatch.state));
@@ -3401,16 +3606,16 @@ template<class minhasher_t,
 																				streams[nextBatchId],
 																				cudaevents[nextBatchId],
 																				false, //must not block
-																				//mainBatch.state == BatchState::WaitForCorrection, 
+																				//mainBatch.state == BatchState::WaitForCorrection,
 																				false, //cannot launch kernels
-																				transFuncData); 
-										
+																				transFuncData);
+
 										/*if((sideBatchAdvanceResult.noProgressBlocking || sideBatchAdvanceResult.noProgressLaunching) && batchQueue.size() < 2){
 											//the current side batch cannot make progress. switch it with a second side batch
 											int queuesize = batchQueue.size();
-											
+
 											batchQueue.push(std::move(sideBatch));
-											
+
 											if(queuesize == 0){
 												sideBatch = Batch{};
 											}else{
@@ -3418,25 +3623,25 @@ template<class minhasher_t,
 												batchQueue.pop();
 											}
 										}*/
-										
+
 										if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
 											pop_range("side inner");
 											popSide = false;
 											--stacksize;
 										}
-										
+
 										firstSideIter = false;
 									}
-									
+
 									/*if(popSide){
 										pop_range("side outer");
 										popSide = false;
 										--stacksize;
 									}*/
-									
-									
+
+
                                 }
-                                
+
                                 if(popSide){
 									pop_range("side outer");
 									popSide = false;
@@ -3469,46 +3674,46 @@ template<class minhasher_t,
 								batchQueue.pop();
 
 								assert(sideBatch.state != BatchState::Unprepared);
-								
+
 								if(sideBatch.state == BatchState::DataOnGPU){
 									push_range("sideBatch"+nameOf(sideBatch.state), int(sideBatch.state));
 									++stacksize;
-									
+
 									advance_one_step(sideBatch,
 													dataArrays[nextBatchId],
 													streams[nextBatchId],
 													cudaevents[nextBatchId],
 													false, //must not block
 													true); //can launch kernels
-									
+
 									pop_range("side");
 									--stacksize;
 								}
-								
+
 								batchQueue.push(std::move(sideBatch));
 							}
-							
+
 							POP_RANGE_2;
 						}
                     }
-#endif                    
-                    
+#endif
+
                 }
-                
+
                 if(popMain){
 					pop_range("main outer");
 					popMain = false;
 					--stacksize;
 				}
-				
+
 				assert(stacksize == 0);
-				
-				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted); 
+
+				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
 				if(nParallelBatches > 1){
 					batchIndex = nextBatchIndex(batchIndex, nParallelBatches);
 				}
-				
+
 				nProcessedReads = mybatchgen.currentId - mybatchgen.firstId;
 
 
@@ -3525,7 +3730,7 @@ template<class minhasher_t,
 
             outputstream.flush();
             featurestream.flush();
-			
+
 			std::cout << "new gpu thread finished" << std::endl;
 
     	#if 0
@@ -3628,7 +3833,7 @@ template<class minhasher_t,
 
 
 
-#endif	
+#endif
 
 #endif
 

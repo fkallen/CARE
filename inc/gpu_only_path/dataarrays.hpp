@@ -17,9 +17,9 @@ namespace gpu{
 
     #ifdef __NVCC__
 
-    template<class Sequence_t>
+    template<class Sequence_t, class ReadId_t>
     struct DataArrays{
-        static constexpr int padding_bytes = 128;
+        static constexpr int padding_bytes = 4;
 		static constexpr float allocfactor = 1.1;
 
         DataArrays() : DataArrays(0){}
@@ -44,12 +44,16 @@ namespace gpu{
             std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
             std::size_t memQueries = n_quer * encoded_sequence_pitch;
             std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
+            std::size_t memSubjectIds = SDIV(sizeof(ReadId_t) * n_sub, padding_bytes) * padding_bytes;
+            std::size_t memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
 
             std::size_t required_alignment_transfer_data_allocation_size = memSubjects
                                                             + memSubjectLengths
                                                             + memNqueriesPrefixSum
                                                             + memQueries
-                                                            + memQueryLengths;
+                                                            + memQueryLengths
+                                                            + memSubjectIds
+                                                            + memCandidateIds;
 
             if(required_alignment_transfer_data_allocation_size > alignment_transfer_data_allocation_size){
                 //std::cout << "A" << std::endl;
@@ -68,12 +72,16 @@ namespace gpu{
             h_subject_sequences_lengths = (int*)(((char*)h_candidate_sequences_data) + memQueries);
             h_candidate_sequences_lengths = (int*)(((char*)h_subject_sequences_lengths) + memSubjectLengths);
             h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
+            h_subject_read_ids = (ReadId_t*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
+            h_candidate_read_ids = (ReadId_t*)(((char*)h_subject_read_ids) + memSubjectIds);
 
             d_subject_sequences_data = (char*)alignment_transfer_data_device;
             d_candidate_sequences_data = (char*)(((char*)d_subject_sequences_data) + memSubjects);
             d_subject_sequences_lengths = (int*)(((char*)d_candidate_sequences_data) + memQueries);
             d_candidate_sequences_lengths = (int*)(((char*)d_subject_sequences_lengths) + memSubjectLengths);
             d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
+            d_subject_read_ids = (ReadId_t*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
+            d_candidate_read_ids = (ReadId_t*)(((char*)d_subject_read_ids) + memSubjectIds);
 
             //alignment output
             std::size_t memAlignmentScores = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
@@ -533,12 +541,16 @@ namespace gpu{
         int* h_subject_sequences_lengths = nullptr;
         int* h_candidate_sequences_lengths = nullptr;
         int* h_candidates_per_subject_prefixsum = nullptr;
+        ReadId_t* h_subject_read_ids = nullptr;
+        ReadId_t* h_candidate_read_ids = nullptr;
 
         char* d_subject_sequences_data = nullptr;
         char* d_candidate_sequences_data = nullptr;
         int* d_subject_sequences_lengths = nullptr;
         int* d_candidate_sequences_lengths = nullptr;
         int* d_candidates_per_subject_prefixsum = nullptr;
+        ReadId_t* d_subject_read_ids = nullptr;
+        ReadId_t* d_candidate_read_ids = nullptr;
 
         //indices
         void* indices_transfer_data_host = nullptr;
