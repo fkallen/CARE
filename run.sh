@@ -22,11 +22,11 @@ deviceIds="--deviceIds=0"
 datapath=/home/fekallen/arbeit/evaluationtool
 
 #input file
-inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
-coverage=21
+#inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
+#coverage=21
 
-#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
-#coverage=255
+inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
+coverage=255
 
 #inputfile=$datapath/datasets/E.coli_SRR490124.fastq
 #coverage=465
@@ -81,7 +81,7 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=false
+candidateCorrection=--candidateCorrection=true
 
 #if indels should be corrected, too
 indels=--indels=false
@@ -102,7 +102,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=200
+batchsize=5
 
 #properties of good alignment
 maxmismatchratio=0.20
