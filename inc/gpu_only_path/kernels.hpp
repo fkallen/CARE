@@ -2880,7 +2880,7 @@ void call_msa_correct_subject_kernel_async(
 							int* __restrict__ d_indices_of_corrected_candidates,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* __restrict__ d_num_indices,
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
@@ -2891,6 +2891,7 @@ void call_msa_correct_subject_kernel_async(
 
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 		const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
+		const int n_indices = *d_num_indices;
 
         for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x){
 			const int subjectIndex = d_high_quality_subject_indices[index];
@@ -3002,7 +3003,7 @@ void call_msa_correct_subject_kernel_async(
 							int* d_indices_of_corrected_candidates,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* d_num_indices,
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
@@ -3040,7 +3041,7 @@ void call_msa_correct_subject_kernel_async(
 									d_indices_of_corrected_candidates, \
 									n_subjects, \
 									n_queries, \
-									n_indices, \
+									d_num_indices, \
 									sequence_pitch, \
 									msa_pitch, \
 									msa_weights_pitch, \
