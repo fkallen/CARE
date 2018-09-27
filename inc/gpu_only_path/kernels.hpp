@@ -2417,6 +2417,7 @@ void call_msa_correct_subject_kernel_async(
                             const ReadId_t* __restrict__ d_candidate_read_ids,
                             const int* __restrict__ d_subject_sequences_lengths,
                             const int* __restrict__ d_candidate_sequences_lengths,
+                            const char* __restrict__ d_quality_data,
                             const char* __restrict__ d_subject_qualities,
                             const char* __restrict__ d_candidate_qualities,
                             const int* __restrict__ d_alignment_overlaps,
@@ -2475,7 +2476,9 @@ void call_msa_correct_subject_kernel_async(
             const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
 
             const char* const subject = d_sequence_data + subjectReadId * max_sequence_bytes;
-            const char* const subjectQualityScore = d_subject_qualities + subjectIndex * quality_pitch;
+            const char* const subjectQualityScore = d_quality_data == nullptr ?
+                                                        d_subject_qualities + subjectIndex * quality_pitch :
+                                                        d_quality_data + subjectReadId * maximum_sequence_length;
 
             for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
                 multiple_sequence_alignment[subjectColumnsBegin_incl + i] = get_as_nucleotide(subject, subjectLength, i);
@@ -2521,7 +2524,11 @@ void call_msa_correct_subject_kernel_async(
             const char* const query = d_sequence_data + candidateReadId * max_sequence_bytes;
 
             //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
-            const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
+            //const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
+            const char* const queryQualityScore = d_quality_data == nullptr ?
+                                                    d_candidate_qualities + index * quality_pitch :
+                                                    d_quality_data + candidateReadId * maximum_sequence_length;
+                                                    
             //const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
 
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
@@ -2617,6 +2624,7 @@ void call_msa_correct_subject_kernel_async(
                             const ReadId_t* d_candidate_read_ids,
                             const int* d_subject_sequences_lengths,
                             const int* d_candidate_sequences_lengths,
+                            const char* d_quality_data,
                             const char* d_subject_qualities,
                             const char* d_candidate_qualities,
                             const int* d_alignment_overlaps,
@@ -2660,6 +2668,7 @@ void call_msa_correct_subject_kernel_async(
                                                             d_candidate_read_ids,
                                                             d_subject_sequences_lengths,
                                                             d_candidate_sequences_lengths,
+                                                            d_quality_data,
                                                             d_subject_qualities,
                                                             d_candidate_qualities,
                                                             d_alignment_overlaps,

@@ -531,6 +531,9 @@ struct BatchGenerator{
                                 make_unpacked_reverse_complement_inplace,
                                 stream);
             }else{
+                const char* d_quality_data = gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities ?
+                                                 gpuReadStorage->d_quality_data :
+                                                 nullptr;
                 call_msa_add_sequences_kernel_rs_async(
                                 d_multiple_sequence_alignments,
                                 d_multiple_sequence_alignment_weights,
@@ -541,6 +544,7 @@ struct BatchGenerator{
                                 d_candidate_read_ids,
                                 d_subject_sequences_lengths,
                                 d_candidate_sequences_lengths,
+                                d_quality_data,
                                 d_subject_qualities,
                                 d_candidate_qualities,
                                 d_alignment_overlaps,
@@ -808,7 +812,7 @@ struct BatchGenerator{
 
 		BatchGenerator<ReadId_t> mybatchgen;
 		int num_ids_per_add_tasks = 30;
-		int minimum_candidates_per_batch = 20000;
+		int minimum_candidates_per_batch = 50000;
 
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
@@ -1440,45 +1444,50 @@ struct BatchGenerator{
 
 			if(transFuncData.useQualityScores){
 
-				assert(batch.copiedTasks <= int(batch.tasks.size()));
+                if(transFuncData.useGpuReadStorage || transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
+                    //we don't need to copy any quality strings. they are already present in the gpu read storage
+                    return BatchState::StartCorrection;
+                }else{
 
-				if(batch.copiedTasks < int(batch.tasks.size())){
+    				assert(batch.copiedTasks <= int(batch.tasks.size()));
 
-					const int my_num_indices = dataArrays.h_indices_per_subject[batch.copiedTasks];
-					const int* my_indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[batch.copiedTasks];
-					const int candidatesOfPreviousTasks = dataArrays.h_candidates_per_subject_prefixsum[batch.copiedTasks];
+    				if(batch.copiedTasks < int(batch.tasks.size())){
 
-					const auto& task = batch.tasks[batch.copiedTasks];
-					auto& arrays = dataArrays;
+    					const int my_num_indices = dataArrays.h_indices_per_subject[batch.copiedTasks];
+    					const int* my_indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[batch.copiedTasks];
+    					const int candidatesOfPreviousTasks = dataArrays.h_candidates_per_subject_prefixsum[batch.copiedTasks];
 
-					//fill subject
-					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
-								task.subject_quality->c_str(),
-								task.subject_quality->length());
+    					const auto& task = batch.tasks[batch.copiedTasks];
+    					auto& arrays = dataArrays;
 
-					for(int i = 0; i < my_num_indices; ++i){
-						const int candidate_index = my_indices[i];
-						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
-						const std::string* qual = task.candidate_qualities[local_candidate_index];
+    					//fill subject
+    					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
+    								task.subject_quality->c_str(),
+    								task.subject_quality->length());
 
-						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
-									qual->c_str(),
-									qual->length());
-						++batch.copiedCandidates;
-					}
+    					for(int i = 0; i < my_num_indices; ++i){
+    						const int candidate_index = my_indices[i];
+    						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
+    						const std::string* qual = task.candidate_qualities[local_candidate_index];
 
-					++batch.copiedTasks;
-				}
+    						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
+    									qual->c_str(),
+    									qual->length());
+    						++batch.copiedCandidates;
+    					}
 
-				//gather_quality_scores_of_next_task(batch, dataArrays);
+    					++batch.copiedTasks;
+    				}
 
-				//if batch is fully copied, transfer to gpu
-				if(batch.copiedTasks == int(batch.tasks.size())){
-					return BatchState::TransferQualities;
-				}else{
-					return BatchState::CopyQualities;
-				}
+    				//gather_quality_scores_of_next_task(batch, dataArrays);
 
+    				//if batch is fully copied, transfer to gpu
+    				if(batch.copiedTasks == int(batch.tasks.size())){
+    					return BatchState::TransferQualities;
+    				}else{
+    					return BatchState::CopyQualities;
+    				}
+                }
 			}else{
 				return BatchState::StartCorrection;
 			}
