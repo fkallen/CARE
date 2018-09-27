@@ -2155,7 +2155,7 @@ void call_msa_correct_subject_kernel_async(
                             const int* __restrict__ d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* __restrict__ d_num_indices,
                             bool canUseQualityScores,
                             float desiredAlignmentMaxErrorRate,
 							int maximum_sequence_length,
@@ -2186,6 +2186,7 @@ void call_msa_correct_subject_kernel_async(
 		char* const sharedSequence = (char*)(sharedWeights + maximum_sequence_length);
 
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+		const int n_indices = *d_num_indices;
 
         //copy each subject into the top row of its multiple sequence alignment
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
@@ -2350,7 +2351,7 @@ void call_msa_correct_subject_kernel_async(
                             const int* d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* d_num_indices,
                             bool canUseQualityScores,
                             float desiredAlignmentMaxErrorRate,
 							int maximum_sequence_length,
@@ -2365,7 +2366,8 @@ void call_msa_correct_subject_kernel_async(
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
 
             dim3 block(128, 1, 1);
-            dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
+            //dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
+			dim3 grid(n_queries, 1, 1);
             //dim3 grid(1,1,1);
 
 			//dim3 block(1, 1, 1);
@@ -2392,7 +2394,7 @@ void call_msa_correct_subject_kernel_async(
                                                             d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
-                                                            n_indices,
+                                                            d_num_indices,
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
 															maximum_sequence_length,
@@ -2429,7 +2431,7 @@ void call_msa_correct_subject_kernel_async(
                             const int* __restrict__ d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* __restrict__ d_num_indices,
                             bool canUseQualityScores,
                             float desiredAlignmentMaxErrorRate,
 							int maximum_sequence_length,
@@ -2460,6 +2462,7 @@ void call_msa_correct_subject_kernel_async(
 		char* const sharedSequence = (char*)(sharedWeights + maximum_sequence_length);
 
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+		const int n_indices = *d_num_indices;
 
         //copy each subject into the top row of its multiple sequence alignment
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
@@ -2636,7 +2639,7 @@ void call_msa_correct_subject_kernel_async(
                             const int* d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* d_num_indices,
                             bool canUseQualityScores,
                             float desiredAlignmentMaxErrorRate,
 							int maximum_sequence_length,
@@ -2651,7 +2654,8 @@ void call_msa_correct_subject_kernel_async(
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
 
             dim3 block(128, 1, 1);
-            dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
+            //dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
+			dim3 grid(n_queries, 1, 1);
             //dim3 grid(1,1,1);
 
 			//dim3 block(1, 1, 1);
@@ -2680,7 +2684,7 @@ void call_msa_correct_subject_kernel_async(
                                                             d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
-                                                            n_indices,
+                                                            d_num_indices,
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
 															maximum_sequence_length,
