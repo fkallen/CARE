@@ -1052,46 +1052,46 @@ struct BatchGenerator{
             if(batch.copiedTasks < int(batch.tasks.size())){
                 const auto& task = batch.tasks[batch.copiedTasks];
                 auto& arrays = dataArrays;
-				
+
 				if(transFuncData.useGpuReadStorage){
 					//copy read Ids
 					arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
 					std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
-					
+
 					//copy subject length
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
 					batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
                                                                 batch.maxSubjectLength);
-					
+
 					//copy candidate lengths
 					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
 						arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
-						
+
 						batch.maxQueryLength = std::max(int(candidate_sequence->length()),
 																	batch.maxQueryLength);
 
 						++batch.copiedCandidates;
 					}
-					
+
 					//update prefix sum
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 										+ int(task.candidate_read_ids.size());
 
 					++batch.copiedTasks;
-				
+
 				}else{
 					//copy subject data
 					std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
 								task.subject_sequence->begin(),
 								task.subject_sequence->getNumBytes());
-					
+
 					//copy subject length
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
 					batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
 																	batch.maxSubjectLength);
 
-					
+
 					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
 
 						//copy candidate data
@@ -1113,7 +1113,7 @@ struct BatchGenerator{
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 										+ int(task.candidate_read_ids.size());
 
-					++batch.copiedTasks;					
+					++batch.copiedTasks;
 				}
 
 
@@ -2000,6 +2000,7 @@ struct BatchGenerator{
             GPUReadStorage_t gpuReadStorage;
             GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
                                                                                     Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+                                                                                    fileProperties.maxSequenceLength,
                                                                                     0.8f,
                                                                                     threadOpts.deviceId);
 
@@ -2008,10 +2009,11 @@ struct BatchGenerator{
                 gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
 																bestGPUReadStorageType,
                                                                 Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+                                                                fileProperties.maxSequenceLength,
                                                                 threadOpts.deviceId);
-				
+
 				canUseGPUReadStorage = true;
-                std::cout << "Using gpu read storage" << std::endl;
+                std::cout << "Using gpu read storage, type " << GPUReadStorage_t::nameOf(bestGPUReadStorageType) << std::endl;
             }
 
 
