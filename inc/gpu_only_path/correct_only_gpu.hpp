@@ -1444,7 +1444,7 @@ struct BatchGenerator{
 
 			if(transFuncData.useQualityScores){
 
-                if(transFuncData.useGpuReadStorage || transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
+                if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
                     //we don't need to copy any quality strings. they are already present in the gpu read storage
                     return BatchState::StartCorrection;
                 }else{
