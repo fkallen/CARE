@@ -2365,9 +2365,39 @@ void call_msa_correct_subject_kernel_async(
 
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
 
-            dim3 block(128, 1, 1);
+			const int blocksize = 128;
+
+            int max_blocks_per_SM = 1;
+
+            int deviceId;
+            cudaGetDevice(&deviceId); CUERR;
+
+            int SMs;
+            cudaDeviceGetAttribute(&SMs, cudaDevAttrMultiProcessorCount, deviceId); CUERR;
+
+            /*
+            #define getsms(blocksize) {\
+                                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
+                                                                                    msa_add_sequences_kernel<ReadId_t, Accessor, RevCompl>, \
+                                                                                    blocksize, smem); CUERR;}
+
+            */
+ 
+            #define getsms(blocksize) {max_blocks_per_SM = 12;}
+
+
+            getsms(blocksize);
+
+            //d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
+            const int gridsize = std::min(n_queries, max_blocks_per_SM * SMs);
+
+            dim3 block(blocksize, 1, 1);
+            dim3 grid(gridsize, 1, 1);
+
+
+            //dim3 block(128, 1, 1);
             //dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
-			dim3 grid(n_queries, 1, 1);
+			//dim3 grid(n_queries, 1, 1);
             //dim3 grid(1,1,1);
 
 			//dim3 block(1, 1, 1);
@@ -2652,10 +2682,40 @@ void call_msa_correct_subject_kernel_async(
                             cudaStream_t stream){
 
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+			
+			const int blocksize = 128;
 
-            dim3 block(128, 1, 1);
+            int max_blocks_per_SM = 1;
+
+            int deviceId;
+            cudaGetDevice(&deviceId); CUERR;
+
+            int SMs;
+            cudaDeviceGetAttribute(&SMs, cudaDevAttrMultiProcessorCount, deviceId); CUERR;
+
+            /*
+            #define getsms(blocksize) {\
+                                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
+                                                                                    msa_add_sequences_kernel_rs<ReadId_t, Accessor, RevCompl>, \
+                                                                                    blocksize, smem); CUERR;}
+
+            */
+ 
+            #define getsms(blocksize) {max_blocks_per_SM = 12;}
+
+
+            getsms(blocksize);
+
+            //d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
+            const int gridsize = std::min(n_queries, max_blocks_per_SM * SMs);
+
+            dim3 block(blocksize, 1, 1);
+            dim3 grid(gridsize, 1, 1);
+
+
+            //dim3 block(128, 1, 1);
             //dim3 grid(n_indices, 1, 1); // one block per candidate which needs to be added to msa
-			dim3 grid(n_queries, 1, 1);
+			//dim3 grid(n_queries, 1, 1);
             //dim3 grid(1,1,1);
 
 			//dim3 block(1, 1, 1);
