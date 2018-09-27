@@ -812,7 +812,7 @@ struct BatchGenerator{
 
 		BatchGenerator<ReadId_t> mybatchgen;
 		int num_ids_per_add_tasks = 30;
-		int minimum_candidates_per_batch = 50000;
+		int minimum_candidates_per_batch = 20000;
 
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
