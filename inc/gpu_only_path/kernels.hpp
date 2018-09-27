@@ -2814,7 +2814,7 @@ void call_msa_correct_subject_kernel_async(
         };
 
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-		const int n_indices = *d_num_indices;
+		//const int n_indices = *d_num_indices;
 
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
             const float* const my_support = d_support + msa_weights_pitch_floats * subjectIndex;
@@ -2955,7 +2955,7 @@ void call_msa_correct_subject_kernel_async(
 
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 		const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
-		const int n_indices = *d_num_indices;
+		//const int n_indices = *d_num_indices;
 
         for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x){
 			const int subjectIndex = d_high_quality_subject_indices[index];

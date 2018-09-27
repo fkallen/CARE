@@ -200,7 +200,7 @@ namespace gpu{
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
         const int localBlockId = blockIdx.x % blocks_per_msa;
-		const int n_indices = *d_num_indices;
+		//const int n_indices = *d_num_indices;
 
         //process multiple sequence alignment of each subject
         //for each column in msa, find consensus and support
