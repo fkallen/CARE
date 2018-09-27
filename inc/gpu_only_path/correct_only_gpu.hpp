@@ -1641,7 +1641,7 @@ struct BatchGenerator{
 								dataArrays.d_subject_is_corrected,
 								dataArrays.n_subjects,
 								dataArrays.n_queries,
-								*dataArrays.h_num_indices,
+								dataArrays.d_num_indices,
 								dataArrays.sequence_pitch,
 								dataArrays.msa_pitch,
 								dataArrays.msa_weights_pitch,

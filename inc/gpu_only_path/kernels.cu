@@ -362,7 +362,7 @@ namespace gpu{
 							bool* d_subject_is_corrected,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* d_num_indices,
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
@@ -394,7 +394,7 @@ namespace gpu{
                                     d_subject_is_corrected, \
                                     n_subjects, \
                                     n_queries, \
-                                    n_indices, \
+                                    d_num_indices, \
                                     sequence_pitch, \
                                     msa_pitch, \
                                     msa_weights_pitch, \
