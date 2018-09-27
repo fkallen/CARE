@@ -60,7 +60,7 @@ namespace gpu{
                             const int* d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* d_num_indices,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
                             int msa_max_column_count,

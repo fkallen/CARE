@@ -1619,7 +1619,7 @@ struct BatchGenerator{
 								dataArrays.d_indices_per_subject_prefixsum,
 								dataArrays.n_subjects,
 								dataArrays.n_queries,
-								*dataArrays.h_num_indices,
+								dataArrays.d_num_indices,
 								dataArrays.msa_pitch,
 								dataArrays.msa_weights_pitch,
 								3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,

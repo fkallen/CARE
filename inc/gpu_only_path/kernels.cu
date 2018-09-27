@@ -191,7 +191,7 @@ namespace gpu{
                             const int* __restrict__ d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* __restrict__ d_num_indices,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
                             int msa_max_column_count,
@@ -200,6 +200,7 @@ namespace gpu{
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
         const int localBlockId = blockIdx.x % blocks_per_msa;
+		const int n_indices = *d_num_indices;
 
         //process multiple sequence alignment of each subject
         //for each column in msa, find consensus and support
@@ -315,7 +316,7 @@ namespace gpu{
                             const int* d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int n_queries,
-                            int n_indices,
+                            const int* d_num_indices,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
                             int msa_max_column_count,
@@ -340,7 +341,7 @@ namespace gpu{
                                                             d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
-                                                            n_indices,
+                                                            d_num_indices,
                                                             msa_pitch,
                                                             msa_weights_pitch,
                                                             msa_max_column_count,
