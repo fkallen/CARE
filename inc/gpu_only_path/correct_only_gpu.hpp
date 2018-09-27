@@ -1452,18 +1452,21 @@ struct BatchGenerator{
     				assert(batch.copiedTasks <= int(batch.tasks.size()));
 
     				if(batch.copiedTasks < int(batch.tasks.size())){
+						
+						const auto& task = batch.tasks[batch.copiedTasks];
+    					auto& arrays = dataArrays;
+
+    					//copy subject quality
+    					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
+    								task.subject_quality->c_str(),
+    								task.subject_quality->length());
+
+#if 1					
+						//copy qualities of candidates identified by indices
 
     					const int my_num_indices = dataArrays.h_indices_per_subject[batch.copiedTasks];
     					const int* my_indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[batch.copiedTasks];
     					const int candidatesOfPreviousTasks = dataArrays.h_candidates_per_subject_prefixsum[batch.copiedTasks];
-
-    					const auto& task = batch.tasks[batch.copiedTasks];
-    					auto& arrays = dataArrays;
-
-    					//fill subject
-    					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
-    								task.subject_quality->c_str(),
-    								task.subject_quality->length());
 
     					for(int i = 0; i < my_num_indices; ++i){
     						const int candidate_index = my_indices[i];
@@ -1477,6 +1480,21 @@ struct BatchGenerator{
     					}
 
     					++batch.copiedTasks;
+#else
+                        //copy qualities of all candidates
+
+                        for(const std::string* qual : task.candidate_qualities){
+
+                            std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
+                                        qual->c_str(),
+                                        qual->length());
+
+                            ++batch.copiedCandidates;
+                        }
+
+                        ++batch.copiedTasks;
+
+#endif						
     				}
 
     				//gather_quality_scores_of_next_task(batch, dataArrays);
