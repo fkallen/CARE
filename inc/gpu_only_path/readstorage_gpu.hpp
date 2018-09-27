@@ -72,7 +72,7 @@ struct GPUReadStorage{
         std::size_t totalMem;
         cudaMemGetInfo(&freeMem, &totalMem); CUERR;
 
-        std::cout << "GPUReadStorage: required " << requiredSequenceMem << ", free " << freeMem << ", total " << totalMem << std::endl;
+        std::cout << "GPUReadStorage: requiredSequenceMem " << requiredSequenceMem << ", requiredQualityMem " << requiredQualityMem << ", free " << freeMem << ", total " << totalMem << std::endl;
 
         GPUReadStorageType result = GPUReadStorageType::None;
         if(requiredSequenceMem < maxPercentOfTotalMem * totalMem && requiredSequenceMem < freeMem){
