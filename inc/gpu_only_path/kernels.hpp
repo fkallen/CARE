@@ -2163,6 +2163,7 @@ void call_msa_correct_subject_kernel_async(
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
+							bool qualitiesArePacked,
                             Accessor get_as_nucleotide,
                             RevCompl make_unpacked_reverse_complement_inplace){
 
@@ -2245,8 +2246,9 @@ void call_msa_correct_subject_kernel_async(
             const char* const query = d_candidate_sequences_data + queryIndex * encoded_sequence_pitch;
 
             //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
-            const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
-            //const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
+            const char* const queryQualityScore = qualitiesArePacked ? 
+													d_candidate_qualities + index * quality_pitch :
+													d_candidate_qualities + queryIndex * quality_pitch;
 
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
             const int query_alignment_nops = d_alignment_nOps[queryIndex];
@@ -2359,6 +2361,7 @@ void call_msa_correct_subject_kernel_async(
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
+							bool qualitiesArePacked,
                             Accessor get_as_nucleotide,
                             RevCompl make_unpacked_reverse_complement_inplace,
                             cudaStream_t stream){
@@ -2432,6 +2435,7 @@ void call_msa_correct_subject_kernel_async(
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
+															qualitiesArePacked,
 															get_as_nucleotide,
                                                             make_unpacked_reverse_complement_inplace); CUERR;
     }
@@ -2469,6 +2473,7 @@ void call_msa_correct_subject_kernel_async(
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
+							bool qualitiesArePacked,
                             Accessor get_as_nucleotide,
                             RevCompl make_unpacked_reverse_complement_inplace){
 
@@ -2559,11 +2564,9 @@ void call_msa_correct_subject_kernel_async(
             //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
             //const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
             const char* const queryQualityScore = d_quality_data == nullptr ?
-                                                    d_candidate_qualities + index * quality_pitch :
+                                                    d_candidate_qualities + (qualitiesArePacked ? index : queryIndex) * quality_pitch :
                                                     d_quality_data + candidateReadId * maximum_sequence_length;
                                                     
-            //const char* const queryQualityScore = d_candidate_qualities + queryIndex * quality_pitch;
-
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
             const int query_alignment_nops = d_alignment_nOps[queryIndex];
 
@@ -2677,6 +2680,7 @@ void call_msa_correct_subject_kernel_async(
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
+							bool qualitiesArePacked,
                             Accessor get_as_nucleotide,
                             RevCompl make_unpacked_reverse_complement_inplace,
                             cudaStream_t stream){
@@ -2752,6 +2756,7 @@ void call_msa_correct_subject_kernel_async(
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
+															qualitiesArePacked,
 															get_as_nucleotide,
                                                             make_unpacked_reverse_complement_inplace); CUERR;
     }
