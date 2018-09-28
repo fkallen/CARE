@@ -722,6 +722,16 @@ struct BatchGenerator{
 			DataArrays<Sequence_t, ReadId_t>* dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>* streams;
 			std::array<cudaEvent_t, nEventsPerBatch>* events;
+			
+			void reset(){
+				tasks.clear();
+				maxSubjectLength = 0;
+				maxQueryLength = 0;
+				initialNumberOfCandidates = 0;
+				state = BatchState::Unprepared;
+				copiedTasks = 0;
+				copiedCandidates = 0;
+			}
 		};
 
 		struct AdvanceResult{
@@ -930,7 +940,7 @@ struct BatchGenerator{
 			
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			//while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
 			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
@@ -1058,8 +1068,8 @@ struct BatchGenerator{
 			assert(batch.copiedTasks <= int(batch.tasks.size()));
 			
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
@@ -1157,7 +1167,7 @@ struct BatchGenerator{
 			
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
 							dataArrays.alignment_transfer_data_host,
@@ -1381,8 +1391,8 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WaitForAlignment);
 			
-			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			cudaError_t querystatus = cudaEventQuery(events[alignments_finished_event_index]); CUERR;
@@ -1427,8 +1437,8 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WaitForIndices);
 			
-			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			cudaError_t querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
@@ -1461,8 +1471,8 @@ struct BatchGenerator{
 			assert(batch.state == BatchState::CopyQualities);
 			
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			if(transFuncData.useQualityScores){
 
@@ -1569,8 +1579,8 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WaitForQualities);
 			
-			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			cudaError_t querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
@@ -1764,8 +1774,8 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WaitForCorrection);
 			
-			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			cudaError_t querystatus = cudaEventQuery(events[correction_finished_event_index]); CUERR;
@@ -1826,7 +1836,7 @@ struct BatchGenerator{
 			assert(batch.state == BatchState::WaitForResults);
 			
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			cudaError_t querystatus = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
@@ -1854,7 +1864,7 @@ struct BatchGenerator{
 			assert(batch.state == BatchState::UnpackResults);
 			
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 			
 			assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
@@ -1908,9 +1918,9 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WriteResults);
 			
-			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			//write result to file
 			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
@@ -2023,7 +2033,7 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 2;
+    		constexpr int nParallelBatches = 4;
 			constexpr int sideBatchStepsPerWaitIter = 1;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
@@ -2071,15 +2081,7 @@ struct BatchGenerator{
 				freeStreamsQueue.push(&streamArray);
 			for(auto& eventArray : cudaevents)
 				freeEventsQueue.push(&eventArray);
-
-            auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){
-                if(nParallelBatches > 1)
-                    return currentBatchIndex == 0 ? 1 : 0;
-                else
-                    assert(false);
-                    return currentBatchIndex;
-            };
-
+			
             GPUReadStorage_t gpuReadStorage;
             GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
                                                                                     Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
@@ -2140,6 +2142,209 @@ struct BatchGenerator{
 				ReadId_t index = readId % transFuncData.nLocksForProcessedFlags;
 				transFuncData.locksForProcessedFlags[index].unlock();
 			};
+			
+			
+			
+// 1 == new			
+#if 1			
+			
+			std::array<Batch, nParallelBatches> batches;
+			
+			for(int i = 0; i < nParallelBatches; ++i){
+				batches[i].dataArrays = &dataArrays[i];
+				batches[i].streams = &streams[i];
+				batches[i].events = &cudaevents[i];
+			}
+			
+			auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){
+                return (currentBatchIndex + 1) % nParallelBatches;
+            };
+
+            //int num_finished_batches = 0;
+
+            int stacksize = 0;
+			float batchsizefactor = 1.0f;
+
+    		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
+			while(!stopAndAbort && 
+					!(std::all_of(batches.begin(), batches.end(), [](const auto& batch){return batch.state == BatchState::Finished;}) && mybatchgen.empty())){
+
+				if(stacksize != 0)
+						assert(stacksize == 0);
+
+				Batch& mainBatch = batches[0];
+
+				transFuncData.minimum_candidates_per_batch = int(minimum_candidates_per_batch * batchsizefactor);
+
+
+				AdvanceResult mainBatchAdvanceResult;
+				bool popMain = false;
+
+
+
+				assert(popMain == false);
+				push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
+				++stacksize;
+				popMain = true;
+
+                while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)){
+
+                    mainBatchAdvanceResult = advance_one_step(mainBatch,
+                                                            true, //can block
+                                                            true, //can launch kernels
+															transFuncData);
+
+					if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)){
+						pop_range("main inner");
+						popMain = false;
+						--stacksize;
+
+						assert(popMain == false);
+						push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
+						++stacksize;
+						popMain = true;
+					}
+
+
+#if 1
+					IsWaitingResult isWaitingResult = isWaiting(mainBatch.state);
+                    if(isWaitingResult.isWaiting){
+                        /*
+                            Prepare next batch while waiting for the mainBatch gpu work to finish
+                        */
+                        if(nParallelBatches > 1){
+							
+							// 0 <= sideBatchIndex < nParallelBatches - 1
+							// index in batches array is sideBatchIndex + 1;
+							int localSideBatchIndex = 0;
+							const int nSideBatches = nParallelBatches - 1;
+							
+							bool popSide = false;		
+							bool firstSideIter = true;
+							
+							AdvanceResult sideBatchAdvanceResult;
+							cudaError_t eventquerystatus = cudaSuccess;
+							cudaEvent_t eventToWaitFor = (*mainBatch.events)[isWaitingResult.eventIndexToWaitFor];
+							
+							while((eventquerystatus = cudaEventQuery(eventToWaitFor)) == cudaErrorNotReady){
+								const int globalBatchIndex = localSideBatchIndex + 1;
+								
+								Batch& sideBatch = batches[globalBatchIndex];
+
+								if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted){
+									continue;
+								}
+								
+								for(int i = 0; i < sideBatchStepsPerWaitIter; ++i){
+									if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted){
+										break;
+									}
+
+									if(firstSideIter){
+										assert(popSide == false);
+										push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
+										++stacksize;
+										popSide = true;
+									}else{
+										if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
+											assert(popSide == false);
+											push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
+											++stacksize;
+											popSide = true;
+										}
+									}
+
+									sideBatchAdvanceResult = advance_one_step(sideBatch,
+																			false, //must not block
+																			true, //can launch kernels
+																			transFuncData);
+
+									if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
+										pop_range("side inner");
+										popSide = false;
+										--stacksize;
+									}
+									
+									
+
+									firstSideIter = false;
+								}
+								
+								IsWaitingResult isWaitingResultSideBatch = isWaiting(sideBatch.state);
+								if(isWaitingResultSideBatch.isWaiting){
+									//current side batch is waiting, move to next side batch
+									localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
+									
+									if(popSide){
+										pop_range("switch sidebatch");
+										popSide = false;
+										--stacksize;
+									}
+									
+									firstSideIter = true;
+									sideBatchAdvanceResult = AdvanceResult{};
+								}
+							}
+							
+							if(popSide){
+								pop_range("side outer");
+								popSide = false;
+								--stacksize;
+							}
+
+							assert(eventquerystatus == cudaSuccess);
+                        }
+                    }
+#endif
+
+
+                }
+
+                if(popMain){
+					pop_range("main outer");
+					popMain = false;
+					--stacksize;
+				}
+
+				assert(stacksize == 0);
+
+				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
+				
+				if(!mybatchgen.empty()){
+					//there are reads left to correct, so this batch can be reused again
+					mainBatch.reset();
+				}else{
+					mainBatch.state = BatchState::Finished;
+				}
+
+				nProcessedReads = mybatchgen.currentId - mybatchgen.firstId;
+				
+				//rotate left to position next batch index 0
+				std::rotate(batches.begin(), batches.begin()+1, batches.end());
+
+
+
+
+
+
+//#ifdef CARE_GPU_DEBUG
+				//stopAndAbort = true; //remove
+//#endif
+
+
+    		} // end batch processing
+    		
+    		
+#else
+
+			
+			auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){
+                if(nParallelBatches > 1)
+                    return currentBatchIndex == 0 ? 1 : 0;
+                else
+                    assert(false);
+                    return currentBatchIndex;
+            };
 
             int batchIndex = 0; // the main stream we are working on in the current loop iteration
 
@@ -2673,6 +2878,10 @@ struct BatchGenerator{
 
 
     		} // end batch processing
+
+
+
+#endif
 
             outputstream.flush();
             featurestream.flush();
