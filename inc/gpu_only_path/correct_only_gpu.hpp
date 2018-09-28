@@ -482,6 +482,7 @@ struct BatchGenerator{
                             size_t quality_pitch,
                             size_t msa_row_pitch,
                             size_t msa_weights_row_pitch,
+							bool qualitiesArePacked,
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
                             cudaStream_t stream){
@@ -527,6 +528,7 @@ struct BatchGenerator{
                                 quality_pitch,
                                 msa_row_pitch,
                                 msa_weights_row_pitch,
+								qualitiesArePacked,
                                 nucleotide_accessor,
                                 make_unpacked_reverse_complement_inplace,
                                 stream);
@@ -564,6 +566,7 @@ struct BatchGenerator{
                                 quality_pitch,
                                 msa_row_pitch,
                                 msa_weights_row_pitch,
+								qualitiesArePacked,
                                 nucleotide_accessor,
                                 make_unpacked_reverse_complement_inplace,
                                 stream);
@@ -651,6 +654,11 @@ struct BatchGenerator{
     };
 
 #if 1
+	
+//#define CARE_GPU_COPY_ONLY_NECESSARY_QSCORES	
+	
+	
+	
     template<class minhasher_t,
     		 class readStorage_t,
 			 class batchgenerator_t>
@@ -1338,6 +1346,7 @@ struct BatchGenerator{
             assert(cudaSuccess == cudaEventQuery(events[alignments_finished_event_index])); CUERR;
 
             cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
+		
 
             //Determine multiple sequence alignment properties
             call_msa_init_kernel_async(
@@ -1352,8 +1361,12 @@ struct BatchGenerator{
                             dataArrays.n_subjects,
                             dataArrays.n_queries,
                             streams[primary_stream_index]);
-
+			
+#ifdef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES
 			return BatchState::WaitForAlignment;
+#else			
+			return BatchState::CopyQualities;
+#endif			
 		}
 
 		static BatchState state_waitforalignment_func(Batch& batch,
@@ -1415,7 +1428,7 @@ struct BatchGenerator{
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
 
 			if(querystatus == cudaSuccess){
-				if(*dataArrays.h_num_indices == 0){
+				/*if(*dataArrays.h_num_indices == 0){
                         if(canBlock){
 							//wait for outstanding work before reusing buffers, i.e. resizing
 							cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
@@ -1424,9 +1437,9 @@ struct BatchGenerator{
 						}else{
 							return BatchState::WaitForIndices;
 						}
-				}else{
+				}else{*/
 					return BatchState::CopyQualities;
-				}
+				//}
 			}else{
 				return BatchState::WaitForIndices;
 			}
@@ -1461,7 +1474,7 @@ struct BatchGenerator{
     								task.subject_quality->c_str(),
     								task.subject_quality->length());
 
-#if 1					
+#ifdef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES					
 						//copy qualities of candidates identified by indices
 
     					const int my_num_indices = dataArrays.h_indices_per_subject[batch.copiedTasks];
@@ -1617,6 +1630,11 @@ struct BatchGenerator{
         								dataArrays.quality_pitch,
         								dataArrays.msa_pitch,
         								dataArrays.msa_weights_pitch,
+#ifdef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES										
+										true,
+#else
+										false,
+#endif										
                                         transFuncData.gpuReadStorage,
                                         transFuncData.useGpuReadStorage,
                                         streams[primary_stream_index]);
@@ -1764,7 +1782,20 @@ struct BatchGenerator{
 							dataArrays.correction_results_transfer_data_usable_size,
 							D2H,
 							streams[secondary_stream_index]); CUERR;
+							
+#ifndef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES
+	
+			cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+							dataArrays.indices_transfer_data_device,
+							dataArrays.indices_transfer_data_usable_size,
+							D2H,
+							streams[secondary_stream_index]); CUERR;
 
+			assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
+
+			cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+#endif
+			
 			assert(cudaSuccess == cudaEventQuery(events[result_transfer_finished_event_index])); CUERR;
 
 			cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
@@ -1788,7 +1819,13 @@ struct BatchGenerator{
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
 
 			if(querystatus == cudaSuccess){
-				return BatchState::UnpackResults;
+#ifndef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES				
+				if(*dataArrays.h_num_indices == 0)
+					return BatchState::Aborted;
+				else
+#endif					
+					return BatchState::UnpackResults;
+					
 			}else{
 				return BatchState::WaitForResults;
 			}
@@ -1996,9 +2033,9 @@ struct BatchGenerator{
             for(int i = 0; i < nParallelBatches; i++){
                 dataArrays.emplace_back(threadOpts.deviceId);
 
-				streams[i][0] = computeStream;
+				//streams[i][0] = computeStream;
 
-                for(int j = 1; j < nStreamsPerBatch; ++j){
+                for(int j = 0; j < nStreamsPerBatch; ++j){
                     cudaStreamCreate(&streams[i][j]); CUERR;
                 }
 
@@ -2032,8 +2069,10 @@ struct BatchGenerator{
 
 			bool canUseGPUReadStorage = false;
             if(bestGPUReadStorageType != GPUReadStorageType::None){
+				//bestGPUReadStorageType = GPUReadStorageType::Sequences;
+				
                 gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
-																bestGPUReadStorageType,
+																bestGPUReadStorageType,																
                                                                 Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
                                                                 fileProperties.maxSequenceLength,
                                                                 threadOpts.deviceId);
@@ -2201,7 +2240,7 @@ struct BatchGenerator{
 																				cudaevents[nextBatchId],
 																				false, //must not block
 																				//mainBatch.state == BatchState::WaitForCorrection,
-																				false, //cannot launch kernels
+																				true, //can launch kernels
 																				transFuncData);
 
 										/*if((sideBatchAdvanceResult.noProgressBlocking || sideBatchAdvanceResult.noProgressLaunching) && batchQueue.size() < 2){
@@ -2222,6 +2261,10 @@ struct BatchGenerator{
 											pop_range("side inner");
 											popSide = false;
 											--stacksize;
+										}
+										
+										if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted){
+											sideBatch = Batch{};
 										}
 
 										firstSideIter = false;
