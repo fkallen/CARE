@@ -655,7 +655,7 @@ struct BatchGenerator{
 
 #if 1
 	
-//#define CARE_GPU_COPY_ONLY_NECESSARY_QSCORES	
+#define CARE_GPU_COPY_ONLY_NECESSARY_QSCORES	
 	
 	
 	
@@ -1361,7 +1361,20 @@ struct BatchGenerator{
             assert(cudaSuccess == cudaEventQuery(events[alignments_finished_event_index])); CUERR;
 
             cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-		
+			
+#ifdef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES
+			cudaStreamWaitEvent(streams[secondary_stream_index], events[alignments_finished_event_index], 0); CUERR;
+			
+			cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+							dataArrays.indices_transfer_data_device,
+							dataArrays.indices_transfer_data_usable_size,
+							D2H,
+							streams[secondary_stream_index]); CUERR;
+
+			assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
+
+			cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+#endif			
 
             //Determine multiple sequence alignment properties
             call_msa_init_kernel_async(
@@ -1378,7 +1391,8 @@ struct BatchGenerator{
                             streams[primary_stream_index]);
 			
 #ifdef CARE_GPU_COPY_ONLY_NECESSARY_QSCORES
-			return BatchState::WaitForAlignment;
+			//return BatchState::WaitForAlignment;
+			return BatchState::WaitForIndices;
 #else			
 			return BatchState::CopyQualities;
 #endif			
@@ -1569,7 +1583,8 @@ struct BatchGenerator{
 			batch.copiedTasks = 0;
 			batch.copiedCandidates = 0;
 
-			return BatchState::WaitForQualities;
+			//return BatchState::WaitForQualities;
+			return BatchState::StartCorrection;
 		}
 
 		static BatchState state_waitforqualities_func(Batch& batch,
@@ -1583,7 +1598,7 @@ struct BatchGenerator{
 			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-			cudaError_t querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+			cudaError_t querystatus = cudaEventQuery(events[quality_transfer_finished_event_index]); CUERR;
 
 			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
 
@@ -1609,6 +1624,8 @@ struct BatchGenerator{
 				return BatchState::StartCorrection;
 			}else{
 
+				cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0);
+				
 				auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
 					return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
 				};
@@ -1835,7 +1852,7 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WaitForResults);
 			
-			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2091,7 +2108,7 @@ struct BatchGenerator{
 
 			bool canUseGPUReadStorage = false;
             if(bestGPUReadStorageType != GPUReadStorageType::None){
-				//bestGPUReadStorageType = GPUReadStorageType::Sequences;
+				bestGPUReadStorageType = GPUReadStorageType::Sequences;
 				
                 gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
 																bestGPUReadStorageType,																
