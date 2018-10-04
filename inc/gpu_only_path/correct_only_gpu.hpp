@@ -304,7 +304,7 @@ struct BatchGenerator{
                 return Sequence2Bit::make_reverse_complement_inplace(sequence, sequencelength);
             };
 
-            if(!useGpuReadStorage){
+            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
     			call_shd_with_revcompl_kernel_async(d_alignment_scores,
     						d_alignment_overlaps,
     						d_alignment_shifts,
@@ -391,7 +391,7 @@ struct BatchGenerator{
                 return Sequence2BitHiLo::getNumBytes(sequencelength);
             };
 
-            if(!useGpuReadStorage){
+            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
 
     			call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(d_alignment_scores,
     						d_alignment_overlaps,
@@ -498,7 +498,7 @@ struct BatchGenerator{
                 return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
             };
 
-            if(!useGpuReadStorage){
+            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
 
                 call_msa_add_sequences_kernel_async(
                                 d_multiple_sequence_alignments,
@@ -533,9 +533,12 @@ struct BatchGenerator{
                                 make_unpacked_reverse_complement_inplace,
                                 stream);
             }else{
-                const char* d_quality_data = gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities ?
-                                                 gpuReadStorage->d_quality_data :
-                                                 nullptr;
+                //const char* d_quality_data = gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities ?
+                //                                 gpuReadStorage->d_quality_data :
+                //                                 nullptr;
+				const char* d_quality_data = gpuReadStorage->hasQualities() ?
+												gpuReadStorage->d_quality_data :
+												nullptr;
                 call_msa_add_sequences_kernel_rs_async(
                                 d_multiple_sequence_alignments,
                                 d_multiple_sequence_alignment_weights,
@@ -1078,7 +1081,7 @@ struct BatchGenerator{
                 const auto& task = batch.tasks[batch.copiedTasks];
                 auto& arrays = dataArrays;
 
-				if(transFuncData.useGpuReadStorage){
+				if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()){
 					//copy read Ids
 					arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
 					std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
@@ -1490,7 +1493,8 @@ struct BatchGenerator{
 
 			if(transFuncData.useQualityScores){
 
-                if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
+                //if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
+				if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasQualities()){
                     //we don't need to copy any quality strings. they are already present in the gpu read storage
                     return BatchState::StartCorrection;
                 }else{
@@ -1624,7 +1628,7 @@ struct BatchGenerator{
 				return BatchState::StartCorrection;
 			}else{
 
-				cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0);
+				cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
 				
 				auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
 					return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
@@ -1852,7 +1856,7 @@ struct BatchGenerator{
 
 			assert(batch.state == BatchState::WaitForResults);
 			
-			//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2100,15 +2104,16 @@ struct BatchGenerator{
 				freeEventsQueue.push(&eventArray);
 			
             GPUReadStorage_t gpuReadStorage;
-            GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
+			bool canUseGPUReadStorage = true;
+            /*GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
                                                                                     Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
                                                                                     fileProperties.maxSequenceLength,
                                                                                     0.8f,
                                                                                     threadOpts.deviceId);
 
-			bool canUseGPUReadStorage = false;
+			
             if(bestGPUReadStorageType != GPUReadStorageType::None){
-				bestGPUReadStorageType = GPUReadStorageType::Sequences;
+				//bestGPUReadStorageType = GPUReadStorageType::Sequences;
 				
                 gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
 																bestGPUReadStorageType,																
@@ -2118,7 +2123,17 @@ struct BatchGenerator{
 
 				canUseGPUReadStorage = true;
                 std::cout << "Using gpu read storage, type " << GPUReadStorage_t::nameOf(bestGPUReadStorageType) << std::endl;
-            }
+            }*/
+			
+			gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
+														Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+														fileProperties.maxSequenceLength,
+														0.8f,
+														true,
+														threadOpts.deviceId);
+			
+			std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
+			std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
 
 
 			TransitionFunctionData transFuncData;
