@@ -2666,7 +2666,7 @@ private:
 
 
 
-#if 1
+#if 0
 
 template<class minhasher_t,
 		 class readStorage_t,
@@ -2704,7 +2704,7 @@ void correct(const MinhashOptions& minhashOptions,
 
 //#define DO_PROFILE
 
-#if 1
+#if 0
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else
@@ -2874,12 +2874,11 @@ void correct(const MinhashOptions& minhashOptions,
 #else
 
     constexpr int sleepiterbegin = 1;
-    constexpr int sleepiterend = 2;
+    constexpr int sleepiterend = 3;
 
     int sleepiter = 0;
 
-    std::chrono::duration<double> runtime = std::chrono::seconds(0);
-    std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
+    std::chrono::duration<int> sleepinterval = std::chrono::seconds(2);
 
     while(true){
 
@@ -2996,7 +2995,7 @@ void correct(const MinhashOptions& minhashOptions,
 
 //#define DO_PROFILE
 
-#if 0
+#if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else
@@ -3068,7 +3067,7 @@ void correct(const MinhashOptions& minhashOptions,
         tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
     }
 
-    int nGpuThreads = std::min(nCorrectorThreads, 2 * int(deviceIds.size()));
+    int nGpuThreads = std::min(nCorrectorThreads, 1 * int(deviceIds.size()));
 	int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
     std::vector<BatchGenerator<ReadId_t>> cpubatchgenerators(nCpuThreads);
@@ -3079,7 +3078,7 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
-	std::uint64_t ncpuReads = std::uint64_t(props.nReads / 7.0);
+	std::uint64_t ncpuReads = std::uint64_t(props.nReads / 7.0) ;
 	std::uint64_t ngpuReads = props.nReads - ncpuReads;
 	std::uint64_t nReadsPerGPU = SDIV(ngpuReads, nGpuThreads);
 
