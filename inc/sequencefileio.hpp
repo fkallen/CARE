@@ -55,12 +55,22 @@ public:
     std::uint64_t getReadnum() const{
         return readnum;
     }
+    
+    void skipBytes(std::uint64_t nBytes){
+		skipBytes_impl(nBytes);
+	}
+	
+	void skipReads(std::uint64_t nReads){
+		skipReads_impl(nReads);
+	}
 
-protected:
+
     //return false if EOF or if error occured while reading file. true otherwise
     virtual bool getNextRead_impl(Read* read) = 0;
+	virtual void skipBytes_impl(std::uint64_t nBytes) = 0;
+	virtual void skipReads_impl(std::uint64_t nReads) = 0;
 	std::string filename;
-private:
+
 
 
 
@@ -74,10 +84,11 @@ public:
 
 	~FastqReader() override;
 
-protected:
-	bool getNextRead_impl(Read* read) override;
 
-private:
+	bool getNextRead_impl(Read* read) override;
+	void skipBytes_impl(std::uint64_t nBytes) override;
+	void skipReads_impl(std::uint64_t nBytes) override;
+
 	std::ifstream is;
 	std::string stmp;
 };

@@ -979,7 +979,9 @@ private:
 
         struct Batch{
             std::vector<BatchElem_t> batchElems;
+#ifdef __NVCC__			
             cudaStream_t stream;
+#endif			
         };
 
 		isRunning = true;

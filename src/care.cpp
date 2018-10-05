@@ -31,7 +31,7 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
-                  const SequenceFileProperties& props,
+                  SequenceFileProperties& props,
 				  std::uint64_t nReads,
 				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -62,6 +62,13 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 	TIMERSTARTCPU(load_and_build);
     build(fileOptions, runtimeOptions, props, readStorage, minhasher);
 	TIMERSTOPCPU(load_and_build);
+	
+	std::cout << "----------------------------------------" << std::endl;
+    std::cout << "File: " << fileOptions.inputfile << std::endl;
+    std::cout << "Reads: " << props.nReads << std::endl;
+    std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
+    std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
 
     //std::cin >> stmp;
 
@@ -92,7 +99,7 @@ void correctFile(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
-                  const SequenceFileProperties& props,
+                  SequenceFileProperties& props,
 				  std::uint64_t nReads,
 				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -247,6 +254,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
 
     std::cout << "Determining read properties..." << std::endl;
 
+	//Only number of reads is valid.
     SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
     std::cout << "----------------------------------------" << std::endl;
