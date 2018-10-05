@@ -109,10 +109,10 @@ namespace care{
 			class ReadStorage_t>
     void build(const FileOptions& fileOptions,
 			   const RuntimeOptions& runtimeOptions,
+			   const SequenceFileProperties& props,
 			   ReadStorage_t& readStorage,
 			   Minhasher_t& minhasher){
-        SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-
+ 
         minhasher.init(props.nReads);
         readStorage.init(props.nReads);
 
