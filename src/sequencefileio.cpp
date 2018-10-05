@@ -87,7 +87,7 @@ namespace care{
             ;
         }
         if (!is.good())
-			throw std::runtime_error("Skipped too far in file");
+			throw SkipException();
 		
 		bool found = false;		
 		while(!found){
@@ -96,37 +96,37 @@ namespace care{
 			while(!foundPotentialHeader){
 				std::getline(is, stmp);
 				if (!is.good())
-					throw std::runtime_error("Skipped too far in file");
+					throw SkipException();
 				if(stmp[0] == '@')
 					foundPotentialHeader = true;
 			}
 			std::getline(is, stmp);
 			if (!is.good())
-					throw std::runtime_error("Skipped too far in file");
+					throw SkipException();
 			if(stmp[0] == '@'){
 				//two consecutive lines starting with @. second line must be the header. skip sequence, check for +, skip quality
 				std::getline(is, stmp);
 				if (!is.good())
-					throw std::runtime_error("Skipped too far in file");
+					throw SkipException();
 				std::getline(is, stmp);
 				if (!is.good())
-					throw std::runtime_error("Skipped too far in file");
+					throw SkipException();
 				if (stmp[0] == '+') {
 					//found @ in first line and + in third line. skip quality scores and exit
 					std::getline(is, stmp);
 					if (!is.good())
-						throw std::runtime_error("Skipped too far in file");
+						throw SkipException();
 					found = true;
 				}
 			}else{
 				std::getline(is, stmp);
 				if (!is.good())
-					throw std::runtime_error("Skipped too far in file");
+					throw SkipException();
 				if (stmp[0] == '+') {
 					//found @ in first line and + in third line. skip quality scores and exit
 					std::getline(is, stmp);
 					if (!is.good())
-						throw std::runtime_error("Skipped too far in file");
+						throw SkipException();
 					found = true;
 				}
 			}
@@ -139,7 +139,7 @@ namespace care{
 			for(int i = 0; i < 4; i++){
 				is.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 				if (!is.good())
-					throw std::runtime_error("Skipped too far in file");
+					throw SkipException(); //std::runtime_error("Skipped too far in file");
 			}
 			++readnum;
 		}

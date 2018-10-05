@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
-
+#include <exception>
 
 namespace care{
 
@@ -15,6 +15,17 @@ struct SequenceFileProperties{
         std::uint64_t nReads;
         int minSequenceLength;
         int maxSequenceLength;
+};
+
+class SkipException : public std::exception {
+public:
+	SkipException() : std::exception()
+	{
+	}
+	
+	virtual const char* what() const noexcept{
+		return std::exception::what();
+	}
 };
 
 struct Read {
