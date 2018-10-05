@@ -60,7 +60,7 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 
     //std::cin >> stmp;
 	TIMERSTARTCPU(load_and_build);
-    build(fileOptions, runtimeOptions, readStorage, minhasher);
+    build(fileOptions, runtimeOptions, props, readStorage, minhasher);
 	TIMERSTOPCPU(load_and_build);
 
     //std::cin >> stmp;
