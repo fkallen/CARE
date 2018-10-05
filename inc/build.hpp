@@ -193,7 +193,7 @@ namespace care{
         	}
         	
         	SequenceFileProperties props;
-			props.nReads = nReads;
+			props.nReads = reader->getReadnum();
 			props.maxSequenceLength = maxSequenceLength;
 			props.minSequenceLength = minSequenceLength;
 			
@@ -257,9 +257,9 @@ namespace care{
 				}			
 			}
 			
-			std::uint64_t readsPerThread = nReads / nThreads;
+			std::uint64_t readsPerThread = (nReads + nThreads - 1)/ nThreads;
 			using Result_t = std::pair<int,int>;
-			std::vector<Result_t> results(nThreads);
+			std::vector<Result_t> results(nThreads, {std::numeric_limits<int>::max(), 0});
 			std::vector<std::thread> threads;
 			std::vector<std::uint64_t> endings(nThreads);
 			endings[nThreads-1] = nReads;
@@ -363,7 +363,11 @@ namespace care{
 					std::uint64_t firstReadId_incl = readsPerThread * i;
 					std::uint64_t lastReadId_excl = i == nThreads-1 ? nReads : readsPerThread * (i+1);
 					
-					reader->skipReads(firstReadId_incl);
+					try{
+						reader->skipReads(firstReadId_incl);
+					}catch(const SkipException& e){
+						return;
+					}
 					
 					mutex.lock();
 					std::cout << i << " is running. current read num : " << reader->getReadnum() << ", ending : " << lastReadId_excl << std::endl;
@@ -422,6 +426,8 @@ namespace care{
 				
 				if(maxSequenceLength > props.maxSequenceLength)
 					props.maxSequenceLength = maxSequenceLength;
+				
+				props.nReads = readers[i]->getReadnum();
 			}
 		
 			return props;
