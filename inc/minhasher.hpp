@@ -30,6 +30,10 @@
 #include <thrust/copy.h>
 #include <thrust/inner_product.h>
 #include <thrust/sort.h>
+
+#include "thrust_custom_allocators.hpp"
+
+#include <cub/cub.cuh>
 #endif
 
 namespace care{
@@ -256,90 +260,192 @@ namespace care{
 
     				nKeys = unique_end;
                 };
+				
+				
 #ifdef __NVCC__
     		    if(!canUseGpu){
 #endif
     				cpu_transformation();
 #ifdef __NVCC__
                 }else{
+					
+					auto cuda_transformation = [&](bool managed){
+						bool success = false;
+						
+						auto deviceAlloc = [&](void** ptr, std::size_t bytes){
+							return managed ? cudaMallocManaged(ptr, bytes) : cudaMalloc(ptr, bytes);
+						};
+						
+						auto deviceFree = [](void* ptr){
+							return cudaFree(ptr);
+						};
+						
+						Key_t* d_keys = nullptr;
+						Value_t* d_vals = nullptr;
+						Index_t* d_indices = nullptr;
+						//histogram storage
+						Key_t* d_histogram_values = nullptr;
+						Index_t* d_histogram_counts = nullptr;
+						Index_t* d_histogram_counts_prefixsum = nullptr;
+						
+						auto errorhandler = [&](){
+							if(managed){
+								std::cerr << "cuda transformation with managed memory failed." << std::endl;
+							}else{
+								std::cerr << "cuda transformation failed." << std::endl;
+							}
+							
+							deviceFree(d_keys);
+							deviceFree(d_vals);
+							deviceFree(d_indices);
+							deviceFree(d_histogram_values);
+							deviceFree(d_histogram_counts);
+							deviceFree(d_histogram_counts_prefixsum);
+							
+							cudaGetLastError();
+							
+							success = false;
+						};
+						
+						try{
+							cudaError_t status;
+							status = deviceAlloc((void**)&d_keys, sizeof(Key_t) * size);
+							if(status != cudaSuccess) 
+								throw std::bad_alloc();
+							status = deviceAlloc((void**)&d_vals, sizeof(Value_t) * size);
+							if(status != cudaSuccess) 
+								throw std::bad_alloc();
+							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size);
+							if(status != cudaSuccess) 
+								throw std::bad_alloc();
+							
+							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
+							if(status != cudaSuccess) 
+								throw std::exception();
+							status = cudaMemcpy(d_vals, values.data(), sizeof(Value_t) * size, H2D);
+							if(status != cudaSuccess) 
+								throw std::exception();
+							
+							thrust::sequence(thrust::device, d_indices, d_indices + size, Index_t(0));
+							
+							DefaultDeviceAllocator defaultDeviceAllocator;
+							
+							//sort indices by key. equal keys are sorted by value
+							thrust::sort(thrust::cuda::par(defaultDeviceAllocator),
+												d_indices,
+												d_indices + size,
+												[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
+													if(d_keys[lhs] == d_keys[rhs]){
+														return d_vals[lhs] < d_vals[rhs];
+													}
+													return d_keys[lhs] < d_keys[rhs];
+							});
+							
+							thrust::device_ptr<Key_t> d_keys_ptr = thrust::device_pointer_cast(d_keys);
+							thrust::device_ptr<Value_t> d_vals_ptr = thrust::device_pointer_cast(d_vals);
+							thrust::device_ptr<Index_t> d_indices_ptr = thrust::device_pointer_cast(d_indices);
+							//sort values by indices and copy to host
+							thrust::copy(thrust::make_permutation_iterator(d_vals_ptr, d_indices_ptr),
+											thrust::make_permutation_iterator(d_vals_ptr, d_indices_ptr + size),
+											values.begin());
 
-                    try{
+							//sort keys by indices and copy to host
+							thrust::copy(thrust::make_permutation_iterator(d_keys_ptr, d_indices_ptr),
+										thrust::make_permutation_iterator(d_keys_ptr, d_indices_ptr + size),
+										keys.begin());
 
-        				//sort values and keys by keys on gpu. equal keys are sorted by value
-        				thrust::device_vector<Key_t> d_keys(size);
-        				thrust::device_vector<Value_t> d_vals(size);
-        				thrust::device_vector<Index_t> d_indices(size);
+							//copy sorted keys back to gpu
+							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
+							if(status != cudaSuccess) 
+								throw std::exception();
+							
+							deviceFree(d_vals);
+							deviceFree(d_indices);
+							d_vals = nullptr;
+							d_indices = nullptr;
+							
+							nKeys = thrust::inner_product(thrust::device,
+															d_keys, d_keys + size - 1,
+															d_keys + 1,
+															Index_t(1),
+															thrust::plus<Key_t>(),
+															thrust::not_equal_to<Key_t>());
 
-        				thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-        				thrust::copy(values.begin(), values.end(), d_vals.begin());
-        				thrust::sequence(d_indices.begin(), d_indices.end(), Index_t(0));
+							keys.resize(nKeys);
+							keys.shrink_to_fit();
+						
+							status = deviceAlloc((void**)&d_histogram_values, sizeof(Key_t) * nKeys);
+							if(status != cudaSuccess) 
+								throw std::bad_alloc();
+							status = deviceAlloc((void**)&d_histogram_counts, sizeof(Index_t) * nKeys);
+							if(status != cudaSuccess) 
+								throw std::bad_alloc();
+							status = deviceAlloc((void**)&d_histogram_counts_prefixsum, sizeof(Index_t) * (nKeys+1));
+							if(status != cudaSuccess) 
+								throw std::bad_alloc();
+							thrust::fill(thrust::device, d_histogram_counts_prefixsum, d_histogram_counts_prefixsum + (nKeys+1), Index_t(0));					
 
-        				thrust::device_ptr<Key_t> keysptr = d_keys.data();
-        				thrust::device_ptr<Value_t> valuesptr = d_vals.data();
+							// compact find the end of each bin of values
+							thrust::reduce_by_key(thrust::device,
+												d_keys, d_keys + size,
+													thrust::constant_iterator<Index_t>(1),
+													d_histogram_values,
+													d_histogram_counts);
 
-        				thrust::sort(d_indices.begin(),
-        							d_indices.end(),
-        							[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
-        								if(keysptr[lhs] == keysptr[rhs]){
-        									return valuesptr[lhs] < valuesptr[rhs];
-        								}
-        								return keysptr[lhs] < keysptr[rhs];
-        				});
+							thrust::inclusive_scan(thrust::device, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
 
-        				thrust::copy(thrust::make_permutation_iterator(d_vals.begin(), d_indices.begin()),
-        							thrust::make_permutation_iterator(d_vals.begin(), d_indices.end()),
-        							values.begin());
+							countsPrefixSum.resize(nKeys+1);
 
-        				thrust::copy(thrust::make_permutation_iterator(d_keys.begin(), d_indices.begin()),
-        							thrust::make_permutation_iterator(d_keys.begin(), d_indices.end()),
-        							keys.begin());
+							status = cudaMemcpy(keys.data(), d_histogram_values, sizeof(Key_t) * nKeys, D2H);
+							if(status != cudaSuccess) 
+								throw std::exception();
+							status = cudaMemcpy(countsPrefixSum.data(), d_histogram_counts_prefixsum, sizeof(Index_t) * (nKeys+1), D2H);
+							if(status != cudaSuccess) 
+								throw std::exception();
+							
+							deviceFree(d_keys); CUERR;
+							deviceFree(d_histogram_values); CUERR;
+							deviceFree(d_histogram_counts); CUERR;
+							deviceFree(d_histogram_counts_prefixsum); CUERR;
+							
+							success = true;
+							
+						}catch(const std::bad_alloc& e){
+							//std::cerr << e.what() << std::endl;
+							errorhandler();
+						}catch(const thrust::system_error& e){
+							//std::cerr << e.what() << std::endl;
+							errorhandler();
+						}catch(...){
+							errorhandler();
+						}
+						
+						return success;
+					};
 
-        				thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-
-                        //deallocate d_vals
-                        d_vals.clear();
-                        thrust::device_vector<Value_t>().swap(d_vals);
-
-                        //deallocate d_indices
-                        d_indices.clear();
-                        thrust::device_vector<Value_t>().swap(d_indices);
-
-        				nKeys = thrust::inner_product(d_keys.begin(), d_keys.end() - 1,
-        								d_keys.begin() + 1,
-        								Index_t(1),
-        								thrust::plus<Key_t>(),
-        								thrust::not_equal_to<Key_t>());
-
-        				keys.resize(nKeys);
-        				keys.shrink_to_fit();
-
-        				// resize histogram storage
-        				thrust::device_vector<Key_t> histogram_values(nKeys);
-        				thrust::device_vector<Index_t> histogram_counts(nKeys);
-        				thrust::device_vector<Index_t> histogram_counts_prefixsum(nKeys+1, 0); //inclusive with leading zero
-
-        				// compact find the end of each bin of values
-        				thrust::reduce_by_key(d_keys.begin(), d_keys.end(),
-        								thrust::constant_iterator<Index_t>(1),
-        								histogram_values.begin(),
-        								histogram_counts.begin());
-
-        				thrust::inclusive_scan(histogram_counts.begin(), histogram_counts.end(), histogram_counts_prefixsum.begin() + 1);
-
-        				countsPrefixSum.resize(nKeys+1);
-
-        				thrust::copy(histogram_values.begin(), histogram_values.end(), keys.begin());
-        				thrust::copy(histogram_counts_prefixsum.begin(), histogram_counts_prefixsum.end(), countsPrefixSum.begin());
-                    }catch(const std::bad_alloc& e){
-                        std::cerr << e.what() << std::endl;
-                        std::cerr << "Falling back to cpu transformation" << std::endl;
-                        cpu_transformation();
-                    }catch(const thrust::system_error& e){
-                        std::cerr << e.what() << std::endl;
-                        std::cerr << "Falling back to cpu transformation" << std::endl;
-                        cpu_transformation();
-                    }
-                }
+					int nGpus = 0;
+					cudaGetDeviceCount(&nGpus); CUERR;
+					if(nGpus > 0){
+						bool success = cuda_transformation(false);
+						if(!success){
+							cudaDeviceProp prop;
+							cudaGetDeviceProperties(&prop, 0); CUERR;
+							
+							bool isCapableOfUsingManagedMemory = prop.concurrentManagedAccess == 1;
+							if(isCapableOfUsingManagedMemory){
+								std::cout << "Falling back to cuda managed memory transformation" << std::endl;
+								success = cuda_transformation(true);
+							}
+							if(!success){
+								std::cout << "Falling back to cpu transformation" << std::endl;
+								cpu_transformation();
+							}
+						}
+					}else{
+						cpu_transformation();
+					}
+				}
+             
 #endif
 				/*keyIndexMap = KeyIndexMap(nKeys / load);
 				for(Index_t i = 0; i < nKeys; i++){
@@ -757,7 +863,10 @@ struct Minhasher {
 
 
 	void transform(){
-		for (auto& table : minhashTables) {
+		
+		for (std::size_t i = 0; i < minhashTables.size(); ++i){
+			std::cout << "Transforming table " << i << std::endl;
+			auto& table = minhashTables[i];
 			table->transform();
 		}
 	}
