@@ -73,7 +73,10 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     //std::cin >> stmp;
 
     TIMERSTARTCPU(finalize_datastructures);
-
+	
+	minhasher.resize(props.nReads);
+	readStorage.resize(props.nReads);
+	
     readStorage.transform();
     minhasher.transform();
 

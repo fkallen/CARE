@@ -554,6 +554,14 @@ struct ReadStorageMinMemory{
             qualityscores.resize(nReads);
         }
 	}
+	
+	void resize(ReadId_t nReads){
+		assert(sequences.size() >= nReads);
+
+		sequences.resize(nReads);
+		if(useQualityScores)
+			qualityscores.resize(nReads);
+	}
 
 	void clear(){
 		qualityscores.clear();
