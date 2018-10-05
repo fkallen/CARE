@@ -32,6 +32,9 @@ namespace care{
 			ReadStorage_t* readStorage;
 			Minhasher_t* minhasher;
 			std::uint64_t totalNumberOfReads;
+			
+			int maxSequenceLength = 0;
+			int minSequenceLength = std::numeric_limits<int>::max();
 
 			std::uint64_t progress;
 			bool isRunning;
@@ -98,6 +101,12 @@ namespace care{
 
 					minhasher->insertSequence(read.sequence, readnum);
 					readStorage->insertRead(readnum, read.sequence, read.quality);
+					
+					int len = int(read.sequence.length());
+					if(len > maxSequenceLength)
+						maxSequenceLength = len;
+					if(len < minSequenceLength)
+						minSequenceLength = len;
 
 					pair = buffer->get();
 
@@ -200,7 +209,7 @@ namespace care{
 			return props;
         }else{
             //multi-threaded insertion
-#if 0
+#if 1
             using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
 			using BuildThread_t = builddetail::BuildThread<Minhasher_t, ReadStorage_t, Buffer_t>;
 
@@ -211,7 +220,7 @@ namespace care{
                 buildthreads[i].buffer = &buffers[i];
                 buildthreads[i].readStorage = &readStorage;
                 buildthreads[i].minhasher = &minhasher;
-                buildthreads[i].totalNumberOfReads = props.nReads;
+                buildthreads[i].totalNumberOfReads = nReads;
 
                 buildthreads[i].run();
             }
@@ -238,10 +247,26 @@ namespace care{
         	for (auto& b : buffers) {
         		b.done();
         	}
+        	
+        	SequenceFileProperties props;
+			props.nReads = reader->getReadnum();
+			props.maxSequenceLength = 0;
+			props.minSequenceLength = std::numeric_limits<int>::max();
 
             for(auto& t : buildthreads){
                 t.join();
-            }
+				
+				auto minSequenceLength = t.minSequenceLength;
+				auto maxSequenceLength = t.maxSequenceLength;
+				
+				if(minSequenceLength < props.minSequenceLength)
+					props.minSequenceLength = minSequenceLength;
+				
+				if(maxSequenceLength > props.maxSequenceLength)
+					props.maxSequenceLength = maxSequenceLength;
+            }           
+			
+			return props;
 #else
 
 
