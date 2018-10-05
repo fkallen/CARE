@@ -307,6 +307,12 @@ namespace care{
 							success = false;
 						};
 						
+						DefaultDeviceAllocator defaultDeviceAllocator;
+						ManagedDeviceAllocator managedDeviceAllocator;
+						
+						auto defaultAllocatorPolicy = thrust::cuda::par(defaultDeviceAllocator);
+						auto managedAllocatorPolicy = thrust::cuda::par(managedDeviceAllocator);
+						
 						try{
 							cudaError_t status;
 							status = deviceAlloc((void**)&d_keys, sizeof(Key_t) * size);
@@ -327,11 +333,10 @@ namespace care{
 								throw std::exception();
 							
 							thrust::sequence(thrust::device, d_indices, d_indices + size, Index_t(0));
-							
-							DefaultDeviceAllocator defaultDeviceAllocator;
-							
+
 							//sort indices by key. equal keys are sorted by value
-							thrust::sort(thrust::cuda::par(defaultDeviceAllocator),
+							if(managed){
+								thrust::sort(managedAllocatorPolicy,
 												d_indices,
 												d_indices + size,
 												[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
@@ -339,7 +344,19 @@ namespace care{
 														return d_vals[lhs] < d_vals[rhs];
 													}
 													return d_keys[lhs] < d_keys[rhs];
-							});
+								});
+							}else{
+								thrust::sort(defaultAllocatorPolicy,
+												d_indices,
+												d_indices + size,
+												[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
+													if(d_keys[lhs] == d_keys[rhs]){
+														return d_vals[lhs] < d_vals[rhs];
+													}
+													return d_keys[lhs] < d_keys[rhs];
+								});
+							}
+							
 							
 							thrust::device_ptr<Key_t> d_keys_ptr = thrust::device_pointer_cast(d_keys);
 							thrust::device_ptr<Value_t> d_vals_ptr = thrust::device_pointer_cast(d_vals);
@@ -363,13 +380,21 @@ namespace care{
 							deviceFree(d_indices);
 							d_vals = nullptr;
 							d_indices = nullptr;
-							
-							nKeys = thrust::inner_product(thrust::device,
+							if(managed){
+								nKeys = thrust::inner_product(managedAllocatorPolicy,
 															d_keys, d_keys + size - 1,
 															d_keys + 1,
 															Index_t(1),
 															thrust::plus<Key_t>(),
 															thrust::not_equal_to<Key_t>());
+							}else{
+								nKeys = thrust::inner_product(defaultAllocatorPolicy,
+															d_keys, d_keys + size - 1,
+															d_keys + 1,
+															Index_t(1),
+															thrust::plus<Key_t>(),
+															thrust::not_equal_to<Key_t>());
+							}
 
 							keys.resize(nKeys);
 							keys.shrink_to_fit();
@@ -386,14 +411,23 @@ namespace care{
 							thrust::fill(thrust::device, d_histogram_counts_prefixsum, d_histogram_counts_prefixsum + (nKeys+1), Index_t(0));					
 
 							// compact find the end of each bin of values
-							thrust::reduce_by_key(thrust::device,
+							if(managed){
+								thrust::reduce_by_key(managedAllocatorPolicy,
+													d_keys, d_keys + size,
+														thrust::constant_iterator<Index_t>(1),
+														d_histogram_values,
+														d_histogram_counts);
+
+								thrust::inclusive_scan(managedAllocatorPolicy, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
+							}else{
+								thrust::reduce_by_key(defaultAllocatorPolicy,
 												d_keys, d_keys + size,
 													thrust::constant_iterator<Index_t>(1),
 													d_histogram_values,
 													d_histogram_counts);
 
-							thrust::inclusive_scan(thrust::device, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
-
+								thrust::inclusive_scan(defaultAllocatorPolicy, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
+							}
 							countsPrefixSum.resize(nKeys+1);
 
 							status = cudaMemcpy(keys.data(), d_histogram_values, sizeof(Key_t) * nKeys, D2H);
