@@ -143,6 +143,15 @@ namespace care{
 				keys.resize(size);
 				values.resize(size);
 			}
+			
+			void resize(Index_t size_){
+				assert(!noMoreWrites);
+				
+				size = size_;
+				nValues = size_;
+				keys.resize(size);
+				values.resize(size);
+			}
 
 			void clear() noexcept{
 				size = 0;
@@ -354,9 +363,9 @@ namespace care{
 							status = deviceAlloc((void**)&d_vals, sizeof(Value_t) * size);
 							if(status != cudaSuccess) 
 								throw TransformException("Bad alloc", __LINE__, sizeof(Value_t) * size);
-							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size);
+							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size * 100000);
 							if(status != cudaSuccess) 
-								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * size);
+								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * size * 100000);
 							
 							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
 							if(status != cudaSuccess) 
@@ -368,28 +377,33 @@ namespace care{
 							thrust::sequence(thrust::device, d_indices, d_indices + size, Index_t(0));
 
 							//sort indices by key. equal keys are sorted by value
-							if(managed){
-								thrust::sort(managedAllocatorPolicy,
-												d_indices,
-												d_indices + size,
-												[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
-													if(d_keys[lhs] == d_keys[rhs]){
-														return d_vals[lhs] < d_vals[rhs];
-													}
-													return d_keys[lhs] < d_keys[rhs];
-								});
-							}else{
-								thrust::sort(defaultAllocatorPolicy,
-												d_indices,
-												d_indices + size,
-												[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
-													if(d_keys[lhs] == d_keys[rhs]){
-														return d_vals[lhs] < d_vals[rhs];
-													}
-													return d_keys[lhs] < d_keys[rhs];
-								});
+							try{
+								if(managed){
+									thrust::sort(managedAllocatorPolicy,
+													d_indices,
+													d_indices + size,
+													[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
+														if(d_keys[lhs] == d_keys[rhs]){
+															return d_vals[lhs] < d_vals[rhs];
+														}
+														return d_keys[lhs] < d_keys[rhs];
+									});
+								}else{
+								
+									thrust::sort(defaultAllocatorPolicy,
+													d_indices,
+													d_indices + size,
+													[=] __device__ (const Index_t &lhs, const Index_t &rhs) {
+														if(d_keys[lhs] == d_keys[rhs]){
+															return d_vals[lhs] < d_vals[rhs];
+														}
+														return d_keys[lhs] < d_keys[rhs];
+									});
+								
+								}
+							}catch(const thrust::system_error& e){
+									throw TransformException(e.what(), __LINE__);
 							}
-							
 							
 							thrust::device_ptr<Key_t> d_keys_ptr = thrust::device_pointer_cast(d_keys);
 							thrust::device_ptr<Value_t> d_vals_ptr = thrust::device_pointer_cast(d_vals);
@@ -413,20 +427,24 @@ namespace care{
 							deviceFree(d_indices);
 							d_vals = nullptr;
 							d_indices = nullptr;
-							if(managed){
-								nKeys = thrust::inner_product(managedAllocatorPolicy,
-															d_keys, d_keys + size - 1,
-															d_keys + 1,
-															Index_t(1),
-															thrust::plus<Key_t>(),
-															thrust::not_equal_to<Key_t>());
-							}else{
-								nKeys = thrust::inner_product(defaultAllocatorPolicy,
-															d_keys, d_keys + size - 1,
-															d_keys + 1,
-															Index_t(1),
-															thrust::plus<Key_t>(),
-															thrust::not_equal_to<Key_t>());
+							try{
+								if(managed){
+									nKeys = thrust::inner_product(managedAllocatorPolicy,
+																d_keys, d_keys + size - 1,
+																d_keys + 1,
+																Index_t(1),
+																thrust::plus<Key_t>(),
+																thrust::not_equal_to<Key_t>());
+								}else{
+									nKeys = thrust::inner_product(defaultAllocatorPolicy,
+																d_keys, d_keys + size - 1,
+																d_keys + 1,
+																Index_t(1),
+																thrust::plus<Key_t>(),
+																thrust::not_equal_to<Key_t>());
+								}
+							}catch(const thrust::system_error& e){
+									throw TransformException(e.what(), __LINE__);
 							}
 
 							keys.resize(nKeys);
@@ -444,22 +462,26 @@ namespace care{
 							thrust::fill(thrust::device, d_histogram_counts_prefixsum, d_histogram_counts_prefixsum + (nKeys+1), Index_t(0));					
 
 							// compact find the end of each bin of values
-							if(managed){
-								thrust::reduce_by_key(managedAllocatorPolicy,
+							try{
+								if(managed){
+									thrust::reduce_by_key(managedAllocatorPolicy,
+														d_keys, d_keys + size,
+															thrust::constant_iterator<Index_t>(1),
+															d_histogram_values,
+															d_histogram_counts);
+
+									thrust::inclusive_scan(managedAllocatorPolicy, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
+								}else{
+									thrust::reduce_by_key(defaultAllocatorPolicy,
 													d_keys, d_keys + size,
 														thrust::constant_iterator<Index_t>(1),
 														d_histogram_values,
 														d_histogram_counts);
 
-								thrust::inclusive_scan(managedAllocatorPolicy, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
-							}else{
-								thrust::reduce_by_key(defaultAllocatorPolicy,
-												d_keys, d_keys + size,
-													thrust::constant_iterator<Index_t>(1),
-													d_histogram_values,
-													d_histogram_counts);
-
-								thrust::inclusive_scan(defaultAllocatorPolicy, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
+									thrust::inclusive_scan(defaultAllocatorPolicy, d_histogram_counts, d_histogram_counts + nKeys, d_histogram_counts_prefixsum + 1);
+								}
+							}catch(const thrust::system_error& e){
+									throw TransformException(e.what(), __LINE__);
 							}
 							countsPrefixSum.resize(nKeys+1);
 
@@ -491,7 +513,7 @@ namespace care{
 						}catch(...){
 							errorhandler();
 						}
-						
+						std::cout << "Transformation done" << std::endl;
 						return success;
 					};
 
@@ -932,7 +954,18 @@ struct Minhasher {
 
 
 
+	void resize(std::uint64_t nReads_){
+		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
+		if(nReads_-1 > max_read_num)
+			throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
 
+		nReads = nReads_;
+		
+		for (std::size_t i = 0; i < minhashTables.size(); ++i){
+			auto& table = minhashTables[i];
+			table->resize(nReads_);
+		}
+	}
 
 	void transform(){
 		
