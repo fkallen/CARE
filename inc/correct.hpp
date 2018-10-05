@@ -2665,8 +2665,8 @@ void correct(const MinhashOptions& minhashOptions,
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
-#if 0
-#if 0
+#if 1
+#if 1
 	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 #else
 
