@@ -363,9 +363,9 @@ namespace care{
 							status = deviceAlloc((void**)&d_vals, sizeof(Value_t) * size);
 							if(status != cudaSuccess) 
 								throw TransformException("Bad alloc", __LINE__, sizeof(Value_t) * size);
-							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size * 100000);
+							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size);
 							if(status != cudaSuccess) 
-								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * size * 100000);
+								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * size);
 							
 							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
 							if(status != cudaSuccess) 
