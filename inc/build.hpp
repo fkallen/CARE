@@ -265,7 +265,7 @@ namespace care{
 			endings[nThreads-1] = nReads;
 			
 			std::mutex mutex;
-			
+#if 0			
 			for(int i = 1; i < nThreads; ++i){
 				for(int j = i; j < nThreads; ++j){
 					readers[j]->skipReads(readsPerThread);
@@ -353,6 +353,58 @@ namespace care{
 				
 				results[i] =  Result_t{minSequenceLength, maxSequenceLength};
 			}));
+#else
+
+			for(int i = 0; i < nThreads; ++i){
+
+				threads.emplace_back(std::thread([&,i]{
+					
+					auto& reader = readers[i];
+					std::uint64_t firstReadId_incl = readsPerThread * i;
+					std::uint64_t lastReadId_excl = i == nThreads-1 ? nReads : readsPerThread * (i+1);
+					
+					reader->skipReads(firstReadId_incl);
+					
+					mutex.lock();
+					std::cout << i << " is running. current read num : " << reader->getReadnum() << ", ending : " << lastReadId_excl << std::endl;
+					mutex.unlock();
+					int Ncount = 0;
+					char bases[4]{'A', 'C', 'G', 'T'};
+					
+					Read read;
+					int maxSequenceLength = 0;
+					int minSequenceLength = std::numeric_limits<int>::max();
+					
+					while(reader->getNextRead(&read) && reader->getReadnum() <= lastReadId_excl){
+						std::uint64_t readIndex = reader->getReadnum() - 1;
+						
+						for(auto& c : read.sequence){
+							if(c == 'a') c = 'A';
+							if(c == 'c') c = 'C';
+							if(c == 'g') c = 'G';
+							if(c == 't') c = 'T';
+							if(c == 'N' || c == 'n'){
+								c = bases[Ncount];
+								Ncount = (Ncount + 1) % 4;
+							}
+						}
+						
+						readStorage.insertRead(readIndex, read.sequence, read.quality);
+						minhasher.insertSequence(read.sequence, readIndex);
+						
+						int len = int(read.sequence.length());
+						if(len > maxSequenceLength)
+							maxSequenceLength = len;
+						if(len < minSequenceLength)
+							minSequenceLength = len;
+					}
+					
+					results[i] =  Result_t{minSequenceLength, maxSequenceLength};
+				}));
+
+			}
+
+#endif
 			
 			SequenceFileProperties props;
 			props.nReads = nReads;
