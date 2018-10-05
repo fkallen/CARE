@@ -210,11 +210,36 @@ namespace care{
 				if(noMoreWrites) return;
 				noMoreWrites = true;
 				if(size == 0) return;
+				
+				class TransformException : public std::exception {
+					int line;
+					const char* msg;
+					std::uint64_t value;
+				public:
+					TransformException(const char* msg, int line, std::uint64_t value = 0) : std::exception(), line(line), msg(msg), value(value)
+					{
+					}
+					
+					int getLine() const{
+						return line;
+					};
+					
+					std::uint64_t getValue() const{
+						return value;
+					};
+					
+					virtual const char* what() const noexcept{
+						return msg;
+					}
+				};
 
                 auto cpu_transformation = [&](){
                     std::vector<Index_t> indices(size);
+					TIMERSTARTCPU(iota);
     				std::iota(indices.begin(), indices.end(), Index_t(0));
-
+					TIMERSTOPCPU(iota);
+					
+					TIMERSTARTCPU(sortindices);
     				//sort indices by key. if keys are equal, sort by value
     				std::sort(indices.begin(), indices.end(), [&](auto a, auto b)->bool{
     					if(keys[a] == keys[b]){
@@ -222,18 +247,25 @@ namespace care{
     					}
     					return keys[a] < keys[b];
     				});
+					
+					TIMERSTOPCPU(sortindices);
 
+					TIMERSTARTCPU(sortedvalues);
     				std::vector<Value_t> sortedValues(size);
     				for(Index_t i = 0; i < size; i++){
     					sortedValues[i] = values[indices[i]];
     				}
+    				TIMERSTOPCPU(sortedvalues);
 
     				std::swap(sortedValues, values);
-
+					
+					TIMERSTARTCPU(sortkeys);
     				std::sort(keys.begin(), keys.end());
-
+					TIMERSTOPCPU(sortkeys);
+					
     				std::vector<Index_t> counts(size, 0);
 
+					TIMERSTARTCPU(unique);
     				//make keys unique and count frequency of each key
     				Index_t unique_end = 1;
     				counts[0]++;
@@ -249,15 +281,16 @@ namespace care{
     					}
     					prev = cur;
     				}
-
+					TIMERSTOPCPU(unique);
     				keys.resize(unique_end);
 
+					TIMERSTARTCPU(prefixsum);
     				//make prefix sum of counts
     				countsPrefixSum.resize(unique_end+1);
     				countsPrefixSum[0] = 0;
     				for(Index_t i = 0; i < unique_end; i++)
     					countsPrefixSum[i+1] = countsPrefixSum[i] + counts[i];
-
+					TIMERSTOPCPU(prefixsum);
     				nKeys = unique_end;
                 };
 				
@@ -317,20 +350,20 @@ namespace care{
 							cudaError_t status;
 							status = deviceAlloc((void**)&d_keys, sizeof(Key_t) * size);
 							if(status != cudaSuccess) 
-								throw std::bad_alloc();
+								throw TransformException("Bad alloc", __LINE__, sizeof(Key_t) * size);
 							status = deviceAlloc((void**)&d_vals, sizeof(Value_t) * size);
 							if(status != cudaSuccess) 
-								throw std::bad_alloc();
+								throw TransformException("Bad alloc", __LINE__, sizeof(Value_t) * size);
 							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size);
 							if(status != cudaSuccess) 
-								throw std::bad_alloc();
+								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * size);
 							
 							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
 							if(status != cudaSuccess) 
-								throw std::exception();
+								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Key_t) * size);
 							status = cudaMemcpy(d_vals, values.data(), sizeof(Value_t) * size, H2D);
 							if(status != cudaSuccess) 
-								throw std::exception();
+								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Value_t) * size);
 							
 							thrust::sequence(thrust::device, d_indices, d_indices + size, Index_t(0));
 
@@ -374,7 +407,7 @@ namespace care{
 							//copy sorted keys back to gpu
 							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
 							if(status != cudaSuccess) 
-								throw std::exception();
+								throw TransformException("Bad cudamemcpy", __LINE__);
 							
 							deviceFree(d_vals);
 							deviceFree(d_indices);
@@ -401,13 +434,13 @@ namespace care{
 						
 							status = deviceAlloc((void**)&d_histogram_values, sizeof(Key_t) * nKeys);
 							if(status != cudaSuccess) 
-								throw std::bad_alloc();
+								throw TransformException("Bad alloc", __LINE__, sizeof(Key_t) * nKeys);
 							status = deviceAlloc((void**)&d_histogram_counts, sizeof(Index_t) * nKeys);
 							if(status != cudaSuccess) 
-								throw std::bad_alloc();
+								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * nKeys);
 							status = deviceAlloc((void**)&d_histogram_counts_prefixsum, sizeof(Index_t) * (nKeys+1));
 							if(status != cudaSuccess) 
-								throw std::bad_alloc();
+								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * (nKeys+1));
 							thrust::fill(thrust::device, d_histogram_counts_prefixsum, d_histogram_counts_prefixsum + (nKeys+1), Index_t(0));					
 
 							// compact find the end of each bin of values
@@ -432,10 +465,10 @@ namespace care{
 
 							status = cudaMemcpy(keys.data(), d_histogram_values, sizeof(Key_t) * nKeys, D2H);
 							if(status != cudaSuccess) 
-								throw std::exception();
+								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Key_t) * nKeys);
 							status = cudaMemcpy(countsPrefixSum.data(), d_histogram_counts_prefixsum, sizeof(Index_t) * (nKeys+1), D2H);
 							if(status != cudaSuccess) 
-								throw std::exception();
+								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Index_t) * (nKeys+1));
 							
 							deviceFree(d_keys); CUERR;
 							deviceFree(d_histogram_values); CUERR;
@@ -445,10 +478,15 @@ namespace care{
 							success = true;
 							
 						}catch(const std::bad_alloc& e){
-							//std::cerr << e.what() << std::endl;
+							std::cerr << e.what() << std::endl;
 							errorhandler();
 						}catch(const thrust::system_error& e){
-							//std::cerr << e.what() << std::endl;
+							std::cerr << e.what() << std::endl;
+							errorhandler();
+						}catch(const TransformException& e){
+							std::cerr << e.what() << std::endl;
+							std::cerr << "Line: " << e.getLine() << std::endl;
+							std::cerr << "Value: " << e.getValue() << std::endl;
 							errorhandler();
 						}catch(...){
 							errorhandler();
