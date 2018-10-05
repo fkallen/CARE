@@ -9,6 +9,10 @@
 #include <stdexcept>
 #include <cstdint>
 #include <algorithm>
+#include <chrono>
+#include <cassert>
+#include <experimental/filesystem>
+#include <future>
 
 namespace care{
 
@@ -64,9 +68,86 @@ namespace care{
 
 		return !(is.fail() || is.bad());
 	}
+	
+	void FastqReader::skipBytes_impl(std::uint64_t nBytes){
+		std::uint64_t currentPos = is.tellg();
+		std::uint64_t newPos = currentPos + nBytes;		
+		
+		std::experimental::filesystem::path path = this->filename;		
+		std::uint64_t size = std::experimental::filesystem::file_size(path);
+		assert(size >= newPos);
+		
+		is.seekg(nBytes, std::ios::cur);
+		
+		/*
+		 * search for the next read header. then skip one read
+		 */
+		//find nonempty line
+		while(std::getline(is, stmp).good() && stmp == ""){
+            ;
+        }
+        if (!is.good())
+			throw std::runtime_error("Skipped too far in file");
+		
+		bool found = false;		
+		while(!found){
+			bool foundPotentialHeader = false;
+			//search line which starts with @ (may be quality scores, too)
+			while(!foundPotentialHeader){
+				std::getline(is, stmp);
+				if (!is.good())
+					throw std::runtime_error("Skipped too far in file");
+				if(stmp[0] == '@')
+					foundPotentialHeader = true;
+			}
+			std::getline(is, stmp);
+			if (!is.good())
+					throw std::runtime_error("Skipped too far in file");
+			if(stmp[0] == '@'){
+				//two consecutive lines starting with @. second line must be the header. skip sequence, check for +, skip quality
+				std::getline(is, stmp);
+				if (!is.good())
+					throw std::runtime_error("Skipped too far in file");
+				std::getline(is, stmp);
+				if (!is.good())
+					throw std::runtime_error("Skipped too far in file");
+				if (stmp[0] == '+') {
+					//found @ in first line and + in third line. skip quality scores and exit
+					std::getline(is, stmp);
+					if (!is.good())
+						throw std::runtime_error("Skipped too far in file");
+					found = true;
+				}
+			}else{
+				std::getline(is, stmp);
+				if (!is.good())
+					throw std::runtime_error("Skipped too far in file");
+				if (stmp[0] == '+') {
+					//found @ in first line and + in third line. skip quality scores and exit
+					std::getline(is, stmp);
+					if (!is.good())
+						throw std::runtime_error("Skipped too far in file");
+					found = true;
+				}
+			}
+			
+		}
+	}
+	
+	void FastqReader::skipReads_impl(std::uint64_t nReads){
+		for(std::uint64_t counter = 0; counter < nReads; counter++){
+			for(int i = 0; i < 4; i++){
+				is.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+				if (!is.good())
+					throw std::runtime_error("Skipped too far in file");
+			}
+			++readnum;
+		}
+	}
 
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
+#if 0		
         std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
         case FileFormat::FASTQ:
@@ -81,19 +162,163 @@ namespace care{
         prop.maxSequenceLength = 0;
         prop.minSequenceLength = std::numeric_limits<int>::max();
 
-
+		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;		
+		
+		std::chrono::duration<double> duration;
 
         Read r;
+		
+		const std::uint64_t countlimit = 1000000;
+		std::uint64_t count = 0;
+		std::uint64_t totalCount = 0;
+		tpa = std::chrono::system_clock::now();
+		
         while(reader->getNextRead(&r)){
             int len = int(r.sequence.length());
             if(len > prop.maxSequenceLength)
                 prop.maxSequenceLength = len;
             if(len < prop.minSequenceLength)
                 prop.minSequenceLength = len;
+			
+			++count;
+			++totalCount;
+			
+			if(count == countlimit){
+				tpb = std::chrono::system_clock::now();
+				duration = tpb - tpa;
+				std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+				count = 0;
+			}
         }
+        
+        tpb = std::chrono::system_clock::now();
+		duration = tpb - tpa;
+		std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
 
         prop.nReads = reader->getReadnum();
+#else
 
+		/*TIMERSTARTCPU(asdf);
+		std::ifstream myis(filename);
+		std::uint64_t lines = 0;
+		std::string tmp;
+		while(myis.good()){
+			myis.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+			//std::getline(myis, tmp);
+			++lines;
+		}
+		std::cout << "lines : " << lines << std::endl;
+		std::cout << "reads : " << lines/4 << std::endl;
+		TIMERSTOPCPU(asdf);
+		
+		SequenceFileProperties prop;
+
+        prop.maxSequenceLength = -1;
+        prop.minSequenceLength = -1;
+		prop.nReads = lines/4;*/
+		
+		int nThreads = 4;
+		std::vector<std::unique_ptr<FastqReader>> readers;
+		for(int i = 0; i < nThreads; ++i){
+			switch (format) {
+			case FileFormat::FASTQ:
+				readers.emplace_back(new FastqReader(filename));
+				break;
+			default:
+				throw std::runtime_error("care::getSequenceFileProperties: invalid format.");
+			}			
+		}
+		
+		std::experimental::filesystem::path path = filename;		
+		std::int64_t size = std::experimental::filesystem::file_size(path);
+		
+		using Result_t = std::tuple<int, int,std::uint64_t>;
+		std::vector<std::future<Result_t>> futures;
+		std::vector<std::int64_t> endings(nThreads);
+		endings[nThreads-1] = size;
+		
+		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
+		tpa = std::chrono::system_clock::now();
+		
+		std::int64_t sizePerThread = size / nThreads;
+		for(int i = 1; i < nThreads; ++i){
+			for(int j = i; j < nThreads; ++j){
+				readers[j]->skipBytes(sizePerThread);
+			}
+			endings[i-1] = readers[i]->is.tellg();
+			
+			futures.emplace_back(std::async(std::launch::async, [&,i=i-1]{
+				auto& reader = readers[i];
+                int maxSequenceLength = 0;
+				int minSequenceLength = std::numeric_limits<int>::max();
+				
+				Read r;
+				
+				while(reader->getNextRead(&r) && reader->is.tellg() < endings[i]){
+					int len = int(r.sequence.length());
+					if(len > maxSequenceLength)
+						maxSequenceLength = len;
+					if(len < minSequenceLength)
+						minSequenceLength = len;
+				}
+				
+				std::uint64_t nReads = reader->getReadnum();
+				
+				return Result_t(minSequenceLength, maxSequenceLength, nReads);
+			}));
+		}
+		
+		
+		futures.emplace_back(std::async(std::launch::async, [&,i=nThreads-1]{
+			auto& reader = readers[i];
+			int maxSequenceLength = 0;
+			int minSequenceLength = std::numeric_limits<int>::max();
+			
+			Read r;
+			
+			while(reader->getNextRead(&r) && reader->is.tellg() < endings[i]){
+				int len = int(r.sequence.length());
+				if(len > maxSequenceLength)
+					maxSequenceLength = len;
+				if(len < minSequenceLength)
+					minSequenceLength = len;
+			}
+			
+			std::uint64_t nReads = reader->getReadnum();
+			
+			return Result_t(minSequenceLength, maxSequenceLength, nReads);
+		}));
+		
+		
+		SequenceFileProperties prop;
+
+        prop.maxSequenceLength = 0;
+        prop.minSequenceLength = std::numeric_limits<int>::max();
+		prop.nReads = 0;
+		
+		for(int i = 0; i < nThreads; ++i){
+			futures[i].wait();
+			Result_t result = futures[i].get();
+			auto minSequenceLength = std::get<0>(result);
+			auto maxSequenceLength = std::get<1>(result);
+			auto nReads = std::get<2>(result);
+			
+			if(minSequenceLength < prop.minSequenceLength)
+				prop.minSequenceLength = minSequenceLength;
+			
+			if(maxSequenceLength > prop.maxSequenceLength)
+				prop.maxSequenceLength = maxSequenceLength;
+			
+			prop.nReads += nReads;
+		}
+
+		
+		tpb = std::chrono::system_clock::now();
+		std::chrono::duration<double> duration = tpb - tpa;
+		std::cout << prop.nReads << " : " << duration.count() << " seconds." << std::endl;
+
+#endif
         return prop;
     }
 

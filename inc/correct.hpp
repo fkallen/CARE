@@ -1002,9 +1002,11 @@ private:
 
         struct Batch{
             std::vector<BatchElem_t> batchElems;
-#ifdef __NVCC__
+
+#ifdef __NVCC__			
             cudaStream_t stream;
-#endif
+#endif			
+
         };
 
 		isRunning = true;

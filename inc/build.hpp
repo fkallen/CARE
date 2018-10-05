@@ -11,6 +11,8 @@
 #include <iostream>
 #include <limits>
 #include <thread>
+#include <future>
+#include <mutex>
 
 namespace care{
 
@@ -109,7 +111,7 @@ namespace care{
 			class ReadStorage_t>
     void build(const FileOptions& fileOptions,
 			   const RuntimeOptions& runtimeOptions,
-			   const SequenceFileProperties& props,
+			   SequenceFileProperties& props,
 			   ReadStorage_t& readStorage,
 			   Minhasher_t& minhasher){
  
@@ -182,7 +184,7 @@ namespace care{
         	}
         }else{
             //multi-threaded insertion
-
+#if 0
             using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
 			using BuildThread_t = builddetail::BuildThread<Minhasher_t, ReadStorage_t, Buffer_t>;
 
@@ -224,6 +226,137 @@ namespace care{
             for(auto& t : buildthreads){
                 t.join();
             }
+#else
+
+
+		nThreads = std::max(1, std::min(runtimeOptions.threads, 6));
+		std::vector<std::unique_ptr<FastqReader>> readers;
+		for(int i = 0; i < nThreads; ++i){
+			switch (fileOptions.format) {
+			case FileFormat::FASTQ:
+				readers.emplace_back(new FastqReader(fileOptions.inputfile));
+				break;
+			default:
+				throw std::runtime_error("care::getSequenceFileProperties: invalid format.");
+			}			
+		}
+		
+		std::uint64_t readsPerThread = props.nReads / nThreads;
+		using Result_t = std::pair<int,int>;
+		std::vector<Result_t> results(nThreads);
+		std::vector<std::thread> threads;
+		std::vector<std::uint64_t> endings(nThreads);
+		endings[nThreads-1] = props.nReads;
+		
+		std::mutex mutex;
+		
+		for(int i = 1; i < nThreads; ++i){
+			for(int j = i; j < nThreads; ++j){
+				readers[j]->skipReads(readsPerThread);
+			}
+			endings[i-1] = readers[i]->getReadnum();
+			
+			threads.emplace_back(std::thread([&,i=i-1]{
+				
+				auto& reader = readers[i];
+				mutex.lock();
+				std::cout << i << " is running. current read num : " << reader->getReadnum() << ", ending : " << endings[i] << std::endl;
+				mutex.unlock();
+                int Ncount = 0;
+				char bases[4]{'A', 'C', 'G', 'T'};
+				
+				Read read;
+				int maxSequenceLength = 0;
+				int minSequenceLength = std::numeric_limits<int>::max();
+				
+				while(reader->getNextRead(&read) && reader->getReadnum() <= endings[i]){
+					std::uint64_t readIndex = reader->getReadnum() - 1;
+					
+					for(auto& c : read.sequence){
+						if(c == 'a') c = 'A';
+						if(c == 'c') c = 'C';
+						if(c == 'g') c = 'G';
+						if(c == 't') c = 'T';
+						if(c == 'N' || c == 'n'){
+							c = bases[Ncount];
+							Ncount = (Ncount + 1) % 4;
+						}
+					}
+					
+					readStorage.insertRead(readIndex, read.sequence, read.quality);
+					minhasher.insertSequence(read.sequence, readIndex);
+					
+					int len = int(read.sequence.length());
+					if(len > maxSequenceLength)
+						maxSequenceLength = len;
+					if(len < minSequenceLength)
+						minSequenceLength = len;
+				}
+				
+				results[i] =  Result_t{minSequenceLength, maxSequenceLength};
+			}));
+
+		}
+		
+		threads.emplace_back(std::thread([&,i=nThreads-1]{
+			
+			auto& reader = readers[i];
+			mutex.lock();
+			std::cout << i << " is running. current read num : " << reader->getReadnum() << ", ending : " << endings[i] << std::endl;
+			mutex.unlock();
+			int Ncount = 0;
+			char bases[4]{'A', 'C', 'G', 'T'};
+			
+			Read read;
+			int maxSequenceLength = 0;
+			int minSequenceLength = std::numeric_limits<int>::max();
+			
+			while(reader->getNextRead(&read) && reader->getReadnum() <= endings[i]){
+				std::uint64_t readIndex = reader->getReadnum() - 1;			
+
+				for(auto& c : read.sequence){
+					if(c == 'a') c = 'A';
+					if(c == 'c') c = 'C';
+					if(c == 'g') c = 'G';
+					if(c == 't') c = 'T';
+					if(c == 'N' || c == 'n'){
+						c = bases[Ncount];
+						Ncount = (Ncount + 1) % 4;
+					}
+				}
+				
+				readStorage.insertRead(readIndex, read.sequence, read.quality);
+				minhasher.insertSequence(read.sequence, readIndex);
+				
+				int len = int(read.sequence.length());
+				if(len > maxSequenceLength)
+					maxSequenceLength = len;
+				if(len < minSequenceLength)
+					minSequenceLength = len;
+			}
+			
+			results[i] =  Result_t{minSequenceLength, maxSequenceLength};
+		}));
+
+        props.maxSequenceLength = 0;
+        props.minSequenceLength = std::numeric_limits<int>::max();
+		
+		for(int i = 0; i < nThreads; ++i){			
+			threads[i].join();
+			Result_t result = results[i];
+			auto minSequenceLength = result.first;
+			auto maxSequenceLength = result.second;
+			
+			if(minSequenceLength < props.minSequenceLength)
+				props.minSequenceLength = minSequenceLength;
+			
+			if(maxSequenceLength > props.maxSequenceLength)
+				props.maxSequenceLength = maxSequenceLength;
+		}
+				
+		//std::cout << "props.minSequenceLength " << props.minSequenceLength << ", props.maxSequenceLength " << props.maxSequenceLength << std::endl;
+
+#endif
         }
     }
 
