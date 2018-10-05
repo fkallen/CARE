@@ -321,6 +321,67 @@ namespace care{
 #endif
         return prop;
     }
+    
+    std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format){
+		
+		if(format == FileFormat::FASTQ){
+			std::ifstream myis(filename);
+			std::uint64_t lines = 0;
+			std::string tmp;
+			while(myis.good()){
+				myis.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+				++lines;
+			}
+			//std::cout << "lines : " << lines << std::endl;
+			//std::cout << "reads : " << lines/4 << std::endl;
+			
+			return lines / 4;
+		}else{
+			throw std::runtime_error("getNumberOfReads invalid format");
+		}
+	}
+	
+	std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
+		
+		std::unique_ptr<SequenceFileReader> reader;
+        switch (format) {
+        case FileFormat::FASTQ:
+            reader.reset(new FastqReader(filename));
+            break;
+    	default:
+    		throw std::runtime_error("care::getNumberOfReads: invalid format.");
+    	}
+
+		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb;		
+		
+		//std::chrono::duration<double> duration;
+
+        Read r;
+		
+		const std::uint64_t countlimit = 10000000;
+		std::uint64_t count = 0;
+		std::uint64_t totalCount = 0;
+		//tpa = std::chrono::system_clock::now();
+		
+        while(reader->getNextRead(&r)){
+			
+			++count;
+			++totalCount;
+			
+			if(count == countlimit){
+				//tpb = std::chrono::system_clock::now();
+				//duration = tpb - tpa;
+				//std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+				count = 0;
+			}
+        }
+        
+        //tpb = std::chrono::system_clock::now();
+		//duration = tpb - tpa;
+		//std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+
+        return reader->getReadnum();
+	}
 
     /*
         Deletes every file in vector filenames

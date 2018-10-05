@@ -63,6 +63,7 @@ namespace care{
 		std::string outputdirectory;
         std::string outputfilename;
 		std::string outputfile;
+		std::uint64_t nReads;
 	};
 }
 
