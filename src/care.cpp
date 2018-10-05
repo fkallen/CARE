@@ -30,8 +30,7 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 				  const GoodAlignmentProperties& goodAlignmentProperties,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
-				  const FileOptions& fileOptions,
-                  SequenceFileProperties& props,
+				  const FileOptions& fileOptions,                  
 				  std::uint64_t nReads,
 				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -60,8 +59,9 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 
     //std::cin >> stmp;
 	TIMERSTARTCPU(load_and_build);
-    build(fileOptions, runtimeOptions, props, readStorage, minhasher);
+    const SequenceFileProperties props = build(fileOptions, runtimeOptions, nReads, readStorage, minhasher);
 	TIMERSTOPCPU(load_and_build);
+	
 	
 	std::cout << "----------------------------------------" << std::endl;
     std::cout << "File: " << fileOptions.inputfile << std::endl;
@@ -99,7 +99,6 @@ void correctFile(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
-                  SequenceFileProperties& props,
 				  std::uint64_t nReads,
 				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -130,7 +129,6 @@ void correctFile(const MinhashOptions& minhashOptions,
     							correctionOptions,
     							runtimeOptions,
     							fileOptions,
-                                props,
     							nReads,
     							readIsCorrectedVector,
     							locksForProcessedFlags,
@@ -150,7 +148,6 @@ void correctFile(const MinhashOptions& minhashOptions,
     							correctionOptions,
     							runtimeOptions,
     							fileOptions,
-                                props,
     							nReads,
     							readIsCorrectedVector,
     							locksForProcessedFlags,
@@ -177,7 +174,6 @@ void correctFile(const MinhashOptions& minhashOptions,
                                 correctionOptions,
                                 runtimeOptions,
                                 fileOptions,
-                                props,
                                 nReads,
                                 readIsCorrectedVector,
                                 locksForProcessedFlags,
@@ -197,7 +193,6 @@ void correctFile(const MinhashOptions& minhashOptions,
                                 correctionOptions,
                                 runtimeOptions,
                                 fileOptions,
-                                props,
                                 nReads,
                                 readIsCorrectedVector,
                                 locksForProcessedFlags,
@@ -252,19 +247,24 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
 
-    std::cout << "Determining read properties..." << std::endl;
+    //std::cout << "Determining read properties..." << std::endl;
 
 	//Only number of reads is valid.
-    SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+    /*SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
     std::cout << "----------------------------------------" << std::endl;
     std::cout << "File: " << fileOptions.inputfile << std::endl;
     std::cout << "Reads: " << props.nReads << std::endl;
     std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
     std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
-    std::cout << "----------------------------------------" << std::endl;
+    std::cout << "----------------------------------------" << std::endl;*/
+	std::uint64_t nReads = fileOptions.nReads;
+	if(nReads == 0){
+		std::cout << "Determining number of reads" << std::endl;
+		nReads = getNumberOfReadsFast(fileOptions.inputfile, fileOptions.format);
+	}
 
-	std::vector<char> readIsCorrectedVector(props.nReads, 0);
+	std::vector<char> readIsCorrectedVector(nReads, 0);
 	std::size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
@@ -284,7 +284,6 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	// correct file in multiple passes
 	do{
 		FileOptions iterFileOptions = fileOptions;
-        SequenceFileProperties iterprops = props;
 
 #ifdef DO_ALTERNATE
 		//alternate between two output files
@@ -301,10 +300,6 @@ void performCorrection(const cxxopts::ParseResult& args) {
 				iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
 				iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
 			}
-
-            // with indel correction, corrected sequence lengths may be different from original sequence length. cannot reuse min / max sequence length from props
-            if(correctionOptions.correctionMode == CorrectionMode::Graph)
-                iterprops = getSequenceFileProperties(iterFileOptions.inputfile, iterFileOptions.format);
 		}
 
 #else
@@ -314,19 +309,13 @@ void performCorrection(const cxxopts::ParseResult& args) {
 		}else{
 			iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iter-1);
 			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iter);
-
-            // with indel correction, corrected sequence lengths may be different from original sequence length. cannot reuse min / max sequence length from props
-            if(correctionOptions.correctionMode == CorrectionMode::Graph)
-                iterprops = getSequenceFileProperties(iterFileOptions.inputfile, iterFileOptions.format);
 		}
 #endif
 
-
-
 		correctFile(minhashOptions, alignmentOptions,
             goodAlignmentProperties, correctionOptions,
-            runtimeOptions, iterFileOptions, iterprops,
-			props.nReads,
+            runtimeOptions, iterFileOptions,
+			nReads,
             readIsCorrectedVector, locksForProcessedFlags,
             nLocksForProcessedFlags, runtimeOptions.deviceIds);
 

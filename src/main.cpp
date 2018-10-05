@@ -57,6 +57,8 @@ int main(int argc, const char** argv){
               cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("maxCandidates", "Upper limit for number of candidates per read. Reads with more than max_candidates candidates will not be corrected. The program will guess the limit if max_candidates == 0",
       				 cxxopts::value<int>()->default_value("0")->implicit_value("0"))
+		("nReads", "Upper limit for number of reads in the inputfile. The program will determine the exact number of reads before building the datastructures if nReads == 0",
+      				 cxxopts::value<std::uint64_t>()->default_value("0")->implicit_value("0"))
          ("progress", "If set, progress bar is shown during correction",
                cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 	;

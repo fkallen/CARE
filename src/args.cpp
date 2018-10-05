@@ -158,6 +158,8 @@ namespace args{
 			result.format = FileFormat::FASTQ;
 		else
 			throw std::runtime_error("Set invalid file format : " + result.fileformatstring);
+		
+		result.nReads = pr["nReads"].as<std::uint64_t>();
 
         return result;
 	}

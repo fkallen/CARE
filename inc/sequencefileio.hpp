@@ -93,7 +93,9 @@ public:
 	std::string stmp;
 };
 
-SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
+//SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
+std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format);
+std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
 
 /*
     Deletes every file in vector filenames
