@@ -79,6 +79,15 @@ struct ManagedDeviceAllocator
 		if(status != cudaSuccess){
 			throw std::bad_alloc(); //("cudaMallocManaged: " + cudaGetErrorString(status));
 		}
+		int deviceId = 0;
+		status = cudaGetDevice(&deviceId);
+		if(status != cudaSuccess){
+			throw std::bad_alloc();
+		}
+		status = cudaMemAdvise(ptr, num_bytes, cudaMemAdviseSetAccessedBy, deviceId);
+		if(status != cudaSuccess){
+			throw std::bad_alloc();
+		}
 		allocations.emplace_back(ptr);
 		++nAllocations;
 		return ptr;

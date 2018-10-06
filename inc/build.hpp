@@ -13,6 +13,8 @@
 #include <thread>
 #include <future>
 #include <mutex>
+#include <iterator>
+#include <random>
 
 namespace care{
 
@@ -212,7 +214,7 @@ namespace care{
 #if 1
             using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
 			using BuildThread_t = builddetail::BuildThread<Minhasher_t, ReadStorage_t, Buffer_t>;
-
+#if 1
             std::vector<BuildThread_t> buildthreads(nThreads);
             std::vector<Buffer_t> buffers(nThreads);
 
@@ -236,20 +238,23 @@ namespace care{
         		break;
         	}
 
-        	Read read;
-        	int target = 0;
-
-        	while (reader->getNextRead(&read)) {
+        	
+        	
+		
+			Read read;
+        	int target = 0;			
+			while (reader->getNextRead(&read)) {
                 std::uint64_t readnum = reader->getReadnum()-1;
         		target = readnum % nThreads;
         		buffers[target].add( { read, readnum });
-        	}
-        	for (auto& b : buffers) {
+			}
+			
+			for (auto& b : buffers) {
         		b.done();
         	}
         	
         	SequenceFileProperties props;
-			props.nReads = reader->getReadnum();
+			props.nReads = nReads;//reader->getReadnum();
 			props.maxSequenceLength = 0;
 			props.minSequenceLength = std::numeric_limits<int>::max();
 
@@ -267,6 +272,39 @@ namespace care{
             }           
 			
 			return props;
+#else
+			auto random_string = [](std::size_t len) {
+				std::mt19937_64 gen { std::random_device()() };
+
+				const std::string allowed_chars = "ACGT";
+				std::uniform_int_distribution<size_t> dist { 0, allowed_chars.length()-1 };
+
+				std::string ret;
+				ret.reserve(len);
+
+				std::generate_n(std::back_inserter(ret), len, [&] { return allowed_chars[dist(gen)]; });
+				return ret;
+			};
+			
+			#pragma omp parallel for num_threads(16)
+			for(std::uint64_t readnum = 0; readnum < nReads; readnum++){
+				//const int target = readnum % nThreads;
+				//Read read;
+				//read.sequence = random_string(101);
+				//buffers[target].add( { read, readnum });
+				minhasher.insertSequence(random_string(101), readnum);
+        	}
+        	
+        	SequenceFileProperties props;
+			props.nReads = nReads;//reader->getReadnum();
+			props.maxSequenceLength = 0;
+			props.minSequenceLength = std::numeric_limits<int>::max();
+			
+			return props;
+#endif        	
+     
+			
+			
 #else
 
 
