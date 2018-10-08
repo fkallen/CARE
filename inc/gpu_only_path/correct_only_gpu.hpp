@@ -678,12 +678,13 @@ struct BatchGenerator{
         static constexpr int primary_stream_index = 0;
         static constexpr int secondary_stream_index = 1;
 
-        static constexpr int nEventsPerBatch = 5;
+        static constexpr int nEventsPerBatch = 6;
         static constexpr int alignments_finished_event_index = 0;
         static constexpr int quality_transfer_finished_event_index = 1;
         static constexpr int indices_transfer_finished_event_index = 2;
         static constexpr int correction_finished_event_index = 3;
 		static constexpr int result_transfer_finished_event_index = 4;
+        static constexpr int featuredata_transfer_finished_event_index = 5;
 
 		enum class BatchState {
 			Unprepared,
@@ -702,6 +703,8 @@ struct BatchGenerator{
 			WaitForResults,
 			UnpackResults,
 			WriteResults,
+            WaitForFeatureData,
+            WriteFeatures,
 			Finished,
 			Aborted,
 		};
@@ -771,6 +774,7 @@ struct BatchGenerator{
             bool useGpuReadStorage;
 			std::mutex* locksForProcessedFlags;
     		std::size_t nLocksForProcessedFlags;
+            CorrectionOptions correctionOptions;
 			std::vector<char>* readIsCorrectedVector;
 			std::function<void(const ReadId_t, const std::string&)> write_read_to_stream;
 			std::function<void(const ReadId_t)> lock;
@@ -882,6 +886,8 @@ struct BatchGenerator{
 				case BatchState::WaitForResults: return "WaitForResults";
 				case BatchState::UnpackResults: return "UnpackResults";
 				case BatchState::WriteResults: return "WriteResults";
+                case BatchState::WaitForFeatureData: return "WaitForFeatureData";
+                case BatchState::WriteFeatures: return "WriteFeatures";
 				case BatchState::Finished: return "Finished";
 				case BatchState::Aborted: return "Aborted";
 				default: assert(false); return "None";
@@ -906,6 +912,7 @@ struct BatchGenerator{
 				case BatchState::WaitForResults: return {true, result_transfer_finished_event_index};
 				case BatchState::UnpackResults: return {false, -1};
 				case BatchState::WriteResults: return {false, -1};
+                case BatchState::WaitForFeatureData: return {true, featuredata_transfer_finished_event_index};
 				case BatchState::Finished: return {false, -1};
 				case BatchState::Aborted: return {false, -1};
 				default: assert(false); return {false, -1};
@@ -929,6 +936,8 @@ struct BatchGenerator{
 			transitionFunctionTable[BatchState::WaitForResults] = state_waitforresults_func;
 			transitionFunctionTable[BatchState::UnpackResults] = state_unpackresults_func;
 			transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
+            transitionFunctionTable[BatchState::WaitForFeatureData] = state_waitforfeaturedata_func;
+            transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
 			transitionFunctionTable[BatchState::Finished] = state_finished_func;
 			transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
 		}
@@ -1784,6 +1793,31 @@ struct BatchGenerator{
 
 				cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
+                cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
+
+                cudaMemcpyAsync(dataArrays.h_consensus,
+                                dataArrays.d_consensus,
+                                dataArrays.n_subjects * dataArrays.msa_pitch,
+                                D2H,
+                                streams[secondary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_support,
+                                dataArrays.d_support,
+                                dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                                D2H,
+                                streams[secondary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_coverage,
+                                dataArrays.d_coverage,
+                                dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                                D2H,
+                                streams[secondary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_origCoverages,
+                                dataArrays.d_origCoverages,
+                                dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                                D2H,
+                                streams[secondary_stream_index]); CUERR;
+
+                cudaEventRecord(events[featuredata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+
 				return BatchState::WaitForCorrection;
 			}
 		}
@@ -1979,9 +2013,48 @@ struct BatchGenerator{
 				}
 			}
 
+            if(transFuncData.correctionOptions.extractFeatures)
+                return BatchState::WaitForFeatureData;
+            else
+			    return BatchState::Finished;
+		}
 
+        static BatchState state_waitforfeaturedata_func(Batch& batch,
+										bool canBlock,
+										bool canLaunchKernel,
+										const TransitionFunctionData& transFuncData){
 
-			return BatchState::Finished;
+			assert(batch.state == BatchState::WaitForFeatureData);
+
+			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+			cudaError_t querystatus = cudaEventQuery(events[featuredata_transfer_finished_event_index]); CUERR;
+
+			assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
+
+			if(querystatus == cudaSuccess){
+                return BatchState::WriteFeatures;
+			}else{
+				return BatchState::WaitForFeatureData;
+			}
+		}
+
+        static BatchState state_writefeatures_func(Batch& batch,
+										bool canBlock,
+										bool canLaunchKernel,
+										const TransitionFunctionData& transFuncData){
+
+			assert(batch.state == BatchState::WriteFeatures);
+
+            DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+			//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+			assert(cudaEventQuery(events[featuredata_transfer_finished_event_index]) == cudaSuccess); CUERR;
+
+            return BatchState::Finished;
 		}
 
 		static BatchState state_finished_func(Batch& batch,
@@ -2156,6 +2229,7 @@ struct BatchGenerator{
 			transFuncData.num_ids_per_add_tasks = num_ids_per_add_tasks;
 			transFuncData.minimum_candidates_per_batch = minimum_candidates_per_batch;
 			transFuncData.max_candidates = max_candidates;
+            transFuncData.correctionOptions = correctionOptions;
 			transFuncData.maxSequenceLength = fileProperties.maxSequenceLength;
 			transFuncData.locksForProcessedFlags = threadOpts.locksForProcessedFlags;
 			transFuncData.nLocksForProcessedFlags = threadOpts.nLocksForProcessedFlags;
