@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <cstdint>
+#include <cstdlib>
 #include <algorithm>
 #include <chrono>
 #include <cassert>
@@ -68,17 +69,17 @@ namespace care{
 
 		return !(is.fail() || is.bad());
 	}
-	
+
 	void FastqReader::skipBytes_impl(std::uint64_t nBytes){
 		std::uint64_t currentPos = is.tellg();
-		std::uint64_t newPos = currentPos + nBytes;		
-		
-		std::experimental::filesystem::path path = this->filename;		
+		std::uint64_t newPos = currentPos + nBytes;
+
+		std::experimental::filesystem::path path = this->filename;
 		std::uint64_t size = std::experimental::filesystem::file_size(path);
 		assert(size >= newPos);
-		
+
 		is.seekg(nBytes, std::ios::cur);
-		
+
 		/*
 		 * search for the next read header. then skip one read
 		 */
@@ -88,8 +89,8 @@ namespace care{
         }
         if (!is.good())
 			throw SkipException();
-		
-		bool found = false;		
+
+		bool found = false;
 		while(!found){
 			bool foundPotentialHeader = false;
 			//search line which starts with @ (may be quality scores, too)
@@ -130,10 +131,10 @@ namespace care{
 					found = true;
 				}
 			}
-			
+
 		}
 	}
-	
+
 	void FastqReader::skipReads_impl(std::uint64_t nReads){
 		for(std::uint64_t counter = 0; counter < nReads; counter++){
 			for(int i = 0; i < 4; i++){
@@ -147,7 +148,7 @@ namespace care{
 
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
-#if 0		
+#if 0
         std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
         case FileFormat::FASTQ:
@@ -162,27 +163,27 @@ namespace care{
         prop.maxSequenceLength = 0;
         prop.minSequenceLength = std::numeric_limits<int>::max();
 
-		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;		
-		
+		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
 		std::chrono::duration<double> duration;
 
         Read r;
-		
+
 		const std::uint64_t countlimit = 1000000;
 		std::uint64_t count = 0;
 		std::uint64_t totalCount = 0;
 		tpa = std::chrono::system_clock::now();
-		
+
         while(reader->getNextRead(&r)){
             int len = int(r.sequence.length());
             if(len > prop.maxSequenceLength)
                 prop.maxSequenceLength = len;
             if(len < prop.minSequenceLength)
                 prop.minSequenceLength = len;
-			
+
 			++count;
 			++totalCount;
-			
+
 			if(count == countlimit){
 				tpb = std::chrono::system_clock::now();
 				duration = tpb - tpa;
@@ -190,7 +191,7 @@ namespace care{
 				count = 0;
 			}
         }
-        
+
         tpb = std::chrono::system_clock::now();
 		duration = tpb - tpa;
 		std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
@@ -210,13 +211,13 @@ namespace care{
 		std::cout << "lines : " << lines << std::endl;
 		std::cout << "reads : " << lines/4 << std::endl;
 		TIMERSTOPCPU(asdf);
-		
+
 		SequenceFileProperties prop;
 
         prop.maxSequenceLength = -1;
         prop.minSequenceLength = -1;
 		prop.nReads = lines/4;*/
-		
+
 		int nThreads = 4;
 		std::vector<std::unique_ptr<FastqReader>> readers;
 		for(int i = 0; i < nThreads; ++i){
@@ -226,35 +227,35 @@ namespace care{
 				break;
 			default:
 				throw std::runtime_error("care::getSequenceFileProperties: invalid format.");
-			}			
+			}
 		}
-		
-		std::experimental::filesystem::path path = filename;		
+
+		std::experimental::filesystem::path path = filename;
 		std::int64_t size = std::experimental::filesystem::file_size(path);
-		
+
 		using Result_t = std::tuple<int, int,std::uint64_t>;
 		std::vector<std::future<Result_t>> futures;
 		std::vector<std::int64_t> endings(nThreads);
 		endings[nThreads-1] = size;
-		
+
 		std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
 
 		tpa = std::chrono::system_clock::now();
-		
+
 		std::int64_t sizePerThread = size / nThreads;
 		for(int i = 1; i < nThreads; ++i){
 			for(int j = i; j < nThreads; ++j){
 				readers[j]->skipBytes(sizePerThread);
 			}
 			endings[i-1] = readers[i]->is.tellg();
-			
+
 			futures.emplace_back(std::async(std::launch::async, [&,i=i-1]{
 				auto& reader = readers[i];
                 int maxSequenceLength = 0;
 				int minSequenceLength = std::numeric_limits<int>::max();
-				
+
 				Read r;
-				
+
 				while(reader->getNextRead(&r) && reader->is.tellg() < endings[i]){
 					int len = int(r.sequence.length());
 					if(len > maxSequenceLength)
@@ -262,21 +263,21 @@ namespace care{
 					if(len < minSequenceLength)
 						minSequenceLength = len;
 				}
-				
+
 				std::uint64_t nReads = reader->getReadnum();
-				
+
 				return Result_t(minSequenceLength, maxSequenceLength, nReads);
 			}));
 		}
-		
-		
+
+
 		futures.emplace_back(std::async(std::launch::async, [&,i=nThreads-1]{
 			auto& reader = readers[i];
 			int maxSequenceLength = 0;
 			int minSequenceLength = std::numeric_limits<int>::max();
-			
+
 			Read r;
-			
+
 			while(reader->getNextRead(&r) && reader->is.tellg() < endings[i]){
 				int len = int(r.sequence.length());
 				if(len > maxSequenceLength)
@@ -284,36 +285,36 @@ namespace care{
 				if(len < minSequenceLength)
 					minSequenceLength = len;
 			}
-			
+
 			std::uint64_t nReads = reader->getReadnum();
-			
+
 			return Result_t(minSequenceLength, maxSequenceLength, nReads);
 		}));
-		
-		
+
+
 		SequenceFileProperties prop;
 
         prop.maxSequenceLength = 0;
         prop.minSequenceLength = std::numeric_limits<int>::max();
 		prop.nReads = 0;
-		
+
 		for(int i = 0; i < nThreads; ++i){
 			futures[i].wait();
 			Result_t result = futures[i].get();
 			auto minSequenceLength = std::get<0>(result);
 			auto maxSequenceLength = std::get<1>(result);
 			auto nReads = std::get<2>(result);
-			
+
 			if(minSequenceLength < prop.minSequenceLength)
 				prop.minSequenceLength = minSequenceLength;
-			
+
 			if(maxSequenceLength > prop.maxSequenceLength)
 				prop.maxSequenceLength = maxSequenceLength;
-			
+
 			prop.nReads += nReads;
 		}
 
-		
+
 		tpb = std::chrono::system_clock::now();
 		std::chrono::duration<double> duration = tpb - tpa;
 		std::cout << prop.nReads << " : " << duration.count() << " seconds." << std::endl;
@@ -321,9 +322,9 @@ namespace care{
 #endif
         return prop;
     }
-    
+
     std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format){
-		
+
 		if(format == FileFormat::FASTQ){
 			std::ifstream myis(filename);
 			std::uint64_t lines = 0;
@@ -334,15 +335,15 @@ namespace care{
 			}
 			//std::cout << "lines : " << lines << std::endl;
 			//std::cout << "reads : " << lines/4 << std::endl;
-			
+
 			return lines / 4;
 		}else{
 			throw std::runtime_error("getNumberOfReads invalid format");
 		}
 	}
-	
+
 	std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
-		
+
 		std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
         case FileFormat::FASTQ:
@@ -352,22 +353,22 @@ namespace care{
     		throw std::runtime_error("care::getNumberOfReads: invalid format.");
     	}
 
-		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb;		
-		
+		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+
 		//std::chrono::duration<double> duration;
 
         Read r;
-		
+
 		const std::uint64_t countlimit = 10000000;
 		std::uint64_t count = 0;
 		std::uint64_t totalCount = 0;
 		//tpa = std::chrono::system_clock::now();
-		
+
         while(reader->getNextRead(&r)){
-			
+
 			++count;
 			++totalCount;
-			
+
 			if(count == countlimit){
 				//tpb = std::chrono::system_clock::now();
 				//duration = tpb - tpa;
@@ -375,7 +376,7 @@ namespace care{
 				count = 0;
 			}
         }
-        
+
         //tpb = std::chrono::system_clock::now();
 		//duration = tpb - tpa;
 		//std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
@@ -533,7 +534,7 @@ void sortResultFileUsingDisk(const std::string& filename, std::uint32_t chunksiz
 void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                       FileFormat originalFormat,
                       const std::vector<std::string>& filesToMerge, const std::string& outputfile){
-
+#if 0
     constexpr std::uint32_t chunksize = 5000000;
 
     std::vector<Read> reads;
@@ -606,6 +607,86 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     outputstream.flush();
     outputstream.close();
+#else
+
+    std::string tempfile = outputfile + "mergetempfile";
+    std::stringstream commandbuilder;
+
+    //sort the result files and save sorted result file in tempfile.
+    //Then, merge original file and tempfile, replacing the reads in
+    //original file by the corresponding reads in the tempfile.
+
+    commandbuilder << "sort --parallel=4 -k1,1 -n ";
+    for(const auto& filename : filesToMerge){
+        commandbuilder << "\"" << filename << "\" ";
+    }
+    commandbuilder << " > " << tempfile;
+
+    std::string command = commandbuilder.str();
+    TIMERSTARTCPU(sort_during_merge);
+    int r1 = std::system(command.c_str());
+    std::cout << r1 << std::endl;
+    TIMERSTOPCPU(sort_during_merge);
+
+    std::unique_ptr<SequenceFileReader> reader;
+    switch (originalFormat) {
+    case FileFormat::FASTQ:
+        reader.reset(new FastqReader(originalReadFile));
+        break;
+    default:
+        throw std::runtime_error("Merging: Invalid file format.");
+    }
+
+    std::ifstream correctionsstream(tempfile);
+    std::ofstream outputstream(outputfile);
+
+    std::string correctionline;
+    //loop over correction sequences
+    while(std::getline(correctionsstream, correctionline)){
+        std::stringstream ss(correctionline);
+        std::uint64_t correctionReadId;
+        std::string correctedSequence;
+        ss >> correctionReadId >> correctedSequence;
+
+        std::uint64_t originalReadId = reader->getReadnum();
+        Read read;
+        //copy preceding reads from original file
+        while(originalReadId < correctionReadId){
+            bool valid = reader->getNextRead(&read);
+
+            assert(valid);
+
+            outputstream << read.header << '\n' << read.sequence << '\n';
+            if (originalFormat == FileFormat::FASTQ)
+                outputstream << '+' << '\n' << read.quality << '\n';
+
+            originalReadId = reader->getReadnum();
+        }
+        //replace sequence of next read with corrected sequence
+        bool valid = reader->getNextRead(&read);
+
+        assert(valid);
+
+        outputstream << read.header << '\n' << correctedSequence << '\n';
+        if (originalFormat == FileFormat::FASTQ)
+            outputstream << '+' << '\n' << read.quality << '\n';
+    }
+
+    //copy remaining reads from original file
+    Read read;
+
+    while(reader->getNextRead(&read)){
+        outputstream << read.header << '\n' << read.sequence << '\n';
+        if (originalFormat == FileFormat::FASTQ)
+            outputstream << '+' << '\n' << read.quality << '\n';
+    }
+
+    outputstream.flush();
+    outputstream.close();
+
+    deleteFiles({tempfile});
+
+#endif
 }
 
 
