@@ -702,10 +702,26 @@ private:
 							*/
 
 							if(correctionOptions.extractFeatures){
+                                #if 0
 								std::vector<MSAFeature> MSAFeatures =  extractFeatures(pileupImage, b.fwdSequenceString,
 																threadOpts.minhasher->minparams.k, 0.0,
 																correctionOptions.estimatedCoverage);
+#else
+                                std::vector<float> tmp(pileupImage.h_support.size());
+                                std::copy(pileupImage.h_support.begin(), pileupImage.h_support.end(), tmp.begin());
 
+                                std::vector<MSAFeature> MSAFeatures = extractFeatures(pileupImage.h_consensus.data(),
+                                        tmp.data(),
+                                        pileupImage.h_coverage.data(),
+                                        pileupImage.h_origCoverage.data(),
+                                        pileupImage.columnProperties.columnsToCheck,
+                                        pileupImage.columnProperties.subjectColumnsBegin_incl,
+                                        pileupImage.columnProperties.subjectColumnsEnd_excl,
+                                        b.fwdSequenceString,
+                                        threadOpts.minhasher->minparams.k, 0.0,
+                                        correctionOptions.estimatedCoverage);
+
+#endif
 								if(MSAFeatures.size() > 0){
 									for(const auto& msafeature : MSAFeatures){
 										featurestream << b.readId << '\t' << msafeature.position << '\n';
