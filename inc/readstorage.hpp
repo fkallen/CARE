@@ -512,14 +512,24 @@ struct ReadStorageMinMemory{
 
     std::size_t size() const{
         std::size_t result = 0;
+		
+		std::map<std::size_t, std::uint64_t> map;
 
         for(const auto& s : qualityscores){
             result += sizeof(std::string) + s.capacity();
         }
 
         for(const auto& s : sequences){
-            result += sizeof(Sequence_t) + s.getNumBytes();
+			std::size_t t = sizeof(Sequence_t) + s.getNumBytes();
+			
+			map[t]++;
+			
+            result += t;
         }
+        
+        for(const auto& p : map){
+			std::cout << p.first << " : " << p.second << std::endl;
+		}
 
         return result;
     }
@@ -579,16 +589,16 @@ struct ReadStorageMinMemory{
 			insertRead(readNumber, sequence, std::string(sequence.length(), 'A'));
 		}else{
 			Sequence_t seq(sequence);
-			//sequences[readNumber] = std::move(seq);
-            sequences.at(readNumber) = std::move(seq);
+			sequences[readNumber] = std::move(seq);
+            //sequences.at(readNumber) = std::move(seq);
 		}
 	}
 
     void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
 		Sequence_t seq(sequence);
 
-		//sequences[readNumber] = std::move(seq);
-        sequences.at(readNumber) = std::move(seq);
+		sequences[readNumber] = std::move(seq);
+        //sequences.at(readNumber) = std::move(seq);
 		if(useQualityScores){
 			//qualityscores[readNumber] = std::move(quality);
             qualityscores.at(readNumber) = std::move(quality);

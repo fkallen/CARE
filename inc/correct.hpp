@@ -327,8 +327,12 @@ private:
 		auto write_read = [&](const ReadId_t readId, const auto& sequence){
             //std::cout << readId << " " << sequence << std::endl;
 			auto& stream = outputstream;
+#if 1
+			stream << readId << ' ' << sequence << '\n';
+#else
 			stream << readId << '\n';
 			stream << sequence << '\n';
+#endif
 		};
 
 		auto lock = [&](ReadId_t readId){
@@ -1003,9 +1007,9 @@ private:
         struct Batch{
             std::vector<BatchElem_t> batchElems;
 
-#ifdef __NVCC__			
+#ifdef __NVCC__
             cudaStream_t stream;
-#endif			
+#endif
 
         };
 
