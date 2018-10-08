@@ -9,6 +9,8 @@
 #include <vector>
 #include <omp.h>
 #include <map>
+#include <fstream>
+#include <memory>
 
 namespace care{
 
@@ -479,6 +481,78 @@ struct ReadStorageMinMemory{
     std::vector<std::string> qualityscores;
     std::vector<Sequence_t> sequences;
 
+    void saveToFile(const std::string& filename) const{
+        std::ofstream stream(filename, std::ios::binary);
+
+        auto writesequence = [&](const Sequence_t& seq){
+            const int length = seq.length();
+            const int bytes = seq.getNumBytes();
+            stream.write(reinterpret_cast<const char*>(&length), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(&bytes), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(seq.begin()), bytes);
+        };
+
+        auto writequality = [&](const std::string& qual){
+            const std::size_t bytes = qual.length();
+            stream.write(reinterpret_cast<const char*>(&bytes), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(qual.c_str()), bytes);
+        };
+
+        std::size_t numReads = sequences.size();
+        stream.write(reinterpret_cast<const char*>(&numReads), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
+
+        for(std::size_t i = 0; i < numReads; i++){
+            writesequence(sequences[i]);
+            if(useQualityScores)
+                writequality(qualityscores[i]);
+        }
+    }
+
+    void loadFromFile(const std::string& filename){
+        std::ifstream stream(filename);
+        if(!stream)
+            throw std::runtime_error("cannot load binary sequences from file " + filename);
+
+        auto readsequence = [&](){
+            int length;
+            int bytes;
+            stream.read(reinterpret_cast<char*>(&length), sizeof(int));
+            stream.read(reinterpret_cast<char*>(&bytes), sizeof(int));
+
+            auto data = std::make_unique<std::uint8_t[]>(bytes);
+            stream.read(reinterpret_cast<char*>(data.get()), bytes);
+
+            return Sequence_t{data.get(), length};
+        };
+
+        auto readquality = [&](){
+            static_assert(sizeof(char) == 1);
+
+            std::size_t bytes;
+            stream.read(reinterpret_cast<char*>(&bytes), sizeof(int));
+            auto data = std::make_unique<char[]>(bytes);
+
+            stream.read(reinterpret_cast<char*>(data.get()), bytes);
+
+            return std::string{data.get(), bytes};
+        };
+
+        std::size_t numReads;
+        stream.read(reinterpret_cast<char*>(&numReads), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&useQualityScores), sizeof(bool));
+
+        sequences.reserve(numReads);
+        if(useQualityScores)
+            qualityscores.reserve(numReads);
+
+        for(std::size_t i = 0; i < numReads; i++){
+            sequences.emplace_back(readsequence());
+            if(useQualityScores)
+                qualityscores.emplace_back(readquality());
+        }
+    }
+
     ReadStorageMinMemory() : ReadStorageMinMemory(false){}
     ReadStorageMinMemory(bool b) : useQualityScores(b){}
 
@@ -510,9 +584,27 @@ struct ReadStorageMinMemory{
         return *this;
     }
 
+    bool operator==(const ReadStorageMinMemory& other){
+        if(useQualityScores != other.useQualityScores)
+            return false;
+        if(sequences.size() != other.sequences.size())
+            return false;
+        if(qualityscores.size() != other.qualityscores.size())
+            return false;
+        for(std::size_t i = 0; i < sequences.size(); i++){
+            if(sequences[i] != other.sequences[i])
+                return false;
+        }
+        for(std::size_t i = 0; i < qualityscores.size(); i++){
+            if(qualityscores[i] != other.qualityscores[i])
+                return false;
+        }
+        return true;
+    }
+
     std::size_t size() const{
         std::size_t result = 0;
-		
+
 		std::map<std::size_t, std::uint64_t> map;
 
         for(const auto& s : qualityscores){
@@ -521,12 +613,12 @@ struct ReadStorageMinMemory{
 
         for(const auto& s : sequences){
 			std::size_t t = sizeof(Sequence_t) + s.getNumBytes();
-			
+
 			map[t]++;
-			
+
             result += t;
         }
-        
+
         for(const auto& p : map){
 			std::cout << p.first << " : " << p.second << std::endl;
 		}
@@ -564,7 +656,7 @@ struct ReadStorageMinMemory{
             qualityscores.resize(nReads);
         }
 	}
-	
+
 	void resize(ReadId_t nReads){
 		assert(sequences.size() >= nReads);
 
