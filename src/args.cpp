@@ -158,8 +158,12 @@ namespace args{
 			result.format = FileFormat::FASTQ;
 		else
 			throw std::runtime_error("Set invalid file format : " + result.fileformatstring);
-		
+
 		result.nReads = pr["nReads"].as<std::uint64_t>();
+        result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
+        result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
+
+
 
         return result;
 	}

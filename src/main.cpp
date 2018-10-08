@@ -61,6 +61,11 @@ int main(int argc, const char** argv){
       				 cxxopts::value<std::uint64_t>()->default_value("0")->implicit_value("0"))
          ("progress", "If set, progress bar is shown during correction",
                cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+
+        ("save-binary-reads-to", "Save binary dump of loaded reads from inputfile to disk",
+        			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+        ("load-binary-reads-from", "Load binary dump of reads from disk",
+        			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 	;
 
     options.parse_positional({"deviceIds"});
