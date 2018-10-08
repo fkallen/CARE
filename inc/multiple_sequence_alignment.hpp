@@ -3,7 +3,6 @@
 
 
 #include "featureextractor.hpp"
-#include "msa_kernels.hpp"
 #include "qualityscoreweights.hpp"
 
 #include <vector>
