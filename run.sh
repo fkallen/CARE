@@ -104,7 +104,11 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
+<<<<<<< HEAD
 batchsize=10
+=======
+batchsize=5
+>>>>>>> onlygpu
 
 #properties of good alignment
 maxmismatchratio=0.20

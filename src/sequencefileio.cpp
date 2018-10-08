@@ -196,6 +196,10 @@ namespace care{
 		duration = tpb - tpa;
 		std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
 
+        tpb = std::chrono::system_clock::now();
+		duration = tpb - tpa;
+		std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+
         prop.nReads = reader->getReadnum();
 #else
 

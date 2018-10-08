@@ -41,7 +41,7 @@
 
 
 #if defined USE_NVTX && defined __NVCC__
-#include "nvToolsExt.h"
+#include <nvToolsExt.h>
 
 const uint32_t colors[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff, 0xdeadbeef };
 const int num_colors = sizeof(colors)/sizeof(uint32_t);
@@ -324,8 +324,8 @@ private:
 		std::ofstream outputstream(threadOpts.outputfile);
 
         std::ofstream featurestream(threadOpts.outputfile + "_features");
-
 		auto write_read = [&](const ReadId_t readId, const auto& sequence){
+            //std::cout << readId << " " << sequence << std::endl;
 			auto& stream = outputstream;
 #if 1
 			stream << readId << ' ' << sequence << '\n';
@@ -403,6 +403,8 @@ private:
 
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
+                PUSH_RANGE("init_batch", 0);
+
                 tpc = std::chrono::system_clock::now();
 				//fit vector size to actual batch size
 				if (batchElems[streamIndex].size() != readIds.size()) {
@@ -430,6 +432,12 @@ private:
                 tpd = std::chrono::system_clock::now();
                 initIdTimeTotal += tpd - tpc;
 
+                POP_RANGE;
+
+
+                PUSH_RANGE("find_candidates", 1);
+
+
 				tpa = std::chrono::system_clock::now();
 
 				for(auto& b : batchElems[streamIndex]){
@@ -450,9 +458,13 @@ private:
 				tpb = std::chrono::system_clock::now();
 				mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
 
+                POP_RANGE;
+
+                PUSH_RANGE("perform_alignments", 3);
+
 				tpa = std::chrono::system_clock::now();
 
-				auto activeBatchElementsEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+				auto activeBatchElementsEnd = std::stable_partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
 				if(std::distance(batchElems[streamIndex].begin(), activeBatchElementsEnd) > 0){
 
@@ -556,12 +568,17 @@ private:
 
 				tpb = std::chrono::system_clock::now();
 				getAlignmentsTimeTotal += tpb - tpa;
+
+                POP_RANGE;
 			}
 
 
 #if 1
 
 			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
+
+
+                PUSH_RANGE("wait_for_alignments" , 4);
 
 				tpa = std::chrono::system_clock::now();
 
@@ -581,7 +598,7 @@ private:
                 bestSequenceStringsbegin.reserve(batchElems[streamIndex].size());
 				bestSequenceStringsend.reserve(batchElems[streamIndex].size());
 
-				auto activeBatchElementsEnd = std::partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+				auto activeBatchElementsEnd = std::stable_partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
 
 				//for(auto& b : batchElems[streamIndex]){
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
@@ -622,6 +639,8 @@ private:
 
 				tpb = std::chrono::system_clock::now();
 				getAlignmentsTimeTotal += tpb - tpa;
+
+                POP_RANGE;
 	#if 1
 				//check quality of alignments
 				tpc = std::chrono::system_clock::now();
@@ -656,6 +675,8 @@ private:
 
                 tpd = std::chrono::system_clock::now();
                 fetchgoodcandidatesTime += tpd - tpc;
+
+                PUSH_RANGE("correct_batch" , 5);
 
 				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
 					auto& b = *it;
@@ -775,6 +796,8 @@ private:
 						}
 					}
 				}
+
+                POP_RANGE;
 
 #endif
 			}
@@ -999,9 +1022,11 @@ private:
 
         struct Batch{
             std::vector<BatchElem_t> batchElems;
+
 #ifdef __NVCC__
             cudaStream_t stream;
 #endif
+
         };
 
 		isRunning = true;
@@ -2663,7 +2688,7 @@ private:
 
 
 
-
+#if 0
 
 template<class minhasher_t,
 		 class readStorage_t,
@@ -2687,17 +2712,30 @@ void correct(const MinhashOptions& minhashOptions,
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
-#if 1
+#if 0
 #if 1
 	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 #else
 
-    using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedSplitTasks<Minhasher_t, ReadStorage_t, indels>;
-    //using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedThisThat<Minhasher_t, ReadStorage_t, indels>;
+    //using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedSplitTasks<Minhasher_t, ReadStorage_t, indels>;
+    using ErrorCorrectionThread_t = ErrorCorrectionThreadCombinedThisThat<Minhasher_t, ReadStorage_t, indels>;
 #endif
 #else
 	using ErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, BatchGenerator<ReadId_t>>;
 #endif
+
+//#define DO_PROFILE
+
+#if 0
+    const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
+                        : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
+#else
+	const int nCorrectorThreads = 1;
+#endif
+
+	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
+
+
 
       // initialize qscore-to-weight lookup table
   	init_weights();
@@ -2754,17 +2792,6 @@ void correct(const MinhashOptions& minhashOptions,
     /*
         Spawn correction threads
     */
-
-//#define DO_PROFILE
-
-#if 1
-    const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
-                        : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
-#else
-	const int nCorrectorThreads = 1;
-#endif
-
-	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
     std::vector<std::string> tmpfiles;
     for(int i = 0; i < nCorrectorThreads; i++){
@@ -2869,12 +2896,11 @@ void correct(const MinhashOptions& minhashOptions,
 #else
 
     constexpr int sleepiterbegin = 1;
-    constexpr int sleepiterend = 2;
+    constexpr int sleepiterend = 3;
 
     int sleepiter = 0;
 
-    std::chrono::duration<double> runtime = std::chrono::seconds(0);
-    std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
+    std::chrono::duration<int> sleepinterval = std::chrono::seconds(2);
 
     while(true){
 
@@ -2896,6 +2922,11 @@ void correct(const MinhashOptions& minhashOptions,
                 ecthreads[threadId].stopAndAbort = true;
                 ecthreads[threadId].join();
             }
+
+            for(int deviceId : deviceIds){
+				cudaSetDevice(deviceId); CUERR;
+				cudaDeviceReset(); CUERR;
+			}
 
             std::exit(0);
         }
@@ -2948,6 +2979,328 @@ TIMERSTOPCPU(correction);
 
     std::cout << "end merge" << std::endl;
 }
+
+
+
+#else
+
+
+template<class minhasher_t,
+		 class readStorage_t,
+		 bool indels>
+void correct(const MinhashOptions& minhashOptions,
+				  const AlignmentOptions& alignmentOptions,
+				  const GoodAlignmentProperties& goodAlignmentProperties,
+				  const CorrectionOptions& correctionOptions,
+				  const RuntimeOptions& runtimeOptions,
+				  const FileOptions& fileOptions,
+                  const SequenceFileProperties& props,
+                  minhasher_t& minhasher,
+                  readStorage_t& readStorage,
+				  std::vector<char>& readIsCorrectedVector,
+				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+				  std::size_t nLocksForProcessedFlags,
+				  const std::vector<int>& deviceIds){
+
+	assert(indels == false);
+
+	using Minhasher_t = minhasher_t;
+	using ReadStorage_t = readStorage_t;
+	using Sequence_t = typename ReadStorage_t::Sequence_t;
+	using ReadId_t = typename ReadStorage_t::ReadId_t;
+
+
+	using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
+
+	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
+
+
+//#define DO_PROFILE
+
+#if 1
+    const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
+                        : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
+#else
+	const int nCorrectorThreads = 1;
+#endif
+
+	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
+
+
+
+      // initialize qscore-to-weight lookup table
+  	init_weights();
+
+    //SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+
+    /*
+        Make candidate statistics
+    */
+
+    std::uint64_t max_candidates = runtimeOptions.max_candidates;
+    //std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
+
+    if(max_candidates == 0){
+        std::cout << "estimating candidate cutoff" << std::endl;
+
+        correctiondetail::Dist<std::int64_t, std::int64_t> candidateDistribution;
+
+        {
+            TIMERSTARTCPU(candidateestimation);
+            std::map<std::int64_t, std::int64_t> candidateHistogram
+                    = correctiondetail::getCandidateCountHistogram(minhasher,
+                                                readStorage,
+                                                props.nReads / 10,
+                                                runtimeOptions.threads);
+
+            TIMERSTOPCPU(candidateestimation);
+
+            candidateDistribution = correctiondetail::estimateDist(candidateHistogram);
+
+            std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
+            std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
+
+            std::ofstream of("ncandidates.txt");
+            for(const auto& p : vec)
+                of << p.first << " " << p.second << '\n';
+            of.flush();
+        }
+
+        std::cout << "candidates.max " << candidateDistribution.max << std::endl;
+        std::cout << "candidates.average " << candidateDistribution.average << std::endl;
+        std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
+
+        const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
+        const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
+        const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
+                                                        + 2.5 * estimatedDeviationAlignedCandidates;
+
+        max_candidates = estimatedAlignmentCountThreshold;
+    }
+
+    std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
+
+    /*
+        Spawn correction threads
+    */
+
+    std::vector<std::string> tmpfiles;
+    for(int i = 0; i < nCorrectorThreads; i++){
+        tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
+    }
+
+    int nGpuThreads = std::min(nCorrectorThreads, 1 * int(deviceIds.size()));
+	int nCpuThreads = nCorrectorThreads - nGpuThreads;
+
+    std::vector<BatchGenerator<ReadId_t>> cpubatchgenerators(nCpuThreads);
+	std::vector<care::gpu::BatchGenerator<ReadId_t>> gpubatchgenerators(nGpuThreads);
+
+    std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
+	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
+    std::vector<char> readIsProcessedVector(readIsCorrectedVector);
+    std::mutex writelock;
+
+	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(props.nReads / 7.0) : 0;
+	std::uint64_t ngpuReads = props.nReads - ncpuReads;
+	std::uint64_t nReadsPerGPU = SDIV(ngpuReads, nGpuThreads);
+
+	std::cout << "nCpuThreads: " << nCpuThreads << ", nGpuThreads: " << nGpuThreads << std::endl;
+	std::cout << "ncpuReads: " << ncpuReads << ", ngpuReads: " << ngpuReads << std::endl;
+
+	for(int threadId = 0; threadId < nCpuThreads; threadId++){
+
+        cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, correctionOptions.batchsize, threadId, nCpuThreads);
+        typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
+        threadOpts.threadId = threadId;
+        threadOpts.deviceId = 0;
+        threadOpts.canUseGpu = false;
+        threadOpts.outputfile = tmpfiles[threadId];
+        threadOpts.batchGen = &cpubatchgenerators[threadId];
+        threadOpts.minhasher = &minhasher;
+        threadOpts.readStorage = &readStorage;
+        threadOpts.coutLock = &writelock;
+        threadOpts.readIsProcessedVector = &readIsProcessedVector;
+        threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
+        threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
+        threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
+
+        cpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
+        cpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
+        cpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+        cpucorrectorThreads[threadId].threadOpts = threadOpts;
+        cpucorrectorThreads[threadId].fileProperties = props;
+        cpucorrectorThreads[threadId].max_candidates = max_candidates;
+
+        cpucorrectorThreads[threadId].run();
+    }
+
+
+    for(int threadId = 0; threadId < nGpuThreads; threadId++){
+
+        gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPU, std::min(props.nReads, ncpuReads + (threadId+1) * nReadsPerGPU));
+        typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
+        threadOpts.threadId = threadId;
+        threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
+        threadOpts.canUseGpu = runtimeOptions.canUseGpu;
+        threadOpts.outputfile = tmpfiles[nCpuThreads + threadId];
+        threadOpts.batchGen = &gpubatchgenerators[threadId];
+        threadOpts.minhasher = &minhasher;
+        threadOpts.readStorage = &readStorage;
+        threadOpts.coutLock = &writelock;
+        threadOpts.readIsProcessedVector = &readIsProcessedVector;
+        threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
+        threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
+        threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
+
+        gpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
+        gpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
+        gpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+        gpucorrectorThreads[threadId].threadOpts = threadOpts;
+        gpucorrectorThreads[threadId].fileProperties = props;
+        gpucorrectorThreads[threadId].max_candidates = max_candidates;
+
+        gpucorrectorThreads[threadId].run();
+    }
+
+    std::cout << "Correcting..." << std::endl;
+
+
+#ifndef DO_PROFILE
+
+    bool showProgress = runtimeOptions.showProgress;
+
+    std::thread progressThread = std::thread([&]() -> void{
+        if(!showProgress)
+            return;
+
+        std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
+        std::chrono::duration<double> runtime = std::chrono::seconds(0);
+        std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
+
+        while(showProgress){
+            ReadId_t progress = 0;
+            ReadId_t correctorProgress = 0;
+
+            for(int i = 0; i < nCpuThreads; i++){
+                correctorProgress += cpucorrectorThreads[i].nProcessedReads;
+            }
+
+            for(int i = 0; i < nGpuThreads; i++){
+                correctorProgress += gpucorrectorThreads[i].nProcessedReads;
+            }
+
+            progress = correctorProgress;
+
+            printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
+                    ((progress * 1.0 / props.nReads) * 100.0),
+                    correctorProgress, props.nReads,
+                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                    int(runtime.count()) % 60);
+            std::cout << std::flush;
+
+            if(progress < props.nReads){
+                  std::this_thread::sleep_for(sleepinterval);
+                  runtime = std::chrono::system_clock::now() - timepoint_begin;
+            }
+        }
+    });
+
+#else
+
+    constexpr int sleepiterbegin = 1;
+    constexpr int sleepiterend = 2;
+
+    int sleepiter = 0;
+
+    std::chrono::duration<double> runtime = std::chrono::seconds(0);
+    std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
+
+    while(true){
+
+        std::this_thread::sleep_for(sleepinterval);
+
+        sleepiter++;
+
+        #ifdef __NVCC__
+            if(sleepiter == sleepiterbegin)
+                cudaProfilerStart(); CUERR;
+        #endif
+
+
+        #ifdef __NVCC__
+        if(sleepiter == sleepiterend){
+            cudaProfilerStop(); CUERR;
+
+			for(int i = 0; i < nCpuThreads; i++){
+                cpucorrectorThreads[i].stopAndAbort = true;
+				cpucorrectorThreads[i].join();
+            }
+
+            for(int i = 0; i < nGpuThreads; i++){
+                gpucorrectorThreads[i].stopAndAbort = true;
+				gpucorrectorThreads[i].join();
+            }
+
+            std::exit(0);
+        }
+        #endif
+
+    }
+#endif
+
+TIMERSTARTCPU(correction);
+
+    for (auto& thread : cpucorrectorThreads)
+        thread.join();
+
+	for (auto& thread : gpucorrectorThreads)
+        thread.join();
+
+#ifndef DO_PROFILE
+    showProgress = false;
+    progressThread.join();
+    if(runtimeOptions.showProgress)
+        printf("Progress: %3.2f %%\n", 100.00);
+#endif
+
+TIMERSTOPCPU(correction);
+
+    //std::cout << "threads done" << std::endl;
+
+
+
+    minhasher.destroy();
+	readStorage.destroy();
+
+   // generators.clear();
+   // ecthreads.clear();
+    readIsProcessedVector.clear();
+    readIsProcessedVector.shrink_to_fit();
+
+    std::cout << "begin merge" << std::endl;
+    TIMERSTARTCPU(merge);
+
+    mergeResultFiles(props.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+
+    TIMERSTOPCPU(merge);
+
+    deleteFiles(tmpfiles);
+
+    if(!correctionOptions.extractFeatures){
+        std::vector<std::string> featureFiles(tmpfiles);
+        for(auto& s : featureFiles)
+            s = s + "_features";
+        deleteFiles(featureFiles);
+    }
+
+    std::cout << "end merge" << std::endl;
+}
+
+
+
+
+#endif
 
 
 }

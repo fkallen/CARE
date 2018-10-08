@@ -3,7 +3,6 @@
 
 
 #include "featureextractor.hpp"
-#include "msa_kernels.hpp"
 #include "qualityscoreweights.hpp"
 
 #include <vector>
@@ -292,6 +291,7 @@ struct PileupImage{
                 const double qw = *candidateQualityiter != nullptr ?
                                             qscore_to_weight[(unsigned char)(*(*candidateQualityiter))[j]] * defaultweight
                                             : 1.0;
+                //std::cout << (*(*candidateQualityiter))[j] << " "; //remove;
                 const char base = (*sequenceiter)[j];
                 switch(base){
                     case 'A': h_Aweights[globalIndex] += qw; h_As[globalIndex] += 1;
@@ -307,6 +307,14 @@ struct PileupImage{
                 h_coverage[globalIndex] += 1;
                 //h_support[j] = 0;
             }
+            /*std::cout << std::endl; //remove
+            for(int j = 0; j < len; j++){
+                const double qw = *candidateQualityiter != nullptr ?
+                                            qscore_to_weight[(unsigned char)(*(*candidateQualityiter))[j]] * defaultweight
+                                            : 1.0;
+                std::cout << qw << " ";
+            }
+            std::cout << std::endl; //remove*/
         }
 
         // after adding all candidate sequences, find weight and coverage of bases in sequence_to_correct

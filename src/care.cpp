@@ -114,7 +114,7 @@ void correctFile(const MinhashOptions& minhashOptions,
     using Minhasher_t = Minhasher<Key_t, ReadId_t>;
 
     if(runtimeOptions.canUseGpu){
-        using NoIndelSequence_t = Sequence2Bit;
+        using NoIndelSequence_t = Sequence2BitHiLo;
         using IndelSequence_t = Sequence2Bit;
         using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
         using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
