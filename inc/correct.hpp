@@ -3084,7 +3084,7 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
-	std::uint64_t ncpuReads = std::uint64_t(props.nReads / 7.0) ;
+	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(props.nReads / 7.0) : 0;
 	std::uint64_t ngpuReads = props.nReads - ncpuReads;
 	std::uint64_t nReadsPerGPU = SDIV(ngpuReads, nGpuThreads);
 
