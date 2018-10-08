@@ -1,5 +1,4 @@
 #include "../inc/shifted_hamming_distance.hpp"
-#include "../inc/msa_kernels.hpp"
 
 #include <cassert>
 
@@ -81,7 +80,7 @@ namespace shd{
         memOrigWeights = msa_weights_row_pitch * n_sub;
         memOrigCoverage = msa_weights_row_pitch * n_sub;
         memQualityScores = msa_row_pitch * (n_quer + n_sub);
-        memMSAColumnProperties = SDIV(sizeof(care::msa::MSAColumnProperties) * n_sub, sequencepitch) * sequencepitch;
+        //memMSAColumnProperties = SDIV(sizeof(care::msa::MSAColumnProperties) * n_sub, sequencepitch) * sequencepitch;
 
         const std::size_t requiredMem = memSubjects + memSubjectLengths + memNqueriesPrefixSum
                                         + memQueries + memQueryLengths + memResults
