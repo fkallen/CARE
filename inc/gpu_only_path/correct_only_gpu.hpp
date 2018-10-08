@@ -84,6 +84,7 @@ void pop_range(){
 #include "../options.hpp"
 #include "../tasktiming.hpp"
 #include "../sequence.hpp"
+#include "../featureextractor.hpp"
 
 #include "kernels.hpp"
 #include "dataarrays.hpp"
@@ -776,6 +777,7 @@ struct BatchGenerator{
     		std::size_t nLocksForProcessedFlags;
             CorrectionOptions correctionOptions;
 			std::vector<char>* readIsCorrectedVector;
+            std::ofstream* featurestream;
 			std::function<void(const ReadId_t, const std::string&)> write_read_to_stream;
 			std::function<void(const ReadId_t)> lock;
 			std::function<void(const ReadId_t)> unlock;
@@ -913,6 +915,7 @@ struct BatchGenerator{
 				case BatchState::UnpackResults: return {false, -1};
 				case BatchState::WriteResults: return {false, -1};
                 case BatchState::WaitForFeatureData: return {true, featuredata_transfer_finished_event_index};
+                case BatchState::WriteFeatures: return {true, featuredata_transfer_finished_event_index};
 				case BatchState::Finished: return {false, -1};
 				case BatchState::Aborted: return {false, -1};
 				default: assert(false); return {false, -1};
@@ -1815,6 +1818,11 @@ struct BatchGenerator{
                                 dataArrays.n_subjects * dataArrays.msa_weights_pitch,
                                 D2H,
                                 streams[secondary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_msa_column_properties,
+                                dataArrays.d_msa_column_properties,
+                                dataArrays.n_subjects * sizeof(MSAColumnProperties),
+                                D2H,
+                                streams[secondary_stream_index]); CUERR;
 
                 cudaEventRecord(events[featuredata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
@@ -2054,6 +2062,33 @@ struct BatchGenerator{
 
 			assert(cudaEventQuery(events[featuredata_transfer_finished_event_index]) == cudaSuccess); CUERR;
 
+            auto& featurestream = *transFuncData.featurestream;
+
+            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
+
+				const auto& task = batch.tasks[subject_index];
+                const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+
+                std::vector<MSAFeature> MSAFeatures = extractFeatures(dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                                        dataArrays.h_support + subject_index * dataArrays.msa_weights_pitch,
+                                                        dataArrays.h_coverage + subject_index * dataArrays.msa_weights_pitch,
+                                                        dataArrays.h_origCoverages + subject_index * dataArrays.msa_weights_pitch,
+                                                        columnProperties.columnsToCheck,
+                                                        columnProperties.subjectColumnsBegin_incl,
+                                                        columnProperties.subjectColumnsEnd_excl,
+                                                        task.subject_sequence->toString(),
+                                                        transFuncData.minhasher->minparams.k, 0.0,
+                                                        transFuncData.estimatedCoverage);
+
+                    for(const auto& msafeature : MSAFeatures){
+                        featurestream << task.readId << '\t' << msafeature.position << '\n';
+                        featurestream << msafeature << '\n';
+                    }
+
+			}
+
+
+
             return BatchState::Finished;
 		}
 
@@ -2234,6 +2269,7 @@ struct BatchGenerator{
 			transFuncData.locksForProcessedFlags = threadOpts.locksForProcessedFlags;
 			transFuncData.nLocksForProcessedFlags = threadOpts.nLocksForProcessedFlags;
 			transFuncData.readIsCorrectedVector = threadOpts.readIsCorrectedVector;
+            transFuncData.featurestream = &featurestream;
 			transFuncData.write_read_to_stream = [&](const ReadId_t readId, const std::string& sequence){
                 //std::cout << readId << " " << sequence << std::endl;
     			auto& stream = outputstream;
