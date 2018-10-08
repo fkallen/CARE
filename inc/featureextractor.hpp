@@ -35,6 +35,18 @@ namespace care{
                                     int k, double support_threshold,
                                     int dataset_coverage);
 
+    std::vector<MSAFeature> extractFeatures(const char* consensusptr,
+                                            const float* supportptr,
+                                            const int* coverageptr,
+                                            const int* origcoverageptr,
+                                            int columnsToCheck,
+                                            int subjectColumnsBegin_incl,
+                                            int subjectColumnsEnd_excl,
+                                            const std::string& sequence,
+                                            int k, double
+                                            support_threshold,
+                                            int dataset_coverage);
+
 }
 
 
