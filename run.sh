@@ -88,7 +88,7 @@ candidateCorrection=--candidateCorrection=false
 #if indels should be corrected, too
 indels=--indels=false
 
-extractFeatures=--extractFeatures=false
+extractFeatures=--extractFeatures=true
 
 #minhashing parameters
 #kmer length
@@ -104,7 +104,7 @@ insertscore=-100
 deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-batchsize=1
+batchsize=10
 
 #properties of good alignment
 maxmismatchratio=0.20
