@@ -2688,7 +2688,7 @@ private:
 
 
 
-#if 0
+#if 1
 
 template<class minhasher_t,
 		 class readStorage_t,
