@@ -605,22 +605,22 @@ struct SequenceBase {
     using Impl_t = Impl;
 
 	SequenceBase() : nBases(0){
-        data.second = 0;
+        //data.second = 0;
     }
 
     ~SequenceBase(){}
 
     SequenceBase(const std::string& sequence)
 		: nBases(sequence.length()){
-		data = Impl::encode(sequence);
+        auto p = Impl::encode(sequence);
+		data = std::move(p.first);
 	}
 
     SequenceBase(const std::uint8_t* rawdata, int nBases_) noexcept
 		: nBases(nBases_){
 
 		const int size = getNumBytes();
-		data.first = std::make_unique<std::uint8_t[]>(size);
-		data.second = size;
+		data = std::make_unique<std::uint8_t[]>(size);
 
 		std::copy(rawdata, rawdata + size, begin());
 	}
@@ -631,8 +631,7 @@ struct SequenceBase {
 
 	SequenceBase(const SequenceBase& other) : nBases(other.nBases){
 		const int size = other.getNumBytes();
-		data.first = std::make_unique<std::uint8_t[]>(size);
-		data.second = size;
+		data = std::make_unique<std::uint8_t[]>(size);
 
 		std::copy(other.begin(), other.end(), begin());
     }
@@ -676,14 +675,14 @@ struct SequenceBase {
 
 	char operator[](int i) const noexcept{
         if(!Impl::isCompressed())
-            return Impl::get((const char*)data.first.get(), nBases, i);
+            return Impl::get((const char*)data.get(), nBases, i);
         else{
             constexpr std::uint8_t BASE_A = 0x00;
             constexpr std::uint8_t BASE_C = 0x01;
             constexpr std::uint8_t BASE_G = 0x02;
             constexpr std::uint8_t BASE_T = 0x03;
 
-            switch(Impl::get((const char*)data.first.get(), nBases, i)){
+            switch(Impl::get((const char*)data.get(), nBases, i)){
             case BASE_A: return 'A';
             case BASE_C: return 'C';
             case BASE_G: return 'G';
@@ -694,13 +693,14 @@ struct SequenceBase {
     }
 
 	std::string toString() const{
-        return Impl::toString(data.first.get(), nBases);
+        return Impl::toString(data.get(), nBases);
     }
 
 	SequenceBase reverseComplement() const{
         SequenceBase revCompl;
         revCompl.nBases = nBases;
-        revCompl.data = Impl::reverseComplement(data.first.get(), nBases);
+        auto p = Impl::reverseComplement(data.get(), nBases);
+        revCompl.data = std::move(p.first);
         //std::cout << "orig:" << toString() << std::endl;
         //std::cout << "revc:" << revCompl.toString() << std::endl;
         return revCompl;
@@ -720,11 +720,11 @@ struct SequenceBase {
     }
 
     std::uint8_t* begin() const noexcept{
-        return data.first.get();
+        return data.get();
     }
 
     std::uint8_t* end() const noexcept{
-        return data.first.get() + getNumBytes();
+        return data.get() + getNumBytes();
     }
 
     HOSTDEVICEQUALIFIER
@@ -766,7 +766,8 @@ struct SequenceBase {
         return Impl::make_reverse_complement_inplace(sequence, sequencelength);
     };
 
-	std::pair<std::unique_ptr<std::uint8_t[]>, int> data;
+	//std::pair<std::unique_ptr<std::uint8_t[]>, int> data;
+    std::unique_ptr<std::uint8_t[]> data;
 	int nBases;
 
 public:
