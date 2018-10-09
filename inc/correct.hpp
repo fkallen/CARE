@@ -2726,7 +2726,7 @@ void correct(const MinhashOptions& minhashOptions,
 
 //#define DO_PROFILE
 
-#if 0
+#if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else
