@@ -86,6 +86,8 @@ void pop_range(){
 #include "../sequence.hpp"
 #include "../featureextractor.hpp"
 
+#include "../forestclassifier.hpp"
+
 #include "kernels.hpp"
 #include "dataarrays.hpp"
 #include "readstorage_gpu.hpp"
@@ -595,7 +597,8 @@ struct BatchGenerator{
                 corrected(false),
                 readId(readId),
                 subject_sequence(subject_sequence),
-                subject_quality(subject_quality){}
+                subject_quality(subject_quality),
+                subject_string(subject_sequence->toString()){}
 
         CorrectionTask(const CorrectionTask& other)
             : active(other.active),
@@ -603,6 +606,7 @@ struct BatchGenerator{
             readId(other.readId),
             subject_sequence(other.subject_sequence),
             subject_quality(other.subject_quality),
+            subject_string(other.subject_string),
             candidate_read_ids(other.candidate_read_ids),
             candidate_sequences(other.candidate_sequences),
             candidate_qualities(other.candidate_qualities),
@@ -634,6 +638,7 @@ struct BatchGenerator{
             swap(l.corrected, r.corrected);
             swap(l.readId, r.readId);
             swap(l.subject_sequence, r.subject_sequence);
+            swap(l.subject_string, r.subject_string);
             swap(l.candidate_read_ids, r.candidate_read_ids);
             swap(l.candidate_sequences, r.candidate_sequences);
             swap(l.subject_quality, r.subject_quality);
@@ -651,6 +656,7 @@ struct BatchGenerator{
 
         const std::string* subject_quality;
         std::vector<const std::string*> candidate_qualities;
+        std::string subject_string;
 
         std::string corrected_subject;
         std::vector<std::string> corrected_candidates;
@@ -984,8 +990,8 @@ struct BatchGenerator{
 
 						auto& task = batch.tasks.back();
 
-						const std::string sequencestring = task.subject_sequence->toString();
-						task.candidate_read_ids = minhasher->getCandidates(sequencestring, transFuncData.max_candidates);
+						task.subject_string = task.subject_sequence->toString();
+						task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
 
 						//remove self from candidates
 						auto readIdPos = std::find(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
@@ -1719,114 +1725,119 @@ struct BatchGenerator{
 								streams[primary_stream_index]);
 
 				// Step 14. Correction
+                if(transFuncData.correctionOptions.classicMode){
 
-				// correct subjects
-				call_msa_correct_subject_kernel_async(
-								dataArrays.d_consensus,
-								dataArrays.d_support,
-								dataArrays.d_coverage,
-								dataArrays.d_origCoverages,
-								dataArrays.d_multiple_sequence_alignments,
-								dataArrays.d_msa_column_properties,
-								dataArrays.d_indices_per_subject_prefixsum,
-								dataArrays.d_is_high_quality_subject,
-								dataArrays.d_corrected_subjects,
-								dataArrays.d_subject_is_corrected,
-								dataArrays.n_subjects,
-								dataArrays.n_queries,
-								dataArrays.d_num_indices,
-								dataArrays.sequence_pitch,
-								dataArrays.msa_pitch,
-								dataArrays.msa_weights_pitch,
-								transFuncData.estimatedErrorrate,
-								avg_support_threshold,
-								min_support_threshold,
-								min_coverage_threshold,
-								transFuncData.kmerlength,
-								dataArrays.maximum_sequence_length,
-								streams[primary_stream_index]);
+    				// correct subjects
+    				call_msa_correct_subject_kernel_async(
+    								dataArrays.d_consensus,
+    								dataArrays.d_support,
+    								dataArrays.d_coverage,
+    								dataArrays.d_origCoverages,
+    								dataArrays.d_multiple_sequence_alignments,
+    								dataArrays.d_msa_column_properties,
+    								dataArrays.d_indices_per_subject_prefixsum,
+    								dataArrays.d_is_high_quality_subject,
+    								dataArrays.d_corrected_subjects,
+    								dataArrays.d_subject_is_corrected,
+    								dataArrays.n_subjects,
+    								dataArrays.n_queries,
+    								dataArrays.d_num_indices,
+    								dataArrays.sequence_pitch,
+    								dataArrays.msa_pitch,
+    								dataArrays.msa_weights_pitch,
+    								transFuncData.estimatedErrorrate,
+    								avg_support_threshold,
+    								min_support_threshold,
+    								min_coverage_threshold,
+    								transFuncData.kmerlength,
+    								dataArrays.maximum_sequence_length,
+    								streams[primary_stream_index]);
 
-				if(transFuncData.correctCandidates){
+    				if(transFuncData.correctionOptions.correctCandidates){
 
 
-					// find subject ids of subjects with high quality multiple sequence alignment
+    					// find subject ids of subjects with high quality multiple sequence alignment
 
-					cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
-									dataArrays.tmp_storage_allocation_size,
-									cub::CountingInputIterator<int>(0),
-									dataArrays.d_is_high_quality_subject,
-									dataArrays.d_high_quality_subject_indices,
-									dataArrays.d_num_high_quality_subject_indices,
-									dataArrays.n_subjects,
-									streams[primary_stream_index]); CUERR;
+    					cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
+    									dataArrays.tmp_storage_allocation_size,
+    									cub::CountingInputIterator<int>(0),
+    									dataArrays.d_is_high_quality_subject,
+    									dataArrays.d_high_quality_subject_indices,
+    									dataArrays.d_num_high_quality_subject_indices,
+    									dataArrays.n_subjects,
+    									streams[primary_stream_index]); CUERR;
 
-					// correct candidates
-					call_msa_correct_candidates_kernel_async(
-									dataArrays.d_consensus,
-									dataArrays.d_support,
-									dataArrays.d_coverage,
-									dataArrays.d_origCoverages,
-									dataArrays.d_multiple_sequence_alignments,
-									dataArrays.d_msa_column_properties,
-									dataArrays.d_indices,
-									dataArrays.d_indices_per_subject,
-									dataArrays.d_indices_per_subject_prefixsum,
-									dataArrays.d_high_quality_subject_indices,
-									dataArrays.d_num_high_quality_subject_indices,
-									dataArrays.d_alignment_shifts,
-									dataArrays.d_alignment_best_alignment_flags,
-									dataArrays.d_candidate_sequences_lengths,
-									dataArrays.d_num_corrected_candidates,
-									dataArrays.d_corrected_candidates,
-									dataArrays.d_indices_of_corrected_candidates,
-									dataArrays.n_subjects,
-									dataArrays.n_queries,
-									dataArrays.d_num_indices,
-									dataArrays.sequence_pitch,
-									dataArrays.msa_pitch,
-									dataArrays.msa_weights_pitch,
-									min_support_threshold,
-									min_coverage_threshold,
-									new_columns_to_correct,
-									make_unpacked_reverse_complement_inplace,
-									dataArrays.maximum_sequence_length,
-									streams[primary_stream_index]);
+    					// correct candidates
+    					call_msa_correct_candidates_kernel_async(
+    									dataArrays.d_consensus,
+    									dataArrays.d_support,
+    									dataArrays.d_coverage,
+    									dataArrays.d_origCoverages,
+    									dataArrays.d_multiple_sequence_alignments,
+    									dataArrays.d_msa_column_properties,
+    									dataArrays.d_indices,
+    									dataArrays.d_indices_per_subject,
+    									dataArrays.d_indices_per_subject_prefixsum,
+    									dataArrays.d_high_quality_subject_indices,
+    									dataArrays.d_num_high_quality_subject_indices,
+    									dataArrays.d_alignment_shifts,
+    									dataArrays.d_alignment_best_alignment_flags,
+    									dataArrays.d_candidate_sequences_lengths,
+    									dataArrays.d_num_corrected_candidates,
+    									dataArrays.d_corrected_candidates,
+    									dataArrays.d_indices_of_corrected_candidates,
+    									dataArrays.n_subjects,
+    									dataArrays.n_queries,
+    									dataArrays.d_num_indices,
+    									dataArrays.sequence_pitch,
+    									dataArrays.msa_pitch,
+    									dataArrays.msa_weights_pitch,
+    									min_support_threshold,
+    									min_coverage_threshold,
+    									new_columns_to_correct,
+    									make_unpacked_reverse_complement_inplace,
+    									dataArrays.maximum_sequence_length,
+    									streams[primary_stream_index]);
 
-				}
-
+    				}
+                }
 				assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
 
 				cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
-                cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
+                if(transFuncData.correctionOptions.extractFeatures || !transFuncData.correctionOptions.classicMode){
 
-                cudaMemcpyAsync(dataArrays.h_consensus,
-                                dataArrays.d_consensus,
-                                dataArrays.n_subjects * dataArrays.msa_pitch,
-                                D2H,
-                                streams[secondary_stream_index]); CUERR;
-                cudaMemcpyAsync(dataArrays.h_support,
-                                dataArrays.d_support,
-                                dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                                D2H,
-                                streams[secondary_stream_index]); CUERR;
-                cudaMemcpyAsync(dataArrays.h_coverage,
-                                dataArrays.d_coverage,
-                                dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                                D2H,
-                                streams[secondary_stream_index]); CUERR;
-                cudaMemcpyAsync(dataArrays.h_origCoverages,
-                                dataArrays.d_origCoverages,
-                                dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                                D2H,
-                                streams[secondary_stream_index]); CUERR;
-                cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                                dataArrays.d_msa_column_properties,
-                                dataArrays.n_subjects * sizeof(MSAColumnProperties),
-                                D2H,
-                                streams[secondary_stream_index]); CUERR;
+                    cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
-                cudaEventRecord(events[featuredata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.h_consensus,
+                                    dataArrays.d_consensus,
+                                    dataArrays.n_subjects * dataArrays.msa_pitch,
+                                    D2H,
+                                    streams[secondary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.h_support,
+                                    dataArrays.d_support,
+                                    dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                                    D2H,
+                                    streams[secondary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.h_coverage,
+                                    dataArrays.d_coverage,
+                                    dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                                    D2H,
+                                    streams[secondary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.h_origCoverages,
+                                    dataArrays.d_origCoverages,
+                                    dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                                    D2H,
+                                    streams[secondary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.h_msa_column_properties,
+                                    dataArrays.d_msa_column_properties,
+                                    dataArrays.n_subjects * sizeof(MSAColumnProperties),
+                                    D2H,
+                                    streams[secondary_stream_index]); CUERR;
+
+                    cudaEventRecord(events[featuredata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+                }
 
 				return BatchState::WaitForCorrection;
 			}
@@ -2086,45 +2097,100 @@ struct BatchGenerator{
                             std::cout << std::endl;
             #endif
 
+            if(transFuncData.correctionOptions.classicMode){
 
-			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
-				auto& task = batch.tasks[subject_index];
-				auto& arrays = dataArrays;
 
-				const char* const my_corrected_subject_data = arrays.h_corrected_subjects + subject_index * arrays.sequence_pitch;
-				const char* const my_corrected_candidates_data = arrays.h_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index] * arrays.sequence_pitch;
-				const int* const my_indices_of_corrected_candidates = arrays.h_indices_of_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index];
+    			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
+    				auto& task = batch.tasks[subject_index];
+    				auto& arrays = dataArrays;
 
-				const bool any_correction_candidates = arrays.h_indices_per_subject[subject_index] > 0;
+    				const char* const my_corrected_subject_data = arrays.h_corrected_subjects + subject_index * arrays.sequence_pitch;
+    				const char* const my_corrected_candidates_data = arrays.h_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index] * arrays.sequence_pitch;
+    				const int* const my_indices_of_corrected_candidates = arrays.h_indices_of_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index];
 
-				//has subject been corrected ?
-				task.corrected = arrays.h_subject_is_corrected[subject_index];
-				//if corrected, copy corrected subject to task
-				if(task.corrected){
+    				const bool any_correction_candidates = arrays.h_indices_per_subject[subject_index] > 0;
 
-					const int subject_length = task.subject_sequence->length();
+    				//has subject been corrected ?
+    				task.corrected = arrays.h_subject_is_corrected[subject_index];
+    				//if corrected, copy corrected subject to task
+    				if(task.corrected){
 
-					task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
-				}
+    					const int subject_length = task.subject_sequence->length();
 
-				if(transFuncData.correctCandidates){
-					const int n_corrected_candidates = arrays.h_num_corrected_candidates[subject_index];
+    					task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+    				}
 
-					assert((!any_correction_candidates && n_corrected_candidates == 0) || any_correction_candidates);
+    				if(transFuncData.correctCandidates){
+    					const int n_corrected_candidates = arrays.h_num_corrected_candidates[subject_index];
 
-					for(int i = 0; i < n_corrected_candidates; ++i){
-						const int global_candidate_index = my_indices_of_corrected_candidates[i];
-						const int local_candidate_index = global_candidate_index - arrays.h_candidates_per_subject_prefixsum[subject_index];
+    					assert((!any_correction_candidates && n_corrected_candidates == 0) || any_correction_candidates);
 
-						const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
-						const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
+    					for(int i = 0; i < n_corrected_candidates; ++i){
+    						const int global_candidate_index = my_indices_of_corrected_candidates[i];
+    						const int local_candidate_index = global_candidate_index - arrays.h_candidates_per_subject_prefixsum[subject_index];
 
-						task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
+    						const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
+    						const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
 
-						task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
-					}
-				}
-			}
+    						task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
+
+    						task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
+    					}
+    				}
+    			}
+            }else{
+                for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
+    				auto& task = batch.tasks[subject_index];
+                    const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+                    const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+
+                    task.corrected_subject = task.subject_string;
+
+                    const char* cons = dataArrays.h_consensus + subject_index * dataArrays.msa_pitch;
+
+                    std::vector<MSAFeature> MSAFeatures = extractFeatures(cons,
+                                                            dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                                                            dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                                                            dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                                            columnProperties.columnsToCheck,
+                                                            columnProperties.subjectColumnsBegin_incl,
+                                                            columnProperties.subjectColumnsEnd_excl,
+                                                            task.subject_sequence->toString(),
+                                                            transFuncData.minhasher->minparams.k, 0.0,
+                                                            transFuncData.estimatedCoverage);
+
+                    for(const auto& msafeature : MSAFeatures){
+                        constexpr double maxgini = 0.05;
+                        constexpr double forest_correction_fraction = 0.5;
+
+                        const bool doCorrect = care::forestclassifier::shouldCorrect(
+                                                        care::forestclassifier::Mode::CombinedAlignCov,
+                                                        //care::forestclassifier::Mode::CombinedDataCov,
+                                                        //care::forestclassifier::Mode::Species,
+                                                        msafeature.position_support,
+                                                        msafeature.position_coverage,
+                                                        msafeature.alignment_coverage,
+                                                        msafeature.dataset_coverage,
+                                                        msafeature.min_support,
+                                                        msafeature.min_coverage,
+                                                        msafeature.max_support,
+                                                        msafeature.max_coverage,
+                                                        msafeature.mean_support,
+                                                        msafeature.mean_coverage,
+                                                        msafeature.median_support,
+                                                        msafeature.median_coverage,
+                                                        maxgini,
+                                                        forest_correction_fraction);
+
+                        if(doCorrect){
+                            task.corrected = true;
+
+                            const int globalIndex = columnProperties.subjectColumnsBegin_incl + msafeature.position;
+                            task.corrected_subject[msafeature.position] = cons[globalIndex];
+                        }
+                    }
+                }
+            }
 
 			return BatchState::WriteResults;
 		}
@@ -2240,14 +2306,11 @@ struct BatchGenerator{
                                                         transFuncData.minhasher->minparams.k, 0.0,
                                                         transFuncData.estimatedCoverage);
 
-                    for(const auto& msafeature : MSAFeatures){
-                        featurestream << task.readId << '\t' << msafeature.position << '\n';
-                        featurestream << msafeature << '\n';
-                    }
-
+                for(const auto& msafeature : MSAFeatures){
+                    featurestream << task.readId << '\t' << msafeature.position << '\n';
+                    featurestream << msafeature << '\n';
+                }
 			}
-
-
 
             return BatchState::Finished;
 		}
