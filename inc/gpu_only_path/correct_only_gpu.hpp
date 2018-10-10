@@ -1007,6 +1007,8 @@ struct BatchGenerator{
 
                         assert(!task.active || batch.initialNumberOfCandidates > 0);
                         assert(!task.active || int(task.candidate_read_ids.size()) > 0);
+
+                        //std::cout << "newtask" << id << ' ' << task.candidate_read_ids.size() << ' ' << task.active << std::endl;
 					}
 				}
 			}
@@ -1932,6 +1934,159 @@ struct BatchGenerator{
 
 			assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
 
+            #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
+                            std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+                            //DEBUGGING
+                            cudaMemcpyAsync(dataArrays.msa_data_host,
+                                            dataArrays.msa_data_device,
+                                            dataArrays.msa_data_usable_size,
+                                            D2H,
+                                            streams[primary_stream_index]); CUERR;
+                            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                            //DEBUGGING
+                            cudaMemcpyAsync(dataArrays.alignment_result_data_host,
+                                            dataArrays.alignment_result_data_device,
+                                            dataArrays.alignment_result_data_usable_size,
+                                            D2H,
+                                            streams[primary_stream_index]); CUERR;
+                            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                            //DEBUGGING
+                            cudaMemcpyAsync(dataArrays.subject_indices_data_host,
+                                            dataArrays.subject_indices_data_device,
+                                            dataArrays.subject_indices_data_usable_size,
+                                            D2H,
+                                            streams[primary_stream_index]); CUERR;
+                            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                            cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+                                            dataArrays.indices_transfer_data_device,
+                                            dataArrays.indices_transfer_data_usable_size,
+                                            D2H,
+                                            streams[primary_stream_index]); CUERR;
+                            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+
+            #endif
+
+            #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
+                            //DEBUGGING
+                            std::cout << "alignment scores" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                                std::cout << dataArrays[batchIndex].h_alignment_scores[i] << "\t";
+                            }
+                            std::cout << std::endl;
+                            //DEBUGGING
+                            std::cout << "alignment overlaps" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                                std::cout << dataArrays[batchIndex].h_alignment_overlaps[i] << "\t";
+                            }
+                            std::cout << std::endl;
+                            //DEBUGGING
+                            std::cout << "alignment shifts" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                                std::cout << dataArrays[batchIndex].h_alignment_shifts[i] << "\t";
+                            }
+                            std::cout << std::endl;
+                            //DEBUGGING
+                            std::cout << "alignment nOps" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                                std::cout << dataArrays[batchIndex].h_alignment_nOps[i] << "\t";
+                            }
+                            std::cout << std::endl;
+                            //DEBUGGING
+                            std::cout << "alignment isvalid" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                                std::cout << dataArrays[batchIndex].h_alignment_isValid[i] << "\t";
+                            }
+                            std::cout << std::endl;
+                            //DEBUGGING
+                            std::cout << "alignment flags" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_queries * 2; i++){
+                                std::cout << int(dataArrays[batchIndex].h_alignment_best_alignment_flags[i]) << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_candidates_per_subject_prefixsum" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects +1; i++){
+                                std::cout << dataArrays[batchIndex].h_candidates_per_subject_prefixsum[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_num_indices" << std::endl;
+                            for(int i = 0; i< 1; i++){
+                                std::cout << dataArrays[batchIndex].h_num_indices[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_indices" << std::endl;
+                            for(int i = 0; i< *dataArrays[batchIndex].h_num_indices; i++){
+                                std::cout << dataArrays[batchIndex].h_indices[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_indices_per_subject" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                                std::cout << dataArrays[batchIndex].h_indices_per_subject[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_indices_per_subject_prefixsum" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                                std::cout << dataArrays[batchIndex].h_indices_per_subject_prefixsum[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_high_quality_subject_indices" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                                std::cout << dataArrays[batchIndex].h_high_quality_subject_indices[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_is_high_quality_subject" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                                std::cout << dataArrays[batchIndex].h_is_high_quality_subject[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_num_high_quality_subject_indices" << std::endl;
+                            for(int i = 0; i< 1; i++){
+                                std::cout << dataArrays[batchIndex].h_num_high_quality_subject_indices[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_num_corrected_candidates" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                                std::cout << dataArrays[batchIndex].h_num_corrected_candidates[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_subject_is_corrected" << std::endl;
+                            for(int i = 0; i< dataArrays[batchIndex].n_subjects; i++){
+                                std::cout << dataArrays[batchIndex].h_subject_is_corrected[i] << "\t";
+                            }
+                            std::cout << std::endl;
+
+                            //DEBUGGING
+                            std::cout << "h_indices_of_corrected_candidates" << std::endl;
+                            for(int i = 0; i< *dataArrays[batchIndex].h_num_indices; i++){
+                                std::cout << dataArrays[batchIndex].h_indices_of_corrected_candidates[i] << "\t";
+                            }
+                            std::cout << std::endl;
+            #endif
+
+
 			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
 				auto& task = batch.tasks[subject_index];
 				auto& arrays = dataArrays;
@@ -1989,6 +2144,7 @@ struct BatchGenerator{
 			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index){
 
 				const auto& task = batch.tasks[subject_index];
+                //std::cout << task.readId << "result" << std::endl;
 
 				//std::cout << "finished readId " << task.readId << std::endl;
 
@@ -2069,10 +2225,14 @@ struct BatchGenerator{
 				const auto& task = batch.tasks[subject_index];
                 const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
 
+                //std::cout << task.readId << "feature" << std::endl;
+
+                const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+
                 std::vector<MSAFeature> MSAFeatures = extractFeatures(dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
-                                                        dataArrays.h_support + subject_index * dataArrays.msa_weights_pitch,
-                                                        dataArrays.h_coverage + subject_index * dataArrays.msa_weights_pitch,
-                                                        dataArrays.h_origCoverages + subject_index * dataArrays.msa_weights_pitch,
+                                                        dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                                                        dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                                                        dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
                                                         columnProperties.columnsToCheck,
                                                         columnProperties.subjectColumnsBegin_incl,
                                                         columnProperties.subjectColumnsEnd_excl,
