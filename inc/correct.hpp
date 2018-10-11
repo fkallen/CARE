@@ -395,8 +395,8 @@ private:
 		std::array<std::vector<BatchElem_t>, nStreams> batchElems;
 		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
 
-        int currentStreamIndex = 0;
-        int nextStreamIndex = 1;
+        //int currentStreamIndex = 0;
+        //int nextStreamIndex = 1;
 
 		while(!stopAndAbort && !readIds.empty()){
 
