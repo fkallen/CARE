@@ -554,6 +554,7 @@ struct BatchGenerator{
 
     template<class minhasher_t,
     		 class readStorage_t,
+             class gpureadStorage_t,
 			 class batchgenerator_t>
     struct ErrorCorrectionThreadOnlyGPU{
     using Minhasher_t = minhasher_t;
@@ -562,7 +563,7 @@ struct BatchGenerator{
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
 		using BatchGenerator_t = batchgenerator_t;
-        using GPUReadStorage_t = GPUReadStorage;
+        using GPUReadStorage_t = gpureadStorage_t;
 
         static constexpr int primary_stream_index = 0;
         static constexpr int secondary_stream_index = 1;
@@ -680,6 +681,8 @@ struct BatchGenerator{
     		BatchGenerator_t* batchGen;
     		const Minhasher_t* minhasher;
     		const ReadStorage_t* readStorage;
+            GPUReadStorage_t* gpuReadStorage;
+            bool canUseGPUReadStorage;
     		std::mutex* coutLock;
     		std::vector<char>* readIsProcessedVector;
     		std::vector<char>* readIsCorrectedVector;
@@ -737,6 +740,7 @@ struct BatchGenerator{
 		using FuncTableEntry = BatchState (*)(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData&);
 
 		std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
@@ -821,6 +825,7 @@ struct BatchGenerator{
 		static BatchState state_unprepared_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::Unprepared);
@@ -830,8 +835,8 @@ struct BatchGenerator{
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-			//while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
-			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
+			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
+			//if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
 				const auto& readStorage = transFuncData.readStorage;
 				const auto& minhasher = transFuncData.minhasher;
 				const auto readIds = transFuncData.mybatchgen->getNextReadIds(transFuncData.num_ids_per_add_tasks);
@@ -884,6 +889,10 @@ struct BatchGenerator{
                         //std::cout << "newtask" << id << ' ' << task.candidate_read_ids.size() << ' ' << task.active << std::endl;
 					}
 				}
+
+                //only perform one iteration if pausable
+                if(isPausable)
+                    break;
 			}
 
             auto new_end = std::remove_if(batch.tasks.begin(),
@@ -952,6 +961,7 @@ struct BatchGenerator{
 		static BatchState state_copyreads_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::CopyReads);
@@ -964,7 +974,7 @@ struct BatchGenerator{
 			dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
 			//copy one task
-            if(batch.copiedTasks < int(batch.tasks.size())){
+            while(batch.copiedTasks < int(batch.tasks.size())){
                 const auto& task = batch.tasks[batch.copiedTasks];
                 auto& arrays = dataArrays;
 
@@ -992,8 +1002,6 @@ struct BatchGenerator{
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 										+ int(task.candidate_read_ids.size());
-
-					++batch.copiedTasks;
 
 				}else{
 					//copy subject data
@@ -1027,12 +1035,12 @@ struct BatchGenerator{
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 										+ int(task.candidate_read_ids.size());
-
-					++batch.copiedTasks;
 				}
 
+                ++batch.copiedTasks;
 
-
+                if(isPausable)
+                    break;
             }
 
 			//if batch is fully copied, transfer to gpu
@@ -1058,6 +1066,7 @@ struct BatchGenerator{
 		static BatchState state_startalignment_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::StartAlignment);
@@ -1263,6 +1272,7 @@ struct BatchGenerator{
 		static BatchState state_waitforindices_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::WaitForIndices);
@@ -1285,6 +1295,7 @@ struct BatchGenerator{
 		static BatchState state_copyqualities_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::CopyQualities);
@@ -1303,7 +1314,7 @@ struct BatchGenerator{
 
     				assert(batch.copiedTasks <= int(batch.tasks.size()));
 
-    				if(batch.copiedTasks < int(batch.tasks.size())){
+    				while(batch.copiedTasks < int(batch.tasks.size())){
 
 						const auto& task = batch.tasks[batch.copiedTasks];
     					auto& arrays = dataArrays;
@@ -1331,6 +1342,9 @@ struct BatchGenerator{
     					}
 
     					++batch.copiedTasks;
+
+                        if(isPausable)
+                            break;
     				}
 
     				//gather_quality_scores_of_next_task(batch, dataArrays);
@@ -1361,6 +1375,7 @@ struct BatchGenerator{
         static BatchState state_buildmsa_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::BuildMSA);
@@ -1499,6 +1514,7 @@ struct BatchGenerator{
 		static BatchState state_startclassiccorrection_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::StartClassicCorrection);
@@ -1621,6 +1637,7 @@ struct BatchGenerator{
         static BatchState state_startforestcorrection_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::StartForestCorrection);
@@ -1699,6 +1716,7 @@ struct BatchGenerator{
 		static BatchState state_waitforclassicresults_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::WaitForClassicResults);
@@ -1735,6 +1753,7 @@ struct BatchGenerator{
         static BatchState state_waitformsadata_func(Batch& batch,
                                         bool canBlock,
                                         bool canLaunchKernel,
+                                        bool isPausable,
                                         const TransitionFunctionData& transFuncData){
 
             assert(batch.state == BatchState::WaitForMSAData);
@@ -1756,6 +1775,7 @@ struct BatchGenerator{
 		static BatchState state_unpackclassicresults_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::UnpackClassicResults);
@@ -1965,6 +1985,7 @@ struct BatchGenerator{
 		static BatchState state_writeresults_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::WriteResults);
@@ -2019,6 +2040,7 @@ struct BatchGenerator{
         static BatchState state_writefeatures_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::WriteFeatures);
@@ -2063,6 +2085,7 @@ struct BatchGenerator{
 		static BatchState state_finished_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::Finished);
@@ -2075,6 +2098,7 @@ struct BatchGenerator{
 		static BatchState state_aborted_func(Batch& batch,
 										bool canBlock,
 										bool canLaunchKernel,
+                                        bool isPausable,
 										const TransitionFunctionData& transFuncData){
 
 			assert(batch.state == BatchState::Aborted);
@@ -2088,6 +2112,7 @@ struct BatchGenerator{
         AdvanceResult advance_one_step(Batch& batch,
                                 bool canBlock,
                                 bool canLaunchKernel,
+                                bool isPausable,
 								const TransitionFunctionData& transFuncData){
 
 			AdvanceResult advanceResult;
@@ -2098,7 +2123,7 @@ struct BatchGenerator{
 
 			auto iter = transitionFunctionTable.find(batch.state);
 			if(iter != transitionFunctionTable.end()){
-				batch.state = iter->second(batch, canBlock, canLaunchKernel, transFuncData);
+				batch.state = iter->second(batch, canBlock, canLaunchKernel, isPausable, transFuncData);
 			}else{
 					std::cout << nameOf(batch.state) << std::endl;
                     assert(false); // Every State should be handled above
@@ -2178,7 +2203,7 @@ struct BatchGenerator{
 				freeStreamsQueue.push(&streamArray);
 			for(auto& eventArray : cudaevents)
 				freeEventsQueue.push(&eventArray);
-
+#if 0
             GPUReadStorage_t gpuReadStorage;
 			bool canUseGPUReadStorage = true;
             /*GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
@@ -2210,15 +2235,16 @@ struct BatchGenerator{
 
 			std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
 			std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
-
+#endif
 
 			TransitionFunctionData transFuncData;
 
 			transFuncData.mybatchgen = &mybatchgen;
 			transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
-            transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
-            transFuncData.useGpuReadStorage = canUseGPUReadStorage;
+            //transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
+            transFuncData.gpuReadStorage = threadOpts.canUseGPUReadStorage ? threadOpts.gpuReadStorage : nullptr;
+            transFuncData.useGpuReadStorage = threadOpts.canUseGPUReadStorage;
 			transFuncData.min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
 			transFuncData.min_overlap = goodAlignmentProperties.min_overlap;
 			transFuncData.estimatedErrorrate = correctionOptions.estimatedErrorrate;
@@ -2301,6 +2327,7 @@ struct BatchGenerator{
                     mainBatchAdvanceResult = advance_one_step(mainBatch,
                                                             true, //can block
                                                             true, //can launch kernels
+                                                            false, //cannot be paused
 															transFuncData);
 
 					if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)){
@@ -2366,6 +2393,7 @@ struct BatchGenerator{
 									sideBatchAdvanceResult = advance_one_step(sideBatch,
 																			false, //must not block
 																			true, //can launch kernels
+                                                                            true, //can be paused
 																			transFuncData);
 
 									if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
@@ -2535,9 +2563,9 @@ struct BatchGenerator{
     		}
     	#endif
 
-            if(canUseGPUReadStorage){
-                GPUReadStorage_t::destroy(gpuReadStorage);
-            }
+            //if(canUseGPUReadStorage){
+            //    GPUReadStorage_t::destroy(gpuReadStorage);
+            //}
 
             for(auto& array : dataArrays){
                 array.reset();

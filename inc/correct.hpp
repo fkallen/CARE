@@ -30,6 +30,7 @@
 
 //EXPERIMENTAL
 #include "gpu_only_path/correct_only_gpu.hpp"
+#include "gpu_only_path/readstorage_gpu.hpp"
 
 
 
@@ -2994,7 +2995,7 @@ void correct(const MinhashOptions& minhashOptions,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
 				  const FileOptions& fileOptions,
-                  const SequenceFileProperties& props,
+                  const SequenceFileProperties& sequenceFileProperties,
                   minhasher_t& minhasher,
                   readStorage_t& readStorage,
 				  std::vector<char>& readIsCorrectedVector,
@@ -3008,11 +3009,11 @@ void correct(const MinhashOptions& minhashOptions,
 	using ReadStorage_t = readStorage_t;
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
-
+    using GPUReadStorage_t = GPUReadStorage;
 
 	using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 
-	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
+	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
 
 
 //#define DO_PROFILE
@@ -3031,7 +3032,7 @@ void correct(const MinhashOptions& minhashOptions,
       // initialize qscore-to-weight lookup table
   	init_weights();
 
-    //SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+    //SequenceFileProperties sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
     /*
         Make candidate statistics
@@ -3050,7 +3051,7 @@ void correct(const MinhashOptions& minhashOptions,
             std::map<std::int64_t, std::int64_t> candidateHistogram
                     = correctiondetail::getCandidateCountHistogram(minhasher,
                                                 readStorage,
-                                                props.nReads / 10,
+                                                sequenceFileProperties.nReads / 10,
                                                 runtimeOptions.threads);
 
             TIMERSTOPCPU(candidateestimation);
@@ -3100,8 +3101,8 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
-	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(props.nReads / 7.0) : 0;
-	std::uint64_t ngpuReads = props.nReads - ncpuReads;
+	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(sequenceFileProperties.nReads / 7.0) : 0;
+	std::uint64_t ngpuReads = sequenceFileProperties.nReads - ncpuReads;
 	std::uint64_t nReadsPerGPU = SDIV(ngpuReads, nGpuThreads);
 
 	std::cout << "nCpuThreads: " << nCpuThreads << ", nGpuThreads: " << nGpuThreads << std::endl;
@@ -3128,16 +3129,50 @@ void correct(const MinhashOptions& minhashOptions,
         cpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
         cpucorrectorThreads[threadId].correctionOptions = correctionOptions;
         cpucorrectorThreads[threadId].threadOpts = threadOpts;
-        cpucorrectorThreads[threadId].fileProperties = props;
+        cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
         cpucorrectorThreads[threadId].max_candidates = max_candidates;
 
         cpucorrectorThreads[threadId].run();
     }
 
+    GPUReadStorage_t gpuReadStorage;
+    bool canUseGPUReadStorage = true;
+    /*GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(readStorage,
+                                                                            Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+                                                                            fileProperties.maxSequenceLength,
+                                                                            0.8f,
+                                                                            threadOpts.deviceId);
+
+
+    if(bestGPUReadStorageType != GPUReadStorageType::None){
+        //bestGPUReadStorageType = GPUReadStorageType::Sequences;
+
+        gpuReadStorage = GPUReadStorage_t::createFrom(readStorage,
+                                                        bestGPUReadStorageType,
+                                                        Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
+                                                        fileProperties.maxSequenceLength,
+                                                        threadOpts.deviceId);
+
+        canUseGPUReadStorage = true;
+        std::cout << "Using gpu read storage, type " << GPUReadStorage_t::nameOf(bestGPUReadStorageType) << std::endl;
+    }*/
+    std::cout << "External gpu read storage" << std::endl;
+    gpuReadStorage = GPUReadStorage_t::createFrom(readStorage,
+                                                Sequence_t::getNumBytes(sequenceFileProperties.maxSequenceLength),
+                                                sequenceFileProperties.maxSequenceLength,
+                                                0.8f,
+                                                true,
+                                                deviceIds.size() == 0 ? -1 : deviceIds[0]);
+
+    std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
+    std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
+
 
     for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
-        gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPU, std::min(props.nReads, ncpuReads + (threadId+1) * nReadsPerGPU));
+        gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPU,
+                                                                            std::min(sequenceFileProperties.nReads,
+                                                                            ncpuReads + (threadId+1) * nReadsPerGPU));
         typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
@@ -3146,6 +3181,8 @@ void correct(const MinhashOptions& minhashOptions,
         threadOpts.batchGen = &gpubatchgenerators[threadId];
         threadOpts.minhasher = &minhasher;
         threadOpts.readStorage = &readStorage;
+        threadOpts.gpuReadStorage = &gpuReadStorage;
+        threadOpts.canUseGPUReadStorage = canUseGPUReadStorage;
         threadOpts.coutLock = &writelock;
         threadOpts.readIsProcessedVector = &readIsProcessedVector;
         threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
@@ -3156,7 +3193,7 @@ void correct(const MinhashOptions& minhashOptions,
         gpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
         gpucorrectorThreads[threadId].correctionOptions = correctionOptions;
         gpucorrectorThreads[threadId].threadOpts = threadOpts;
-        gpucorrectorThreads[threadId].fileProperties = props;
+        gpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
         gpucorrectorThreads[threadId].max_candidates = max_candidates;
 
         gpucorrectorThreads[threadId].run();
@@ -3192,14 +3229,14 @@ void correct(const MinhashOptions& minhashOptions,
             progress = correctorProgress;
 
             printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
-                    ((progress * 1.0 / props.nReads) * 100.0),
-                    correctorProgress, props.nReads,
+                    ((progress * 1.0 / sequenceFileProperties.nReads) * 100.0),
+                    correctorProgress, sequenceFileProperties.nReads,
                     int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
                     int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
                     int(runtime.count()) % 60);
             std::cout << std::flush;
 
-            if(progress < props.nReads){
+            if(progress < sequenceFileProperties.nReads){
                   std::this_thread::sleep_for(sleepinterval);
                   runtime = std::chrono::system_clock::now() - timepoint_begin;
             }
@@ -3272,6 +3309,10 @@ TIMERSTOPCPU(correction);
 
     minhasher.destroy();
 	readStorage.destroy();
+    
+    if(canUseGPUReadStorage){
+        GPUReadStorage_t::destroy(gpuReadStorage);
+    }
 
    // generators.clear();
    // ecthreads.clear();
@@ -3281,7 +3322,7 @@ TIMERSTOPCPU(correction);
     std::cout << "begin merge" << std::endl;
     TIMERSTARTCPU(merge);
 
-    mergeResultFiles(props.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+    mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
 
     TIMERSTOPCPU(merge);
 
