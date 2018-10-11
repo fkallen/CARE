@@ -30,7 +30,7 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 				  const GoodAlignmentProperties& goodAlignmentProperties,
 				  const CorrectionOptions& correctionOptions,
 				  const RuntimeOptions& runtimeOptions,
-				  const FileOptions& fileOptions,                  
+				  const FileOptions& fileOptions,
 				  std::uint64_t nReads,
 				  std::vector<char>& readIsCorrectedVector,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -61,8 +61,8 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 	TIMERSTARTCPU(load_and_build);
     const SequenceFileProperties props = build(fileOptions, runtimeOptions, nReads, readStorage, minhasher);
 	TIMERSTOPCPU(load_and_build);
-	
-	
+
+
 	std::cout << "----------------------------------------" << std::endl;
     std::cout << "File: " << fileOptions.inputfile << std::endl;
     std::cout << "Reads: " << props.nReads << std::endl;
@@ -73,10 +73,10 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     //std::cin >> stmp;
 
     TIMERSTARTCPU(finalize_datastructures);
-	
+
 	minhasher.resize(props.nReads);
 	readStorage.resize(props.nReads);
-	
+
     readStorage.transform();
     minhasher.transform();
 
@@ -229,6 +229,11 @@ void performCorrection(const cxxopts::ParseResult& args) {
         if(!args::isValid(correctionOptions)) throw std::runtime_error("care::performCorrection: Invalid correctionOptions!");
         if(!args::isValid(runtimeOptions)) throw std::runtime_error("care::performCorrection: Invalid runtimeOptions!");
         if(!args::isValid(fileOptions)) throw std::runtime_error("care::performCorrection: Invalid fileOptions!");
+    }
+
+    if(correctionOptions.correctCandidates && correctionOptions.extractFeatures){
+        std::cout << "Warning! correctCandidates=true cannot be used with extractFeatures=true. Using correctCandidates=false" << std::endl;
+        correctionOptions.correctCandidates = false;
     }
 
 #ifndef __NVCC__
