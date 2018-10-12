@@ -95,7 +95,7 @@ void call_msa_correct_subject_kernel_async(
     /*
         SHIFTED HAMMING DISTANCE
     */
-
+#if 0
     template<int BLOCKSIZE, class Accessor, class RevCompl>
     __global__
     void
@@ -564,7 +564,7 @@ void call_msa_correct_subject_kernel_async(
           #undef mycall
           #undef getsms
     }
-
+#endif
 
 
 
@@ -2246,7 +2246,7 @@ void call_msa_correct_subject_kernel_async(
             const char* const query = d_candidate_sequences_data + queryIndex * encoded_sequence_pitch;
 
             //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
-            const char* const queryQualityScore = qualitiesArePacked ? 
+            const char* const queryQualityScore = qualitiesArePacked ?
 													d_candidate_qualities + index * quality_pitch :
 													d_candidate_qualities + queryIndex * quality_pitch;
 
@@ -2385,7 +2385,7 @@ void call_msa_correct_subject_kernel_async(
                                                                                     blocksize, smem); CUERR;}
 
             */
- 
+
             #define getsms(blocksize) {max_blocks_per_SM = 12;}
 
 
@@ -2566,7 +2566,7 @@ void call_msa_correct_subject_kernel_async(
             const char* const queryQualityScore = d_quality_data == nullptr ?
                                                     d_candidate_qualities + (qualitiesArePacked ? index : queryIndex) * quality_pitch :
                                                     d_quality_data + candidateReadId * maximum_sequence_length;
-                                                    
+
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
             const int query_alignment_nops = d_alignment_nOps[queryIndex];
 
@@ -2686,7 +2686,7 @@ void call_msa_correct_subject_kernel_async(
                             cudaStream_t stream){
 
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
-			
+
 			const int blocksize = 128;
 
             int max_blocks_per_SM = 1;
@@ -2704,7 +2704,7 @@ void call_msa_correct_subject_kernel_async(
                                                                                     blocksize, smem); CUERR;}
 
             */
- 
+
             #define getsms(blocksize) {max_blocks_per_SM = 12;}
 
 

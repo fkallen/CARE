@@ -155,7 +155,7 @@ struct BatchGenerator{
 
     template<class Sequence_t, class ReadId_t>
     struct ShiftedHammingDistanceChooser;
-
+#if 0
 	template<class ReadId_t>
     struct ShiftedHammingDistanceChooser<Sequence2Bit, ReadId_t>{
         using GPUReadStorage_t = GPUReadStorage;
@@ -246,7 +246,7 @@ struct BatchGenerator{
             }
 		}
 	};
-
+#endif
 	template<class ReadId_t>
     struct ShiftedHammingDistanceChooser<Sequence2BitHiLo, ReadId_t>{
         using GPUReadStorage_t = GPUReadStorage;

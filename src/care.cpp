@@ -115,7 +115,7 @@ void correctFile(const MinhashOptions& minhashOptions,
 
     if(runtimeOptions.canUseGpu){
         using NoIndelSequence_t = Sequence2BitHiLo;
-        using IndelSequence_t = Sequence2Bit;
+        using IndelSequence_t = Sequence2BitHiLo;
         using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
         using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
 
@@ -160,7 +160,7 @@ void correctFile(const MinhashOptions& minhashOptions,
     	}
     }else{
         using NoIndelSequence_t = Sequence2BitHiLo;
-        using IndelSequence_t = Sequence2Bit;
+        using IndelSequence_t = Sequence2BitHiLo;
         using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
         using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
 
