@@ -1498,7 +1498,11 @@ void call_msa_correct_subject_kernel_async(
                                         int rhi_bitcount,
                                         int max_errors){
 
-                const int overlap_bitcount = lhi_bitcount < rhi_bitcount ? lhi_bitcount : rhi_bitcount;
+                const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
+				
+				if(overlap_bitcount == 0)
+					return max_errors+1;
+				
                 const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
                 const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
 
@@ -1660,8 +1664,8 @@ void call_msa_correct_subject_kernel_async(
                                         subjectdata_lo,
                                         querydata_hi,
                                         querydata_lo,
-                                        subjectbases - abs(shift),
-                                        querybases - abs(shift),
+                                        max(0, subjectbases - abs(shift)),
+                                        max(0, querybases - abs(shift)),
                                         max_errors);
 
                     score = (score < max_errors ?
