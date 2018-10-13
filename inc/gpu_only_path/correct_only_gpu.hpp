@@ -338,6 +338,119 @@ struct BatchGenerator{
 		}
 	};
 
+    template<class Sequence_t, class ReadId_t>
+    struct ShiftedHammingDistanceChooserExp;
+
+    template<class ReadId_t>
+    struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t>{
+        using GPUReadStorage_t = GPUReadStorage;
+
+		static void callKernelAsync(int* d_alignment_scores,
+                            int* d_alignment_overlaps,
+                            int* d_alignment_shifts,
+                            int* d_alignment_nOps,
+                            bool* d_alignment_isValid,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const char* d_subject_sequences_data,
+                            const char* d_candidate_sequences_data,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            const int* d_candidates_per_subject_prefixsum,
+                            int n_subjects,
+							int n_queries,
+                            int max_sequence_bytes,
+                            size_t encodedsequencepitch,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double min_overlap_ratio,
+                            int maxSubjectLength,
+                            int maxQueryLength,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+            const char* d_sequence_data = gpuReadStorage->d_sequence_data;
+
+			auto getNumBytes = [] __device__ (int sequencelength){
+                return Sequence2BitHiLo::getNumBytes(sequencelength);
+            };
+
+            auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+                const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const char* result = d_sequence_data + subjectReadId * max_sequence_bytes;
+                return result;
+            };
+
+            auto getCandidatePtr_sparse = [=] __device__ (ReadId_t candidateIndex){
+                const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+                const char* result = d_sequence_data + candidateReadId * max_sequence_bytes;
+                return result;
+            };
+
+            auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+                const char* result = d_subject_sequences_data + subjectIndex * encodedsequencepitch;
+                return result;
+            };
+
+            auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+                const char* result = d_candidate_sequences_data + candidateIndex * encodedsequencepitch;
+                return result;
+            };
+
+            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
+                call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
+                            d_alignment_scores,
+                            d_alignment_overlaps,
+                            d_alignment_shifts,
+                            d_alignment_nOps,
+                            d_alignment_isValid,
+                            d_subject_sequences_lengths,
+                            d_candidate_sequences_lengths,
+                            d_candidates_per_subject_prefixsum,
+                            n_subjects,
+                            n_queries,
+                            max_sequence_bytes,
+                            min_overlap,
+                            maxErrorRate,
+                            min_overlap_ratio,
+                            getNumBytes,
+                            getSubjectPtr_dense,
+                            getCandidatePtr_dense,
+                            maxSubjectLength,
+                            maxQueryLength,
+                            stream);
+
+            }else{
+
+                call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
+                            d_alignment_scores,
+    						d_alignment_overlaps,
+    						d_alignment_shifts,
+    						d_alignment_nOps,
+    						d_alignment_isValid,
+    						d_subject_sequences_lengths,
+    						d_candidate_sequences_lengths,
+    						d_candidates_per_subject_prefixsum,
+    						n_subjects,
+    						n_queries,
+    						max_sequence_bytes,
+    						min_overlap,
+    						maxErrorRate,
+    						min_overlap_ratio,
+    						getNumBytes,
+                            getSubjectPtr_sparse,
+                            getCandidatePtr_sparse,
+    						maxSubjectLength,
+    						maxQueryLength,
+    						stream);
+            }
+		}
+	};
+
 
     template<class Sequence_t, class ReadId_t>
     struct MSAAddSequencesChooser{
@@ -465,6 +578,176 @@ struct BatchGenerator{
                                 nucleotide_accessor,
                                 make_unpacked_reverse_complement_inplace,
                                 stream);
+            }
+        }
+    };
+
+
+    template<class Sequence_t, class ReadId_t>
+    struct MSAAddSequencesChooserExp{
+        using GPUReadStorage_t = GPUReadStorage;
+
+        static void callKernelAsync(
+                            char* d_multiple_sequence_alignments,
+                            float* d_multiple_sequence_alignment_weights,
+                            const int* d_alignment_shifts,
+                            const BestAlignment_t* d_alignment_best_alignment_flags,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const char* d_subject_sequences_data,
+                            const char* d_candidate_sequences_data,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            const char* d_subject_qualities,
+                            const char* d_candidate_qualities,
+                            const int* d_alignment_overlaps,
+                            const int* d_alignment_nOps,
+                            const MSAColumnProperties*  d_msa_column_properties,
+                            const int* d_candidates_per_subject_prefixsum,
+                            const int* d_indices,
+                            const int* d_indices_per_subject,
+                            const int* d_indices_per_subject_prefixsum,
+                            int n_subjects,
+                            int n_queries,
+                            const int* d_num_indices,
+                            bool canUseQualityScores,
+                            float desiredAlignmentMaxErrorRate,
+                            int maximum_sequence_length,
+                            int max_sequence_bytes,
+                            size_t encoded_sequence_pitch,
+                            size_t quality_pitch,
+                            size_t msa_row_pitch,
+                            size_t msa_weights_row_pitch,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+            auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+                return Sequence_t::get_as_nucleotide(data, length, index);
+            };
+
+            auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+                return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+            };
+
+            const char* d_sequence_data = gpuReadStorage->d_sequence_data;
+            const char* d_quality_data = gpuReadStorage->hasQualities() ?
+                                            gpuReadStorage->d_quality_data :
+                                            nullptr;
+
+            auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+                const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const char* result = d_sequence_data + subjectReadId * max_sequence_bytes;
+                return result;
+            };
+
+            auto getCandidatePtr_sparse = [=] __device__ (ReadId_t candidateIndex){
+                const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+                const char* result = d_sequence_data + candidateReadId * max_sequence_bytes;
+                return result;
+            };
+
+            auto getSubjectQualityPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+                const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const char* result = d_quality_data + subjectReadId * maximum_sequence_length;
+                return result;
+            };
+
+            auto getCandidateQualityPtr_sparse = [=] __device__ (ReadId_t localCandidateIndex){
+				const int candidateIndex = d_indices[localCandidateIndex];
+                const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+                const char* result = d_quality_data + candidateReadId * maximum_sequence_length;
+                return result;
+            };
+
+            auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+                const char* result = d_subject_sequences_data + subjectIndex * encoded_sequence_pitch;
+                return result;
+            };
+
+            auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+                const char* result = d_candidate_sequences_data + candidateIndex * encoded_sequence_pitch;
+                return result;
+            };
+
+            auto getSubjectQualityPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+                const char* result = d_subject_qualities + subjectIndex * quality_pitch;
+                return result;
+            };
+
+            auto getCandidateQualityPtr_dense = [=] __device__ (ReadId_t localCandidateIndex){
+                const char* result = d_candidate_qualities + localCandidateIndex * quality_pitch;
+                return result;
+            };
+
+            auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality){
+                call_msa_add_sequences_kernel_exp_async(
+                    d_multiple_sequence_alignments,
+                    d_multiple_sequence_alignment_weights,
+                    d_alignment_shifts,
+                    d_alignment_best_alignment_flags,
+                    d_subject_sequences_lengths,
+                    d_candidate_sequences_lengths,
+                    d_alignment_overlaps,
+                    d_alignment_nOps,
+                    d_msa_column_properties,
+                    d_candidates_per_subject_prefixsum,
+                    d_indices,
+                    d_indices_per_subject,
+                    d_indices_per_subject_prefixsum,
+                    n_subjects,
+                    n_queries,
+                    d_num_indices,
+                    canUseQualityScores,
+                    desiredAlignmentMaxErrorRate,
+                    maximum_sequence_length,
+                    max_sequence_bytes,
+                    quality_pitch,
+                    msa_row_pitch,
+                    msa_weights_row_pitch,
+                    nucleotide_accessor,
+                    make_unpacked_reverse_complement_inplace,
+                    subjectptr,
+                    candidateptr,
+                    subjectquality,
+                    candidatequality,
+                    stream);
+            };
+
+            if(!useGpuReadStorage){
+                callKernel( getSubjectPtr_dense,
+                            getCandidatePtr_dense,
+                            getSubjectQualityPtr_dense,
+                            getCandidateQualityPtr_dense);
+            }else{
+                if(gpuReadStorage->hasSequences()){
+                    if(gpuReadStorage->hasQualities()){
+                        callKernel( getSubjectPtr_sparse,
+                                    getCandidatePtr_sparse,
+                                    getSubjectQualityPtr_sparse,
+                                    getCandidateQualityPtr_sparse);
+                    }else{
+                        callKernel( getSubjectPtr_sparse,
+                                    getCandidatePtr_sparse,
+                                    getSubjectQualityPtr_dense,
+                                    getCandidateQualityPtr_dense);
+                    }
+                }else{
+                    if(gpuReadStorage->hasQualities()){
+                        callKernel( getSubjectPtr_dense,
+                                    getCandidatePtr_dense,
+                                    getSubjectQualityPtr_sparse,
+                                    getCandidateQualityPtr_sparse);
+                    }else{
+                        callKernel( getSubjectPtr_dense,
+                                    getCandidatePtr_dense,
+                                    getSubjectQualityPtr_dense,
+                                    getCandidateQualityPtr_dense);
+                    }
+                }
             }
         }
     };
@@ -1131,7 +1414,7 @@ struct BatchGenerator{
                                             stream); CUERR;
             };
 
-			ShiftedHammingDistanceChooser<Sequence_t, ReadId_t>::callKernelAsync(
+			ShiftedHammingDistanceChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
                                     dataArrays.d_alignment_scores,
                                     dataArrays.d_alignment_overlaps,
                                     dataArrays.d_alignment_shifts,
@@ -1410,7 +1693,7 @@ struct BatchGenerator{
                                 dataArrays.n_queries,
                                 streams[primary_stream_index]);
 
-                MSAAddSequencesChooser<Sequence_t, ReadId_t>::callKernelAsync(
+                MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
                                         dataArrays.d_multiple_sequence_alignments,
                                         dataArrays.d_multiple_sequence_alignment_weights,
                                         dataArrays.d_alignment_shifts,
@@ -1441,7 +1724,7 @@ struct BatchGenerator{
         								dataArrays.quality_pitch,
         								dataArrays.msa_pitch,
         								dataArrays.msa_weights_pitch,
-										true,
+										//true,
                                         transFuncData.gpuReadStorage,
                                         transFuncData.useGpuReadStorage,
                                         streams[primary_stream_index]);

@@ -83,7 +83,7 @@ struct GPUReadStorage{
 	}
 
     std::string getNameOfSequenceLengthType() const{
-		return nameOf(qualityType);
+		return nameOf(sequencelengthType);
 	}
 
 	bool hasSequences() const{
@@ -157,6 +157,9 @@ struct GPUReadStorage{
         gpurs.max_sequence_bytes = max_sequence_bytes;
         gpurs.max_sequence_length = max_sequence_length;
 		gpurs.useQualityScores = cpurs.useQualityScores;
+
+        //return gpurs;
+		canUseManagedMemory = false;
 
 		const std::uint64_t requiredSequenceMem = max_sequence_bytes * nSequences;
         const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
@@ -513,6 +516,10 @@ struct GPUReadStorage{
 		}
 
         cudaSetDevice(oldId); CUERR;
+		
+		//gpurs.sequenceType = GPUReadStorage::Type::None;
+		//gpurs.qualityType = GPUReadStorage::Type::None;
+		//gpurs.sequencelengthType = GPUReadStorage::Type::None;
 
         return gpurs;
     }
