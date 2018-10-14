@@ -1393,7 +1393,7 @@ void call_msa_correct_subject_kernel_async(
           #undef getsms
     }
 
-        template<int BLOCKSIZE, class B, class GetSubjectPtr, class GetCandidatePtr>
+        template<int BLOCKSIZE, class B, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectLength, class GetCandidateLength>
         __global__
         void
         cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp(
@@ -1402,8 +1402,8 @@ void call_msa_correct_subject_kernel_async(
                                             int* alignment_shifts,
                                             int* alignment_nOps,
                                             bool* alignment_isValid,
-                                            const int* subject_sequences_lengths,
-                                            const int* candidate_sequences_lengths,
+                                            //const int* subject_sequences_lengths,
+                                            //const int* candidate_sequences_lengths,
                                             const int* candidates_per_subject_prefixsum,
                                             int n_subjects,
                                             int n_candidates,
@@ -1413,7 +1413,9 @@ void call_msa_correct_subject_kernel_async(
                                             double min_overlap_ratio,
                                             B getNumBytes,
                                             GetSubjectPtr getSubjectPtr,
-                                            GetCandidatePtr getCandidatePtr){
+                                            GetCandidatePtr getCandidatePtr,
+											GetSubjectLength getSubjectLength,
+											GetCandidateLength getCandidateLength){
 
             auto no_bank_conflict_index = [&](int logical_index)->int{
                 return logical_index * blockDim.x;
@@ -1567,7 +1569,8 @@ void call_msa_correct_subject_kernel_async(
 
                 //save subject in shared memory
     #if 1
-                const int subjectbases = subject_sequences_lengths[subjectIndex];
+                //const int subjectbases = subject_sequences_lengths[subjectIndex];
+                const int subjectbases = getSubjectLength(subjectIndex);
                 const char* subjectptr = getSubjectPtr(subjectIndex);
                 const char* candidateptr = getCandidatePtr(queryIndex);
                 //const ReadId_t subjectReadId = subject_read_ids[subjectIndex];
@@ -1577,7 +1580,8 @@ void call_msa_correct_subject_kernel_async(
                 }
 
                 //save query in shared memory
-                const int querybases = candidate_sequences_lengths[queryIndex];
+                //const int querybases = candidate_sequences_lengths[queryIndex];
+                const int querybases = getCandidateLength(queryIndex);
                 //const ReadId_t candidateReadId = candidate_read_ids[queryIndex];
 
                 for(int lane = threadIdx.x; lane < max_sequence_ints; lane += blockDim.x){
@@ -1706,15 +1710,15 @@ void call_msa_correct_subject_kernel_async(
 
 
 
-        template<class B, class GetSubjectPtr, class GetCandidatePtr>
+        template<class B, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectLength, class GetCandidateLength>
         void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
                                 int* d_alignment_scores,
                                 int* d_alignment_overlaps,
                                 int* d_alignment_shifts,
                                 int* d_alignment_nOps,
                                 bool* d_alignment_isValid,
-                                const int* d_subject_sequences_lengths,
-                                const int* d_candidate_sequences_lengths,
+                                //const int* d_subject_sequences_lengths,
+                                //const int* d_candidate_sequences_lengths,
                                 const int* d_candidates_per_subject_prefixsum,
                                 int n_subjects,
                                 int n_queries,
@@ -1725,6 +1729,8 @@ void call_msa_correct_subject_kernel_async(
                                 B getNumBytes,
                                 GetSubjectPtr getSubjectPtr,
                                 GetCandidatePtr getCandidatePtr,
+								GetSubjectLength getSubjectLength,
+								GetCandidateLength getCandidateLength,
                                 int maxSubjectLength,
                                 int maxQueryLength,
                                 cudaStream_t stream){
@@ -1736,8 +1742,6 @@ void call_msa_correct_subject_kernel_async(
                                             d_alignment_shifts, \
                                             d_alignment_nOps, \
                                             d_alignment_isValid, \
-                                            d_subject_sequences_lengths, \
-                                            d_candidate_sequences_lengths, \
                                             d_candidates_per_subject_prefixsum, \
                                             n_subjects, \
                                             n_queries, \
@@ -1747,12 +1751,14 @@ void call_msa_correct_subject_kernel_async(
                                             min_overlap_ratio, \
                                             getNumBytes, \
                                             getSubjectPtr, \
-                                            getCandidatePtr); CUERR;
+                                            getCandidatePtr, \
+											getSubjectLength, \
+   											getCandidateLength); CUERR;
 
         #if 0
         #define getsms(blocksize) {\
                             cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
-                                                                            cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs<(blocksize), B>, \
+                                                                            cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp<(blocksize), B, GetSubjectPtr, GetCandidatePtr, GetSubjectLength, GetCandidateLength>, \
                                                                             blocksize, smem); CUERR;}
 
         #else
@@ -2109,6 +2115,119 @@ void call_msa_correct_subject_kernel_async(
 
 
 
+    
+    
+	template<int BLOCKSIZE, class GetSubjectLength, class GetCandidateLength>
+    __global__
+    void msa_init_kernel_exp(
+                        MSAColumnProperties* __restrict__ msa_column_properties,
+                        const int* __restrict__ alignment_shifts,
+                        const BestAlignment_t* __restrict__ alignment_best_alignment_flags,
+                        const int* __restrict__ indices,
+                        const int* __restrict__ indices_per_subject,
+                        const int* __restrict__ indices_per_subject_prefixsum,
+                        int n_subjects,
+						GetSubjectLength getSubjectLength,
+						GetCandidateLength getCandidateLength){
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceInt::TempStorage reduce;
+        } temp_storage;
+
+        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+            MSAColumnProperties* const properties_ptr = msa_column_properties + subjectIndex;
+
+            // We only want to consider the candidates with good alignments. the indices of those were determined in a previous step
+            const int num_indices_for_this_subject = indices_per_subject[subjectIndex];
+            const int* const indices_for_this_subject = indices + indices_per_subject_prefixsum[subjectIndex];
+
+			const int subjectLength = getSubjectLength(subjectIndex);
+            int startindex = 0;
+			int endindex = getSubjectLength(subjectIndex);
+
+            for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
+                const int queryIndex = indices_for_this_subject[index];
+
+                const int shift = alignment_shifts[queryIndex];
+                const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
+                const int queryLength = getCandidateLength(subjectIndex, queryIndex);
+
+                if(flag != BestAlignment_t::None){
+                    const int queryEndsAt = queryLength + shift;
+                    startindex = min(startindex, shift);
+                    endindex = max(endindex, queryEndsAt);
+                }
+            }
+
+			startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
+			__syncthreads();
+
+			endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());
+			__syncthreads();
+
+			if(threadIdx.x == 0){
+				MSAColumnProperties my_columnproperties;
+
+				my_columnproperties.startindex = startindex;
+				my_columnproperties.endindex = endindex;
+				my_columnproperties.columnsToCheck = my_columnproperties.endindex - my_columnproperties.startindex;
+				my_columnproperties.subjectColumnsBegin_incl = max(-my_columnproperties.startindex, 0);
+				my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+
+				*properties_ptr = my_columnproperties;
+			}
+
+        }
+    }
+
+	template<class GetSubjectLength, class GetCandidateLength>
+    void call_msa_init_kernel_async_exp(
+                        MSAColumnProperties* d_msa_column_properties,
+                        const int* d_alignment_shifts,
+                        const BestAlignment_t* d_alignment_best_alignment_flags,
+                        const int* d_indices,
+                        const int* d_indices_per_subject,
+                        const int* d_indices_per_subject_prefixsum,
+                        int n_subjects,
+                        int n_queries,
+						GetSubjectLength getSubjectLength,
+						GetCandidateLength getCandidateLength,
+                        cudaStream_t stream){
+
+		const int blocksize = 128;
+
+        dim3 block(blocksize, 1, 1);
+        dim3 grid(n_subjects, 1, 1);
+
+		#define mycall(blocksize) msa_init_kernel_exp<(blocksize)><<<grid, block, 0, stream>>>(d_msa_column_properties, \
+                                                    d_alignment_shifts, \
+                                                    d_alignment_best_alignment_flags, \
+                                                    d_indices, \
+                                                    d_indices_per_subject, \
+                                                    d_indices_per_subject_prefixsum, \
+                                                    n_subjects, \
+													getSubjectLength, \
+  													getCandidateLength); CUERR;
+
+		switch(blocksize){
+			case 1: mycall(1); break;
+            case 32: mycall(32); break;
+            case 64: mycall(64); break;
+            case 96: mycall(96); break;
+            case 128: mycall(128); break;
+            case 160: mycall(160); break;
+            case 192: mycall(192); break;
+            case 224: mycall(224); break;
+            case 256: mycall(256); break;
+            default: mycall(256); break;
+        }
+
+		#undef mycall
+
+
+    }
 
 
 

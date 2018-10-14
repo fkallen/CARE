@@ -63,7 +63,7 @@ namespace gpu{
 
 		#undef mycall
     }
-
+#if 0
 	template<int BLOCKSIZE>
     __global__
     void msa_init_kernel(
@@ -174,7 +174,7 @@ namespace gpu{
 
 
     }
-
+#endif
 
     __global__
     void msa_find_consensus_kernel(

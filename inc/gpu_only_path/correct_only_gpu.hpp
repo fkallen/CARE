@@ -369,11 +369,15 @@ struct BatchGenerator{
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
                             cudaStream_t stream){
+			
+			//the kernel expects length to be an int
+			static_assert(std::numeric_limits<GPUReadStorage_t::Length_t>::max() <= std::numeric_limits<int>::max());
 
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
             const char* d_sequence_data = gpuReadStorage->d_sequence_data;
+			const GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
 
 			auto getNumBytes = [] __device__ (int sequencelength){
                 return Sequence2BitHiLo::getNumBytes(sequencelength);
@@ -390,6 +394,18 @@ struct BatchGenerator{
                 const char* result = d_sequence_data + candidateReadId * max_sequence_bytes;
                 return result;
             };
+			
+			auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
+				const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const int length = d_sequence_lengths[subjectReadId];
+                return length;
+            };
+			
+			auto getCandidateLength_sparse = [=] __device__ (ReadId_t candidateIndex){
+				const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+                const int length = d_sequence_lengths[candidateReadId];
+                return length;
+            };
 
             auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
                 const char* result = d_subject_sequences_data + subjectIndex * encodedsequencepitch;
@@ -400,6 +416,16 @@ struct BatchGenerator{
                 const char* result = d_candidate_sequences_data + candidateIndex * encodedsequencepitch;
                 return result;
             };
+			
+			auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+                const int length = d_subject_sequences_lengths[subjectIndex];
+                return length;
+            };
+			
+			auto getCandidateLength_dense = [=] __device__ (ReadId_t candidateIndex){
+                const int length = d_candidate_sequences_lengths[candidateIndex];
+                return length;
+            };
 
             if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
                 call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
@@ -408,8 +434,8 @@ struct BatchGenerator{
                             d_alignment_shifts,
                             d_alignment_nOps,
                             d_alignment_isValid,
-                            d_subject_sequences_lengths,
-                            d_candidate_sequences_lengths,
+                            //d_subject_sequences_lengths,
+                            //d_candidate_sequences_lengths,
                             d_candidates_per_subject_prefixsum,
                             n_subjects,
                             n_queries,
@@ -420,6 +446,8 @@ struct BatchGenerator{
                             getNumBytes,
                             getSubjectPtr_dense,
                             getCandidatePtr_dense,
+							getSubjectLength_dense,
+							getCandidateLength_dense,
                             maxSubjectLength,
                             maxQueryLength,
                             stream);
@@ -432,8 +460,8 @@ struct BatchGenerator{
     						d_alignment_shifts,
     						d_alignment_nOps,
     						d_alignment_isValid,
-    						d_subject_sequences_lengths,
-    						d_candidate_sequences_lengths,
+    						//d_subject_sequences_lengths,
+    						//d_candidate_sequences_lengths,
     						d_candidates_per_subject_prefixsum,
     						n_subjects,
     						n_queries,
@@ -444,6 +472,8 @@ struct BatchGenerator{
     						getNumBytes,
                             getSubjectPtr_sparse,
                             getCandidatePtr_sparse,
+							getSubjectLength_sparse,
+							getCandidateLength_sparse,
     						maxSubjectLength,
     						maxQueryLength,
     						stream);
@@ -581,6 +611,91 @@ struct BatchGenerator{
             }
         }
     };
+	
+	
+	
+	template<class ReadId_t>
+    struct MSAInitChooserExp{
+        using GPUReadStorage_t = GPUReadStorage;
+
+        static void callKernelAsync(
+							MSAColumnProperties*  d_msa_column_properties, //
+                            const int* d_alignment_shifts, //
+                            const BestAlignment_t* d_alignment_best_alignment_flags, //
+                            const ReadId_t* d_subject_read_ids, //
+                            const ReadId_t* d_candidate_read_ids, //
+                            const int* d_subject_sequences_lengths, //
+                            const int* d_candidate_sequences_lengths, //
+                            const int* d_indices,//
+                            const int* d_indices_per_subject, //
+                            const int* d_indices_per_subject_prefixsum, //
+                            int n_subjects, //
+                            int n_queries, //
+                            const GPUReadStorage_t* gpuReadStorage, //
+                            bool useGpuReadStorage, //
+                            cudaStream_t stream){ //
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+
+			const GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+
+			auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
+				const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const int length = d_sequence_lengths[subjectReadId];
+                return length;
+            };
+			
+			auto getCandidateLength_sparse = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
+				const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+				const int index = indices_for_this_subject[localCandidateIndex];
+				const ReadId_t candidateReadId = d_candidate_read_ids[index];
+                const int length = d_sequence_lengths[candidateReadId];
+                return length;
+            };
+			
+			auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+                const int length = d_subject_sequences_lengths[subjectIndex];
+                return length;
+            };
+			
+			auto getCandidateLength_dense = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
+				const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+				const int index = indices_for_this_subject[localCandidateIndex];
+                const int length = d_candidate_sequences_lengths[index];
+                return length;
+            };
+
+            auto callKernel = [&](auto subjectlength, auto querylength){
+                call_msa_init_kernel_async_exp(
+                                d_msa_column_properties,
+                                d_alignment_shifts,
+                                d_alignment_best_alignment_flags,
+                                d_indices,
+                                d_indices_per_subject,
+                                d_indices_per_subject_prefixsum,
+                                n_subjects,
+                                n_queries,
+								subjectlength,
+								querylength,
+                                stream);
+            };
+
+            if(!useGpuReadStorage){
+                callKernel( getSubjectLength_dense,
+                            getCandidateLength_dense);
+            }else{
+                if(gpuReadStorage->hasSequences()){
+                    callKernel( getSubjectLength_sparse,
+								getCandidateLength_sparse);
+                }else{
+                    callKernel( getSubjectLength_dense,
+								getCandidateLength_dense);
+                }
+            }
+        }
+    };
+	
+	
 
 
     template<class Sequence_t, class ReadId_t>
@@ -1680,7 +1795,7 @@ struct BatchGenerator{
 				const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
 
                 //Determine multiple sequence alignment properties
-                call_msa_init_kernel_async(
+                /*call_msa_init_kernel_async(
                                 dataArrays.d_msa_column_properties,
                                 dataArrays.d_alignment_shifts,
                                 dataArrays.d_alignment_best_alignment_flags,
@@ -1691,7 +1806,24 @@ struct BatchGenerator{
                                 dataArrays.d_indices_per_subject_prefixsum,
                                 dataArrays.n_subjects,
                                 dataArrays.n_queries,
-                                streams[primary_stream_index]);
+                                streams[primary_stream_index]);*/
+				
+				 MSAInitChooserExp<ReadId_t>::callKernelAsync(
+							dataArrays.d_msa_column_properties,
+                            dataArrays.d_alignment_shifts,
+							dataArrays.d_alignment_best_alignment_flags,
+                            dataArrays.d_subject_read_ids,
+                            dataArrays.d_candidate_read_ids,
+                            dataArrays.d_subject_sequences_lengths,
+                            dataArrays.d_candidate_sequences_lengths,
+                            dataArrays.d_indices,
+                            dataArrays.d_indices_per_subject,
+                            dataArrays.d_indices_per_subject_prefixsum,
+                            dataArrays.n_subjects,
+                            dataArrays.n_queries,
+                            transFuncData.gpuReadStorage,
+                            transFuncData.useGpuReadStorage,
+                            streams[primary_stream_index]);
 
                 MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
                                         dataArrays.d_multiple_sequence_alignments,

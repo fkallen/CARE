@@ -3165,7 +3165,7 @@ void correct(const MinhashOptions& minhashOptions,
                                                 deviceIds.size() == 0 ? -1 : deviceIds[0]);
 
     std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
-    std::cout << "Sequence length Type: " << gpuReadStorage.getNameOfSequenceLengthType() << std::endl;
+    //std::cout << "Sequence length Type: " << gpuReadStorage.getNameOfSequenceLengthType() << std::endl;
     std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
 
 
