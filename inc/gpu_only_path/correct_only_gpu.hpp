@@ -1017,6 +1017,117 @@ struct BatchGenerator{
 
 
 
+
+    template<class ReadId_t>
+    struct MSACorrectCandidatesChooserExp{
+        using GPUReadStorage_t = GPUReadStorage;
+
+        static void callKernelAsync(
+                            const char* d_consensus,
+                            const float* d_support,
+                            const int* d_coverage,
+                            const int* d_origCoverages,
+                            const char* d_multiple_sequence_alignments,
+                            const MSAColumnProperties* d_msa_column_properties,
+                            const int* d_indices,
+                            const int* d_indices_per_subject,
+                            const int* d_indices_per_subject_prefixsum,
+                            const int* d_high_quality_subject_indices,
+                            const int* d_num_high_quality_subject_indices,
+                            const int* d_alignment_shifts,
+                            const BestAlignment_t* d_alignment_best_alignment_flags,
+                            const ReadId_t* d_candidate_read_ids,
+                            const int* d_candidate_sequences_lengths,
+                            int* d_num_corrected_candidates,
+                            char* d_corrected_candidates,
+                            int* d_indices_of_corrected_candidates,
+                            int n_subjects,
+                            int n_queries,
+                            const int* d_num_indices,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            double min_support_threshold,
+                            double min_coverage_threshold,
+                            int new_columns_to_correct,
+                            int maximum_sequence_length,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+
+            const GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+
+            auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+                return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+            };
+
+            auto getCandidateLength_sparse = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
+                const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                const int index = my_indices[localCandidateIndex];
+                const ReadId_t candidateReadId = d_candidate_read_ids[index];
+                const int length = d_sequence_lengths[candidateReadId];
+                return length;
+            };
+
+            auto getCandidateLength_dense = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
+                const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                const int index = my_indices[localCandidateIndex];
+                const int length = d_candidate_sequences_lengths[index];
+                return length;
+            };
+
+            auto callKernel = [&](auto revcompl, auto candidatelength){
+                call_msa_correct_candidates_kernel_async_exp(
+                                        d_consensus,
+                                        d_support,
+                                        d_coverage,
+                                        d_origCoverages,
+                                        d_multiple_sequence_alignments,
+                                        d_msa_column_properties,
+            							d_indices,
+            							d_indices_per_subject,
+                                        d_indices_per_subject_prefixsum,
+                                        d_high_quality_subject_indices,
+            							d_num_high_quality_subject_indices,
+            							d_alignment_shifts,
+            							d_alignment_best_alignment_flags,
+            							d_num_corrected_candidates,
+            							d_corrected_candidates,
+            							d_indices_of_corrected_candidates,
+                                        n_subjects,
+                                        n_queries,
+                                        d_num_indices,
+                                        sequence_pitch,
+                                        msa_pitch,
+                                        msa_weights_pitch,
+                                        min_support_threshold,
+                                        min_coverage_threshold,
+                                        new_columns_to_correct,
+            							revcompl,
+                                        candidatelength,
+            							maximum_sequence_length,
+            							stream);
+            };
+
+            if(!useGpuReadStorage){
+                callKernel( make_unpacked_reverse_complement_inplace,
+                            getCandidateLength_dense);
+            }else{
+                if(gpuReadStorage->hasSequences()){
+                    callKernel( make_unpacked_reverse_complement_inplace,
+                                getCandidateLength_sparse);
+                }else{
+                    callKernel( make_unpacked_reverse_complement_inplace,
+                                getCandidateLength_dense);
+                }
+            }
+        }
+    };
+
+
+
     template<class Sequence_t, class ReadId_t>
     struct CorrectionTask{
         CorrectionTask(){}
@@ -2116,10 +2227,6 @@ struct BatchGenerator{
 				return BatchState::StartClassicCorrection;
 			}else{
 
-				auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
-					return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
-				};
-
 				const double avg_support_threshold = 1.0-1.0*transFuncData.estimatedErrorrate;
 				const double min_support_threshold = 1.0-3.0*transFuncData.estimatedErrorrate;
 				// coverage is always >= 1
@@ -2171,6 +2278,7 @@ struct BatchGenerator{
     									streams[primary_stream_index]); CUERR;
 
     					// correct candidates
+#if 0
     					call_msa_correct_candidates_kernel_async(
     									dataArrays.d_consensus,
     									dataArrays.d_support,
@@ -2201,7 +2309,40 @@ struct BatchGenerator{
     									make_unpacked_reverse_complement_inplace,
     									dataArrays.maximum_sequence_length,
     									streams[primary_stream_index]);
+#endif
 
+                        MSACorrectCandidatesChooserExp<ReadId_t>::callKernelAsync(
+                                                dataArrays.d_consensus,
+                                                dataArrays.d_support,
+                                                dataArrays.d_coverage,
+                                                dataArrays.d_origCoverages,
+                                                dataArrays.d_multiple_sequence_alignments,
+                                                dataArrays.d_msa_column_properties,
+                                                dataArrays.d_indices,
+            									dataArrays.d_indices_per_subject,
+            									dataArrays.d_indices_per_subject_prefixsum,
+            									dataArrays.d_high_quality_subject_indices,
+            									dataArrays.d_num_high_quality_subject_indices,
+                                                dataArrays.d_alignment_shifts,
+            									dataArrays.d_alignment_best_alignment_flags,
+                                                dataArrays.d_candidate_read_ids,
+                                                dataArrays.d_candidate_sequences_lengths,
+                                                dataArrays.d_num_corrected_candidates,
+            									dataArrays.d_corrected_candidates,
+            									dataArrays.d_indices_of_corrected_candidates,
+            									dataArrays.n_subjects,
+            									dataArrays.n_queries,
+            									dataArrays.d_num_indices,
+                                                dataArrays.sequence_pitch,
+            									dataArrays.msa_pitch,
+            									dataArrays.msa_weights_pitch,
+                                                min_support_threshold,
+            									min_coverage_threshold,
+            									new_columns_to_correct,
+                                                dataArrays.maximum_sequence_length,
+                                                transFuncData.gpuReadStorage,
+                                                transFuncData.useGpuReadStorage,
+                                                streams[primary_stream_index]);
     				}
                 }
 				assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;

@@ -2260,7 +2260,7 @@ void call_msa_correct_subject_kernel_async(
 
                 const int shift = alignment_shifts[queryIndex];
                 const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
-                const int queryLength = getCandidateLength(subjectIndex, queryIndex);
+                const int queryLength = getCandidateLength(subjectIndex, index);
 
                 if(flag != BestAlignment_t::None){
                     const int queryEndsAt = queryLength + shift;
@@ -3046,13 +3046,8 @@ void call_msa_correct_subject_kernel_async(
             char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
-            //const int subjectLength = d_subject_sequences_lengths[subjectIndex];
             const int subjectLength = getSubjectLength(subjectIndex);
-
             const char* const subject = getSubjectPtr(subjectIndex);
-            /*const char* const subjectQualityScore = d_quality_data == nullptr ?
-                                                        d_subject_qualities + subjectIndex * quality_pitch :
-                                                        d_quality_data + subjectReadId * maximum_sequence_length;*/
             const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
             for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
@@ -3070,8 +3065,6 @@ void call_msa_correct_subject_kernel_async(
 
             const int shift = d_alignment_shifts[queryIndex];
             const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
-            //const int queryLength = d_candidate_sequences_lengths[queryIndex];
-            const int queryLength = getCandidateLength(index);
 
             //find subjectindex
             int subjectIndex = 0;
@@ -3096,15 +3089,8 @@ void call_msa_correct_subject_kernel_async(
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
             const char* const query = getCandidatePtr(queryIndex);
-
-            //need to use index for adressing d_candidate_qualities instead of queryIndex, because d_candidate_qualities is compact
-            //const char* const queryQualityScore = d_candidate_qualities + index * quality_pitch;
-            /*const char* const queryQualityScore = d_quality_data == nullptr ?
-                                                    d_candidate_qualities + (qualitiesArePacked ? index : queryIndex) * quality_pitch :
-                                                    d_quality_data + candidateReadId * maximum_sequence_length;*/
-
+            const int queryLength = getCandidateLength(index);
             const char* const queryQualityScore = getCandidateQualityPtr(index);
-            //const char* const queryQualityScore = getCandidateQualityPtr(queryIndex); //works if sequences and qscores in readstorage
 
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
             const int query_alignment_nops = d_alignment_nOps[queryIndex];
@@ -3659,6 +3645,217 @@ void call_msa_correct_subject_kernel_async(
 									min_coverage_threshold, \
 									new_columns_to_correct, \
 									make_unpacked_reverse_complement_inplace); CUERR;
+
+		assert(blocksize > 0 && blocksize <= max_block_size);
+
+		switch(blocksize){
+			case 32: mycall(32); break;
+			case 64: mycall(64); break;
+			case 96: mycall(96); break;
+			case 128: mycall(128); break;
+			case 160: mycall(160); break;
+			case 192: mycall(192); break;
+			case 224: mycall(224); break;
+			case 256: mycall(256); break;
+			default: mycall(256); break;
+		}
+
+		#undef mycall
+	}
+
+
+
+
+
+    template<int BLOCKSIZE, class RevCompl, class GetCandidateLength>
+    __global__
+    void msa_correct_candidates_kernel_exp(
+                            const char* __restrict__ d_consensus,
+                            const float* __restrict__ d_support,
+                            const int* __restrict__ d_coverage,
+                            const int* __restrict__ d_origCoverages,
+                            const char* __restrict__ d_multiple_sequence_alignments,
+                            const MSAColumnProperties* __restrict__ d_msa_column_properties,
+							const int* __restrict__ d_indices,
+							const int* __restrict__ d_indices_per_subject,
+                            const int* __restrict__ d_indices_per_subject_prefixsum,
+                            const int* __restrict__ d_high_quality_subject_indices,
+							const int* __restrict__ d_num_high_quality_subject_indices,
+							const int* __restrict__ d_alignment_shifts,
+							const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+							int* __restrict__ d_num_corrected_candidates,
+							char* __restrict__ d_corrected_candidates,
+							int* __restrict__ d_indices_of_corrected_candidates,
+                            int n_subjects,
+                            int n_queries,
+                            const int* __restrict__ d_num_indices,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            double min_support_threshold,
+                            double min_coverage_threshold,
+                            int new_columns_to_correct,
+							RevCompl make_unpacked_reverse_complement_inplace,
+                            GetCandidateLength getCandidateLength){
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+		const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
+		//const int n_indices = *d_num_indices;
+
+        for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x){
+			const int subjectIndex = d_high_quality_subject_indices[index];
+			const int my_num_candidates = d_indices_per_subject[subjectIndex];
+
+            const float* const my_support = d_support + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_coverage = d_coverage + msa_weights_pitch_floats * subjectIndex;
+            //const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
+            const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
+            const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+            char* const my_corrected_candidates = d_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
+			int* const my_indices_of_corrected_candidates = d_indices_of_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex];
+
+            const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
+            const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+
+			int n_corrected_candidates = 0;
+
+			for(int local_candidate_index = 0; local_candidate_index < my_num_candidates; ++local_candidate_index){
+				const int global_candidate_index = my_indices[local_candidate_index];
+				const int shift = d_alignment_shifts[global_candidate_index];
+				//const int candidate_length = d_candidate_sequences_lengths[global_candidate_index];
+                const int candidate_length = getCandidateLength(subjectIndex, local_candidate_index);
+				const BestAlignment_t bestAlignmentFlag = d_alignment_best_alignment_flags[global_candidate_index];
+				const int queryColumnsBegin_incl = shift - properties.startindex;
+				const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidate_length;
+
+				//check range condition and length condition
+				if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+					&& queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
+					&& queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
+
+					double newColMinSupport = 1.0;
+					int newColMinCov = std::numeric_limits<int>::max();
+					//check new columns left of subject
+					for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
+						columnindex < subjectColumnsBegin_incl;
+						columnindex++){
+
+						assert(columnindex < properties.columnsToCheck);
+						if(queryColumnsBegin_incl <= columnindex){
+							newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
+							newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
+						}
+					}
+					//check new columns right of subject
+					for(int columnindex = subjectColumnsEnd_excl;
+						columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+						&& columnindex < properties.columnsToCheck;
+						columnindex++){
+
+						newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
+						newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
+					}
+
+					if(newColMinSupport >= min_support_threshold
+						&& newColMinCov >= min_coverage_threshold){
+
+						for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE){
+							my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+						}
+
+                        __syncthreads(); // need to wait until all threads have written my_corrected_candidates before calculating reverse complement
+
+						if(threadIdx.x == 0){
+							//the forward strand will be returned -> make reverse complement again
+							if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+								make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + n_corrected_candidates * sequence_pitch), candidate_length);
+							}
+							my_indices_of_corrected_candidates[n_corrected_candidates] = global_candidate_index;
+							//printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
+						}
+
+						++n_corrected_candidates;
+					}
+				}
+			}
+
+			//printf("%d %d\n", subjectIndex, n_corrected_candidates);
+
+			if(threadIdx.x == 0){
+				d_num_corrected_candidates[subjectIndex] = n_corrected_candidates;
+				//printf("%d %d\n", subjectIndex, n_corrected_candidates);
+			}
+        }
+    }
+
+    template<class RevCompl, class GetCandidateLength>
+    void call_msa_correct_candidates_kernel_async_exp(
+                            const char* d_consensus,
+                            const float* d_support,
+                            const int* d_coverage,
+                            const int* d_origCoverages,
+                            const char* d_multiple_sequence_alignments,
+                            const MSAColumnProperties* d_msa_column_properties,
+							const int* d_indices,
+							const int* d_indices_per_subject,
+                            const int* d_indices_per_subject_prefixsum,
+                            const int* d_high_quality_subject_indices,
+							const int* d_num_high_quality_subject_indices,
+							const int* d_alignment_shifts,
+							const BestAlignment_t* d_alignment_best_alignment_flags,
+							int* d_num_corrected_candidates,
+							char* d_corrected_candidates,
+							int* d_indices_of_corrected_candidates,
+                            int n_subjects,
+                            int n_queries,
+                            const int* d_num_indices,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            double min_support_threshold,
+                            double min_coverage_threshold,
+                            int new_columns_to_correct,
+							RevCompl make_unpacked_reverse_complement_inplace,
+                            GetCandidateLength getCandidateLength,
+							int maximum_sequence_length,
+							cudaStream_t stream){
+
+		const int max_block_size = 256;
+		const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+
+		dim3 block(blocksize, 1, 1);
+		dim3 grid(n_subjects);
+
+		#define mycall(blocksize) msa_correct_candidates_kernel_exp<(blocksize)> \
+								<<<grid, block, 0, stream>>>( \
+									d_consensus, \
+									d_support, \
+									d_coverage, \
+									d_origCoverages, \
+									d_multiple_sequence_alignments, \
+									d_msa_column_properties, \
+									d_indices, \
+									d_indices_per_subject, \
+									d_indices_per_subject_prefixsum, \
+									d_high_quality_subject_indices, \
+									d_num_high_quality_subject_indices, \
+									d_alignment_shifts, \
+									d_alignment_best_alignment_flags, \
+									d_num_corrected_candidates, \
+									d_corrected_candidates, \
+									d_indices_of_corrected_candidates, \
+									n_subjects, \
+									n_queries, \
+									d_num_indices, \
+									sequence_pitch, \
+									msa_pitch, \
+									msa_weights_pitch, \
+									min_support_threshold, \
+									min_coverage_threshold, \
+									new_columns_to_correct, \
+									make_unpacked_reverse_complement_inplace, \
+                                    getCandidateLength); CUERR;
 
 		assert(blocksize > 0 && blocksize <= max_block_size);
 
