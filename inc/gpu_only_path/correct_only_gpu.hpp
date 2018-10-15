@@ -369,7 +369,7 @@ struct BatchGenerator{
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
                             cudaStream_t stream){
-			
+
 			//the kernel expects length to be an int
 			static_assert(std::numeric_limits<GPUReadStorage_t::Length_t>::max() <= std::numeric_limits<int>::max());
 
@@ -394,13 +394,13 @@ struct BatchGenerator{
                 const char* result = d_sequence_data + candidateReadId * max_sequence_bytes;
                 return result;
             };
-			
+
 			auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
 				const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
                 const int length = d_sequence_lengths[subjectReadId];
                 return length;
             };
-			
+
 			auto getCandidateLength_sparse = [=] __device__ (ReadId_t candidateIndex){
 				const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
                 const int length = d_sequence_lengths[candidateReadId];
@@ -416,12 +416,12 @@ struct BatchGenerator{
                 const char* result = d_candidate_sequences_data + candidateIndex * encodedsequencepitch;
                 return result;
             };
-			
+
 			auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
                 const int length = d_subject_sequences_lengths[subjectIndex];
                 return length;
             };
-			
+
 			auto getCandidateLength_dense = [=] __device__ (ReadId_t candidateIndex){
                 const int length = d_candidate_sequences_lengths[candidateIndex];
                 return length;
@@ -480,6 +480,117 @@ struct BatchGenerator{
             }
 		}
 	};
+
+
+
+    template<class ReadId_t>
+    struct FindBestAlignmentChooserExp{
+        using GPUReadStorage_t = GPUReadStorage;
+
+        static void callKernelAsync(
+                            BestAlignment_t* d_alignment_best_alignment_flags,
+                            int* d_alignment_scores,
+                            int* d_alignment_overlaps,
+                            int* d_alignment_shifts,
+                            int* d_alignment_nOps,
+                            bool* d_alignment_isValid,
+                            const int* d_candidates_per_subject_prefixsum,
+                            double min_overlap_ratio,
+                            int min_overlap,
+                            double maxErrorRate,
+                            double estimatedErrorrate,
+                            const ReadId_t* d_subject_read_ids,
+                            const ReadId_t* d_candidate_read_ids,
+                            const int* d_subject_sequences_lengths,
+                            const int* d_candidate_sequences_lengths,
+                            int n_subjects,
+                            int n_queries,
+                            const GPUReadStorage_t* gpuReadStorage,
+                            bool useGpuReadStorage,
+                            cudaStream_t stream){
+
+            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+
+			const GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+
+			auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
+				const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const int length = d_sequence_lengths[subjectReadId];
+                return length;
+            };
+
+			auto getCandidateLength_sparse = [=] __device__ (ReadId_t resultIndex){
+				const ReadId_t candidateReadId = d_candidate_read_ids[resultIndex];
+                const int length = d_sequence_lengths[candidateReadId];
+                return length;
+            };
+
+			auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+                const int length = d_subject_sequences_lengths[subjectIndex];
+                return length;
+            };
+
+			auto getCandidateLength_dense = [=] __device__ (ReadId_t resultIndex){
+                const int length = d_candidate_sequences_lengths[resultIndex];
+                return length;
+            };
+
+            auto best_alignment_comp = [=] __device__ (int fwd_alignment_overlap,
+                                        int revc_alignment_overlap,
+                                        int fwd_alignment_nops,
+                                        int revc_alignment_nops,
+                                        bool fwd_alignment_isvalid,
+                                        bool revc_alignment_isvalid,
+                                        int subjectlength,
+                                        int querylength) -> BestAlignment_t{
+
+                return choose_best_alignment(fwd_alignment_overlap,
+                                            revc_alignment_overlap,
+                                            fwd_alignment_nops,
+                                            revc_alignment_nops,
+                                            fwd_alignment_isvalid,
+                                            revc_alignment_isvalid,
+                                            subjectlength,
+                                            querylength,
+                                            min_overlap_ratio,
+                                            min_overlap,
+                                            estimatedErrorrate * 4.0);
+            };
+
+            auto callKernel = [&](auto subjectlength, auto querylength){
+                call_cuda_find_best_alignment_kernel_async_exp(
+                                                    d_alignment_best_alignment_flags,
+                                                    d_alignment_scores,
+                                                    d_alignment_overlaps,
+                                                    d_alignment_shifts,
+                                                    d_alignment_nOps,
+                                                    d_alignment_isValid,
+                                                    d_candidates_per_subject_prefixsum,
+                                                    n_subjects,
+                                                    n_queries,
+                                                    min_overlap_ratio,
+                                                    min_overlap,
+                                                    maxErrorRate,
+                                                    best_alignment_comp,
+                                                    subjectlength,
+                                                    querylength,
+                                                    stream);
+            };
+
+            if(!useGpuReadStorage){
+                callKernel( getSubjectLength_dense,
+                            getCandidateLength_dense);
+            }else{
+                if(gpuReadStorage->hasSequences()){
+                    callKernel( getSubjectLength_sparse,
+								getCandidateLength_sparse);
+                }else{
+                    callKernel( getSubjectLength_dense,
+								getCandidateLength_dense);
+                }
+            }
+        }
+    };
 
 
     template<class Sequence_t, class ReadId_t>
@@ -611,9 +722,9 @@ struct BatchGenerator{
             }
         }
     };
-	
-	
-	
+
+
+
 	template<class ReadId_t>
     struct MSAInitChooserExp{
         using GPUReadStorage_t = GPUReadStorage;
@@ -644,7 +755,7 @@ struct BatchGenerator{
                 const int length = d_sequence_lengths[subjectReadId];
                 return length;
             };
-			
+
 			auto getCandidateLength_sparse = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
 				const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
 				const int index = indices_for_this_subject[localCandidateIndex];
@@ -652,12 +763,12 @@ struct BatchGenerator{
                 const int length = d_sequence_lengths[candidateReadId];
                 return length;
             };
-			
+
 			auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
                 const int length = d_subject_sequences_lengths[subjectIndex];
                 return length;
             };
-			
+
 			auto getCandidateLength_dense = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
 				const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
 				const int index = indices_for_this_subject[localCandidateIndex];
@@ -694,8 +805,8 @@ struct BatchGenerator{
             }
         }
     };
-	
-	
+
+
 
 
     template<class Sequence_t, class ReadId_t>
@@ -1479,7 +1590,7 @@ struct BatchGenerator{
 			}
 
             //cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
-
+#if 0
             auto best_alignment_comp = [=] __device__ (int fwd_alignment_overlap,
                                         int revc_alignment_overlap,
                                         int fwd_alignment_nops,
@@ -1501,7 +1612,7 @@ struct BatchGenerator{
                                             transFuncData.min_overlap,
                                             transFuncData.estimatedErrorrate * 4.0);
             };
-
+#endif
             auto select_alignment_op = [] __device__ (const BestAlignment_t& flag){
                     return flag != BestAlignment_t::None;
             };
@@ -1557,7 +1668,7 @@ struct BatchGenerator{
 
             //Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
             //    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
-
+#if 0
             call_cuda_find_best_alignment_kernel_async(
                                                 dataArrays.d_alignment_best_alignment_flags,
                                                 dataArrays.d_alignment_scores,
@@ -1575,6 +1686,31 @@ struct BatchGenerator{
                                                 best_alignment_comp,
                                                 dataArrays.n_queries,
                                                 streams[primary_stream_index]);
+#endif
+
+            FindBestAlignmentChooserExp<ReadId_t>::callKernelAsync(
+                        dataArrays.d_alignment_best_alignment_flags,
+                        dataArrays.d_alignment_scores,
+                        dataArrays.d_alignment_overlaps,
+                        dataArrays.d_alignment_shifts,
+                        dataArrays.d_alignment_nOps,
+                        dataArrays.d_alignment_isValid,
+                        dataArrays.d_candidates_per_subject_prefixsum,
+                        transFuncData.min_overlap_ratio,
+                        transFuncData.min_overlap,
+                        transFuncData.maxErrorRate,
+                        transFuncData.estimatedErrorrate,
+                        dataArrays.d_subject_read_ids,
+                        dataArrays.d_candidate_read_ids,
+                        dataArrays.d_subject_sequences_lengths,
+                        dataArrays.d_candidate_sequences_lengths,
+                        dataArrays.n_subjects,
+                        dataArrays.n_queries,
+                        transFuncData.gpuReadStorage,
+                        transFuncData.useGpuReadStorage,
+                        streams[primary_stream_index]);
+
+
 
             //Determine indices where d_alignment_best_alignment_flags[i] != BestAlignment_t::None. this selects all good alignments
             select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
@@ -1807,7 +1943,7 @@ struct BatchGenerator{
                                 dataArrays.n_subjects,
                                 dataArrays.n_queries,
                                 streams[primary_stream_index]);*/
-				
+
 				 MSAInitChooserExp<ReadId_t>::callKernelAsync(
 							dataArrays.d_msa_column_properties,
                             dataArrays.d_alignment_shifts,

@@ -32,7 +32,7 @@ namespace gpu{
 										double mismatchratioBaseFactor,
 										double goodAlignmentsCountThreshold,
 										cudaStream_t stream);
-
+#if 0
     void call_msa_init_kernel_async(
                         MSAColumnProperties* d_msa_column_properties,
                         const int* d_alignment_shifts,
@@ -45,7 +45,7 @@ namespace gpu{
                         int n_subjects,
                         int n_queries,
                         cudaStream_t stream);
-
+#endif
     void call_msa_find_consensus_kernel_async(
                             char* const d_consensus,
                             float* const d_support,
@@ -1501,10 +1501,10 @@ void call_msa_correct_subject_kernel_async(
                                         int max_errors){
 
                 const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
-				
+
 				if(overlap_bitcount == 0)
 					return max_errors+1;
-				
+
                 const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
                 const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
 
@@ -1934,6 +1934,114 @@ void call_msa_correct_subject_kernel_async(
 
     }
 
+    template<class AlignmentComp, class GetSubjectLength, class GetCandidateLength>
+    __global__
+    void cuda_find_best_alignment_kernel_exp(
+                                        BestAlignment_t* d_alignment_best_alignment_flags,
+                                        int* d_alignment_scores,
+                                        int* d_alignment_overlaps,
+                                        int* d_alignment_shifts,
+                                        int* d_alignment_nOps,
+                                        bool* d_alignment_isValid,
+                                        const int* d_candidates_per_subject_prefixsum,
+                                        int n_subjects,
+                                        int n_queries,
+                                        double min_overlap_ratio,
+                                        int min_overlap,
+                                        double maxErrorRate,
+                                        AlignmentComp comp,
+                                        GetSubjectLength getSubjectLength,
+                                        GetCandidateLength getCandidateLength){
+
+        for(unsigned resultIndex = threadIdx.x + blockDim.x * blockIdx.x; resultIndex < n_queries; resultIndex += gridDim.x * blockDim.x){
+            const unsigned fwdIndex = resultIndex;
+            const unsigned revcIndex = resultIndex + n_queries;
+
+            const int fwd_alignment_score = d_alignment_scores[fwdIndex];
+            const int fwd_alignment_overlap = d_alignment_overlaps[fwdIndex];
+            const int fwd_alignment_shift = d_alignment_shifts[fwdIndex];
+            const int fwd_alignment_nops = d_alignment_nOps[fwdIndex];
+            const bool fwd_alignment_isvalid = d_alignment_isValid[fwdIndex];
+
+            const int revc_alignment_score = d_alignment_scores[revcIndex];
+            const int revc_alignment_overlap = d_alignment_overlaps[revcIndex];
+            const int revc_alignment_shift = d_alignment_shifts[revcIndex];
+            const int revc_alignment_nops = d_alignment_nOps[revcIndex];
+            const bool revc_alignment_isvalid = d_alignment_isValid[revcIndex];
+
+            //const int querylength = d_candidate_sequences_lengths[resultIndex];
+            const int querylength = getCandidateLength(resultIndex);
+
+            //find subjectindex
+            int subjectIndex = 0;
+            for(; subjectIndex < n_subjects; subjectIndex++){
+                if(resultIndex < d_candidates_per_subject_prefixsum[subjectIndex+1])
+                    break;
+            }
+
+            //const int subjectlength = d_subject_sequences_lengths[subjectIndex];
+            const int subjectlength = getSubjectLength(subjectIndex);
+
+            const BestAlignment_t flag = comp(fwd_alignment_overlap,
+                                                revc_alignment_overlap,
+                                                fwd_alignment_nops,
+                                                revc_alignment_nops,
+                                                fwd_alignment_isvalid,
+                                                revc_alignment_isvalid,
+                                                subjectlength,
+                                                querylength);
+
+            d_alignment_best_alignment_flags[resultIndex] = flag;
+
+            d_alignment_scores[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_score : revc_alignment_score;
+            d_alignment_overlaps[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_overlap : revc_alignment_overlap;
+            d_alignment_shifts[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_shift : revc_alignment_shift;
+            d_alignment_nOps[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_nops : revc_alignment_nops;
+            d_alignment_isValid[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_isvalid : revc_alignment_isvalid;
+        }
+    }
+
+    template<class AlignmentComp, class GetSubjectLength, class GetCandidateLength>
+    void call_cuda_find_best_alignment_kernel_async_exp(
+                                        BestAlignment_t* d_alignment_best_alignment_flags,
+                                        int* d_alignment_scores,
+                                        int* d_alignment_overlaps,
+                                        int* d_alignment_shifts,
+                                        int* d_alignment_nOps,
+                                        bool* d_alignment_isValid,
+                                        const int* d_candidates_per_subject_prefixsum,
+                                        int n_subjects,
+                                        int n_queries,
+                                        double min_overlap_ratio,
+                                        int min_overlap,
+                                        double maxErrorRate,
+                                        AlignmentComp d_comp,
+                                        GetSubjectLength getSubjectLength,
+                                        GetCandidateLength getCandidateLength,
+                                        cudaStream_t stream){
+
+        dim3 block(128,1,1);
+        dim3 grid(SDIV(n_queries, block.x), 1, 1);
+
+        cuda_find_best_alignment_kernel_exp<<<grid, block, 0, stream>>>(
+                                                d_alignment_best_alignment_flags,
+                                                d_alignment_scores,
+                                                d_alignment_overlaps,
+                                                d_alignment_shifts,
+                                                d_alignment_nOps,
+                                                d_alignment_isValid,
+                                                d_candidates_per_subject_prefixsum,
+                                                n_subjects,
+                                                n_queries,
+                                                min_overlap_ratio,
+                                                min_overlap,
+                                                maxErrorRate,
+                                                d_comp,
+                                                getSubjectLength,
+                                                getCandidateLength); CUERR;
+
+    }
+
     /*
 	 *
 	 */
@@ -2115,8 +2223,8 @@ void call_msa_correct_subject_kernel_async(
 
 
 
-    
-    
+
+
 	template<int BLOCKSIZE, class GetSubjectLength, class GetCandidateLength>
     __global__
     void msa_init_kernel_exp(

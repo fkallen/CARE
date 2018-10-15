@@ -181,7 +181,7 @@ struct GPUReadStorage{
 
             const std::uint64_t requiredSequenceMem = max_sequence_bytes * nSequences;
 			const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
-			
+
             cudaMalloc(&gpurs.d_sequence_data, requiredSequenceMem); CUERR;
 			cudaMalloc(&gpurs.d_sequence_lengths, requiredSequenceLengthsMem); CUERR;
 
@@ -210,7 +210,7 @@ struct GPUReadStorage{
 
 					assert(sequence->getNumBytes() <= max_sequence_bytes );
 					assert(sequence->length() <= std::numeric_limits<Length_t>::max());
-					
+
 					Length_t len = sequence->length();
 
 					std::memcpy(h_tmp_seq + localcount * max_sequence_bytes,
@@ -228,7 +228,7 @@ struct GPUReadStorage{
 								h_tmp_seq,
 								localcount * max_sequence_bytes,
 								H2D); CUERR;
-								
+
 				cudaMemcpy(gpurs.d_sequence_lengths + iter * copybatchsequences,
 								h_tmp_lengths,
 								localcount * sizeof(Length_t),
@@ -255,7 +255,7 @@ struct GPUReadStorage{
 								requiredSequenceMem,
 								cudaMemAdviseSetReadMostly,
 								0); CUERR; //last argument is ignored for cudaMemAdviseSetReadMostly
-								
+
 				cudaMemAdvise(gpurs.d_sequence_lengths,
 								requiredSequenceLengthsMem,
 								cudaMemAdviseSetReadMostly,
@@ -266,7 +266,7 @@ struct GPUReadStorage{
 
 					assert(sequence->getNumBytes() <= max_sequence_bytes);
 					assert(sequence->length() <= std::numeric_limits<Length_t>::max());
-					
+
 					Length_t len = sequence->length();
 
 					std::memcpy(gpurs.d_sequence_data + readId * max_sequence_bytes,
@@ -582,7 +582,7 @@ struct GPUReadStorage{
 		}
 
         cudaSetDevice(oldId); CUERR;
-		
+
 		//gpurs.sequenceType = GPUReadStorage::Type::None;
 		//gpurs.qualityType = GPUReadStorage::Type::None;
 		//gpurs.sequencelengthType = GPUReadStorage::Type::None;
