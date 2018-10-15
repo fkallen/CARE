@@ -860,6 +860,7 @@ struct BatchGenerator{
             };
 
             const char* d_sequence_data = gpuReadStorage->d_sequence_data;
+            const GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
             const char* d_quality_data = gpuReadStorage->hasQualities() ?
                                             gpuReadStorage->d_quality_data :
                                             nullptr;
@@ -889,6 +890,19 @@ struct BatchGenerator{
                 return result;
             };
 
+            auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
+                const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+                const int length = d_sequence_lengths[subjectReadId];
+                return length;
+            };
+
+            auto getCandidateLength_sparse = [=] __device__ (ReadId_t localCandidateIndex){
+				const int candidateIndex = d_indices[localCandidateIndex];
+				const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+                const int length = d_sequence_lengths[candidateReadId];
+                return length;
+            };
+
             auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
                 const char* result = d_subject_sequences_data + subjectIndex * encoded_sequence_pitch;
                 return result;
@@ -909,7 +923,18 @@ struct BatchGenerator{
                 return result;
             };
 
-            auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality){
+            auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+                const int length = d_subject_sequences_lengths[subjectIndex];
+                return length;
+            };
+
+            auto getCandidateLength_dense = [=] __device__ (ReadId_t localCandidateIndex){
+                const int candidateIndex = d_indices[localCandidateIndex];
+                const int length = d_candidate_sequences_lengths[candidateIndex];
+                return length;
+            };
+
+            auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality, auto subjectlength, auto querylength){
                 call_msa_add_sequences_kernel_exp_async(
                     d_multiple_sequence_alignments,
                     d_multiple_sequence_alignment_weights,
@@ -940,6 +965,8 @@ struct BatchGenerator{
                     candidateptr,
                     subjectquality,
                     candidatequality,
+                    subjectlength,
+                    querylength,
                     stream);
             };
 
@@ -947,31 +974,41 @@ struct BatchGenerator{
                 callKernel( getSubjectPtr_dense,
                             getCandidatePtr_dense,
                             getSubjectQualityPtr_dense,
-                            getCandidateQualityPtr_dense);
+                            getCandidateQualityPtr_dense,
+                            getSubjectLength_dense,
+                            getCandidateLength_dense);
             }else{
                 if(gpuReadStorage->hasSequences()){
                     if(gpuReadStorage->hasQualities()){
                         callKernel( getSubjectPtr_sparse,
                                     getCandidatePtr_sparse,
                                     getSubjectQualityPtr_sparse,
-                                    getCandidateQualityPtr_sparse);
+                                    getCandidateQualityPtr_sparse,
+                                    getSubjectLength_sparse,
+                                    getCandidateLength_sparse);
                     }else{
                         callKernel( getSubjectPtr_sparse,
                                     getCandidatePtr_sparse,
                                     getSubjectQualityPtr_dense,
-                                    getCandidateQualityPtr_dense);
+                                    getCandidateQualityPtr_dense,
+                                    getSubjectLength_sparse,
+                                    getCandidateLength_sparse);
                     }
                 }else{
                     if(gpuReadStorage->hasQualities()){
                         callKernel( getSubjectPtr_dense,
                                     getCandidatePtr_dense,
                                     getSubjectQualityPtr_sparse,
-                                    getCandidateQualityPtr_sparse);
+                                    getCandidateQualityPtr_sparse,
+                                    getSubjectLength_dense,
+                                    getCandidateLength_dense);
                     }else{
                         callKernel( getSubjectPtr_dense,
                                     getCandidatePtr_dense,
                                     getSubjectQualityPtr_dense,
-                                    getCandidateQualityPtr_dense);
+                                    getCandidateQualityPtr_dense,
+                                    getSubjectLength_dense,
+                                    getCandidateLength_dense);
                     }
                 }
             }

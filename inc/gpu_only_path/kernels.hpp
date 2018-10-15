@@ -2977,7 +2977,8 @@ void call_msa_correct_subject_kernel_async(
 
 
 
-    template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr>
+    template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+            class GetSubjectLength, class GetCandidateLength>
     __global__
     void msa_add_sequences_kernel_exp(
                             char* __restrict__ d_multiple_sequence_alignments,
@@ -3008,7 +3009,9 @@ void call_msa_correct_subject_kernel_async(
                             GetSubjectPtr getSubjectPtr,
                             GetCandidatePtr getCandidatePtr,
                             GetSubjectQualityPtr getSubjectQualityPtr,
-                            GetCandidateQualityPtr getCandidateQualityPtr){
+                            GetCandidateQualityPtr getCandidateQualityPtr,
+                            GetSubjectLength getSubjectLength,
+                            GetCandidateLength getCandidateLength){
 
         auto reverse_float = [](float* sequence, int length){
 
@@ -3043,7 +3046,8 @@ void call_msa_correct_subject_kernel_async(
             char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
-            const int subjectLength = d_subject_sequences_lengths[subjectIndex];
+            //const int subjectLength = d_subject_sequences_lengths[subjectIndex];
+            const int subjectLength = getSubjectLength(subjectIndex);
 
             const char* const subject = getSubjectPtr(subjectIndex);
             /*const char* const subjectQualityScore = d_quality_data == nullptr ?
@@ -3066,7 +3070,8 @@ void call_msa_correct_subject_kernel_async(
 
             const int shift = d_alignment_shifts[queryIndex];
             const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
-            const int queryLength = d_candidate_sequences_lengths[queryIndex];
+            //const int queryLength = d_candidate_sequences_lengths[queryIndex];
+            const int queryLength = getCandidateLength(index);
 
             //find subjectindex
             int subjectIndex = 0;
@@ -3183,7 +3188,8 @@ void call_msa_correct_subject_kernel_async(
         }
     }
 
-    template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr>
+    template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+             class GetSubjectLength, class GetCandidateLength>
     void call_msa_add_sequences_kernel_exp_async(
                             char* d_multiple_sequence_alignments,
                             float* d_multiple_sequence_alignment_weights,
@@ -3214,6 +3220,8 @@ void call_msa_correct_subject_kernel_async(
                             GetCandidatePtr getCandidatePtr,
                             GetSubjectQualityPtr getSubjectQualityPtr,
                             GetCandidateQualityPtr getCandidateQualityPtr,
+                            GetSubjectLength getSubjectLength,
+                            GetCandidateLength getCandidateLength,
                             cudaStream_t stream){
 
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
@@ -3231,7 +3239,10 @@ void call_msa_correct_subject_kernel_async(
             /*
             #define getsms(blocksize) {\
                                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
-                                                                                    msa_add_sequences_kernel_rs<ReadId_t, Accessor, RevCompl>, \
+                                                                                    msa_add_sequences_kernel_exp<Accessor, RevCompl,
+                                                                                                                GetSubjectPtr, GetCandidatePtr,
+                                                                                                                GetSubjectQualityPtr, GetCandidateQualityPtr,
+                                                                                                                GetSubjectLength, GetCandidateLength>, \
                                                                                     blocksize, smem); CUERR;}
 
             */
@@ -3286,7 +3297,9 @@ void call_msa_correct_subject_kernel_async(
                                                             getSubjectPtr,
                                                             getCandidatePtr,
                                                             getSubjectQualityPtr,
-                                                            getCandidateQualityPtr); CUERR;
+                                                            getCandidateQualityPtr,
+                                                            getSubjectLength,
+                                                            getCandidateLength); CUERR;
     }
 
 
