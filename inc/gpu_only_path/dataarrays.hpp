@@ -39,13 +39,13 @@ namespace gpu{
             msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, padding_bytes) * padding_bytes;
 
             //alignment input
-            std::size_t memSubjects = n_sub * encoded_sequence_pitch;
-            std::size_t memSubjectLengths = SDIV(n_sub * sizeof(int), padding_bytes) * padding_bytes;
-            std::size_t memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
-            std::size_t memQueries = n_quer * encoded_sequence_pitch;
-            std::size_t memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
-            std::size_t memSubjectIds = SDIV(sizeof(ReadId_t) * n_sub, padding_bytes) * padding_bytes;
-            std::size_t memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
+            memSubjects = n_sub * encoded_sequence_pitch;
+            memSubjectLengths = SDIV(n_sub * sizeof(int), padding_bytes) * padding_bytes;
+            memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
+            memQueries = n_quer * encoded_sequence_pitch;
+            memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
+            memSubjectIds = SDIV(sizeof(ReadId_t) * n_sub, padding_bytes) * padding_bytes;
+            memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
 
             std::size_t required_alignment_transfer_data_allocation_size = memSubjects
                                                             + memSubjectLengths
@@ -533,6 +533,14 @@ namespace gpu{
         int* d_num_high_quality_subject_indices = nullptr;
 
         // alignment input
+        std::size_t memSubjects;
+        std::size_t memSubjectLengths;
+        std::size_t memNqueriesPrefixSum;
+        std::size_t memQueries;
+        std::size_t memQueryLengths;
+        std::size_t memSubjectIds;
+        std::size_t memCandidateIds;
+
         void* alignment_transfer_data_host = nullptr;
         void* alignment_transfer_data_device = nullptr;
 

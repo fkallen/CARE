@@ -427,15 +427,13 @@ struct BatchGenerator{
                 return length;
             };
 
-            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
+            auto callKernel = [&](auto subjectpointer, auto candidatepointer, auto subjectlength, auto candidatelength){
                 call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
                             d_alignment_scores,
                             d_alignment_overlaps,
                             d_alignment_shifts,
                             d_alignment_nOps,
                             d_alignment_isValid,
-                            //d_subject_sequences_lengths,
-                            //d_candidate_sequences_lengths,
                             d_candidates_per_subject_prefixsum,
                             n_subjects,
                             n_queries,
@@ -444,39 +442,27 @@ struct BatchGenerator{
                             maxErrorRate,
                             min_overlap_ratio,
                             getNumBytes,
-                            getSubjectPtr_dense,
-                            getCandidatePtr_dense,
-							getSubjectLength_dense,
-							getCandidateLength_dense,
+                            subjectpointer,
+                            candidatepointer,
+							subjectlength,
+							candidatelength,
                             maxSubjectLength,
                             maxQueryLength,
                             stream);
+            };
 
+            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
+                callKernel( getSubjectPtr_dense,
+                            getCandidatePtr_dense,
+							getSubjectLength_dense,
+							getCandidateLength_dense);
             }else{
 
-                call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
-                            d_alignment_scores,
-    						d_alignment_overlaps,
-    						d_alignment_shifts,
-    						d_alignment_nOps,
-    						d_alignment_isValid,
-    						//d_subject_sequences_lengths,
-    						//d_candidate_sequences_lengths,
-    						d_candidates_per_subject_prefixsum,
-    						n_subjects,
-    						n_queries,
-    						max_sequence_bytes,
-    						min_overlap,
-    						maxErrorRate,
-    						min_overlap_ratio,
-    						getNumBytes,
-                            getSubjectPtr_sparse,
+                callKernel( getSubjectPtr_sparse,
                             getCandidatePtr_sparse,
 							getSubjectLength_sparse,
-							getCandidateLength_sparse,
-    						maxSubjectLength,
-    						maxQueryLength,
-    						stream);
+							getCandidateLength_sparse);
+
             }
 		}
 	};
@@ -1641,19 +1627,21 @@ struct BatchGenerator{
 					std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
 
 					//copy subject length
-					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
+					//arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
 					batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
                                                                 batch.maxSubjectLength);
 
 					//copy candidate lengths
 					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
-						arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
+						//arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
 
 						batch.maxQueryLength = std::max(int(candidate_sequence->length()),
 																	batch.maxQueryLength);
 
-						++batch.copiedCandidates;
+						//++batch.copiedCandidates;
 					}
+
+                    batch.copiedCandidates += task.candidate_sequences.size();
 
 					//update prefix sum
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
@@ -1704,11 +1692,34 @@ struct BatchGenerator{
 			if(batch.copiedTasks == int(batch.tasks.size())){
                 assert(batch.copiedTasks == int(batch.tasks.size()));
 
+                if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()){
+                    cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                                    dataArrays.h_subject_read_ids,
+                                    dataArrays.memSubjectIds,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;
+
+                    cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
+                                    dataArrays.h_candidate_read_ids,
+                                    dataArrays.memCandidateIds,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
+                                    dataArrays.h_candidates_per_subject_prefixsum,
+                                    dataArrays.memNqueriesPrefixSum,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;
+                }else{
+
                 cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
     							dataArrays.alignment_transfer_data_host,
     							dataArrays.alignment_transfer_data_usable_size,
     							H2D,
     							streams[primary_stream_index]); CUERR;
+
+
+
+                }
 
                 cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;
 
