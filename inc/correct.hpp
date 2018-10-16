@@ -3009,7 +3009,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using ReadStorage_t = readStorage_t;
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
-    using GPUReadStorage_t = GPUReadStorage;
+    using GPUReadStorage_t = GPUReadStorage<ReadStorage_t>;
 
 	using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 

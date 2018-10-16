@@ -2,12 +2,14 @@
 #define CARE_GPU_READ_STORAGE_HPP
 
 #include "../hpc_helpers.cuh"
+#include "../readstorage.hpp"
 
 #include <iostream>
 #include <limits>
 #include <random>
 #include <cstring>
 #include <cstdint>
+#include <memory>
 
 namespace care{
 
@@ -41,6 +43,7 @@ namespace care{
 	SequencesAndQualities = 2,
 };*/
 
+template<class CPUReadStorage>
 struct GPUReadStorage{
 
 	enum class Type{
@@ -50,6 +53,8 @@ struct GPUReadStorage{
 	};
 
     using Length_t = int;
+    using Sequence_t = typename CPUReadStorage::Sequence_t;
+    using ReadId_t = typename CPUReadStorage::ReadId_t;
 
     char* d_sequence_data = nullptr;
     char* d_quality_data = nullptr;
@@ -58,6 +63,11 @@ struct GPUReadStorage{
     int max_sequence_length = 0;
     int deviceId = -1;
 	bool useQualityScores = false;
+
+    //Length_t* h_sequence_lengths = nullptr;
+    //bool h_sequence_lengths_is_owner = false;
+
+    const CPUReadStorage* cpu_read_storage = nullptr;
 
 	//GPUReadStorageType type = GPUReadStorageType::None;
 
@@ -109,24 +119,11 @@ struct GPUReadStorage{
 	bool hasManagedQualities() const{
 		return useQualityScores && qualityType == GPUReadStorage::Type::Managed;
 	}
-#if 0
-    bool hasSequenceLengths() const{
-        return sequencelengthType != GPUReadStorage::Type::None;
-    }
-
-    bool hasFullSequenceLengths() const{
-        return sequencelengthType == GPUReadStorage::Type::Full;
-    }
-
-    bool hasManagedSequenceLengths() const{
-        return sequencelengthType == GPUReadStorage::Type::Managed;
-    }
-#endif
 
 #ifdef __NVCC__
 
 
-	template<class CPUReadStorage>
+
     static GPUReadStorage createFrom(const CPUReadStorage& cpurs,
                                     int max_sequence_bytes,
                                     int max_sequence_length,
@@ -158,6 +155,7 @@ struct GPUReadStorage{
         gpurs.max_sequence_bytes = max_sequence_bytes;
         gpurs.max_sequence_length = max_sequence_length;
 		gpurs.useQualityScores = cpurs.useQualityScores;
+        gpurs.cpu_read_storage = &cpurs;
 
         //return gpurs;
 		canUseManagedMemory = false;
@@ -171,6 +169,21 @@ struct GPUReadStorage{
 		const bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalMem * totalMem && requiredTotalMem < freeMem);
 
 		bool canTestSequences = false;
+
+        /*gpurs.h_sequence_lengths = new Length_t[nSequences];
+        gpurs.h_sequence_lengths_is_owner = true;
+
+        for(ReadId_t readId = 0; readId < nSequences; ++readId){
+            const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+
+            assert(sequence->length() <= std::numeric_limits<Length_t>::max());
+
+            Length_t len = sequence->length();
+
+            std::memcpy(h_sequence_lengths + readId * sizeof(Length_t),
+                        &len,
+                        sizeof(Length_t));
+        }*/
 
 		//make sequences in gpu mem
 		if(isEnoughMemForSequences){
@@ -243,6 +256,11 @@ struct GPUReadStorage{
 			gpurs.sequenceType = GPUReadStorage::Type::Full;
 
 			canTestSequences = true;
+
+            /*gpurs.h_sequence_lengths = new Length_t[nSequences];
+            gpurs.h_sequence_lengths_is_owner = true;
+
+            cudaMemcpy(h_sequence_lengths, gpurs.d_sequence_lengths, requiredSequenceLengthsMem, D2H); CUERR;*/
 		}else{
 			//use managed memory
 			if(isCapableOfUsingManagedMemory && canUseManagedMemory){
@@ -278,7 +296,14 @@ struct GPUReadStorage{
 				gpurs.sequenceType = GPUReadStorage::Type::Managed;
 
 				canTestSequences = true;
-			}
+
+                //gpurs.h_sequence_lengths = gpurs.d_sequence_lengths;
+                //gpurs.h_sequence_lengths_is_owner = false;
+			}else{
+                //gpurs.h_sequence_lengths_is_owner = false;
+            }
+
+
 		}
 
 		if(canTestSequences){
@@ -351,121 +376,6 @@ struct GPUReadStorage{
 #endif
 
 		}
-#if 0
-        bool canTestSequenceLengths = false;
-
-        if(isEnoughMemForSequenceLengths){
-
-			constexpr std::uint64_t maxcopybatchsequences = std::size_t(10000000);
-
-			//copy sequences to GPU
-
-            const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
-            cudaMalloc(&gpurs.d_sequence_lengths, requiredSequenceLengthsMem); CUERR;
-
-			const std::uint64_t copybatchsequences = std::min(nSequences, maxcopybatchsequences);
-
-			std::uint64_t tmpstoragesize = copybatchsequences * sizeof(Length_t);
-			char* h_tmp;
-			cudaMallocHost(&h_tmp, tmpstoragesize); CUERR;
-
-			assert(h_tmp != nullptr);
-
-			const int iters = SDIV(nSequences, copybatchsequences);
-
-			for(int iter = 0; iter < iters; ++iter){
-				std::memset(h_tmp, 0, tmpstoragesize);
-
-				ReadId_t localcount = 0;
-
-				for(ReadId_t readId = iter * copybatchsequences; readId < std::min((iter + 1) * copybatchsequences, nSequences); ++readId){
-					const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
-
-					assert(sequence->length() <= std::numeric_limits<Length_t>::max());
-                    Length_t len = sequence->length();
-					std::memcpy(h_tmp + localcount * sizeof(Length_t),
-								&len,
-								sizeof(Length_t));
-
-					++localcount;
-				}
-
-				cudaMemcpy(gpurs.d_sequence_lengths + iter * copybatchsequences,
-								h_tmp,
-								localcount * sizeof(Length_t),
-								H2D); CUERR;
-			}
-
-			cudaDeviceSynchronize(); CUERR;
-
-			cudaFreeHost(h_tmp); CUERR;
-
-			gpurs.sequencelengthType = GPUReadStorage::Type::Full;
-
-			canTestSequenceLengths = true;
-		}else{
-			//use managed memory
-			if(isCapableOfUsingManagedMemory && canUseManagedMemory){
-				const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
-				cudaMallocManaged(&gpurs.d_sequence_lengths, requiredSequenceLengthsMem); CUERR;
-
-				cudaMemAdvise(gpurs.d_sequence_lengths,
-								requiredSequenceMem,
-								cudaMemAdviseSetReadMostly,
-								0); CUERR; //last argument is ignored for cudaMemAdviseSetReadMostly
-
-				for(ReadId_t readId = 0; readId < nSequences; ++readId){
-					const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
-
-					assert(sequence->length() <= std::numeric_limits<Length_t>::max());
-                    Length_t len = sequence->length();
-					std::memcpy(gpurs.d_sequence_lengths + readId,
-								&len,
-								sizeof(Length_t));
-				}
-
-				gpurs.sequencelengthType = GPUReadStorage::Type::Managed;
-
-				canTestSequenceLengths = true;
-			}
-		}
-
-        if(canTestSequenceLengths){
-            //test code
-#if 0
-            {
-                Length_t* h_test, *d_test;
-                cudaMallocHost(&h_test, sizeof(Length_t)); CUERR;
-                cudaMalloc(&d_test, sizeof(Length_t)); CUERR;
-
-                std::mt19937 gen;
-                gen.seed(std::random_device()());
-                std::uniform_int_distribution<ReadId_t> dist(0, nSequences-1); // distribution in range [1, 6]
-
-                for(ReadId_t i = 0; i < nSequences; i++){
-                    ReadId_t readId = i;//dist(gen);
-                    GPUReadStorage_sequencelength_test_kernel<<<1,1>>>(d_test, gpurs.d_sequence_lengths, readId); CUERR;
-                    cudaMemcpy(h_test, d_test, sizeof(Length_t), D2H); CUERR;
-                    cudaDeviceSynchronize(); CUERR;
-
-                    const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
-
-                    bool equal = sequence->length() == *h_test;
-                    if(!equal){
-                        std::cout << readId << std::endl;
-                        std::cout << sequence->length() << " " << *h_test << std::endl;
-                    }
-                    assert(equal);
-                }
-
-                std::cout << "GPUReadStorage_sequencelength_test ok" << std::endl;
-
-                cudaFree(d_test); CUERR;
-                cudaFreeHost(h_test); CUERR;
-            }
-#endif
-        }
-#endif
 
 		bool canTestQualities = false;
 
@@ -589,6 +499,29 @@ struct GPUReadStorage{
 
         return gpurs;
     }
+
+
+    const char* fetchSequence_ptr(ReadId_t readNumber) const{
+        const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
+		return sequence_ptr->begin();
+	}
+
+    int fetchSequenceLength(ReadId_t readNumber) const{
+        const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
+		return sequence_ptr->length();
+	}
+
+    const char* fetchQuality_ptr(ReadId_t readNumber) const{
+        const std::string* qualityptr = cpu_read_storage->fetchQuality_ptr(readNumber);
+		return qualityptr->c_str();
+    }
+
+
+
+
+
+
+
 
 /*
 
@@ -846,6 +779,10 @@ struct GPUReadStorage{
         //gpurs.type = GPUReadStorageType::None;
 		gpurs.sequenceType = GPUReadStorage::Type::None;
 		gpurs.qualityType = GPUReadStorage::Type::None;
+
+        //if(gpurs.h_sequence_lengths_is_owner){
+        //    delete [] gpurs.h_sequence_lengths;
+        //}
 
         cudaSetDevice(oldId); CUERR;
     }
