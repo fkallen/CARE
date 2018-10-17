@@ -2681,11 +2681,19 @@ struct BatchGenerator{
 										}
 									}
 
+                                    auto curstate = sideBatch.state;
+                                    if(curstate == BatchState::Unprepared){
+                                        push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
+                                    }
 									sideBatchAdvanceResult = advance_one_step(sideBatch,
 																			false, //must not block
 																			true, //can launch kernels
                                                                             true, //can be paused
 																			transFuncData);
+
+                                    if(curstate == BatchState::Unprepared){
+                                        pop_range();
+                                    }
 
 									if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
 										pop_range("side inner");

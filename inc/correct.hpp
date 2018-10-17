@@ -3016,7 +3016,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
 
 
-//#define DO_PROFILE
+#define DO_PROFILE
 
 #if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
@@ -3247,7 +3247,7 @@ void correct(const MinhashOptions& minhashOptions,
 #else
 
     constexpr int sleepiterbegin = 1;
-    constexpr int sleepiterend = 2;
+    constexpr int sleepiterend = 10;
 
     int sleepiter = 0;
 
