@@ -154,192 +154,6 @@ struct BatchGenerator{
 #ifdef __NVCC__
 
     template<class Sequence_t, class ReadId_t>
-    struct ShiftedHammingDistanceChooser;
-#if 0
-	template<class ReadId_t>
-    struct ShiftedHammingDistanceChooser<Sequence2Bit, ReadId_t>{
-        using GPUReadStorage_t = GPUReadStorage;
-
-		static void callKernelAsync(int* d_alignment_scores,
-                            int* d_alignment_overlaps,
-                            int* d_alignment_shifts,
-                            int* d_alignment_nOps,
-                            bool* d_alignment_isValid,
-                            const ReadId_t* d_subject_read_ids,
-                            const ReadId_t* d_candidate_read_ids,
-                            const char* d_subject_sequences_data,
-                            const char* d_candidate_sequences_data,
-                            const int* d_subject_sequences_lengths,
-                            const int* d_candidate_sequences_lengths,
-                            const int* d_candidates_per_subject_prefixsum,
-                            int n_subjects,
-							int n_queries,
-                            int max_sequence_bytes,
-                            size_t encodedsequencepitch,
-                            int min_overlap,
-                            double maxErrorRate,
-                            double min_overlap_ratio,
-                            int maxSubjectLength,
-                            int maxQueryLength,
-                            const GPUReadStorage_t* gpuReadStorage,
-                            bool useGpuReadStorage,
-                            cudaStream_t stream){
-
-            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
-
-			auto accessor = [] __device__ (const char* data, int length, int index){
-                return Sequence2Bit::get(data, length, index);
-            };
-
-            auto make_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
-                return Sequence2Bit::make_reverse_complement_inplace(sequence, sequencelength);
-            };
-
-            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
-    			call_shd_with_revcompl_kernel_async(d_alignment_scores,
-    						d_alignment_overlaps,
-    						d_alignment_shifts,
-    						d_alignment_nOps,
-    						d_alignment_isValid,
-    						d_subject_sequences_data,
-    						d_candidate_sequences_data,
-    						d_subject_sequences_lengths,
-    						d_candidate_sequences_lengths,
-    						d_candidates_per_subject_prefixsum,
-    						n_subjects,
-    						n_queries,
-    						max_sequence_bytes,
-    						encodedsequencepitch,
-    						min_overlap,
-    						maxErrorRate,
-    						min_overlap_ratio,
-    						accessor,
-    						make_reverse_complement_inplace,
-    						maxSubjectLength,
-    						maxQueryLength,
-    						stream);
-            }else{
-                call_shd_with_revcompl_kernel_rs_async(d_alignment_scores,
-    						d_alignment_overlaps,
-    						d_alignment_shifts,
-    						d_alignment_nOps,
-    						d_alignment_isValid,
-                            gpuReadStorage->d_sequence_data,
-                            d_subject_read_ids,
-                            d_candidate_read_ids,
-    						d_subject_sequences_lengths,
-    						d_candidate_sequences_lengths,
-    						d_candidates_per_subject_prefixsum,
-    						n_subjects,
-    						n_queries,
-    						max_sequence_bytes,
-    						encodedsequencepitch,
-    						min_overlap,
-    						maxErrorRate,
-    						min_overlap_ratio,
-    						accessor,
-    						make_reverse_complement_inplace,
-    						maxSubjectLength,
-    						maxQueryLength,
-    						stream);
-            }
-		}
-	};
-#endif
-#if 0
-	template<class ReadId_t>
-    struct ShiftedHammingDistanceChooser<Sequence2BitHiLo, ReadId_t>{
-        using GPUReadStorage_t = GPUReadStorage;
-
-		static void callKernelAsync(int* d_alignment_scores,
-                            int* d_alignment_overlaps,
-                            int* d_alignment_shifts,
-                            int* d_alignment_nOps,
-                            bool* d_alignment_isValid,
-                            const ReadId_t* d_subject_read_ids,
-                            const ReadId_t* d_candidate_read_ids,
-                            const char* d_subject_sequences_data,
-                            const char* d_candidate_sequences_data,
-                            const int* d_subject_sequences_lengths,
-                            const int* d_candidate_sequences_lengths,
-                            const int* d_candidates_per_subject_prefixsum,
-                            int n_subjects,
-							int n_queries,
-                            int max_sequence_bytes,
-                            size_t encodedsequencepitch,
-                            int min_overlap,
-                            double maxErrorRate,
-                            double min_overlap_ratio,
-                            int maxSubjectLength,
-                            int maxQueryLength,
-                            const GPUReadStorage_t* gpuReadStorage,
-                            bool useGpuReadStorage,
-                            cudaStream_t stream){
-
-            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
-
-			auto getNumBytes = [] __device__ (int sequencelength){
-                return Sequence2BitHiLo::getNumBytes(sequencelength);
-            };
-
-            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
-
-    			call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(d_alignment_scores,
-    						d_alignment_overlaps,
-    						d_alignment_shifts,
-    						d_alignment_nOps,
-    						d_alignment_isValid,
-    						d_subject_sequences_data,
-    						d_candidate_sequences_data,
-    						d_subject_sequences_lengths,
-    						d_candidate_sequences_lengths,
-    						d_candidates_per_subject_prefixsum,
-    						n_subjects,
-    						n_queries,
-    						max_sequence_bytes,
-    						encodedsequencepitch,
-    						min_overlap,
-    						maxErrorRate,
-    						min_overlap_ratio,
-    						getNumBytes,
-    						maxSubjectLength,
-    						maxQueryLength,
-    						stream);
-            }else{
-
-                call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_async(d_alignment_scores,
-    						d_alignment_overlaps,
-    						d_alignment_shifts,
-    						d_alignment_nOps,
-    						d_alignment_isValid,
-                            gpuReadStorage->d_sequence_data,
-                            d_subject_read_ids,
-                            d_candidate_read_ids,
-                            //
-                            //d_subject_sequences_data,
-                            //d_candidate_sequences_data,
-                            //
-    						d_subject_sequences_lengths,
-    						d_candidate_sequences_lengths,
-    						d_candidates_per_subject_prefixsum,
-    						n_subjects,
-    						n_queries,
-    						max_sequence_bytes,
-    						encodedsequencepitch,
-    						min_overlap,
-    						maxErrorRate,
-    						min_overlap_ratio,
-    						getNumBytes,
-    						maxSubjectLength,
-    						maxQueryLength,
-    						stream);
-            }
-		}
-	};
-#endif
-    template<class Sequence_t, class ReadId_t>
     struct ShiftedHammingDistanceChooserExp;
 
     template<class ReadId_t>
@@ -365,8 +179,6 @@ struct BatchGenerator{
                             int min_overlap,
                             double maxErrorRate,
                             double min_overlap_ratio,
-                            int maxSubjectLength,
-                            int maxQueryLength,
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
                             cudaStream_t stream){
@@ -447,8 +259,6 @@ struct BatchGenerator{
                             candidatepointer,
 							subjectlength,
 							candidatelength,
-                            maxSubjectLength,
-                            maxQueryLength,
                             stream);
             };
 
@@ -578,138 +388,6 @@ struct BatchGenerator{
             }
         }
     };
-
-#if 0
-    template<class Sequence_t, class ReadId_t>
-    struct MSAAddSequencesChooser{
-        using GPUReadStorage_t = GPUReadStorage;
-
-        static void callKernelAsync(
-                            char* d_multiple_sequence_alignments,
-                            float* d_multiple_sequence_alignment_weights,
-                            const int* d_alignment_shifts,
-                            const BestAlignment_t* d_alignment_best_alignment_flags,
-                            const ReadId_t* d_subject_read_ids,
-                            const ReadId_t* d_candidate_read_ids,
-                            const char* d_subject_sequences_data,
-                            const char* d_candidate_sequences_data,
-                            const int* d_subject_sequences_lengths,
-                            const int* d_candidate_sequences_lengths,
-                            const char* d_subject_qualities,
-                            const char* d_candidate_qualities,
-                            const int* d_alignment_overlaps,
-                            const int* d_alignment_nOps,
-                            const MSAColumnProperties*  d_msa_column_properties,
-                            const int* d_candidates_per_subject_prefixsum,
-                            const int* d_indices,
-                            const int* d_indices_per_subject,
-                            const int* d_indices_per_subject_prefixsum,
-                            int n_subjects,
-                            int n_queries,
-                            const int* d_num_indices,
-                            bool canUseQualityScores,
-                            float desiredAlignmentMaxErrorRate,
-                            int maximum_sequence_length,
-                            int max_sequence_bytes,
-                            size_t encoded_sequence_pitch,
-                            size_t quality_pitch,
-                            size_t msa_row_pitch,
-                            size_t msa_weights_row_pitch,
-							bool qualitiesArePacked,
-                            const GPUReadStorage_t* gpuReadStorage,
-                            bool useGpuReadStorage,
-                            cudaStream_t stream){
-
-            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-            assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
-
-            auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
-                return Sequence_t::get_as_nucleotide(data, length, index);
-            };
-
-            auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
-                return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
-            };
-
-            if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
-
-                call_msa_add_sequences_kernel_async(
-                                d_multiple_sequence_alignments,
-                                d_multiple_sequence_alignment_weights,
-                                d_alignment_shifts,
-                                d_alignment_best_alignment_flags,
-                                d_subject_sequences_data,
-                                d_candidate_sequences_data,
-                                d_subject_sequences_lengths,
-                                d_candidate_sequences_lengths,
-                                d_subject_qualities,
-                                d_candidate_qualities,
-                                d_alignment_overlaps,
-                                d_alignment_nOps,
-                                d_msa_column_properties,
-                                d_candidates_per_subject_prefixsum,
-                                d_indices,
-                                d_indices_per_subject,
-                                d_indices_per_subject_prefixsum,
-                                n_subjects,
-                                n_queries,
-                                d_num_indices,
-                                canUseQualityScores,
-                                desiredAlignmentMaxErrorRate,
-                                maximum_sequence_length,
-                                max_sequence_bytes,
-                                quality_pitch,
-                                msa_row_pitch,
-                                msa_weights_row_pitch,
-								qualitiesArePacked,
-                                nucleotide_accessor,
-                                make_unpacked_reverse_complement_inplace,
-                                stream);
-            }else{
-                //const char* d_quality_data = gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities ?
-                //                                 gpuReadStorage->d_quality_data :
-                //                                 nullptr;
-				const char* d_quality_data = gpuReadStorage->hasQualities() ?
-												gpuReadStorage->d_quality_data :
-												nullptr;
-                call_msa_add_sequences_kernel_rs_async(
-                                d_multiple_sequence_alignments,
-                                d_multiple_sequence_alignment_weights,
-                                d_alignment_shifts,
-                                d_alignment_best_alignment_flags,
-                                gpuReadStorage->d_sequence_data,
-                                d_subject_read_ids,
-                                d_candidate_read_ids,
-                                d_subject_sequences_lengths,
-                                d_candidate_sequences_lengths,
-                                d_quality_data,
-                                d_subject_qualities,
-                                d_candidate_qualities,
-                                d_alignment_overlaps,
-                                d_alignment_nOps,
-                                d_msa_column_properties,
-                                d_candidates_per_subject_prefixsum,
-                                d_indices,
-                                d_indices_per_subject,
-                                d_indices_per_subject_prefixsum,
-                                n_subjects,
-                                n_queries,
-                                d_num_indices,
-                                canUseQualityScores,
-                                desiredAlignmentMaxErrorRate,
-                                maximum_sequence_length,
-                                max_sequence_bytes,
-                                quality_pitch,
-                                msa_row_pitch,
-                                msa_weights_row_pitch,
-								qualitiesArePacked,
-                                nucleotide_accessor,
-                                make_unpacked_reverse_complement_inplace,
-                                stream);
-            }
-        }
-    };
-#endif
 
 
 	template<class ReadId_t>
@@ -1120,29 +798,17 @@ struct BatchGenerator{
         CorrectionTask(){}
 
         CorrectionTask(ReadId_t readId)
-            : CorrectionTask(readId, nullptr, nullptr){}
-
-        CorrectionTask(ReadId_t readId, const Sequence_t* subject_sequence)
-            : CorrectionTask(readId, subject_sequence, nullptr){}
-
-        CorrectionTask(ReadId_t readId, const Sequence_t* subject_sequence, const std::string* subject_quality)
             :   active(true),
                 corrected(false),
-                readId(readId),
-                subject_sequence(subject_sequence),
-                subject_quality(subject_quality),
-                subject_string(subject_sequence->toString()){}
+                readId(readId)
+                {}
 
         CorrectionTask(const CorrectionTask& other)
             : active(other.active),
             corrected(other.corrected),
             readId(other.readId),
-            subject_sequence(other.subject_sequence),
-            subject_quality(other.subject_quality),
             subject_string(other.subject_string),
             candidate_read_ids(other.candidate_read_ids),
-            candidate_sequences(other.candidate_sequences),
-            candidate_qualities(other.candidate_qualities),
             corrected_subject(other.corrected_subject),
             corrected_candidates(other.corrected_candidates),
             corrected_candidates_read_ids(other.corrected_candidates_read_ids){
@@ -1170,12 +836,8 @@ struct BatchGenerator{
             swap(l.active, r.active);
             swap(l.corrected, r.corrected);
             swap(l.readId, r.readId);
-            swap(l.subject_sequence, r.subject_sequence);
             swap(l.subject_string, r.subject_string);
             swap(l.candidate_read_ids, r.candidate_read_ids);
-            swap(l.candidate_sequences, r.candidate_sequences);
-            swap(l.subject_quality, r.subject_quality);
-            swap(l.candidate_qualities, r.candidate_qualities);
             swap(l.corrected_subject, r.corrected_subject);
             swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
         }
@@ -1183,12 +845,9 @@ struct BatchGenerator{
         bool active;
         bool corrected;
         ReadId_t readId;
-        const Sequence_t* subject_sequence;
-        std::vector<ReadId_t> candidate_read_ids;
-        std::vector<const Sequence_t*> candidate_sequences;
 
-        const std::string* subject_quality;
-        std::vector<const std::string*> candidate_qualities;
+        std::vector<ReadId_t> candidate_read_ids;
+
         std::string subject_string;
 
         std::string corrected_subject;
@@ -1251,8 +910,6 @@ struct BatchGenerator{
 
 		struct Batch{
 			std::vector<CorrectionTask_t> tasks;
-			int maxSubjectLength = 0;
-			int maxQueryLength = 0;
 			int initialNumberOfCandidates = 0;
 			BatchState state = BatchState::Unprepared;
 
@@ -1265,8 +922,6 @@ struct BatchGenerator{
 
 			void reset(){
 				tasks.clear();
-				maxSubjectLength = 0;
-				maxQueryLength = 0;
 				initialNumberOfCandidates = 0;
 				state = BatchState::Unprepared;
 				copiedTasks = 0;
@@ -1302,7 +957,6 @@ struct BatchGenerator{
 			int minimum_candidates_per_batch;
 			int max_candidates;
 			int maxSequenceLength;
-			const ReadStorage_t* readStorage;
 			const Minhasher_t* minhasher;
             const GPUReadStorage_t* gpuReadStorage;
             bool useGpuReadStorage;
@@ -1480,8 +1134,8 @@ struct BatchGenerator{
 			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
-			//if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
-				const auto& readStorage = transFuncData.readStorage;
+
+                const auto* gpuReadStorage = transFuncData.gpuReadStorage;
 				const auto& minhasher = transFuncData.minhasher;
 				const auto readIds = transFuncData.mybatchgen->getNextReadIds(transFuncData.num_ids_per_add_tasks);
 
@@ -1496,17 +1150,14 @@ struct BatchGenerator{
 					transFuncData.unlock(id);
 
 					if(ok){
-						const Sequence_t* sequenceptr = readStorage->fetchSequence_ptr(id);
-						const std::string* qualityptr = nullptr;
+                        const char* sequenceptr = gpuReadStorage->fetchSequence_ptr(id);
+                        const int sequencelength = gpuReadStorage->fetchSequenceLength(id);
 
-						if(transFuncData.correctionOptions.useQualityScores)
-							qualityptr = readStorage->fetchQuality_ptr(id);
-
-						batch.tasks.emplace_back(id, sequenceptr, qualityptr);
+						batch.tasks.emplace_back(id);
 
 						auto& task = batch.tasks.back();
 
-						task.subject_string = task.subject_sequence->toString();
+						task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
 						task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
 
 						//remove self from candidates
@@ -1518,39 +1169,7 @@ struct BatchGenerator{
 							//no need for further processing without candidates
 							task.active = false;
 						}else{
-                            /*if(transFuncData.useGpuReadStorage){
-                                if(transFuncData.gpuReadStorage->hasSequences()){
-                                    if(transFuncData.gpuReadStorage->hasQualities()){
-                                        ;//nothing to do
-                                    }else{
-                                        if(transFuncData.correctionOptions.useQualityScores){
-                                            for(auto candidate_read_id : task.candidate_read_ids){
-                									task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
-                							}
-                                        }
-                                    }
-                                }else{
-                                    if(transFuncData.gpuReadStorage->hasQualities()){
-                                        for(auto candidate_read_id : task.candidate_read_ids){
-            								task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-            							}
-                                    }else{
-                                        for(auto candidate_read_id : task.candidate_read_ids){
-            								task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-            								if(transFuncData.correctionOptions.useQualityScores)
-            									task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
-            							}
-                                    }
-                                }
-                            }else{*/
 
-    							for(auto candidate_read_id : task.candidate_read_ids){
-    								task.candidate_sequences.emplace_back(readStorage->fetchSequence_ptr(candidate_read_id));
-    								if(transFuncData.correctionOptions.useQualityScores)
-    									task.candidate_qualities.emplace_back(readStorage->fetchQuality_ptr(candidate_read_id));
-    							}
-
-                            //}
 						}
 
 						batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
@@ -1655,55 +1274,37 @@ struct BatchGenerator{
 					arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
 					std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
 
-					//copy subject length
-					//arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
-				/*	batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
-                                                                batch.maxSubjectLength);
-
-					//copy candidate lengths
-					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
-						//arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
-
-						batch.maxQueryLength = std::max(int(candidate_sequence->length()),
-																	batch.maxQueryLength);
-
-						//++batch.copiedCandidates;
-					}*/
-
                     batch.copiedCandidates += task.candidate_read_ids.size();
 
 					//update prefix sum
-					/*arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-										+ int(task.candidate_read_ids.size());*/
+										+ int(task.candidate_read_ids.size());
 
 				}else{
 					//copy subject data
+                    const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequence_ptr(task.readId);
+                    const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.readId);
 					std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
-								task.subject_sequence->begin(),
-								task.subject_sequence->getNumBytes());
+                                sequenceptr,
+                                sequencelength);
 
 					//copy subject length
-					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_sequence->length();
-					batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
-																	batch.maxSubjectLength);
+					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
 
+                    for(const ReadId_t& candidate_read_id : task.candidate_read_ids){
+                        const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequence_ptr(candidate_read_id);
+                        const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-					for(const Sequence_t* candidate_sequence : task.candidate_sequences){
-
-						//copy candidate data
-						std::memcpy(arrays.h_candidate_sequences_data
+                        std::memcpy(arrays.h_candidate_sequences_data
 										+ batch.copiedCandidates * arrays.encoded_sequence_pitch,
-									candidate_sequence->begin(),
-									candidate_sequence->getNumBytes());
+									sequenceptr,
+									Sequence_t::getNumBytes(sequencelength));
 
-						//copy candidate length
-						arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = candidate_sequence->length();
-						batch.maxQueryLength = std::max(int(candidate_sequence->length()),
-																	batch.maxQueryLength);
+                        arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = sequencelength;
 
 						++batch.copiedCandidates;
-					}
+                    }
 
 					//update prefix sum
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
@@ -1723,19 +1324,6 @@ struct BatchGenerator{
 
                 if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()){
                     dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
-
-                    for(std::size_t i = 0; i < batch.tasks.size(); i++){
-                        const auto& task = batch.tasks[i];
-                        batch.maxSubjectLength = std::max(int(task.subject_sequence->length()),
-                                                                    batch.maxSubjectLength);
-                        for(const Sequence_t* candidate_sequence : task.candidate_sequences){
-                            batch.maxQueryLength = std::max(int(candidate_sequence->length()),
-                                                                        batch.maxQueryLength);
-                        }
-                        dataArrays.h_candidates_per_subject_prefixsum[i+1]
-                                        = dataArrays.h_candidates_per_subject_prefixsum[i]
-                                            + int(task.candidate_read_ids.size());
-                    }
 
                     cudaMemcpyAsync(dataArrays.d_subject_read_ids,
                                     dataArrays.h_subject_read_ids,
@@ -1760,8 +1348,6 @@ struct BatchGenerator{
     							dataArrays.alignment_transfer_data_usable_size,
     							H2D,
     							streams[primary_stream_index]); CUERR;
-
-
 
                 }
 
@@ -1793,29 +1379,7 @@ struct BatchGenerator{
 			}
 
             //cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
-#if 0
-            auto best_alignment_comp = [=] __device__ (int fwd_alignment_overlap,
-                                        int revc_alignment_overlap,
-                                        int fwd_alignment_nops,
-                                        int revc_alignment_nops,
-                                        bool fwd_alignment_isvalid,
-                                        bool revc_alignment_isvalid,
-                                        int subjectlength,
-                                        int querylength) -> BestAlignment_t{
 
-                return choose_best_alignment(fwd_alignment_overlap,
-                                            revc_alignment_overlap,
-                                            fwd_alignment_nops,
-                                            revc_alignment_nops,
-                                            fwd_alignment_isvalid,
-                                            revc_alignment_isvalid,
-                                            subjectlength,
-                                            querylength,
-                                            transFuncData.min_overlap_ratio,
-                                            transFuncData.min_overlap,
-                                            transFuncData.estimatedErrorrate * 4.0);
-            };
-#endif
             auto select_alignment_op = [] __device__ (const BestAlignment_t& flag){
                     return flag != BestAlignment_t::None;
             };
@@ -1863,33 +1427,14 @@ struct BatchGenerator{
                                     transFuncData.min_overlap,
                                     transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0,
                                     transFuncData.min_overlap_ratio,
-                                    batch.maxSubjectLength,
-                                    batch.maxQueryLength,
+                                    //batch.maxSubjectLength,
+                                    //batch.maxQueryLength,
                                     transFuncData.gpuReadStorage,
                                     transFuncData.useGpuReadStorage,
                                     streams[primary_stream_index]);
 
             //Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
             //    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
-#if 0
-            call_cuda_find_best_alignment_kernel_async(
-                                                dataArrays.d_alignment_best_alignment_flags,
-                                                dataArrays.d_alignment_scores,
-                                                dataArrays.d_alignment_overlaps,
-                                                dataArrays.d_alignment_shifts,
-                                                dataArrays.d_alignment_nOps,
-                                                dataArrays.d_alignment_isValid,
-                                                dataArrays.d_subject_sequences_lengths,
-                                                dataArrays.d_candidate_sequences_lengths,
-                                                dataArrays.d_candidates_per_subject_prefixsum,
-                                                dataArrays.n_subjects,
-                                                transFuncData.min_overlap_ratio,
-                                                transFuncData.min_overlap,
-                                                transFuncData.maxErrorRate, //transFuncData.estimatedErrorrate * 4.0,
-                                                best_alignment_comp,
-                                                dataArrays.n_queries,
-                                                streams[primary_stream_index]);
-#endif
 
             FindBestAlignmentChooserExp<ReadId_t>::callKernelAsync(
                         dataArrays.d_alignment_best_alignment_flags,
@@ -2040,6 +1585,7 @@ struct BatchGenerator{
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+            const auto* gpuReadStorage = transFuncData.gpuReadStorage;
 
 			if(transFuncData.correctionOptions.useQualityScores){
 
@@ -2057,9 +1603,10 @@ struct BatchGenerator{
     					auto& arrays = dataArrays;
 
     					//copy subject quality
+                        const std::string* subject_quality = gpuReadStorage->fetchQuality_ptr(task.readId);
     					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
-    								task.subject_quality->c_str(),
-    								task.subject_quality->length());
+    								subject_quality->c_str(),
+    								subject_quality->length());
 
 						//copy qualities of candidates identified by indices
 
@@ -2070,7 +1617,8 @@ struct BatchGenerator{
     					for(int i = 0; i < my_num_indices; ++i){
     						const int candidate_index = my_indices[i];
     						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
-    						const std::string* qual = task.candidate_qualities[local_candidate_index];
+    						//const std::string* qual = task.candidate_qualities[local_candidate_index];
+                            const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids[local_candidate_index]);
 
     						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
     									qual->c_str(),
@@ -2134,18 +1682,6 @@ struct BatchGenerator{
 				const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
 
                 //Determine multiple sequence alignment properties
-                /*call_msa_init_kernel_async(
-                                dataArrays.d_msa_column_properties,
-                                dataArrays.d_alignment_shifts,
-                                dataArrays.d_alignment_best_alignment_flags,
-                                dataArrays.d_subject_sequences_lengths,
-                                dataArrays.d_candidate_sequences_lengths,
-                                dataArrays.d_indices,
-                                dataArrays.d_indices_per_subject,
-                                dataArrays.d_indices_per_subject_prefixsum,
-                                dataArrays.n_subjects,
-                                dataArrays.n_queries,
-                                streams[primary_stream_index]);*/
 
 				 MSAInitChooserExp<ReadId_t>::callKernelAsync(
 							dataArrays.d_msa_column_properties,
@@ -2333,38 +1869,6 @@ struct BatchGenerator{
     									streams[primary_stream_index]); CUERR;
 
     					// correct candidates
-#if 0
-    					call_msa_correct_candidates_kernel_async(
-    									dataArrays.d_consensus,
-    									dataArrays.d_support,
-    									dataArrays.d_coverage,
-    									dataArrays.d_origCoverages,
-    									dataArrays.d_multiple_sequence_alignments,
-    									dataArrays.d_msa_column_properties,
-    									dataArrays.d_indices,
-    									dataArrays.d_indices_per_subject,
-    									dataArrays.d_indices_per_subject_prefixsum,
-    									dataArrays.d_high_quality_subject_indices,
-    									dataArrays.d_num_high_quality_subject_indices,
-    									dataArrays.d_alignment_shifts,
-    									dataArrays.d_alignment_best_alignment_flags,
-    									dataArrays.d_candidate_sequences_lengths,
-    									dataArrays.d_num_corrected_candidates,
-    									dataArrays.d_corrected_candidates,
-    									dataArrays.d_indices_of_corrected_candidates,
-    									dataArrays.n_subjects,
-    									dataArrays.n_queries,
-    									dataArrays.d_num_indices,
-    									dataArrays.sequence_pitch,
-    									dataArrays.msa_pitch,
-    									dataArrays.msa_weights_pitch,
-    									min_support_threshold,
-    									min_coverage_threshold,
-    									new_columns_to_correct,
-    									make_unpacked_reverse_complement_inplace,
-    									dataArrays.maximum_sequence_length,
-    									streams[primary_stream_index]);
-#endif
 
                         MSACorrectCandidatesChooserExp<ReadId_t>::callKernelAsync(
                                                 dataArrays.d_consensus,
@@ -2457,7 +1961,7 @@ struct BatchGenerator{
                                                             columnProperties.columnsToCheck,
                                                             columnProperties.subjectColumnsBegin_incl,
                                                             columnProperties.subjectColumnsEnd_excl,
-                                                            task.subject_sequence->toString(),
+                                                            task.subject_string,
                                                             transFuncData.minhasher->minparams.k, 0.0,
                                                             transFuncData.estimatedCoverage);
 
@@ -2739,7 +2243,7 @@ struct BatchGenerator{
 				//if corrected, copy corrected subject to task
 				if(task.corrected){
 
-					const int subject_length = task.subject_sequence->length();
+					const int subject_length = task.subject_string.length();
                     //const int subject_length = if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()) task.subject_sequence->length();
 
 					task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
@@ -2754,7 +2258,9 @@ struct BatchGenerator{
 						const int global_candidate_index = my_indices_of_corrected_candidates[i];
 						const int local_candidate_index = global_candidate_index - arrays.h_candidates_per_subject_prefixsum[subject_index];
 
-						const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
+                        const ReadId_t candidate_read_id = task.candidate_read_ids[local_candidate_index];
+                        const int candidate_length = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+						//const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
 						const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
 
 						task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
@@ -2854,7 +2360,7 @@ struct BatchGenerator{
                                                         columnProperties.columnsToCheck,
                                                         columnProperties.subjectColumnsBegin_incl,
                                                         columnProperties.subjectColumnsEnd_excl,
-                                                        task.subject_sequence->toString(),
+                                                        task.subject_string,
                                                         transFuncData.minhasher->minparams.k, 0.0,
                                                         transFuncData.estimatedCoverage);
 
@@ -3025,7 +2531,7 @@ struct BatchGenerator{
 			TransitionFunctionData transFuncData;
 
 			transFuncData.mybatchgen = &mybatchgen;
-			transFuncData.readStorage = threadOpts.readStorage;
+			//transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
             //transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
             transFuncData.gpuReadStorage = threadOpts.canUseGPUReadStorage ? threadOpts.gpuReadStorage : nullptr;

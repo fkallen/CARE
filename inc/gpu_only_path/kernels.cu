@@ -63,118 +63,7 @@ namespace gpu{
 
 		#undef mycall
     }
-#if 0
-	template<int BLOCKSIZE>
-    __global__
-    void msa_init_kernel(
-                        MSAColumnProperties* __restrict__ msa_column_properties,
-                        const int* __restrict__ alignment_shifts,
-                        const BestAlignment_t* __restrict__ alignment_best_alignment_flags,
-                        const int* __restrict__ subject_sequences_lengths,
-                        const int* __restrict__ candidate_sequences_lengths,
-                        const int* __restrict__ indices,
-                        const int* __restrict__ indices_per_subject,
-                        const int* __restrict__ indices_per_subject_prefixsum,
-                        int n_subjects){
 
-        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
-
-        __shared__ union {
-            typename BlockReduceInt::TempStorage reduce;
-        } temp_storage;
-
-        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-            MSAColumnProperties* const properties_ptr = msa_column_properties + subjectIndex;
-
-            // We only want to consider the candidates with good alignments. the indices of those were determined in a previous step
-            const int num_indices_for_this_subject = indices_per_subject[subjectIndex];
-            const int* const indices_for_this_subject = indices + indices_per_subject_prefixsum[subjectIndex];
-
-            const int subjectLength = subject_sequences_lengths[subjectIndex];
-            int startindex = 0;
-            int endindex = subject_sequences_lengths[subjectIndex];
-
-            for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
-                const int queryIndex = indices_for_this_subject[index];
-
-                const int shift = alignment_shifts[queryIndex];
-                const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
-                const int queryLength = candidate_sequences_lengths[queryIndex];
-
-                if(flag != BestAlignment_t::None){
-                    const int queryEndsAt = queryLength + shift;
-                    startindex = min(startindex, shift);
-                    endindex = max(endindex, queryEndsAt);
-                }
-            }
-
-			startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
-			__syncthreads();
-
-			endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());
-			__syncthreads();
-
-			if(threadIdx.x == 0){
-				MSAColumnProperties my_columnproperties;
-
-				my_columnproperties.startindex = startindex;
-				my_columnproperties.endindex = endindex;
-				my_columnproperties.columnsToCheck = my_columnproperties.endindex - my_columnproperties.startindex;
-				my_columnproperties.subjectColumnsBegin_incl = max(-my_columnproperties.startindex, 0);
-				my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
-
-				*properties_ptr = my_columnproperties;
-			}
-
-        }
-    }
-
-    void call_msa_init_kernel_async(
-                        MSAColumnProperties* d_msa_column_properties,
-                        const int* d_alignment_shifts,
-                        const BestAlignment_t* d_alignment_best_alignment_flags,
-                        const int* d_subject_sequences_lengths,
-                        const int* d_candidate_sequences_lengths,
-                        const int* d_indices,
-                        const int* d_indices_per_subject,
-                        const int* d_indices_per_subject_prefixsum,
-                        int n_subjects,
-                        int n_queries,
-                        cudaStream_t stream){
-
-		const int blocksize = 128;
-
-        dim3 block(blocksize, 1, 1);
-        dim3 grid(n_subjects, 1, 1);
-
-		#define mycall(blocksize) msa_init_kernel<(blocksize)><<<grid, block, 0, stream>>>(d_msa_column_properties, \
-                                                    d_alignment_shifts, \
-                                                    d_alignment_best_alignment_flags, \
-                                                    d_subject_sequences_lengths, \
-                                                    d_candidate_sequences_lengths, \
-                                                    d_indices, \
-                                                    d_indices_per_subject, \
-                                                    d_indices_per_subject_prefixsum, \
-                                                    n_subjects); CUERR;
-
-		switch(blocksize){
-			case 1: mycall(1); break;
-            case 32: mycall(32); break;
-            case 64: mycall(64); break;
-            case 96: mycall(96); break;
-            case 128: mycall(128); break;
-            case 160: mycall(160); break;
-            case 192: mycall(192); break;
-            case 224: mycall(224); break;
-            case 256: mycall(256); break;
-            default: mycall(256); break;
-        }
-
-		#undef mycall
-
-
-    }
-#endif
 
     __global__
     void msa_find_consensus_kernel(
@@ -347,6 +236,162 @@ namespace gpu{
                                                             msa_max_column_count,
                                                             blocks_per_msa); CUERR;
 
+    }
+
+
+    template<int BLOCKSIZE>
+    __global__
+    void msa_correct_subject_kernel(
+                            const char* __restrict__ d_consensus,
+                            const float* __restrict__ d_support,
+                            const int* __restrict__ d_coverage,
+                            const int* __restrict__ d_origCoverages,
+                            const char* __restrict__ d_multiple_sequence_alignments,
+                            const MSAColumnProperties* __restrict__ d_msa_column_properties,
+                            const int* __restrict__ d_indices_per_subject_prefixsum,
+                            bool* __restrict__ d_is_high_quality_subject,
+                            char* __restrict__ d_corrected_subjects,
+							bool* __restrict__ d_subject_is_corrected,
+                            int n_subjects,
+                            int n_queries,
+                            const int* __restrict__ d_num_indices,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            double estimatedErrorrate,
+                            double avg_support_threshold,
+                            double min_support_threshold,
+                            double min_coverage_threshold,
+                            int k_region){
+
+        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceBool::TempStorage boolreduce;
+            typename BlockReduceInt::TempStorage intreduce;
+            typename BlockReduceFloat::TempStorage floatreduce;
+        } temp_storage;
+
+        __shared__ bool broadcastbuffer;
+
+        auto isGoodAvgSupport = [&](double avgsupport){
+            return avgsupport >= avg_support_threshold;
+        };
+        auto isGoodMinSupport = [&](double minsupport){
+            return minsupport >= min_support_threshold;
+        };
+        auto isGoodMinCoverage = [&](double mincoverage){
+            return mincoverage >= min_coverage_threshold;
+        };
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+		//const int n_indices = *d_num_indices;
+
+        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+            const float* const my_support = d_support + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_coverage = d_coverage + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
+            const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
+            char* const my_corrected_subject = d_corrected_subjects + subjectIndex * sequence_pitch;
+
+            const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
+            const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+
+            float avg_support = 0;
+            float min_support = 1.0f;
+            //int max_coverage = 0;
+            int min_coverage = std::numeric_limits<int>::max();
+
+            for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                assert(i < properties.columnsToCheck);
+
+                avg_support += my_support[i];
+                min_support = min(my_support[i], min_support);
+                //max_coverage = max(my_coverage[i], max_coverage);
+                min_coverage = min(my_coverage[i], min_coverage);
+            }
+
+            avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
+			__syncthreads();
+
+            min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
+			__syncthreads();
+
+            //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
+
+            min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
+			__syncthreads();
+
+            avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+
+            bool isHQ = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+
+            if(threadIdx.x == 0){
+                broadcastbuffer = isHQ;
+                d_is_high_quality_subject[subjectIndex] = isHQ;
+            }
+            __syncthreads();
+
+            isHQ = broadcastbuffer;
+
+            if(isHQ){
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                }
+                if(threadIdx.x == 0){
+                    d_subject_is_corrected[subjectIndex] = true;
+                }
+            }else{
+                const unsigned offset1 = msa_pitch * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
+                const char* const my_multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
+
+                //copy orignal sequence, which is in first row of msa, to corrected sequences
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = my_multiple_sequence_alignment[i];
+                }
+
+                const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+
+                bool foundAColumn = false;
+                for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+                    const int globalIndex = subjectColumnsBegin_incl + i;
+
+                    if(my_support[globalIndex] > 0.5 && my_orig_coverage[globalIndex] <= min_coverage_threshold){
+                        double avgsupportkregion = 0;
+                        int c = 0;
+                        bool kregioncoverageisgood = true;
+
+                        for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                            if(j != i && j >= 0 && j < subjectLength){
+                                avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                                kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                c++;
+                            }
+                        }
+
+                        avgsupportkregion /= c;
+
+						//if(i == 33 || i == 34){
+						//	printf("%d %f\n", i, avgsupportkregion);
+						//}
+                        if(kregioncoverageisgood && avgsupportkregion >= 1.0-estimatedErrorrate){
+                            my_corrected_subject[i] = my_consensus[globalIndex];
+                            foundAColumn = true;
+                        }
+                    }
+                }
+                //perform block wide or-reduction on foundAColumn
+                foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
+				__syncthreads();
+
+                if(threadIdx.x == 0){
+                    d_subject_is_corrected[subjectIndex] = foundAColumn;
+                }
+            }
+        }
     }
 
     void call_msa_correct_subject_kernel_async(
