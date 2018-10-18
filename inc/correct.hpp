@@ -3016,7 +3016,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
 
 
-#define DO_PROFILE
+//#define DO_PROFILE
 
 #if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
@@ -3090,7 +3090,7 @@ void correct(const MinhashOptions& minhashOptions,
         tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
     }
 
-    int nGpuThreads = std::min(nCorrectorThreads, 1 * int(deviceIds.size()));
+    int nGpuThreads = std::min(nCorrectorThreads, runtimeOptions.threadsForGPUs);
 	int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
     std::vector<BatchGenerator<ReadId_t>> cpubatchgenerators(nCpuThreads);
@@ -3103,7 +3103,11 @@ void correct(const MinhashOptions& minhashOptions,
 
 	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(sequenceFileProperties.nReads / 7.0) : 0;
 	std::uint64_t ngpuReads = sequenceFileProperties.nReads - ncpuReads;
-	std::uint64_t nReadsPerGPU = SDIV(ngpuReads, nGpuThreads);
+	std::uint64_t nReadsPerGPUThread = nGpuThreads > 0 ? SDIV(ngpuReads, nGpuThreads) : 0;
+    if(nGpuThreads == 0){
+        ncpuReads += ngpuReads;
+        ngpuReads = 0;
+    }
 
 	std::cout << "nCpuThreads: " << nCpuThreads << ", nGpuThreads: " << nGpuThreads << std::endl;
 	std::cout << "ncpuReads: " << ncpuReads << ", ngpuReads: " << ngpuReads << std::endl;
@@ -3171,9 +3175,9 @@ void correct(const MinhashOptions& minhashOptions,
 
     for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
-        gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPU,
+        gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPUThread,
                                                                             std::min(sequenceFileProperties.nReads,
-                                                                            ncpuReads + (threadId+1) * nReadsPerGPU));
+                                                                            ncpuReads + (threadId+1) * nReadsPerGPUThread));
         typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];

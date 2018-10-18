@@ -17,6 +17,13 @@ then
 	threads=$2
 fi
 
+threadsgpu=0
+
+if [ $# -gt 2 ]
+then
+	threadsgpu=$3
+fi
+
 deviceIds="--deviceIds=0"
 
 datapath=/home/fekallen/arbeit/evaluationtool
@@ -80,7 +87,7 @@ classicMode=--classicMode=true
 fileformat=fastq
 
 #only valid for fastq fileformat
-useQualityScores=--useQualityScores=false
+useQualityScores=--useQualityScores=true
 #useQualityScores=
 
 candidateCorrection=--candidateCorrection=false
@@ -123,6 +130,6 @@ aa=$(echo 'scale=2; 10/10' | bc)
 progress="--progress=true"
 
 
-echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress $nReads
+echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads --threadsForGPUs=$threadsgpu $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress $nReads
 
-time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress $nReads
+time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads --threadsForGPUs=$threadsgpu $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress $nReads
