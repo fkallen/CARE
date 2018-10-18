@@ -1161,15 +1161,14 @@ struct BatchGenerator{
 						task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
 
 						//remove self from candidates
-						auto readIdPos = std::find(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-						if(readIdPos != task.candidate_read_ids.end())
+						//read ids are sorted
+						auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+						if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
 							task.candidate_read_ids.erase(readIdPos);
 
 						if(task.candidate_read_ids.size() == 0){
 							//no need for further processing without candidates
 							task.active = false;
-						}else{
-
 						}
 
 						batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
