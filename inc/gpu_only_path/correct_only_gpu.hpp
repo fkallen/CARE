@@ -1031,8 +1031,8 @@ struct BatchGenerator{
         TaskTimings detailedCorrectionTimings;
 
 		BatchGenerator<ReadId_t> mybatchgen;
-		int num_ids_per_add_tasks = 30;
-		int minimum_candidates_per_batch = 20000;
+		int num_ids_per_add_tasks = 1;
+		int minimum_candidates_per_batch = 1000;
 
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
@@ -2546,7 +2546,7 @@ struct BatchGenerator{
 			transFuncData.correctionOptions.useQualityScores = correctionOptions.useQualityScores;
 			transFuncData.kmerlength = correctionOptions.kmerlength;
 			transFuncData.num_ids_per_add_tasks = num_ids_per_add_tasks;
-			transFuncData.minimum_candidates_per_batch = minimum_candidates_per_batch;
+			transFuncData.minimum_candidates_per_batch = correctionOptions.batchsize;
 			transFuncData.max_candidates = max_candidates;
             transFuncData.correctionOptions = correctionOptions;
 			transFuncData.maxSequenceLength = fileProperties.maxSequenceLength;

@@ -3114,7 +3114,7 @@ void correct(const MinhashOptions& minhashOptions,
 
 	for(int threadId = 0; threadId < nCpuThreads; threadId++){
 
-        cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, correctionOptions.batchsize, threadId, nCpuThreads);
+        cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
         typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = 0;
