@@ -90,7 +90,7 @@ fileformat=fastq
 useQualityScores=--useQualityScores=true
 #useQualityScores=
 
-candidateCorrection=--candidateCorrection=false
+candidateCorrection=--candidateCorrection=true
 
 #if indels should be corrected, too
 indels=--indels=false
@@ -112,7 +112,7 @@ deletionscore=-100
 
 #batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
 
-batchsize=10
+batchsize=20000
 
 #properties of good alignment
 maxmismatchratio=0.20

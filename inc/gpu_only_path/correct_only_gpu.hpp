@@ -1031,7 +1031,7 @@ struct BatchGenerator{
         TaskTimings detailedCorrectionTimings;
 
 		BatchGenerator<ReadId_t> mybatchgen;
-		int num_ids_per_add_tasks = 1;
+		int num_ids_per_add_tasks = 30;
 		int minimum_candidates_per_batch = 1000;
 
 
@@ -2547,6 +2547,7 @@ struct BatchGenerator{
 			transFuncData.kmerlength = correctionOptions.kmerlength;
 			transFuncData.num_ids_per_add_tasks = num_ids_per_add_tasks;
 			transFuncData.minimum_candidates_per_batch = correctionOptions.batchsize;
+            std::cout << "transFuncData.minimum_candidates_per_batch " << 	transFuncData.minimum_candidates_per_batch << std::endl;
 			transFuncData.max_candidates = max_candidates;
             transFuncData.correctionOptions = correctionOptions;
 			transFuncData.maxSequenceLength = fileProperties.maxSequenceLength;
@@ -2681,18 +2682,18 @@ struct BatchGenerator{
 									}
 
                                     auto curstate = sideBatch.state;
-                                    if(curstate == BatchState::Unprepared){
-                                        push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
-                                    }
+                                    //if(curstate == BatchState::Unprepared){
+                                    //    push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
+                                    //}
 									sideBatchAdvanceResult = advance_one_step(sideBatch,
 																			false, //must not block
 																			true, //can launch kernels
                                                                             true, //can be paused
 																			transFuncData);
 
-                                    if(curstate == BatchState::Unprepared){
-                                        pop_range();
-                                    }
+                                    //if(curstate == BatchState::Unprepared){
+                                    //    pop_range();
+                                    //}
 
 									if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState){
 										pop_range("side inner");
