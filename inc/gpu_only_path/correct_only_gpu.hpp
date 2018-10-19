@@ -1031,7 +1031,7 @@ struct BatchGenerator{
         TaskTimings detailedCorrectionTimings;
 
 		BatchGenerator<ReadId_t> mybatchgen;
-		int num_ids_per_add_tasks = 30;
+		int num_ids_per_add_tasks = 2;
 		int minimum_candidates_per_batch = 1000;
 
 
@@ -2547,7 +2547,6 @@ struct BatchGenerator{
 			transFuncData.kmerlength = correctionOptions.kmerlength;
 			transFuncData.num_ids_per_add_tasks = num_ids_per_add_tasks;
 			transFuncData.minimum_candidates_per_batch = correctionOptions.batchsize;
-            std::cout << "transFuncData.minimum_candidates_per_batch " << 	transFuncData.minimum_candidates_per_batch << std::endl;
 			transFuncData.max_candidates = max_candidates;
             transFuncData.correctionOptions = correctionOptions;
 			transFuncData.maxSequenceLength = fileProperties.maxSequenceLength;
@@ -2589,7 +2588,6 @@ struct BatchGenerator{
             //int num_finished_batches = 0;
 
             int stacksize = 0;
-			float batchsizefactor = 1.0f;
 
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
 			while(!stopAndAbort &&
@@ -2599,9 +2597,6 @@ struct BatchGenerator{
 						assert(stacksize == 0);
 
 				Batch& mainBatch = batches[0];
-
-				transFuncData.minimum_candidates_per_batch = int(minimum_candidates_per_batch * batchsizefactor);
-
 
 				AdvanceResult mainBatchAdvanceResult;
 				bool popMain = false;

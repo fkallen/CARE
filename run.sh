@@ -29,11 +29,11 @@ deviceIds="--deviceIds=0"
 datapath=/home/fekallen/arbeit/evaluationtool
 
 #input file
-inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
-coverage=21
+#inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
+#coverage=21
 
-#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
-#coverage=255
+inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
+coverage=255
 
 #inputfile=$datapath/datasets/E.coli_SRR490124.fastq
 #coverage=465
