@@ -8,6 +8,7 @@
 #include "../inc/ecolisrr490124.hpp"
 #include "../inc/dmelanogastersrr82337.hpp"
 #include "../inc/dmelanogastersrr988075.hpp"
+#include "../inc/humanerx069715.hpp"
 
 #include <utility>
 #include <stdexcept>
@@ -71,7 +72,8 @@ namespace forestclassifier{
                 //namespace speciestype = celegans_srx218989;
                 //namespace speciestype = dmelanogaster_srr82337;
                 //namespace speciestype = celegans_srr543736;
-                namespace speciestype = dmelanogaster_srr988075;
+                //namespace speciestype = dmelanogaster_srr988075;
+                namespace speciestype = human_erx069715;
 
                 forestresult = speciestype::shouldCorrect_forest(
                                             position_support,
