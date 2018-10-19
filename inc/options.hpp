@@ -15,6 +15,9 @@ namespace care{
         int maps = 2;
         int k = 16;
         double min_hits_per_candidate = 0.0;
+        bool operator==(const MinhashOptions& other){
+            return maps == other.maps && k == other.k && min_hits_per_candidate == other.min_hits_per_candidate;
+        };
     };
 
     struct AlignmentOptions{

@@ -20,6 +20,7 @@
 #include <set>
 #include <unordered_set>
 #include <array>
+#include <fstream>
 
 #ifdef __NVCC__
 #include <thrust/host_vector.h>
@@ -128,6 +129,56 @@ namespace care{
 			double load = 0.5;
 			KeyIndexMap<Key_t, Index_t> keyIndexMap;
 
+            void writeToStream(std::ofstream& outstream) const{
+                bool resultsAreSorted_towrite = resultsAreSorted;
+                outstream.write(reinterpret_cast<const char*>(&resultsAreSorted_towrite), sizeof(bool));
+                outstream.write(reinterpret_cast<const char*>(&size), sizeof(Index_t));
+                outstream.write(reinterpret_cast<const char*>(&nKeys), sizeof(Index_t));
+                outstream.write(reinterpret_cast<const char*>(&nValues), sizeof(Index_t));
+                outstream.write(reinterpret_cast<const char*>(&noMoreWrites), sizeof(bool));
+                outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
+
+                assert(nKeys == keys.size());
+                assert(nValues == values.size());
+
+                for(const auto& key : keys)
+                    outstream.write(reinterpret_cast<const char*>(&key), sizeof(Key_t));
+                for(const auto& val : values)
+                    outstream.write(reinterpret_cast<const char*>(&val), sizeof(Value_t));
+
+                std::size_t nCounts = countsPrefixSum.size();
+                outstream.write(reinterpret_cast<const char*>(&nCounts), sizeof(std::size_t));
+                for(const auto& count : countsPrefixSum)
+                    outstream.write(reinterpret_cast<const char*>(&count), sizeof(Index_t));
+            }
+
+            void readFromStream(std::ifstream& instream){
+                bool sorted;
+                instream.read(reinterpret_cast<char*>(&sorted), sizeof(bool));
+                assert(sorted == resultsAreSorted);
+
+                instream.read(reinterpret_cast<char*>(&size), sizeof(Index_t));
+                instream.read(reinterpret_cast<char*>(&nKeys), sizeof(Index_t));
+                instream.read(reinterpret_cast<char*>(&nValues), sizeof(Index_t));
+                instream.read(reinterpret_cast<char*>(&noMoreWrites), sizeof(bool));
+                instream.read(reinterpret_cast<char*>(&canUseGpu), sizeof(bool));
+
+                keys.resize(nKeys);
+                values.resize(nValues);
+                countsPrefixSum.resize(nKeys+1);
+
+                for(auto& key : keys)
+                    instream.read(reinterpret_cast<char*>(&key), sizeof(Key_t));
+                for(auto& val : values)
+                    instream.read(reinterpret_cast<char*>(&val), sizeof(Value_t));
+
+                std::size_t nCounts = countsPrefixSum.size();
+                instream.read(reinterpret_cast<char*>(&nCounts), sizeof(std::size_t));
+                countsPrefixSum.resize(nCounts);
+                for(auto& count : countsPrefixSum)
+                    instream.read(reinterpret_cast<char*>(&count), sizeof(Index_t));
+            }
+
             std::size_t numBytes() const{
                 return keys.size() * sizeof(Key_t)
                     + keys.size() * sizeof(Key_t)
@@ -143,10 +194,10 @@ namespace care{
 				keys.resize(size);
 				values.resize(size);
 			}
-			
+
 			void resize(Index_t size_){
 				assert(!noMoreWrites);
-				
+
 				size = size_;
 				nValues = size_;
 				keys.resize(size);
@@ -219,7 +270,7 @@ namespace care{
 				if(noMoreWrites) return;
 				noMoreWrites = true;
 				if(size == 0) return;
-				
+
 				class TransformException : public std::exception {
 					int line;
 					const char* msg;
@@ -228,15 +279,15 @@ namespace care{
 					TransformException(const char* msg, int line, std::uint64_t value = 0) : std::exception(), line(line), msg(msg), value(value)
 					{
 					}
-					
+
 					int getLine() const{
 						return line;
 					};
-					
+
 					std::uint64_t getValue() const{
 						return value;
 					};
-					
+
 					virtual const char* what() const noexcept{
 						return msg;
 					}
@@ -247,7 +298,7 @@ namespace care{
 					TIMERSTARTCPU(iota);
     				std::iota(indices.begin(), indices.end(), Index_t(0));
 					TIMERSTOPCPU(iota);
-					
+
 					TIMERSTARTCPU(sortindices);
     				//sort indices by key. if keys are equal, sort by value
     				std::sort(indices.begin(), indices.end(), [&](auto a, auto b)->bool{
@@ -256,7 +307,7 @@ namespace care{
     					}
     					return keys[a] < keys[b];
     				});
-					
+
 					TIMERSTOPCPU(sortindices);
 
 					TIMERSTARTCPU(sortedvalues);
@@ -267,11 +318,11 @@ namespace care{
     				TIMERSTOPCPU(sortedvalues);
 
     				std::swap(sortedValues, values);
-					
+
 					TIMERSTARTCPU(sortkeys);
     				std::sort(keys.begin(), keys.end());
 					TIMERSTOPCPU(sortkeys);
-					
+
     				std::vector<Index_t> counts(size, 0);
 
 					TIMERSTARTCPU(unique);
@@ -302,26 +353,26 @@ namespace care{
 					TIMERSTOPCPU(prefixsum);
     				nKeys = unique_end;
                 };
-				
-				
+
+
 #ifdef __NVCC__
     		    if(!canUseGpu){
 #endif
     				cpu_transformation();
 #ifdef __NVCC__
                 }else{
-					
+
 					auto cuda_transformation = [&](bool managed){
 						bool success = false;
-						
+
 						auto deviceAlloc = [&](void** ptr, std::size_t bytes){
 							return managed ? cudaMallocManaged(ptr, bytes) : cudaMalloc(ptr, bytes);
 						};
-						
+
 						auto deviceFree = [](void* ptr){
 							return cudaFree(ptr);
 						};
-						
+
 						Key_t* d_keys = nullptr;
 						Value_t* d_vals = nullptr;
 						Index_t* d_indices = nullptr;
@@ -329,7 +380,7 @@ namespace care{
 						Key_t* d_histogram_values = nullptr;
 						Index_t* d_histogram_counts = nullptr;
 						Index_t* d_histogram_counts_prefixsum = nullptr;
-						
+
 						auto errorhandler = [&](){
 							if(managed){
 								std::cerr << "cuda transformation with managed memory failed." << std::endl;
@@ -343,41 +394,41 @@ namespace care{
 							deviceFree(d_histogram_values);
 							deviceFree(d_histogram_counts);
 							deviceFree(d_histogram_counts_prefixsum);
-							
+
 							cudaGetLastError();
 
 							success = false;
 						};
-						
+
 						DefaultDeviceAllocator defaultDeviceAllocator;
 						ManagedDeviceAllocator managedDeviceAllocator;
-						
+
 						auto defaultAllocatorPolicy = thrust::cuda::par(defaultDeviceAllocator);
 						auto managedAllocatorPolicy = thrust::cuda::par(managedDeviceAllocator);
-						
+
 						try{
 							cudaError_t status;
 							status = deviceAlloc((void**)&d_keys, sizeof(Key_t) * size);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad alloc", __LINE__, sizeof(Key_t) * size);
 							status = deviceAlloc((void**)&d_vals, sizeof(Value_t) * size);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad alloc", __LINE__, sizeof(Value_t) * size);
 							status = deviceAlloc((void**)&d_indices, sizeof(Index_t) * size);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * size);
-							
+
 							status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Key_t) * size);
 							status = cudaMemcpy(d_vals, values.data(), sizeof(Value_t) * size, H2D);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Value_t) * size);
-							
+
 							thrust::device_ptr<Key_t> d_keys_ptr = thrust::device_pointer_cast(d_keys);
 							thrust::device_ptr<Value_t> d_vals_ptr = thrust::device_pointer_cast(d_vals);
 							thrust::device_ptr<Index_t> d_indices_ptr = thrust::device_pointer_cast(d_indices);
-							
+
 							try{
 								if(managed){
 									thrust::sequence(managedAllocatorPolicy, d_indices_ptr, d_indices_ptr + size, Index_t(0));
@@ -403,7 +454,7 @@ namespace care{
 														return d_keys[lhs] < d_keys[rhs];
 									});
 								}else{
-								
+
 									thrust::sort(defaultAllocatorPolicy,
 													d_indices,
 													d_indices + size,
@@ -412,61 +463,61 @@ namespace care{
 															return d_vals[lhs] < d_vals[rhs];
 														}
 														return d_keys[lhs] < d_keys[rhs];
-									});								
+									});
 								}
 								TIMERSTOPCPU(thrustsort);
 							}catch(const thrust::system_error& e){
 								std::cerr << e.what() << std::endl;
 								throw TransformException("", __LINE__);
 							}
-							
-							
-							
+
+
+
 							try{
 								//sort values by indices and copy to host
 								Value_t* d_vals_tmp;
 								status = deviceAlloc((void**)&d_vals_tmp, sizeof(Value_t) * size);
-								if(status != cudaSuccess) 
+								if(status != cudaSuccess)
 									throw TransformException("Bad alloc", __LINE__, sizeof(Value_t) * size);
 								thrust::device_ptr<Value_t> d_vals_tmp_ptr = thrust::device_pointer_cast(d_vals_tmp);
-								
+
 								thrust::copy(thrust::make_permutation_iterator(d_vals_ptr, d_indices_ptr),
 											thrust::make_permutation_iterator(d_vals_ptr, d_indices_ptr + size),
 											d_vals_tmp_ptr);
-								
+
 								thrust::copy(d_vals_tmp_ptr,
 											d_vals_tmp_ptr + size,
 											values.begin());
-								
+
 								deviceFree(d_vals_tmp);
 								deviceFree(d_vals);
 								d_vals = nullptr;
-								
+
 								//sort keys by indices
 								Key_t* d_keys_tmp;
 								status = deviceAlloc((void**)&d_keys_tmp, sizeof(Key_t) * size);
-								if(status != cudaSuccess) 
+								if(status != cudaSuccess)
 									throw TransformException("Bad alloc", __LINE__, sizeof(Key_t) * size);
 								thrust::device_ptr<Key_t> d_keys_tmp_ptr = thrust::device_pointer_cast(d_keys_tmp);
-								
+
 								thrust::copy(thrust::make_permutation_iterator(d_keys_ptr, d_indices_ptr),
 											thrust::make_permutation_iterator(d_keys_ptr, d_indices_ptr + size),
 											d_keys_tmp_ptr);
-								
+
 								std::swap(d_keys_tmp_ptr, d_keys_ptr);
 								std::swap(d_keys_tmp, d_keys);
-								
+
 								deviceFree(d_keys_tmp);
-								
-								
-								
+
+
+
 								/*if(managed){
 									thrust::copy(managedAllocatorPolicy,
 													thrust::make_permutation_iterator(d_vals_ptr, d_indices_ptr),
 													thrust::make_permutation_iterator(d_vals_ptr, d_indices_ptr + size),
 													values.data());
 
-									
+
 									thrust::copy(managedAllocatorPolicy,
 												thrust::make_permutation_iterator(d_keys_ptr, d_indices_ptr),
 												thrust::make_permutation_iterator(d_keys_ptr, d_indices_ptr + size),
@@ -488,9 +539,9 @@ namespace care{
 							}
 							//copy sorted keys back to gpu
 							//status = cudaMemcpy(d_keys, keys.data(), sizeof(Key_t) * size, H2D);
-							//if(status != cudaSuccess) 
+							//if(status != cudaSuccess)
 							//	throw TransformException("Bad cudamemcpy", __LINE__);
-							
+
 							//deviceFree(d_vals);
 							deviceFree(d_indices);
 							//d_vals = nullptr;
@@ -518,17 +569,17 @@ namespace care{
 
 							keys.resize(nKeys);
 							keys.shrink_to_fit();
-						
+
 							status = deviceAlloc((void**)&d_histogram_values, sizeof(Key_t) * nKeys);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad alloc", __LINE__, sizeof(Key_t) * nKeys);
 							status = deviceAlloc((void**)&d_histogram_counts, sizeof(Index_t) * nKeys);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * nKeys);
 							status = deviceAlloc((void**)&d_histogram_counts_prefixsum, sizeof(Index_t) * (nKeys+1));
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad alloc", __LINE__, sizeof(Index_t) * (nKeys+1));
-							
+
 							try{
 								if(managed){
 									thrust::fill(managedAllocatorPolicy, d_histogram_counts_prefixsum, d_histogram_counts_prefixsum + (nKeys+1), Index_t(0));
@@ -565,19 +616,19 @@ namespace care{
 							countsPrefixSum.resize(nKeys+1);
 
 							status = cudaMemcpy(keys.data(), d_histogram_values, sizeof(Key_t) * nKeys, D2H);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Key_t) * nKeys);
 							status = cudaMemcpy(countsPrefixSum.data(), d_histogram_counts_prefixsum, sizeof(Index_t) * (nKeys+1), D2H);
-							if(status != cudaSuccess) 
+							if(status != cudaSuccess)
 								throw TransformException("Bad cudamemcpy", __LINE__, sizeof(Index_t) * (nKeys+1));
-							
+
 							deviceFree(d_keys); CUERR;
 							deviceFree(d_histogram_values); CUERR;
 							deviceFree(d_histogram_counts); CUERR;
 							deviceFree(d_histogram_counts_prefixsum); CUERR;
-							
+
 							success = true;
-							
+
 						}catch(const std::bad_alloc& e){
 							std::cerr << e.what() << std::endl;
 							errorhandler();
@@ -603,7 +654,7 @@ namespace care{
 						if(!success){
 							cudaDeviceProp prop;
 							cudaGetDeviceProperties(&prop, 0); CUERR;
-							
+
 							bool isCapableOfUsingManagedMemory = prop.concurrentManagedAccess == 1;
 							if(isCapableOfUsingManagedMemory){
 								std::cout << "Falling back to cuda managed memory transformation" << std::endl;
@@ -618,7 +669,7 @@ namespace care{
 						cpu_transformation();
 					}
 				}
-             
+
 #endif
 				/*keyIndexMap = KeyIndexMap(nKeys / load);
 				for(Index_t i = 0; i < nKeys; i++){
@@ -675,6 +726,74 @@ struct Minhasher {
 									+ std::to_string(maximum_kmer_length) + "!");
 		}
 	}
+
+    void saveToFile(const std::string& filename) const{
+        std::ofstream outstream(filename, std::ios::binary);
+
+        int bits_key_tosave = bits_key;
+        std::uint64_t key_mask_tosave = key_mask;
+        std::uint64_t max_read_num_tosave = max_read_num;
+        int maximum_number_of_maps_tosave = maximum_number_of_maps;
+        int maximum_kmer_length_tosave = maximum_kmer_length;
+
+        outstream.write(reinterpret_cast<const char*>(&bits_key_tosave), sizeof(int));
+        outstream.write(reinterpret_cast<const char*>(&key_mask_tosave), sizeof(std::uint64_t));
+        outstream.write(reinterpret_cast<const char*>(&max_read_num_tosave), sizeof(std::uint64_t));
+        outstream.write(reinterpret_cast<const char*>(&maximum_number_of_maps_tosave), sizeof(int));
+        outstream.write(reinterpret_cast<const char*>(&maximum_kmer_length_tosave), sizeof(int));
+
+        outstream.write(reinterpret_cast<const char*>(&minparams), sizeof(MinhashOptions));
+        outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(ReadId_t));
+        outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
+        for(const auto& tableptr : minhashTables)
+            tableptr->writeToStream(outstream);
+    }
+
+    void loadFromFile(const std::string& filename){
+        std::ifstream instream(filename, std::ios::binary);
+        if(!instream)
+            throw std::runtime_error("Cannot load hashtable from file " + filename);
+
+        int bits_key_loaded;
+    	std::uint64_t key_mask_loaded;
+        std::uint64_t max_read_num_loaded;
+        int maximum_number_of_maps_loaded;
+        int maximum_kmer_length_loaded;
+
+        instream.read(reinterpret_cast<char*>(&bits_key_loaded), sizeof(int));
+        instream.read(reinterpret_cast<char*>(&key_mask_loaded), sizeof(std::uint64_t));
+        instream.read(reinterpret_cast<char*>(&max_read_num_loaded), sizeof(std::uint64_t));
+        instream.read(reinterpret_cast<char*>(&maximum_number_of_maps_loaded), sizeof(int));
+        instream.read(reinterpret_cast<char*>(&maximum_kmer_length_loaded), sizeof(int));
+
+        assert(bits_key == bits_key_loaded);
+        assert(key_mask == key_mask_loaded);
+        assert(max_read_num == max_read_num_loaded);
+        assert(maximum_number_of_maps == maximum_number_of_maps_loaded);
+        assert(maximum_kmer_length == maximum_kmer_length_loaded);
+
+        MinhashOptions minparams_loaded;
+        ReadId_t nReads_loaded;
+        bool canUseGpu_loaded;
+
+        instream.read(reinterpret_cast<char*>(&minparams_loaded), sizeof(MinhashOptions));
+        instream.read(reinterpret_cast<char*>(&nReads_loaded), sizeof(ReadId_t));
+        instream.read(reinterpret_cast<char*>(&canUseGpu_loaded), sizeof(bool));
+
+        assert(minparams == minparams_loaded);
+        assert(nReads == nReads_loaded);
+        assert(canUseGpu == canUseGpu_loaded);
+
+        minhashTables.resize(minparams.maps);
+
+		for (int i = 0; i < minparams.maps; ++i) {
+			minhashTables[i].reset();
+			minhashTables[i].reset(new Map_t(nReads, canUseGpu));
+		}
+
+        for(auto& tableptr : minhashTables)
+            tableptr->readFromStream(instream);
+    }
 
 	void init(std::uint64_t nReads_){
 		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
@@ -1039,7 +1158,7 @@ struct Minhasher {
 			throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
 
 		nReads = nReads_;
-		
+
 		for (std::size_t i = 0; i < minhashTables.size(); ++i){
 			auto& table = minhashTables[i];
 			table->resize(nReads_);
@@ -1047,7 +1166,7 @@ struct Minhasher {
 	}
 
 	void transform(){
-		
+
 		for (std::size_t i = 0; i < minhashTables.size(); ++i){
 			std::cout << "Transforming table " << i << std::endl;
 			auto& table = minhashTables[i];
