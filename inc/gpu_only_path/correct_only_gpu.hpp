@@ -809,9 +809,14 @@ struct BatchGenerator{
             readId(other.readId),
             subject_string(other.subject_string),
             candidate_read_ids(other.candidate_read_ids),
+            candidate_read_ids_begin(nullptr),
+            candidate_read_ids_end(nullptr),
             corrected_subject(other.corrected_subject),
             corrected_candidates(other.corrected_candidates),
             corrected_candidates_read_ids(other.corrected_candidates_read_ids){
+				
+			candidate_read_ids_begin = &(candidate_read_ids[0]);
+			candidate_read_ids_end = &(candidate_read_ids[candidate_read_ids.size()]);
 
         }
 
@@ -838,6 +843,8 @@ struct BatchGenerator{
             swap(l.readId, r.readId);
             swap(l.subject_string, r.subject_string);
             swap(l.candidate_read_ids, r.candidate_read_ids);
+			swap(l.candidate_read_ids_begin, r.candidate_read_ids_begin);
+			swap(l.candidate_read_ids_end, r.candidate_read_ids_end);
             swap(l.corrected_subject, r.corrected_subject);
             swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
         }
@@ -847,6 +854,8 @@ struct BatchGenerator{
         ReadId_t readId;
 
         std::vector<ReadId_t> candidate_read_ids;
+		ReadId_t* candidate_read_ids_begin;
+		ReadId_t* candidate_read_ids_end; // exclusive
 
         std::string subject_string;
 
@@ -1132,6 +1141,14 @@ struct BatchGenerator{
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+			
+			auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
+				auto copybegin = position_to_erase;
+				std::advance(copybegin, 1);
+				return std::copy(copybegin, end, position_to_erase);
+			};
+			
+			//dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
 			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
 
@@ -1159,22 +1176,59 @@ struct BatchGenerator{
 
 						task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
 						task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
+						
+						task.candidate_read_ids_begin = &(task.candidate_read_ids[0]);
+						task.candidate_read_ids_end = &(task.candidate_read_ids[task.candidate_read_ids.size()]);
 
 						//remove self from candidates
 						//read ids are sorted
+#if 0						
 						auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
 						if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
 							task.candidate_read_ids.erase(readIdPos);
-
+						
 						if(task.candidate_read_ids.size() == 0){
 							//no need for further processing without candidates
 							task.active = false;
 						}
-
+						
 						batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
-
-                        assert(!task.active || batch.initialNumberOfCandidates > 0);
+						assert(!task.active || batch.initialNumberOfCandidates > 0);
                         assert(!task.active || int(task.candidate_read_ids.size()) > 0);
+#else						
+						
+						
+						auto readIdPos = std::lower_bound(task.candidate_read_ids_begin, task.candidate_read_ids_end, task.readId);
+						
+						if(readIdPos != task.candidate_read_ids_end && *readIdPos == task.readId){
+							
+							task.candidate_read_ids_end = erase_from_range(task.candidate_read_ids_begin, task.candidate_read_ids_end, readIdPos);
+							task.candidate_read_ids.resize(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+						}
+						
+						assert(task.candidate_read_ids_begin == &(task.candidate_read_ids[0]));
+						assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
+						
+						std::size_t myNumCandidates = std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
+						assert(myNumCandidates == task.candidate_read_ids.size());
+						if(myNumCandidates == 0){
+							//no need for further processing without candidates
+							task.active = false;
+						}
+						
+						batch.initialNumberOfCandidates += int(myNumCandidates);
+						
+						assert(!task.active || batch.initialNumberOfCandidates > 0);
+                        assert(!task.active || int(myNumCandidates) > 0);
+#endif
+						
+
+						
+						
+
+                        
+						
+						
 
                         //std::cout << "newtask" << id << ' ' << task.candidate_read_ids.size() << ' ' << task.active << std::endl;
 					}
@@ -1271,6 +1325,7 @@ struct BatchGenerator{
 				if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()){
 					//copy read Ids
 					arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
+#if 0					
 					std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
 
                     batch.copiedCandidates += task.candidate_read_ids.size();
@@ -1279,7 +1334,23 @@ struct BatchGenerator{
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 										+ int(task.candidate_read_ids.size());
+#else			
 
+					assert(task.candidate_read_ids.size() == std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+					assert(task.candidate_read_ids_begin == &(task.candidate_read_ids[0]));
+					assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
+						
+					std::copy(task.candidate_read_ids_begin, task.candidate_read_ids_end, arrays.h_candidate_read_ids + batch.copiedCandidates);
+
+
+						
+                    batch.copiedCandidates += std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
+
+					//update prefix sum
+					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
+										+ int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+#endif
 				}else{
 					//copy subject data
                     const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequence_ptr(task.readId);
@@ -1291,7 +1362,9 @@ struct BatchGenerator{
 					//copy subject length
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
 
-                    for(const ReadId_t& candidate_read_id : task.candidate_read_ids){
+                    //for(const ReadId_t& candidate_read_id : task.candidate_read_ids){
+					for(auto it = task.candidate_read_ids_begin; it != task.candidate_read_ids_end; ++it){
+						ReadId_t candidate_read_id = *it;
                         const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequence_ptr(candidate_read_id);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
@@ -1306,9 +1379,15 @@ struct BatchGenerator{
                     }
 
 					//update prefix sum
+#if 0					
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 										+ int(task.candidate_read_ids.size());
+#else					
+					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+									= arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
+										+ int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+#endif										
 				}
 
                 ++batch.copiedTasks;
@@ -1616,8 +1695,8 @@ struct BatchGenerator{
     					for(int i = 0; i < my_num_indices; ++i){
     						const int candidate_index = my_indices[i];
     						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
-    						//const std::string* qual = task.candidate_qualities[local_candidate_index];
-                            const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids[local_candidate_index]);
+                            //const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids[local_candidate_index]);
+							const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[local_candidate_index]);
 
     						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
     									qual->c_str(),
@@ -1969,9 +2048,9 @@ struct BatchGenerator{
                         constexpr double forest_correction_fraction = 0.5;
 
                         const bool doCorrect = care::forestclassifier::shouldCorrect(
-                                                        care::forestclassifier::Mode::CombinedAlignCov,
+                                                        //care::forestclassifier::Mode::CombinedAlignCov,
                                                         //care::forestclassifier::Mode::CombinedDataCov,
-                                                        //care::forestclassifier::Mode::Species,
+                                                        care::forestclassifier::Mode::Species,
                                                         msafeature.position_support,
                                                         msafeature.position_coverage,
                                                         msafeature.alignment_coverage,
@@ -2257,12 +2336,14 @@ struct BatchGenerator{
 						const int global_candidate_index = my_indices_of_corrected_candidates[i];
 						const int local_candidate_index = global_candidate_index - arrays.h_candidates_per_subject_prefixsum[subject_index];
 
-                        const ReadId_t candidate_read_id = task.candidate_read_ids[local_candidate_index];
+                        //const ReadId_t candidate_read_id = task.candidate_read_ids[local_candidate_index];
+						const ReadId_t candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
                         const int candidate_length = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 						//const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
 						const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
 
-						task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
+						//task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
+						task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids_begin[local_candidate_index]);
 
 						task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
 					}
@@ -2445,7 +2526,7 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 4;
+    		constexpr int nParallelBatches = 1;
 			constexpr int sideBatchStepsPerWaitIter = 1;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
@@ -2676,7 +2757,7 @@ struct BatchGenerator{
 										}
 									}
 
-                                    auto curstate = sideBatch.state;
+                                    //auto curstate = sideBatch.state;
                                     //if(curstate == BatchState::Unprepared){
                                     //    push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
                                     //}
