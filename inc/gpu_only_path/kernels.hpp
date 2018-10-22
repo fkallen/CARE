@@ -27,6 +27,7 @@ namespace gpu{
         FilterAlignmentsByMismatchRatio,
         MSAInitExp,
         MSAAddSequences,
+        MSACorrectCandidates,
     };
 
     struct KernelLaunchConfig{
@@ -1969,13 +1970,59 @@ void call_msa_correct_subject_kernel_async(
 							RevCompl make_unpacked_reverse_complement_inplace,
                             GetCandidateLength getCandidateLength,
 							int maximum_sequence_length,
-							cudaStream_t stream){
+							cudaStream_t stream,
+                            KernelLaunchHandle& handle){
 
-		const int max_block_size = 256;
+
+        const int max_block_size = 256;
 		const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+        const std::size_t smem = 0;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::MSACorrectCandidates);
+        if(iter == handle.kernelPropertiesMap.end()){
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            #define getProp(blocksize) { \
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = 0; \
+                KernelProperties kernelProperties; \
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                                                                msa_correct_candidates_kernel_exp<(blocksize), RevCompl, GetCandidateLength>, \
+                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+            getProp(32);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::MSACorrectCandidates] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
 
 		dim3 block(blocksize, 1, 1);
-		dim3 grid(n_subjects);
+		dim3 grid(std::min(max_blocks_per_device, n_subjects));
 
 		#define mycall(blocksize) msa_correct_candidates_kernel_exp<(blocksize)> \
 								<<<grid, block, 0, stream>>>( \

@@ -726,7 +726,8 @@ struct BatchGenerator{
                             int maximum_sequence_length,
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
-                            cudaStream_t stream){
+                            cudaStream_t stream,
+                            KernelLaunchHandle& kernelLaunchHandle){
 
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
@@ -781,7 +782,8 @@ struct BatchGenerator{
             							revcompl,
                                         candidatelength,
             							maximum_sequence_length,
-            							stream);
+            							stream,
+                                        kernelLaunchHandle);
             };
 
             if(!useGpuReadStorage){
@@ -2023,7 +2025,8 @@ struct BatchGenerator{
                                                 dataArrays.maximum_sequence_length,
                                                 transFuncData.gpuReadStorage,
                                                 transFuncData.useGpuReadStorage,
-                                                streams[primary_stream_index]);
+                                                streams[primary_stream_index],
+                                                batch.kernelLaunchHandle);
     				}
                 }
 				assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
