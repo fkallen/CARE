@@ -163,8 +163,8 @@ namespace args{
 		result.nReads = pr["nReads"].as<std::uint64_t>();
         result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
         result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
-
-
+        result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
+        result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
 
         return result;
 	}

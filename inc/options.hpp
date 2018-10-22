@@ -70,6 +70,8 @@ namespace care{
 		std::uint64_t nReads;
         std::string save_binary_reads_to;
         std::string load_binary_reads_from;
+        std::string save_hashtables_to;
+        std::string load_hashtables_from;
 	};
 }
 

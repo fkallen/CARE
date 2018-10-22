@@ -67,6 +67,10 @@ int main(int argc, const char** argv){
         			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
         ("load-binary-reads-from", "Load binary dump of reads from disk",
         			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+        ("save-hashtables-to", "Save binary dump of hash tables to disk",
+        			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+        ("load-hashtables-from", "Load binary dump of hash tables from disk",
+        			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 	;
 
     options.parse_positional({"deviceIds"});

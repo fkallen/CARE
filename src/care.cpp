@@ -58,9 +58,14 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     std::cout << "loading file and building data structures..." << std::endl;
 
     //std::cin >> stmp;
-	TIMERSTARTCPU(load_and_build);
+	/*TIMERSTARTCPU(load_and_build);
     const SequenceFileProperties props = build(fileOptions, runtimeOptions, nReads, readStorage, minhasher);
-	TIMERSTOPCPU(load_and_build);
+	TIMERSTOPCPU(load_and_build);*/
+
+    TIMERSTARTCPU(load_and_build);
+    const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
+    build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
+    TIMERSTOPCPU(load_and_build);
 
 
 	std::cout << "----------------------------------------" << std::endl;
@@ -70,9 +75,19 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
     std::cout << "----------------------------------------" << std::endl;
 
+    if(fileOptions.save_binary_reads_to != ""){
+        readStorage.saveToFile(fileOptions.save_binary_reads_to);
+        std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
+    }
+
+    if(fileOptions.save_hashtables_to != ""){
+        minhasher.saveToFile(fileOptions.save_hashtables_to);
+        std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
+    }
+
     //std::cin >> stmp;
 
-    TIMERSTARTCPU(finalize_datastructures);
+    /*TIMERSTARTCPU(finalize_datastructures);
 
 	minhasher.resize(props.nReads);
 	readStorage.resize(props.nReads);
@@ -80,7 +95,7 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     readStorage.transform();
     minhasher.transform();
 
-	TIMERSTOPCPU(finalize_datastructures);
+	TIMERSTOPCPU(finalize_datastructures);*/
 
     std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
     std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;

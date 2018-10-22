@@ -119,6 +119,10 @@ namespace care{
 		};
 	}
 
+
+
+
+
 	template<class Minhasher_t,
 			class ReadStorage_t>
     SequenceFileProperties build(const FileOptions& fileOptions,
@@ -561,6 +565,296 @@ namespace care{
     }
 
 
+
+
+
+
+
+
+
+
+
+    template<class ReadStorage_t>
+    SequenceFileProperties build_readstorage(const FileOptions& fileOptions,
+               const RuntimeOptions& runtimeOptions,
+               std::uint64_t nReads,
+               ReadStorage_t& readStorage){
+
+        if(fileOptions.load_binary_reads_from != ""){
+            readStorage.loadFromFile(fileOptions.load_binary_reads_from);
+
+            std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
+
+            int maxSequenceLength = 0;
+            int minSequenceLength = std::numeric_limits<int>::max();
+
+            const int oldnumthreads = omp_get_thread_num();
+
+            omp_set_num_threads(runtimeOptions.threads);
+
+            #pragma omp parallel for reduction(max:maxSequenceLength) reduction(min:minSequenceLength)
+            for(std::size_t i = 0; i < readStorage.sequences.size(); i++){
+                const auto& seq = readStorage.sequences[i];
+
+                int len = seq.length();
+                if(len > maxSequenceLength)
+                    maxSequenceLength = len;
+                if(len < minSequenceLength)
+                    minSequenceLength = len;
+            }
+
+            omp_set_num_threads(oldnumthreads);
+
+            //minhasher.loadFromFile("hashtabledump.bin");
+            //std::cout << "Loaded hashtable from " << "hashtabledump.bin" << std::endl;
+
+            SequenceFileProperties props;
+            props.nReads = readStorage.sequences.size();
+            props.maxSequenceLength = maxSequenceLength;
+            props.minSequenceLength = minSequenceLength;
+
+            readStorage.resize(props.nReads);
+
+            return props;
+        }else{
+
+            readStorage.init(nReads);
+
+            int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
+            //int nThreads = 1;
+
+            //single-threaded insertion
+            if(nThreads == 1){
+                std::unique_ptr<SequenceFileReader> reader;
+
+                switch(fileOptions.format) {
+                    case FileFormat::FASTQ: reader.reset(new FastqReader(fileOptions.inputfile)); break;
+                    default: assert(false && "inputfileformat"); break;
+                }
+
+                Read read;
+                std::uint64_t progress = 0;
+                int Ncount = 0;
+                char bases[4]{'A', 'C', 'G', 'T'};
+
+                int maxSequenceLength = 0;
+                int minSequenceLength = std::numeric_limits<int>::max();
+
+                while (reader->getNextRead(&read)) {
+                    std::uint64_t readIndex = reader->getReadnum() - 1;
+
+                    for(auto& c : read.sequence){
+                        if(c == 'a') c = 'A';
+                        if(c == 'c') c = 'C';
+                        if(c == 'g') c = 'G';
+                        if(c == 't') c = 'T';
+                        if(c == 'N' || c == 'n'){
+                            c = bases[Ncount];
+                            Ncount = (Ncount + 1) % 4;
+                        }
+                    }
+
+    #if 0
+                        SequenceString s1(read.sequence);
+                        Sequence2Bit s2(read.sequence);
+                        Sequence2BitHiLo s3(read.sequence);
+
+                        assert(s1.toString() == read.sequence);
+                        assert(s2.toString() == read.sequence);
+                        assert(s3.toString() == read.sequence);
+
+                        SequenceString rs1 = s1.reverseComplement();
+                        Sequence2Bit rs2 = s2.reverseComplement();
+                        Sequence2BitHiLo rs3 = s3.reverseComplement();
+
+                        assert(rs1.toString() == rs2.toString());
+                        assert(rs1.toString() == rs3.toString());
+
+                        for(int i = 0; i < int(read.sequence.size()); i++){
+                            assert(s1[i] == s2[i]);
+                            assert(s1[i] == s3[i]);
+
+                            assert(rs1[i] == rs2[i]);
+                            assert(rs1[i] == rs3[i]);
+                        }
+    #endif
+
+                    readStorage.insertRead(readIndex, read.sequence, read.quality);
+                    progress++;
+
+                    int len = int(read.sequence.length());
+                    if(len > maxSequenceLength)
+                        maxSequenceLength = len;
+                    if(len < minSequenceLength)
+                        minSequenceLength = len;
+                }
+
+                SequenceFileProperties props;
+                props.nReads = reader->getReadnum();
+                props.maxSequenceLength = maxSequenceLength;
+                props.minSequenceLength = minSequenceLength;
+
+                readStorage.resize(props.nReads);
+
+                return props;
+            }else{
+                //multi-threaded insertion
+
+                using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
+
+                std::vector<std::future<std::pair<int, int>>> futures;
+                std::vector<Buffer_t> buffers(nThreads);
+
+                for(int i = 0; i < nThreads; i++){
+                    futures.emplace_back(std::async(std::launch::async, [&, i]{
+
+                			int maxSequenceLength = 0;
+                			int minSequenceLength = std::numeric_limits<int>::max();
+
+            				auto pair = buffers[i].get();
+            				int Ncount = 0;
+            				char bases[4]{'A', 'C', 'G', 'T'};
+            				while (pair != buffers[i].defaultValue) {
+            					Read& read = pair.first;
+            					const auto readnum = pair.second;
+
+            					for(auto& c : read.sequence){
+                                    if(c == 'a') c = 'A';
+                                    if(c == 'c') c = 'C';
+                                    if(c == 'g') c = 'G';
+                                    if(c == 't') c = 'T';
+            						if(c == 'N' || c == 'n'){
+            							c = bases[Ncount];
+            							Ncount = (Ncount + 1) % 4;
+            						}
+            					}
+
+            #if 0
+                                SequenceString s1(read.sequence);
+                                Sequence2Bit s2(read.sequence);
+                                Sequence2BitHiLo s3(read.sequence);
+
+                                assert(s1.toString() == read.sequence);
+                                assert(s2.toString() == read.sequence);
+                                assert(s3.toString() == read.sequence);
+
+                                SequenceString rs1 = s1.reverseComplement();
+                                Sequence2Bit rs2 = s2.reverseComplement();
+                                Sequence2BitHiLo rs3 = s3.reverseComplement();
+
+                                assert(rs1.toString() == rs2.toString());
+                                assert(rs1.toString() == rs3.toString());
+
+                                for(int i = 0; i < int(read.sequence.size()); i++){
+                                    assert(s1[i] == s2[i]);
+                                    assert(s1[i] == s3[i]);
+
+                                    assert(rs1[i] == rs2[i]);
+                                    assert(rs1[i] == rs3[i]);
+                                }
+            #endif
+
+            					readStorage.insertRead(readnum, read.sequence, read.quality);
+
+            					int len = int(read.sequence.length());
+            					if(len > maxSequenceLength)
+            						maxSequenceLength = len;
+            					if(len < minSequenceLength)
+            						minSequenceLength = len;
+
+            					pair = buffers[i].get();
+            				}
+
+                            return std::pair<int, int>(minSequenceLength, maxSequenceLength);
+            			}
+                    ));
+                }
+
+                std::unique_ptr<SequenceFileReader> reader;
+
+                switch (fileOptions.format) {
+                case FileFormat::FASTQ:
+                    reader.reset(new FastqReader(fileOptions.inputfile));
+                    break;
+                default:
+                    assert(false && "inputfileformat");
+                    break;
+                }
+
+                Read read;
+                int target = 0;
+                while (reader->getNextRead(&read)) {
+                    std::uint64_t readnum = reader->getReadnum()-1;
+                    target = readnum % nThreads;
+                    buffers[target].add( { read, readnum });
+                }
+
+                for (auto& b : buffers) {
+                    b.done();
+                }
+
+                SequenceFileProperties props;
+                props.nReads = nReads;//reader->getReadnum();
+                props.maxSequenceLength = 0;
+                props.minSequenceLength = std::numeric_limits<int>::max();
+
+                for(auto& f : futures){
+                    auto pair = f.get();
+
+                    auto minSequenceLength = pair.first;
+                    auto maxSequenceLength = pair.second;
+
+                    if(minSequenceLength < props.minSequenceLength)
+                        props.minSequenceLength = minSequenceLength;
+
+                    if(maxSequenceLength > props.maxSequenceLength)
+                        props.maxSequenceLength = maxSequenceLength;
+                }
+
+                readStorage.resize(props.nReads);
+
+                return props;
+            }
+        }
+
+    }
+
+
+
+    template<class Minhasher_t,
+			class ReadStorage_t>
+    void build_minhasher(const FileOptions& fileOptions,
+			   const RuntimeOptions& runtimeOptions,
+			   std::uint64_t nReads,
+			   ReadStorage_t& readStorage,
+			   Minhasher_t& minhasher){
+
+        minhasher.init(nReads);
+
+        if(fileOptions.load_hashtables_from != ""){
+            minhasher.loadFromFile(fileOptions.load_hashtables_from);
+
+            std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
+        }else{
+            const int oldnumthreads = omp_get_thread_num();
+
+            omp_set_num_threads(runtimeOptions.threads);
+
+            #pragma omp parallel for
+            for(std::size_t i = 0; i < readStorage.sequences.size(); i++){
+                const auto& seq = readStorage.sequences[i];
+
+                minhasher.insertSequence(seq.toString(), i);
+            }
+
+            omp_set_num_threads(oldnumthreads);
+        }
+
+        TIMERSTARTCPU(finalize_hashtables);
+        minhasher.transform();
+        TIMERSTOPCPU(finalize_hashtables);
+
+    }
 }
 
 
