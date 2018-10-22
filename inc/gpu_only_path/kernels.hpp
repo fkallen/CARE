@@ -27,6 +27,8 @@ namespace gpu{
         FilterAlignmentsByMismatchRatio,
         MSAInitExp,
         MSAAddSequences,
+        MSAFindConsensus,
+        MSACorrectSubject,
         MSACorrectCandidates,
     };
 
@@ -85,7 +87,8 @@ namespace gpu{
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
                             int msa_max_column_count,
-                            cudaStream_t stream);
+                            cudaStream_t stream,
+                            KernelLaunchHandle& handle);
 
 void call_msa_correct_subject_kernel_async(
                             const char* d_consensus,
@@ -110,7 +113,8 @@ void call_msa_correct_subject_kernel_async(
                             double min_coverage_threshold,
                             int k_region,
                             int maximum_sequence_length,
-                            cudaStream_t stream);
+                            cudaStream_t stream,
+                            KernelLaunchHandle& handle);
 
 
     /*

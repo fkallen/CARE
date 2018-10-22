@@ -1878,7 +1878,8 @@ struct BatchGenerator{
 								dataArrays.msa_pitch,
 								dataArrays.msa_weights_pitch,
 								3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,
-								streams[primary_stream_index]);
+								streams[primary_stream_index],
+                                batch.kernelLaunchHandle);
 
 				assert(cudaSuccess == cudaEventQuery(events[msa_build_finished_event_index])); CUERR;
 
@@ -1976,7 +1977,8 @@ struct BatchGenerator{
     								min_coverage_threshold,
     								transFuncData.kmerlength,
     								dataArrays.maximum_sequence_length,
-    								streams[primary_stream_index]);
+    								streams[primary_stream_index],
+                                    batch.kernelLaunchHandle);
 
     				if(transFuncData.correctionOptions.correctCandidates){
 
