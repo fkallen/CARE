@@ -181,7 +181,8 @@ struct BatchGenerator{
                             double min_overlap_ratio,
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
-                            cudaStream_t stream){
+                            cudaStream_t stream,
+                            KernelLaunchHandle& kernelLaunchHandle){
 
 			//the kernel expects length to be an int
 			static_assert(std::numeric_limits<typename GPUReadStorage_t::Length_t>::max() <= std::numeric_limits<int>::max());
@@ -259,7 +260,8 @@ struct BatchGenerator{
                             candidatepointer,
 							subjectlength,
 							candidatelength,
-                            stream);
+                            stream,
+                            kernelLaunchHandle);
             };
 
             if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
@@ -929,6 +931,8 @@ struct BatchGenerator{
 			std::array<cudaStream_t, nStreamsPerBatch>* streams;
 			std::array<cudaEvent_t, nEventsPerBatch>* events;
 
+            KernelLaunchHandle kernelLaunchHandle;
+
 			void reset(){
 				tasks.clear();
 				initialNumberOfCandidates = 0;
@@ -1538,7 +1542,8 @@ struct BatchGenerator{
                                     //batch.maxQueryLength,
                                     transFuncData.gpuReadStorage,
                                     transFuncData.useGpuReadStorage,
-                                    streams[primary_stream_index]);
+                                    streams[primary_stream_index],
+                                    batch.kernelLaunchHandle);
 
             //Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
             //    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
@@ -2698,6 +2703,7 @@ struct BatchGenerator{
 				batches[i].dataArrays = &dataArrays[i];
 				batches[i].streams = &streams[i];
 				batches[i].events = &cudaevents[i];
+                batches[i].kernelLaunchHandle = make_kernel_launch_handle(threadOpts.deviceId);
 			}
 
 			auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){

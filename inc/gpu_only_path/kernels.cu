@@ -14,6 +14,14 @@ namespace gpu{
 
 #ifdef __NVCC__
 
+    KernelLaunchHandle make_kernel_launch_handle(int deviceId){
+        KernelLaunchHandle handle;
+        handle.deviceId = deviceId;
+        cudaGetDeviceProperties(&handle.deviceProperties, deviceId); CUERR;
+        return handle;
+    }
+
+
 	void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
                                         BestAlignment_t* d_alignment_best_alignment_flags,
                                         const int* d_alignment_overlaps,

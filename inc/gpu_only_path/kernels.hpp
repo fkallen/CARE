@@ -8,6 +8,7 @@
 
 #include <stdexcept>
 #include <cassert>
+#include <map>
 
 #ifdef __NVCC__
 #include <cub/cub.cuh>
@@ -17,7 +18,34 @@
 namespace care{
 namespace gpu{
 
+
 #ifdef __NVCC__
+
+    enum class KernelId{
+        PopcountSHDExp
+    };
+
+    struct KernelLaunchConfig{
+        int threads_per_block;
+        int smem;
+    };
+
+    constexpr bool operator<(const KernelLaunchConfig& lhs, const KernelLaunchConfig& rhs){
+        return lhs.threads_per_block < rhs.threads_per_block
+                && lhs.smem < rhs.smem;
+    }
+
+    struct KernelProperties{
+        int max_blocks_per_SM = 1;
+    };
+
+    struct KernelLaunchHandle{
+        int deviceId;
+        cudaDeviceProp deviceProperties;
+        std::map<KernelId, std::map<KernelLaunchConfig, KernelProperties>> kernelPropertiesMap;
+    };
+
+    KernelLaunchHandle make_kernel_launch_handle(int deviceId);
 
 	void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
                                         BestAlignment_t* d_alignment_best_alignment_flags,
@@ -1039,7 +1067,8 @@ void call_msa_correct_subject_kernel_async(
                                 GetCandidatePtr getCandidatePtr,
 								GetSubjectLength getSubjectLength,
 								GetCandidateLength getCandidateLength,
-                                cudaStream_t stream){
+                                cudaStream_t stream,
+                                KernelLaunchHandle& handle){
 
             #define mycall(blocksize) cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp<(blocksize)> \
                                         <<<grid, block, smem, stream>>>( \
@@ -1061,63 +1090,75 @@ void call_msa_correct_subject_kernel_async(
 											getSubjectLength, \
    											getCandidateLength); CUERR;
 
-        #if 0
-        #define getsms(blocksize) {\
-                            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_SM, \
-                                                                            cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp<(blocksize), B, GetSubjectPtr, GetCandidatePtr, GetSubjectLength, GetCandidateLength>, \
-                                                                            blocksize, smem); CUERR;}
+            const int blocksize = 32;
+            const std::size_t smem = sizeof(char) * (2 * max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
 
-        #else
+            int max_blocks_per_device = 1;//handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
+            KernelLaunchConfig kernelLaunchConfig;
+            kernelLaunchConfig.threads_per_block = blocksize;
+            kernelLaunchConfig.smem = smem;
 
-        #define getsms(blocksize) {max_blocks_per_SM = 32;}
+            auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDExp);
+            if(iter == handle.kernelPropertiesMap.end()){
 
-        #endif
+                std::map<KernelLaunchConfig, KernelProperties> mymap;
 
-                const int blocksize = 32;
+                #define getProp(blocksize) { \
+                    KernelLaunchConfig kernelLaunchConfig; \
+                    kernelLaunchConfig.threads_per_block = (blocksize); \
+                    kernelLaunchConfig.smem = sizeof(char) * (2 * max_sequence_bytes * (blocksize) + 2 * max_sequence_bytes); \
+                    KernelProperties kernelProperties; \
+                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                                                                    cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp<(blocksize), B, \
+                                                                                                                        GetSubjectPtr, GetCandidatePtr, \
+                                                                                                                        GetSubjectLength, GetCandidateLength>, \
+                                                                    kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                    mymap[kernelLaunchConfig] = kernelProperties; \
+                }
 
-                const std::size_t smem = sizeof(char) * (2 * max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
+                //TIMERSTARTCPU(getprop);
+                getProp(32);
+                //TIMERSTOPCPU(getprop);
+                getProp(64);
+                getProp(96);
+                getProp(128);
+                getProp(160);
+                getProp(192);
+                getProp(224);
+                getProp(256);
 
+                const auto& kernelProperties = mymap[kernelLaunchConfig];
+                max_blocks_per_device = handle.deviceProperties.multiProcessorCount * 32;//kernelProperties.max_blocks_per_SM;
 
-              int deviceId;
-              cudaGetDevice(&deviceId); CUERR;
+                handle.kernelPropertiesMap[KernelId::PopcountSHDExp] = std::move(mymap);
 
-              int SMs;
-              cudaDeviceGetAttribute(&SMs, cudaDevAttrMultiProcessorCount, deviceId); CUERR;
+                #undef getProp
+            }else{
+                //TIMERSTARTCPU(cached);
+                std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+                const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+                max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+                //TIMERSTOPCPU(cached);
+            }
 
-              int max_blocks_per_SM = 1;
+            dim3 block(blocksize, 1, 1);
+            dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1); // one block per candidate
 
-              switch(blocksize){
-              case 32: getsms(32); break;
-              case 64: getsms(64); break;
-              case 96: getsms(96); break;
-              case 128: getsms(128); break;
-              case 160: getsms(160); break;
-              case 192: getsms(192); break;
-              case 224: getsms(224); break;
-              case 256: getsms(256); break;
-              default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_exp with 0 threads due to a bug.");
-              }
+            switch(blocksize){
+            case 32: mycall(32); break;
+            case 64: mycall(64); break;
+            case 96: mycall(96); break;
+            case 128: mycall(128); break;
+            case 160: mycall(160); break;
+            case 192: mycall(192); break;
+            case 224: mycall(224); break;
+            case 256: mycall(256); break;
+            default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_exp with 0 threads due to a bug.");
+            }
 
-              int max_blocks_per_device = SMs * max_blocks_per_SM;
+            #undef mycall
 
-              dim3 block(blocksize, 1, 1);
-              dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1); // one block per candidate
-
-              switch(blocksize){
-              case 32: mycall(32); break;
-              case 64: mycall(64); break;
-              case 96: mycall(96); break;
-              case 128: mycall(128); break;
-              case 160: mycall(160); break;
-              case 192: mycall(192); break;
-              case 224: mycall(224); break;
-              case 256: mycall(256); break;
-              default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_rs_exp with 0 threads due to a bug.");
-              }
-
-              #undef mycall
-              #undef getsms
         }
 
 
@@ -1779,7 +1820,7 @@ void call_msa_correct_subject_kernel_async(
 
 
 
-    
+
 
 
     template<int BLOCKSIZE, class RevCompl, class GetCandidateLength>
