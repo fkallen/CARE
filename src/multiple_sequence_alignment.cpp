@@ -510,9 +510,9 @@ PileupImage::CorrectionResult PileupImage::cpu_correct_sequence_internal_RF(cons
 
     #else
         const bool doCorrect = care::forestclassifier::shouldCorrect(
-                                        care::forestclassifier::Mode::CombinedAlignCov,
+                                        //care::forestclassifier::Mode::CombinedAlignCov,
                                         //care::forestclassifier::Mode::CombinedDataCov,
-                                        //care::forestclassifier::Mode::Species,
+                                        care::forestclassifier::Mode::Species,
                                         feature.position_support,
                                         feature.position_coverage,
                                         feature.alignment_coverage,

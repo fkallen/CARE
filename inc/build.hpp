@@ -156,6 +156,9 @@ namespace care{
 
             omp_set_num_threads(oldnumthreads);
 
+            //minhasher.loadFromFile("hashtabledump.bin");
+            //std::cout << "Loaded hashtable from " << "hashtabledump.bin" << std::endl;
+
             SequenceFileProperties props;
             props.nReads = readStorage.sequences.size();
             props.maxSequenceLength = maxSequenceLength;
@@ -241,6 +244,9 @@ namespace care{
     					minSequenceLength = len;
             	}
 
+                //minhasher.loadFromFile("hashtabledump.bin");
+                //std::cout << "1Loaded hashtable from " << "hashtabledump.bin" << std::endl;
+
             	SequenceFileProperties props;
     			props.nReads = reader->getReadnum();
     			props.maxSequenceLength = maxSequenceLength;
@@ -313,6 +319,9 @@ namespace care{
     				if(maxSequenceLength > props.maxSequenceLength)
     					props.maxSequenceLength = maxSequenceLength;
                 }
+
+                //minhasher.loadFromFile("hashtabledump.bin");
+                //std::cout << "2Loaded hashtable from " << "hashtabledump.bin" << std::endl;
 
                 if(fileOptions.save_binary_reads_to != ""){
                     readStorage.saveToFile(fileOptions.save_binary_reads_to);
@@ -548,6 +557,7 @@ namespace care{
     #endif
             }
         }
+
     }
 
 
