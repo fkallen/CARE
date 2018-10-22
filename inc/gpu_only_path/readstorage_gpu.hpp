@@ -158,7 +158,7 @@ struct GPUReadStorage{
         gpurs.cpu_read_storage = &cpurs;
 
         //return gpurs;
-		//canUseManagedMemory = false;
+	canUseManagedMemory = false;
 
 		const std::uint64_t requiredSequenceMem = max_sequence_bytes * nSequences + sizeof(Length_t) * nSequences; //sequences and sequence lengths
         //const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
