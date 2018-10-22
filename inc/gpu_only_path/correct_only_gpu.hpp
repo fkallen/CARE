@@ -2423,12 +2423,15 @@ struct BatchGenerator{
 				//std::cout << "finished readId " << task.readId << std::endl;
 
 				if(task.corrected){
+					push_range("write_subject", 4);
 					//std::cout << task.readId << " " << task.corrected_subject << std::endl;
 					transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
 					//transFuncData.lock(task.readId);
 					//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
 					//transFuncData.unlock(task.readId);
+					pop_range();
 				}else{
+					push_range("subject_not_corrected", 5);
                     //mark read as not corrected
                     if((*transFuncData.readIsCorrectedVector)[task.readId] == 1){
                         transFuncData.lock(task.readId);
@@ -2436,9 +2439,10 @@ struct BatchGenerator{
                             (*transFuncData.readIsCorrectedVector)[task.readId] = 0;
                         }
                         transFuncData.unlock(task.readId);
+					pop_range();
                     }
                 }
-
+				push_range("correctedcandidates", 6);
 				for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index){
 
 					ReadId_t candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
@@ -2458,6 +2462,7 @@ struct BatchGenerator{
 						transFuncData.write_read_to_stream(candidateId, corrected_candidate);
 					}
 				}
+				pop_range();
 			}
 
             if(transFuncData.correctionOptions.extractFeatures)
