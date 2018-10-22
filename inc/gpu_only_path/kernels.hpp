@@ -23,7 +23,9 @@ namespace gpu{
 
     enum class KernelId{
         PopcountSHDExp,
-        FindBestAlignmentExp
+        FindBestAlignmentExp,
+        FilterAlignmentsByMismatchRatio,
+        MSAInitExp,
     };
 
     struct KernelLaunchConfig{
@@ -60,7 +62,8 @@ namespace gpu{
 										const int* d_num_indices,
 										double mismatchratioBaseFactor,
 										double goodAlignmentsCountThreshold,
-										cudaStream_t stream);
+										cudaStream_t stream,
+                                        KernelLaunchHandle& handle);
 
     void call_msa_find_consensus_kernel_async(
                             char* const d_consensus,
@@ -1273,9 +1276,7 @@ void call_msa_correct_subject_kernel_async(
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
 
-            //TIMERSTARTCPU(getprop);
             getProp(32);
-            //TIMERSTOPCPU(getprop);
             getProp(64);
             getProp(96);
             getProp(128);
@@ -1318,117 +1319,6 @@ void call_msa_correct_subject_kernel_async(
 
     }
 
-    /*
-	 *
-	 */
-
-	template<int BLOCKSIZE>
-    __global__
-    void cuda_filter_alignments_by_mismatchratio_kernel(
-                                        BestAlignment_t* d_alignment_best_alignment_flags,
-                                        const int* d_alignment_overlaps,
-                                        const int* d_alignment_nOps,
-                                        const int* d_indices,
-										const int* d_indices_per_subject,
-										const int* d_indices_per_subject_prefixsum,
-                                        int n_subjects,
-										int n_candidates,
-										const int* d_num_indices,
-										double mismatchratioBaseFactor,
-										double goodAlignmentsCountThreshold){
-
-        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
-
-        __shared__ union {
-            typename BlockReduceInt::TempStorage intreduce;
-			int broadcast[3];
-        } temp_storage;
-
-        /*if(threadIdx.x == 0){
-            printf("n_subjects %d\n", n_subjects);
-        }
-
-        printf("blockIdx.x %d\n", blockIdx.x);*/
-
-        for(int subjectindex = blockIdx.x; subjectindex < n_subjects; subjectindex += gridDim.x){
-
-			const int my_n_indices = d_indices_per_subject[subjectindex];
-			const int* my_indices = d_indices + d_indices_per_subject_prefixsum[subjectindex];
-
-            //printf("subjectindex %d\n", subjectindex);
-
-			int counts[3]{0,0,0};
-
-            //if(threadIdx.x == 0){
-            //    printf("my_n_indices %d\n", my_n_indices);
-            //}
-
-			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
-				const int candidate_index = my_indices[index];
-				const int alignment_overlap = d_alignment_overlaps[candidate_index];
-				const int alignment_nops = d_alignment_nOps[candidate_index];
-
-				const double mismatchratio = double(alignment_nops) / alignment_overlap;
-                if(mismatchratio >= 4 * mismatchratioBaseFactor){
-                    d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
-                }else{
-
-    				#pragma unroll
-    				for(int i = 2; i <= 4; i++){
-    					counts[i-2] += (mismatchratio < i * mismatchratioBaseFactor);
-    				}
-                }
-			}
-
-			//accumulate counts over block
-			#pragma unroll
-			for(int i = 0; i < 3; i++){
-				counts[i] = BlockReduceInt(temp_storage.intreduce).Sum(counts[i]);
-				__syncthreads();
-			}
-
-			//broadcast accumulated counts to block
-            if(threadIdx.x == 0){
-    			#pragma unroll
-    			for(int i = 0; i < 3; i++){
-                    temp_storage.broadcast[i] = counts[i];
-                    //printf("count[%d] = %d\n", i, counts[i]);
-    			}
-                //printf("mismatchratioBaseFactor %f, goodAlignmentsCountThreshold %f\n", mismatchratioBaseFactor, goodAlignmentsCountThreshold);
-			}
-
-            __syncthreads();
-
-            #pragma unroll
-            for(int i = 0; i < 3; i++){
-                counts[i] = temp_storage.broadcast[i];
-            }
-
-			double mismatchratioThreshold = 0;
-			if (counts[0] >= goodAlignmentsCountThreshold) {
-				mismatchratioThreshold = 2 * mismatchratioBaseFactor;
-			} else if (counts[1] >= goodAlignmentsCountThreshold) {
-				mismatchratioThreshold = 3 * mismatchratioBaseFactor;
-			} else if (counts[2] >= goodAlignmentsCountThreshold) {
-				mismatchratioThreshold = 4 * mismatchratioBaseFactor;
-			} else {
-				mismatchratioThreshold = -1; //this will invalidate all alignments for subject
-			}
-
-			// Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
-			for(int index = threadIdx.x; index < my_n_indices; index += blockDim.x){
-				const int candidate_index = my_indices[index];
-				const int alignment_overlap = d_alignment_overlaps[candidate_index];
-				const int alignment_nops = d_alignment_nOps[candidate_index];
-
-				const double mismatchratio = double(alignment_nops) / alignment_overlap;
-
-				const bool remove = mismatchratio >= mismatchratioThreshold;
-				if(remove)
-					d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
-			}
-        }
-    }
 
 
 	template<int BLOCKSIZE, class GetSubjectLength, class GetCandidateLength>
@@ -1508,12 +1398,57 @@ void call_msa_correct_subject_kernel_async(
                         int n_queries,
 						GetSubjectLength getSubjectLength,
 						GetCandidateLength getCandidateLength,
-                        cudaStream_t stream){
+                        cudaStream_t stream,
+                        KernelLaunchHandle& handle){
 
-		const int blocksize = 128;
+        const int blocksize = 128;
+        const std::size_t smem = 0;
+
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::MSAInitExp);
+        if(iter == handle.kernelPropertiesMap.end()){
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            #define getProp(blocksize) { \
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = 0; \
+                KernelProperties kernelProperties; \
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                                                                msa_init_kernel_exp<(blocksize), GetSubjectLength, GetCandidateLength>, \
+                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+            getProp(32);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::MSAInitExp] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
 
         dim3 block(blocksize, 1, 1);
-        dim3 grid(n_subjects, 1, 1);
+        dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1);
 
 		#define mycall(blocksize) msa_init_kernel_exp<(blocksize)><<<grid, block, 0, stream>>>(d_msa_column_properties, \
                                                     d_alignment_shifts, \
@@ -1776,7 +1711,8 @@ void call_msa_correct_subject_kernel_async(
                             GetCandidateQualityPtr getCandidateQualityPtr,
                             GetSubjectLength getSubjectLength,
                             GetCandidateLength getCandidateLength,
-                            cudaStream_t stream){
+                            cudaStream_t stream,
+                            KernelLaunchHandle& handle){
 
 			const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
 

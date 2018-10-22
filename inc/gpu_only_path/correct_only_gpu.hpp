@@ -413,7 +413,8 @@ struct BatchGenerator{
                             int n_queries, //
                             const GPUReadStorage_t* gpuReadStorage, //
                             bool useGpuReadStorage, //
-                            cudaStream_t stream){ //
+                            cudaStream_t stream,
+                            KernelLaunchHandle& kernelLaunchHandle){ //
 
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
@@ -457,7 +458,8 @@ struct BatchGenerator{
                                 n_queries,
 								subjectlength,
 								querylength,
-                                stream);
+                                stream,
+                                kernelLaunchHandle);
             };
 
             if(!useGpuReadStorage){
@@ -515,7 +517,8 @@ struct BatchGenerator{
                             size_t msa_weights_row_pitch,
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
-                            cudaStream_t stream){
+                            cudaStream_t stream,
+                            KernelLaunchHandle& kernelLaunchHandle){
 
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
@@ -636,7 +639,8 @@ struct BatchGenerator{
                     candidatequality,
                     subjectlength,
                     querylength,
-                    stream);
+                    stream,
+                    kernelLaunchHandle);
             };
 
             if(!useGpuReadStorage){
@@ -1611,7 +1615,8 @@ struct BatchGenerator{
                                     dataArrays.d_num_indices,
                                     transFuncData.estimatedErrorrate,
                                     transFuncData.estimatedCoverage * transFuncData.m_coverage,
-                                    streams[primary_stream_index]);
+                                    streams[primary_stream_index],
+                                    batch.kernelLaunchHandle);
 
             //determine indices of remaining alignments
             select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
@@ -1813,7 +1818,8 @@ struct BatchGenerator{
                             dataArrays.n_queries,
                             transFuncData.gpuReadStorage,
                             transFuncData.useGpuReadStorage,
-                            streams[primary_stream_index]);
+                            streams[primary_stream_index],
+                            batch.kernelLaunchHandle);
 
                 MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
                                         dataArrays.d_multiple_sequence_alignments,
@@ -1849,7 +1855,8 @@ struct BatchGenerator{
 										//true,
                                         transFuncData.gpuReadStorage,
                                         transFuncData.useGpuReadStorage,
-                                        streams[primary_stream_index]);
+                                        streams[primary_stream_index],
+                                        batch.kernelLaunchHandle);
 
 				call_msa_find_consensus_kernel_async(
 								dataArrays.d_consensus,
