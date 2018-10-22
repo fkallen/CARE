@@ -704,6 +704,11 @@ struct Minhasher {
 	ReadId_t nReads;
     bool canUseGpu = false;
 
+	struct Handle{
+		std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+	};
+
     std::size_t numBytes() const{
         //return minhashTables[0]->numBytes() * minhashTables.size();
         std::size_t result = 0;
@@ -845,8 +850,13 @@ struct Minhasher {
 			}
 		}
 	}
-	
+
 	std::int64_t getNumberOfCandidates(const std::string& sequence) const noexcept{
+		Handle handle;
+		return getNumberOfCandidates(sequence, handle);
+	}
+
+	std::int64_t getNumberOfCandidates(const std::string& sequence, Handle& handle) const noexcept{
 		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
 		// we do not consider reads which are shorter than k
 		if(sequence.size() < unsigned(minparams.k))
@@ -860,35 +870,48 @@ struct Minhasher {
 		//TIMERSTOPCPU(minhashfunc);
 
 
-        std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
+        handle.allUniqueResults.clear();
+        handle.tmp.clear();
+
         for(int map = 0; map < minparams.maps; ++map) {
             Key_t key = hashValues[map] & key_mask;
 
+			//TIMERSTARTCPU(get_ranged);
             auto entries_range = minhashTables[map]->get_ranged(key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+			//TIMERSTOPCPU(get_ranged);
 
             if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(minparams.maps * n_entries);
-                allUniqueResults.reserve(minparams.maps * n_entries);
+				//TIMERSTARTCPU(reserve);
+                handle.tmp.reserve(minparams.maps * n_entries);
+                handle.allUniqueResults.reserve(minparams.maps * n_entries);
+				//TIMERSTOPCPU(reserve);
             }
 
-            tmp.resize(allUniqueResults.size() + n_entries);
+            //TIMERSTARTCPU(resizebeforeunion);
+            handle.tmp.resize(handle.allUniqueResults.size() + n_entries);
+			//TIMERSTOPCPU(resizebeforeunion);
+
+			//TIMERSTARTCPU(setunion);
             auto union_end = std::set_union(entries_range.first,
                                                 entries_range.second,
-                                                allUniqueResults.begin(),
-                                                allUniqueResults.end(),
-                                                tmp.begin());
-			
-			tmp.resize(std::distance(tmp.begin(), union_end));
-			std::swap(tmp, allUniqueResults);
-        }
-        
-        assert(allUniqueResults.size() <= std::numeric_limits<std::int64_t>::max());
+                                                handle.allUniqueResults.begin(),
+                                                handle.allUniqueResults.end(),
+                                                handle.tmp.begin());
+			//TIMERSTOPCPU(setunion);
 
-		return std::int64_t(allUniqueResults.size());
+			//TIMERSTARTCPU(resizeafterunion);
+			handle.tmp.resize(std::distance(handle.tmp.begin(), union_end));
+			//TIMERSTOPCPU(resizeafterunion);
+
+			//TIMERSTARTCPU(swap);
+			std::swap(handle.tmp, handle.allUniqueResults);
+			//TIMERSTOPCPU(swap);
+        }
+
+        assert(handle.allUniqueResults.size() <= std::numeric_limits<std::int64_t>::max());
+
+		return std::int64_t(handle.allUniqueResults.size());
 
 	}
 
@@ -936,27 +959,27 @@ struct Minhasher {
                 std::swap(tmp, allUniqueResults);
             }
         }
-        
+
         /*std::vector<Value_t> result2(allUniqueResults.size());
 		auto result2end = getCandidates(result2.begin(), result2.end(), sequence, max_number_candidates);
 		result2.resize(std::distance(result2.begin(), result2end));
-		
+
 		assert(result2.size() == allUniqueResults.size());
 		assert(result2 == allUniqueResults);
-		
+
 		std::cout << result2.size() << " " << allUniqueResults.size() << " " << (result2 == allUniqueResults) << std::endl;*/
 
 		return allUniqueResults;
 
 	}
-	
+
 	template<class Iter>
 	Iter getCandidates(Iter begin, Iter end, const std::string& sequence,
 										std::uint64_t max_number_candidates) const noexcept{
 		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-		
+
 		const std::size_t totalresultrangesize = std::distance(begin, end);
-		
+
 		// we do not consider reads which are shorter than k
 		if(sequence.size() < unsigned(minparams.k))
 			return begin;
@@ -967,14 +990,14 @@ struct Minhasher {
 		//TIMERSTARTCPU(minhashfunc);
 		minhashfunc(sequence, hashValues, isForwardStrand);
 		//TIMERSTOPCPU(minhashfunc);
-		
+
 		//Iter curBegin = begin;
 		Iter curEnd = begin;
 
         //std::vector<Value_t> allUniqueResults;
         std::vector<Value_t> tmp;
         //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && std::distance(begin, curEnd) < max_number_candidates; ++map) {
+        for(int map = 0; map < minparams.maps && std::uint64_t(std::distance(begin, curEnd)) < max_number_candidates; ++map) {
             Key_t key = hashValues[map] & key_mask;
 
             auto entries_range = minhashTables[map]->get_ranged(key);
@@ -996,6 +1019,8 @@ struct Minhasher {
                 return begin;
             }else{
                 tmp.resize(std::distance(tmp.begin(), union_end));
+				if(tmp.size() > totalresultrangesize)
+					std::cout << tmp.size() << " > " << totalresultrangesize << std::endl;
 				assert(tmp.size() <= totalresultrangesize);
 				curEnd = std::swap_ranges(tmp.begin(), tmp.end(), begin);
             }

@@ -142,12 +142,13 @@ namespace care{
                 candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
                     std::map<std::int64_t, std::int64_t> candidateMap;
                     std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
+					typename minhasher_t::Handle handle;
 
                     for(ReadId_t readId = i; readId < sampleCount; readId += threads){
                         std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
                         //auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
                         //std::int64_t count = std::int64_t(candidateList.size()) - 1;
-						std::int64_t count = minhasher.getNumberOfCandidates(sequencestring);
+						std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, handle);
 						if(count > 0)
 							--count;
                         candidateMap[count]++;
