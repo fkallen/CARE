@@ -28,6 +28,23 @@ namespace gpu{
 			//cudaSetDevice(deviceId);
         };
 
+		void allocCandidateIds(int n_quer){
+			memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
+			
+			std::size_t required_size = memCandidateIds;
+			
+			if(required_size > candidate_ids_allocation_size){
+				cudaFree(d_candidate_read_ids); CUERR;
+				cudaFreeHost(h_candidate_read_ids); CUERR;
+				
+				cudaMalloc(&d_candidate_read_ids, size_t(required_size * allocfactor)); CUERR;
+				cudaMallocHost(&h_candidate_read_ids, size_t(required_size * allocfactor)); CUERR;
+				
+				candidate_ids_allocation_size = required_size;
+			}
+			
+			candidate_ids_usable_size = required_size;
+		}
 
         void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int min_overlap_, double min_overlap_ratio_, bool useQualityScores){
 
@@ -45,15 +62,15 @@ namespace gpu{
             memQueries = n_quer * encoded_sequence_pitch;
             memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
             memSubjectIds = SDIV(sizeof(ReadId_t) * n_sub, padding_bytes) * padding_bytes;
-            memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
+            //memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
 
             std::size_t required_alignment_transfer_data_allocation_size = memSubjects
                                                             + memSubjectLengths
                                                             + memNqueriesPrefixSum
                                                             + memQueries
                                                             + memQueryLengths
-                                                            + memSubjectIds
-                                                            + memCandidateIds;
+                                                            + memSubjectIds;
+                                                            //+ memCandidateIds;
 
             if(required_alignment_transfer_data_allocation_size > alignment_transfer_data_allocation_size){
                 //std::cout << "A" << std::endl;
@@ -73,7 +90,7 @@ namespace gpu{
             h_candidate_sequences_lengths = (int*)(((char*)h_subject_sequences_lengths) + memSubjectLengths);
             h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
             h_subject_read_ids = (ReadId_t*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
-            h_candidate_read_ids = (ReadId_t*)(((char*)h_subject_read_ids) + memSubjectIds);
+            //h_candidate_read_ids = (ReadId_t*)(((char*)h_subject_read_ids) + memSubjectIds);
 
             d_subject_sequences_data = (char*)alignment_transfer_data_device;
             d_candidate_sequences_data = (char*)(((char*)d_subject_sequences_data) + memSubjects);
@@ -81,7 +98,7 @@ namespace gpu{
             d_candidate_sequences_lengths = (int*)(((char*)d_subject_sequences_lengths) + memSubjectLengths);
             d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
             d_subject_read_ids = (ReadId_t*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
-            d_candidate_read_ids = (ReadId_t*)(((char*)d_subject_read_ids) + memSubjectIds);
+            //d_candidate_read_ids = (ReadId_t*)(((char*)d_subject_read_ids) + memSubjectIds);
 
             //alignment output
             std::size_t memAlignmentScores = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
@@ -347,6 +364,7 @@ namespace gpu{
 			std::memset(subject_indices_data_host, 0, subject_indices_data_usable_size);
 			std::memset(alignment_result_data_host, 0, alignment_result_data_usable_size);
 			std::memset(alignment_transfer_data_host, 0, alignment_transfer_data_usable_size);
+			//std::memset(h_candidate_read_ids, 0, candidate_ids_usable_size);
 		}
 
 		void zero_gpu(cudaStream_t stream){
@@ -362,6 +380,7 @@ namespace gpu{
 			cudaMemsetAsync(subject_indices_data_device, 0, subject_indices_data_usable_size, stream); CUERR;
 			cudaMemsetAsync(alignment_result_data_device, 0, alignment_result_data_usable_size, stream); CUERR;
 			cudaMemsetAsync(alignment_transfer_data_device, 0, alignment_transfer_data_usable_size, stream); CUERR;
+			//cudaMemsetAsync(d_candidate_read_ids, 0, candidate_ids_usable_size); CUERR;
 		}
 
         void fill_d_indices(int val, cudaStream_t stream){
@@ -392,6 +411,8 @@ namespace gpu{
 			cudaFree(a.msa_data_device); CUERR;
 			cudaFreeHost(a.msa_data_host); CUERR;
 			cudaFree(a.d_temp_storage); CUERR;
+			cudaFree(a.d_candidate_read_ids); CUERR;
+			cudaFreeHost(a.h_candidate_read_ids); CUERR;
 
 			a.subject_indices_data_device = nullptr;
 			a.subject_indices_data_host = nullptr;
@@ -480,6 +501,8 @@ namespace gpu{
 			a.h_origWeights = nullptr;
 			a.h_origCoverages = nullptr;
 			a.h_msa_column_properties = nullptr;
+			a.d_candidate_read_ids = nullptr;
+			a.h_candidate_read_ids = nullptr;
 
 			a.n_subjects = 0;
 			a.n_queries = 0;
@@ -507,6 +530,8 @@ namespace gpu{
             a.msa_data_usable_size = 0;
 			a.msa_pitch = 0;
 			a.msa_weights_pitch = 0;
+			a.candidate_ids_allocation_size = 0;
+			a.candidate_ids_usable_size = 0;
         }
 
         int deviceId = -1;
@@ -546,6 +571,8 @@ namespace gpu{
 
         std::size_t alignment_transfer_data_allocation_size = 0;
         std::size_t alignment_transfer_data_usable_size = 0;
+		std::size_t candidate_ids_allocation_size = 0;
+		std::size_t candidate_ids_usable_size = 0;
         std::size_t encoded_sequence_pitch = 0;
 
         char* h_subject_sequences_data = nullptr;
