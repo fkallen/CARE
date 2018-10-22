@@ -306,7 +306,8 @@ struct BatchGenerator{
                             int n_queries,
                             const GPUReadStorage_t* gpuReadStorage,
                             bool useGpuReadStorage,
-                            cudaStream_t stream){
+                            cudaStream_t stream,
+                            KernelLaunchHandle& kernelLaunchHandle){
 
             assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
@@ -373,7 +374,8 @@ struct BatchGenerator{
                                                     best_alignment_comp,
                                                     subjectlength,
                                                     querylength,
-                                                    stream);
+                                                    stream,
+                                                    kernelLaunchHandle);
             };
 
             if(!useGpuReadStorage){
@@ -1568,7 +1570,8 @@ struct BatchGenerator{
                         dataArrays.n_queries,
                         transFuncData.gpuReadStorage,
                         transFuncData.useGpuReadStorage,
-                        streams[primary_stream_index]);
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
 
 
 

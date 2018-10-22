@@ -22,7 +22,8 @@ namespace gpu{
 #ifdef __NVCC__
 
     enum class KernelId{
-        PopcountSHDExp
+        PopcountSHDExp,
+        FindBestAlignmentExp
     };
 
     struct KernelLaunchConfig{
@@ -1093,7 +1094,7 @@ void call_msa_correct_subject_kernel_async(
             const int blocksize = 32;
             const std::size_t smem = sizeof(char) * (2 * max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
 
-            int max_blocks_per_device = 1;//handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+            int max_blocks_per_device = 1;
 
             KernelLaunchConfig kernelLaunchConfig;
             kernelLaunchConfig.threads_per_block = blocksize;
@@ -1117,9 +1118,7 @@ void call_msa_correct_subject_kernel_async(
                     mymap[kernelLaunchConfig] = kernelProperties; \
                 }
 
-                //TIMERSTARTCPU(getprop);
                 getProp(32);
-                //TIMERSTOPCPU(getprop);
                 getProp(64);
                 getProp(96);
                 getProp(128);
@@ -1129,17 +1128,15 @@ void call_msa_correct_subject_kernel_async(
                 getProp(256);
 
                 const auto& kernelProperties = mymap[kernelLaunchConfig];
-                max_blocks_per_device = handle.deviceProperties.multiProcessorCount * 32;//kernelProperties.max_blocks_per_SM;
+                max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
                 handle.kernelPropertiesMap[KernelId::PopcountSHDExp] = std::move(mymap);
 
                 #undef getProp
             }else{
-                //TIMERSTARTCPU(cached);
                 std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
                 const KernelProperties& kernelProperties = map[kernelLaunchConfig];
                 max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-                //TIMERSTOPCPU(cached);
             }
 
             dim3 block(blocksize, 1, 1);
@@ -1248,12 +1245,61 @@ void call_msa_correct_subject_kernel_async(
                                         AlignmentComp d_comp,
                                         GetSubjectLength getSubjectLength,
                                         GetCandidateLength getCandidateLength,
-                                        cudaStream_t stream){
+                                        cudaStream_t stream,
+                                        KernelLaunchHandle& handle){
 
-        dim3 block(128,1,1);
-        dim3 grid(SDIV(n_queries, block.x), 1, 1);
+        const int blocksize = 128;
+        const std::size_t smem = 0;
 
-        cuda_find_best_alignment_kernel_exp<<<grid, block, 0, stream>>>(
+        int max_blocks_per_device = 1;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::FindBestAlignmentExp);
+        if(iter == handle.kernelPropertiesMap.end()){
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            #define getProp(blocksize) { \
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = 0; \
+                KernelProperties kernelProperties; \
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                                                                cuda_find_best_alignment_kernel_exp<AlignmentComp, GetSubjectLength, GetCandidateLength>, \
+                                                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+            //TIMERSTARTCPU(getprop);
+            getProp(32);
+            //TIMERSTOPCPU(getprop);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::FindBestAlignmentExp] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
+        dim3 block(blocksize ,1,1);
+        dim3 grid(std::min(max_blocks_per_device, SDIV(n_queries, blocksize)), 1, 1);
+
+        cuda_find_best_alignment_kernel_exp<<<grid, block, smem, stream>>>(
                                                 d_alignment_best_alignment_flags,
                                                 d_alignment_scores,
                                                 d_alignment_overlaps,
