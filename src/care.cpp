@@ -85,6 +85,8 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
         std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
     }
 
+    readIsCorrectedVector.resize(props.nReads, 0);
+
     //std::cin >> stmp;
 
     /*TIMERSTARTCPU(finalize_datastructures);
@@ -273,24 +275,13 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
 
-    //std::cout << "Determining read properties..." << std::endl;
-
-	//Only number of reads is valid.
-    /*SequenceFileProperties props = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-
-    std::cout << "----------------------------------------" << std::endl;
-    std::cout << "File: " << fileOptions.inputfile << std::endl;
-    std::cout << "Reads: " << props.nReads << std::endl;
-    std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
-    std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
-    std::cout << "----------------------------------------" << std::endl;*/
 	std::uint64_t nReads = fileOptions.nReads;
-	if(nReads == 0){
+	if(nReads == 0 && fileOptions.load_binary_reads_from == ""){ // if load_binary_reads_from != "", we use number of reads from binaryreadfile
 		std::cout << "Determining number of reads" << std::endl;
 		nReads = getNumberOfReadsFast(fileOptions.inputfile, fileOptions.format);
 	}
 
-	std::vector<char> readIsCorrectedVector(nReads, 0);
+	std::vector<char> readIsCorrectedVector;
 	std::size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
