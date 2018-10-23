@@ -657,7 +657,10 @@ namespace gpu{
                 }
             }
         };
-    }
+
+#endif
+
+}
 }
 
 

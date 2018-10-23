@@ -227,6 +227,7 @@ struct BatchGenerator{
         std::vector<ReadId_t> corrected_candidates_read_ids;
     };
 
+#ifdef __NVCC__
     template<class minhasher_t,
     		 class readStorage_t,
              class gpureadStorage_t,
