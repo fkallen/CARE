@@ -29,7 +29,7 @@
 
 
 //EXPERIMENTAL
-#include "gpu_only_path/correct_only_gpu.hpp"
+#include "gpu_only_path/gpu_correction_thread.hpp"
 #include "gpu_only_path/readstorage_gpu.hpp"
 
 
