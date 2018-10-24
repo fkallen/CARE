@@ -4,9 +4,11 @@
 #include "../options.hpp"
 #include "../batchelem.hpp"
 #include "../tasktiming.hpp"
-#include "../alignmentwrapper.hpp"
+#include "../cpu_alignment.hpp"
 #include "../multiple_sequence_alignment.hpp"
 #include "../bestalignment.hpp"
+#include "../msa.hpp"
+#include "../qualityscoreweights.hpp"
 
 #include <array>
 #include <chrono>
@@ -36,12 +38,84 @@ namespace gpu{
     struct CPUCorrectionThread{
         static_assert(indels == false, "indels != false");
 
+        template<class Sequence_t, class ReadId_t>
+        struct CorrectionTask{
+            CorrectionTask(){}
+
+            CorrectionTask(ReadId_t readId)
+                :   active(true),
+                    corrected(false),
+                    readId(readId)
+                    {}
+
+            CorrectionTask(const CorrectionTask& other)
+                : active(other.active),
+                corrected(other.corrected),
+                readId(other.readId),
+                subject_string(other.subject_string),
+                candidate_read_ids(other.candidate_read_ids),
+                candidate_read_ids_begin(other.candidate_read_ids_begin),
+                candidate_read_ids_end(other.candidate_read_ids_end),
+                corrected_subject(other.corrected_subject),
+                corrected_candidates(other.corrected_candidates),
+                corrected_candidates_read_ids(other.corrected_candidates_read_ids){
+
+                candidate_read_ids_begin = &(candidate_read_ids[0]);
+                candidate_read_ids_end = &(candidate_read_ids[candidate_read_ids.size()]);
+
+            }
+
+            CorrectionTask(CorrectionTask&& other){
+                operator=(other);
+            }
+
+            CorrectionTask& operator=(const CorrectionTask& other){
+                CorrectionTask tmp(other);
+                swap(*this, tmp);
+                return *this;
+            }
+
+            CorrectionTask& operator=(CorrectionTask&& other){
+                swap(*this, other);
+                return *this;
+            }
+
+            friend void swap(CorrectionTask& l, CorrectionTask& r) noexcept{
+                using std::swap;
+
+                swap(l.active, r.active);
+                swap(l.corrected, r.corrected);
+                swap(l.readId, r.readId);
+                swap(l.subject_string, r.subject_string);
+                swap(l.candidate_read_ids, r.candidate_read_ids);
+                swap(l.candidate_read_ids_begin, r.candidate_read_ids_begin);
+                swap(l.candidate_read_ids_end, r.candidate_read_ids_end);
+                swap(l.corrected_subject, r.corrected_subject);
+                swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
+            }
+
+            bool active;
+            bool corrected;
+            ReadId_t readId;
+
+            std::vector<ReadId_t> candidate_read_ids;
+            ReadId_t* candidate_read_ids_begin;
+            ReadId_t* candidate_read_ids_end; // exclusive
+
+            std::string subject_string;
+
+            std::string corrected_subject;
+            std::vector<std::string> corrected_candidates;
+            std::vector<ReadId_t> corrected_candidates_read_ids;
+        };
+
         using Minhasher_t = minhasher_t;
     	using ReadStorage_t = readStorage_t;
     	using Sequence_t = typename ReadStorage_t::Sequence_t;
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using AlignmentResult_t = typename alignment_result_type<indels>::type;
         using BatchElem_t = BatchElem<ReadStorage_t, AlignmentResult_t>;
+        using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
 
     	struct CorrectionThreadOptions{
     		int threadId;
@@ -156,10 +230,10 @@ namespace gpu{
             //std::uint64_t savedAlignments = 0;
             //std::uint64_t performedAlignments = 0;
 
-    		constexpr int nStreams = 2;
-            const bool canUseGpu = threadOpts.canUseGpu;
+    	//	constexpr int nStreams = 2;
+        //    const bool canUseGpu = threadOpts.canUseGpu;
 
-    		std::vector<SHDhandle> shdhandles(nStreams);
+/*    		std::vector<SHDhandle> shdhandles(nStreams);
     		std::vector<SGAhandle> sgahandles(nStreams);
 
 			for(auto& handle : shdhandles){
@@ -168,278 +242,228 @@ namespace gpu{
 						fileProperties.maxSequenceLength,
 						Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
 						threadOpts.gpuThresholdSHD);
-			}
+			}*/
 
-    		pileup::PileupImage pileupImage(correctionOptions.m_coverage,
-                                            correctionOptions.kmerlength,
-                                            correctionOptions.estimatedCoverage);
+            care::cpu::MultipleSequenceAlignment multipleSequenceAlignment(correctionOptions.useQualityScores,
+                                                                            correctionOptions.m_coverage,
+                                                                            correctionOptions.kmerlength,
+                                                                            correctionOptions.estimatedCoverage);
 
-    		std::array<std::vector<BatchElem_t>, nStreams> batchElems;
-    		std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
+            std::vector<ReadId_t> readIds;
 
-    		while(!stopAndAbort && !readIds.empty()){
+    		while(!stopAndAbort && !(mybatchgen->empty() && readIds.empty())){
 
-    			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
-                    PUSH_RANGE("init_batch", 0);
+                if(readIds.empty())
+                    readIds = mybatchgen->getNextReadIds(1000);
 
-                    tpc = std::chrono::system_clock::now();
-    				//fit vector size to actual batch size
-    				if (batchElems[streamIndex].size() != readIds.size()) {
-    					batchElems[streamIndex].resize(readIds.size(),
-    									BatchElem_t(*threadOpts.readStorage,
-    												correctionOptions, max_candidates));
-    				}
+                if(readIds.empty())
+                    continue;
 
-    				for(std::size_t i = 0; i < readIds.size(); i++){
-    					set_read_id(batchElems[streamIndex][i], readIds[i]);
-    					nProcessedQueries++;
-    				}
+                CorrectionTask_t task(readIds.back());
+                readIds.pop_back();
 
-    				for(auto& b : batchElems[streamIndex]){
-    					lock(b.readId);
-    					if ((*threadOpts.readIsCorrectedVector)[b.readId] == 0) {
-    						(*threadOpts.readIsCorrectedVector)[b.readId] = 1;
-    					}else{
-    						b.active = false;
-    						nProcessedQueries--;
-    					}
-    					unlock(b.readId);
-    				}
+                bool ok = false;
+                lock(task.readId);
+                if ((*transFuncData.readIsCorrectedVector)[task.readId] == 0) {
+                    (*transFuncData.readIsCorrectedVector)[task.readId] = 1;
+                    ok = true;
+                }else{
+                }
+                unlock(task.readId);
 
-                    tpd = std::chrono::system_clock::now();
-                    initIdTimeTotal += tpd - tpc;
+                if(!ok)
+                    continue; //already corrected
 
-                    POP_RANGE;
+                const char* subjectptr = gpuReadStorage->fetchSequence_ptr(id);
+                const int subjectLength = gpuReadStorage->fetchSequenceLength(id);
 
+                task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)subjectptr, subjectLength);
+                task.candidate_read_ids = *threadOpts.minhasher->getCandidates(task.subject_string, max_candidates);
 
-                    PUSH_RANGE("find_candidates", 1);
+                //remove our own read id from candidate list. candidate_read_ids is sorted.
+                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
+                    task.candidate_read_ids.erase(readIdPos);
 
+                std::size_t myNumCandidates = task.candidate_read_ids.size();
 
-    				tpa = std::chrono::system_clock::now();
-
-    				for(auto& b : batchElems[streamIndex]){
+                if(myNumCandidates == 0){
+                    continue; //no candidates to use for correction
+                }
 
 
-    					// get query data, determine candidates via minhashing, get candidate data
-    					if(b.active){
-    						findCandidates(b, [&, this](const std::string& sequencestring){
-    							return threadOpts.minhasher->getCandidates(sequencestring, max_candidates);
-    						});
+                std::vector<AlignmentResult_t> bestAlignments;
+                std::vector<BestAlignment_t> bestAlignmentFlags;
+                std::vector<ReadId_t> bestCandidateReadIds;
+                std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements;
 
-    						//don't correct candidates with more than estimatedAlignmentCountThreshold alignments
-    						if(b.n_candidates > max_candidates)
-    							b.active = false;
-    					}
-    				}
+                bestAlignments.reserve(task.candidate_read_ids.size());
+                bestAlignmentFlags.reserve(task.candidate_read_ids.size());
+                bestCandidateReadIds.reserve(task.candidate_read_ids.size());
+                bestReverseComplements.reserve(task.candidate_read_ids.size());
 
-    				tpb = std::chrono::system_clock::now();
-    				mapMinhashResultsToSequencesTimeTotal += tpb - tpa;
+                //calculate alignments
+                for(const ReadId_t candidateId: task.candidate_read_ids){
+                    const char* candidateptr = gpuReadStorage->fetchSequence_ptr(candidateId);
+                    const int candidateLength = gpuReadStorage->fetchSequenceLength(candidateId);
 
-                    POP_RANGE;
+                    std::unique_ptr<std::uint8_t[]> reverse_complement_candidate = std::make_unique<std::uint8_t[]>(Sequence_t::getNumBytes(candidateLength));
 
-                    PUSH_RANGE("perform_alignments", 3);
+                    Sequence_t::make_reverse_complement(reverse_complement_candidate.get(), (const std::uint8_t*)candidateptr, candidateLength);
 
-    				tpa = std::chrono::system_clock::now();
+                    AlignmentResult_t forwardAlignment =
+                        CPUShiftedHammingDistanceChooser<Sequence_t>::cpu_shifted_hamming_distance(subjectptr,
+                                                            subjectLength,
+                    										candidateptr,
+                    										candidateLength,
+                                                            goodAlignmentProperties.min_overlap,
+                                                            goodAlignmentProperties.maxErrorRate,
+                                                            goodAlignmentProperties.min_overlap_ratio);
 
-    				auto activeBatchElementsEnd = std::stable_partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
+                    AlignmentResult_t reverseComplementAlignment =
+                        CPUShiftedHammingDistanceChooser<Sequence_t>::cpu_shifted_hamming_distance(subjectptr,
+                                                            subjectLength,
+                    										(const char*)reverse_complement_candidate.get(),
+                    										candidateLength,
+                                                            goodAlignmentProperties.min_overlap,
+                                                            goodAlignmentProperties.maxErrorRate,
+                                                            goodAlignmentProperties.min_overlap_ratio);
 
-    				if(std::distance(batchElems[streamIndex].begin(), activeBatchElementsEnd) > 0){
+                    BestAlignment_t bestAlignmentFlag = choose_best_alignment(forwardAlignment,
+                                                                              reverseComplementAlignment,
+                                                                              subjectLength,
+                                                                              candidateLength,
+                                                                              goodAlignmentProperties.min_overlap_ratio,
+                                                                              goodAlignmentProperties.min_overlap,
+                                                                              goodAlignmentProperties.maxErrorRate);
 
-    					std::vector<const Sequence_t**> subjectsbegin;
-    					std::vector<const Sequence_t**> subjectsend;
-    					std::vector<typename std::vector<const Sequence_t*>::iterator> queriesbegin;
-    					std::vector<typename std::vector<const Sequence_t*>::iterator> queriesend;
-                        std::vector<typename std::vector<BestAlignment_t>::iterator> flagsbegin;
-                        std::vector<typename std::vector<BestAlignment_t>::iterator> flagsend;
+                    if(bestAlignmentFlag == BestAlignment_t::Forward){
+                        bestAlignments.emplace_back(forwardAlignment);
+                        bestAlignmentFlags.emplace_back(bestAlignmentFlag);
+                        bestCandidateReadIds.emplace_back(candidateId);
+                        bestReverseComplements.emplace_back(nullptr);
+                    }else if(bestAlignmentFlag == BestAlignment_t::ReverseComplement){
+                        bestAlignments.emplace_back(reverseComplementAlignment);
+                        bestAlignmentFlags.emplace_back(bestAlignmentFlag);
+                        bestCandidateReadIds.emplace_back(candidateId);
+                        bestReverseComplements.emplace_back(std::move(reverse_complement_candidate));
+                    }else{
+                        ; // discard
+                    }
+                }
 
-                        std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsbegin;
-                        std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsend;
-                        std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsbegin;
-                        std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsend;
+                //bin alignments
+                std::array<int, 3> counts({0,0,0});
+                const double mismatchratioBaseFactor = correctionOptions.estimatedErrorrate * 1.0;
+
+                for(const auto& alignment : bestAlignments){
+                    const double mismatchratio = double(alignment.nOps) / double(alignment.overlap);
+
+                    if (mismatchratio < 2 * mismatchratioBaseFactor) {
+                        counts[0] += 1;
+                    }
+                    if (mismatchratio < 3 * mismatchratioBaseFactor) {
+                        counts[1] += 1;
+                    }
+                    if (mismatchratio < 4 * mismatchratioBaseFactor) {
+                        counts[2] += 1;
+                    }
+                }
+
+                if(!std::any_of(counts.begin(), counts.end(), [](auto c){return c > 0;}))
+                    continue; //no good alignments
+
+                const double goodAlignmentsCountThreshold = correctionOptions.estimatedCoverage * correctionOptions.m_coverage;
+                double mismatchratioThreshold = 0;
+                if (counts[0] >= goodAlignmentsCountThreshold) {
+                    mismatchratioThreshold = 2 * mismatchratioBaseFactor;
+                } else if (counts[1] >= goodAlignmentsCountThreshold) {
+                    mismatchratioThreshold = 3 * mismatchratioBaseFactor;
+                } else if (counts[2] >= goodAlignmentsCountThreshold) {
+                    mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+                } else {
+                    continue;  //no correction possible
+                }
+
+                //filter alignments
+                std::size_t newsize = 0;
+                for(std::size_t i = 0; i < bestAlignments.size(); i++){
+                    auto& alignment = bestAlignments[i];
+                    const double mismatchratio = double(alignment.nOps) / double(alignment.overlap);
+                    const bool notremoved = mismatchratio < mismatchratioThreshold;
+
+                    if(notremoved){
+                        bestAlignments[newsize] = bestAlignments[i];
+                        bestAlignmentFlags[newsize] = bestAlignmentFlags[i];
+                        bestCandidateReadIds[newsize] = bestCandidateReadIds[i];
+
+                        ++newsize;
+                    }
+                }
+
+                bestAlignments.resize(newsize);
+                bestAlignmentFlags.resize(newsize);
+                bestCandidateReadIds.resize(newsize);
+
+                std::vector<int> bestCandidateLengths();
+                bestCandidateLengths.reserve(newsize);
+                for(const ReadId_t readId : bestCandidateReadIds)
+                    bestCandidateLengths.emplace_back(gpuReadStorage->fetchSequenceLength(readId));
+
+                //build multiple sequence alignment
+
+                multipleSequenceAlignment.init(subjectLength,
+                                                bestCandidateLengths,
+                                                bestAlignmentFlags,
+                                                bestAlignments);
+
+                const std::string* subjectQualityPtr = useQualityScores ? gpuReadStorage->fetchQuality_ptr(task.readId) : nullptr;
+
+                multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
+                    return qscore_to_weight[(unsigned char)(*subjectQualityPtr)[i]];
+                });
+
+                const float desiredAlignmentMaxErrorRate = goodAlignmentProperties.maxErrorRate;
+
+                for(std::size_t i = 0; i < bestAlignments.size(); i++){
+
+                    const char* candidateSequencePtr;
+
+                    if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
+                        candidateSequencePtr = (const char*)bestReverseComplements[i].get();
+                    }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
+                        candidateSequencePtr = gpuReadStorage->fetchSequence_ptr(bestCandidateReadIds[i]);
+                    }else{
+                        assert(false);
+                    }
+
+                    const int length = bestCandidateLengths[i];
+                    const std::string candidateSequence = Sequence_t::Impl_t::toString((const std::uint8_t*)candidateSequencePtr, length);
+                    const std::string* candidateQualityPtr = useQualityScores ? gpuReadStorage->fetchQuality_ptr(bestCandidateReadIds[i]) : nullptr;
+
+                    const float defaultweight = 1.0 - std::sqrtf(bestAlignments[i].nOps
+                                                                / (bestAlignments[i].overlap
+                                                                    * desiredAlignmentMaxErrorRate));
+
+                    if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
+                        multipleSequenceAlignment.insertCandidate(candidateSequence, [&](int i){
+                            return qscore_to_weight[(unsigned char)(*candidateQualityPtr)[length - 1 - i]] * defaultweight;
+                        });
+                    }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
+                        multipleSequenceAlignment.insertCandidate(candidateSequence, [&](int i){
+                            return qscore_to_weight[(unsigned char)(*candidateQualityPtr)[i]] * defaultweight;
+                        });
+                    }else{
+                        assert(false);
+                    }
+
+                }
 
 
-    					std::vector<int> queriesPerSubject;
-
-    					subjectsbegin.reserve(batchElems[streamIndex].size());
-    					subjectsend.reserve(batchElems[streamIndex].size());
-    					queriesbegin.reserve(batchElems[streamIndex].size());
-    					queriesend.reserve(batchElems[streamIndex].size());
-    					alignmentsbegin.reserve(batchElems[streamIndex].size());
-    					alignmentsend.reserve(batchElems[streamIndex].size());
-                        flagsbegin.reserve(batchElems[streamIndex].size());
-    					flagsend.reserve(batchElems[streamIndex].size());
-                        bestSequenceStringsbegin.reserve(batchElems[streamIndex].size());
-                        bestSequenceStringsend.reserve(batchElems[streamIndex].size());
-    					queriesPerSubject.reserve(batchElems[streamIndex].size());
-
-    					//for(auto& b : batchElems[streamIndex]){
-    					for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
-    						auto& b = *it;
-    				        auto& flags = b.bestAlignmentFlags;
-    				        auto& alignments = b.alignments;
-                            auto& strings = b.bestSequenceStrings;
-
-    						subjectsbegin.emplace_back(&b.fwdSequence);
-    						subjectsend.emplace_back(&b.fwdSequence + 1);
-    						queriesbegin.emplace_back(b.fwdSequences.begin());
-    						queriesend.emplace_back(b.fwdSequences.end());
-    						alignmentsbegin.emplace_back(alignments.begin());
-    						alignmentsend.emplace_back(alignments.end());
-    		                flagsbegin.emplace_back(flags.begin());
-    						flagsend.emplace_back(flags.end());
-                            bestSequenceStringsbegin.emplace_back(strings.begin());
-        					bestSequenceStringsend.emplace_back(strings.end());
-    						queriesPerSubject.emplace_back(b.fwdSequences.size());
-    					}
-
-    				    AlignmentDevice device = AlignmentDevice::None;
-    					if(indels){
-    						device = semi_global_alignment_canonical_batched_async<Sequence_t>(sgahandles[streamIndex],
-    														subjectsbegin,
-    														subjectsend,
-    														queriesbegin,
-    														queriesend,
-    														alignmentsbegin,
-    														alignmentsend,
-    														flagsbegin,
-    														flagsend,
-                                                            bestSequenceStringsbegin,
-                                                            bestSequenceStringsend,
-    														queriesPerSubject,
-    														goodAlignmentProperties.min_overlap,
-    														goodAlignmentProperties.maxErrorRate,
-    														goodAlignmentProperties.min_overlap_ratio,
-    														alignmentOptions.alignmentscore_match,
-    														alignmentOptions.alignmentscore_sub,
-    														alignmentOptions.alignmentscore_ins,
-    														alignmentOptions.alignmentscore_del,
-    														canUseGpu);
-    					}else{
-    						device = shifted_hamming_distance_canonical_batched_async<Sequence_t>(shdhandles[streamIndex],
-    														subjectsbegin,
-    														subjectsend,
-    														queriesbegin,
-    														queriesend,
-    														alignmentsbegin,
-    														alignmentsend,
-    														flagsbegin,
-    														flagsend,
-                                                            bestSequenceStringsbegin,
-                                                            bestSequenceStringsend,
-    														queriesPerSubject,
-    														goodAlignmentProperties.min_overlap,
-    														goodAlignmentProperties.maxErrorRate,
-    														goodAlignmentProperties.min_overlap_ratio,
-    														canUseGpu);
-    					}
-
-    					if(device == AlignmentDevice::CPU)
-    						cpuAlignments++;
-    					else if (device == AlignmentDevice::GPU)
-    						gpuAlignments++;
-
-    				}
-
-    				nProcessedReads += readIds.size();
-    				readIds = threadOpts.batchGen->getNextReadIds();
-
-    				tpb = std::chrono::system_clock::now();
-    				getAlignmentsTimeTotal += tpb - tpa;
-
-                    POP_RANGE;
-    			}
 
 
-    #if 1
-
-    			for(int streamIndex = 0; streamIndex < nStreams; ++streamIndex){
 
 
-                    PUSH_RANGE("wait_for_alignments" , 4);
-
-    				tpa = std::chrono::system_clock::now();
-
-    				std::vector<typename std::vector<BestAlignment_t>::iterator> flagsbegin;
-    				std::vector<typename std::vector<BestAlignment_t>::iterator> flagsend;
-
-    				std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsbegin;
-    				std::vector<typename std::vector<AlignmentResult_t>::iterator> alignmentsend;
-
-                    std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsbegin;
-    				std::vector<typename std::vector<std::string>::iterator> bestSequenceStringsend;
-
-    				alignmentsbegin.reserve(batchElems[streamIndex].size());
-    				alignmentsend.reserve(batchElems[streamIndex].size());
-    				flagsbegin.reserve(batchElems[streamIndex].size());
-    				flagsend.reserve(batchElems[streamIndex].size());
-                    bestSequenceStringsbegin.reserve(batchElems[streamIndex].size());
-    				bestSequenceStringsend.reserve(batchElems[streamIndex].size());
-
-    				auto activeBatchElementsEnd = std::stable_partition(batchElems[streamIndex].begin(), batchElems[streamIndex].end(), [](const auto& b){return b.active;});
-
-    				//for(auto& b : batchElems[streamIndex]){
-    				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
-    					auto& b = *it;
-    					auto& flags = b.bestAlignmentFlags;
-
-    					auto& alignments = b.alignments;
-                        auto& strings = b.bestSequenceStrings;
-
-    					alignmentsbegin.emplace_back(alignments.begin());
-    					alignmentsend.emplace_back(alignments.end());
-    					flagsbegin.emplace_back(flags.begin());
-    					flagsend.emplace_back(flags.end());
-                        bestSequenceStringsbegin.emplace_back(strings.begin());
-    					bestSequenceStringsend.emplace_back(strings.end());
-    				}
-
-					shifted_hamming_distance_canonical_get_results_batched(shdhandles[streamIndex],
-											alignmentsbegin,
-											alignmentsend,
-											flagsbegin,
-											flagsend,
-                                            bestSequenceStringsbegin,
-                                            bestSequenceStringsend,
-											canUseGpu);
-
-    				tpb = std::chrono::system_clock::now();
-    				getAlignmentsTimeTotal += tpb - tpa;
-
-                    POP_RANGE;
-    	#if 1
-    				//check quality of alignments
-    				tpc = std::chrono::system_clock::now();
-    				//for(auto& b : batchElems[streamIndex]){
-    				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
-    					auto& b = *it;
-    					if(b.active){
-    						determine_good_alignments(b);
-    					}
-    				}
-
-    				tpd = std::chrono::system_clock::now();
-    				determinegoodalignmentsTime += tpd - tpc;
-
-                    tpc = std::chrono::system_clock::now();
-
-    				for(auto it = batchElems[streamIndex].begin(); it != activeBatchElementsEnd; ++it){
-    					auto& b = *it;
-    					if(b.active && hasEnoughGoodCandidates(b)){
-    						if(b.active){
-    							//move candidates which are used for correction to the front
-    							auto tup = prepare_good_candidates(b);
-                                da += std::get<0>(tup);
-                                db += std::get<1>(tup);
-                                dc += std::get<2>(tup);
-    						}
-    					}else{
-    						//not enough good candidates. cannot correct this read.
-    						b.active = false;
-    					}
-    				}
-
-                    tpd = std::chrono::system_clock::now();
-                    fetchgoodcandidatesTime += tpd - tpc;
 
                     PUSH_RANGE("correct_batch" , 5);
 
