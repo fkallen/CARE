@@ -148,9 +148,13 @@ namespace care{
                         std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
                         //auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
                         //std::int64_t count = std::int64_t(candidateList.size()) - 1;
+
 						std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, handle);
-						if(count > 0)
+                        if(count > 0)
 							--count;
+
+                        //std::int64_t count = minhasher.getNumberOfCandidatesUpperBound(sequencestring);
+
                         candidateMap[count]++;
                     }
 
