@@ -915,6 +915,38 @@ struct Minhasher {
 
 	}
 
+    std::int64_t getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept{
+		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+		// we do not consider reads which are shorter than k
+		if(sequence.size() < unsigned(minparams.k))
+			return 0;
+
+		std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+		bool isForwardStrand[maximum_number_of_maps]{0};
+		//TIMERSTARTCPU(minhashfunc);
+		minhashfunc(sequence, hashValues, isForwardStrand);
+		//TIMERSTOPCPU(minhashfunc);
+
+        std::size_t result = 0;
+
+        for(int map = 0; map < minparams.maps; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+			//TIMERSTARTCPU(get_ranged);
+            const auto entries_range = minhashTables[map]->get_ranged(key);
+            const std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+            result += n_entries;
+			//TIMERSTOPCPU(get_ranged);
+        }
+
+        assert(result >= std::size_t(minparams.maps));
+        result -= minparams.maps; //remove self from each map result
+
+		return std::int64_t(result);
+
+	}
+
 	std::vector<Result_t> getCandidates(const std::string& sequence,
 										std::uint64_t max_number_candidates) const noexcept{
 		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
