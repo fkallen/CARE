@@ -53,20 +53,12 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
     Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
     ReadStorage_t readStorage(correctionOptions.useQualityScores);
 
-    std::string stmp;
-
     std::cout << "loading file and building data structures..." << std::endl;
-
-    //std::cin >> stmp;
-	/*TIMERSTARTCPU(load_and_build);
-    const SequenceFileProperties props = build(fileOptions, runtimeOptions, nReads, readStorage, minhasher);
-	TIMERSTOPCPU(load_and_build);*/
 
     TIMERSTARTCPU(load_and_build);
     const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
     build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
     TIMERSTOPCPU(load_and_build);
-
 
 	std::cout << "----------------------------------------" << std::endl;
     std::cout << "File: " << fileOptions.inputfile << std::endl;
@@ -87,23 +79,9 @@ void correctFile_impl(const MinhashOptions& minhashOptions,
 
     readIsCorrectedVector.resize(props.nReads, 0);
 
-    //std::cin >> stmp;
-
-    /*TIMERSTARTCPU(finalize_datastructures);
-
-	minhasher.resize(props.nReads);
-	readStorage.resize(props.nReads);
-
-    readStorage.transform();
-    minhasher.transform();
-
-	TIMERSTOPCPU(finalize_datastructures);*/
 
     std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
     std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
-
-    //minhasher.saveToFile("hashtabledump.bin");
-    //std::cout << "Saved hashtable to " << "hashtabledump.bin" << std::endl;
 
     correct<Minhasher_t,
 			ReadStorage_t,
@@ -282,7 +260,7 @@ void performCorrection(const cxxopts::ParseResult& args) {
 	}
 
 	std::vector<char> readIsCorrectedVector;
-	std::size_t nLocksForProcessedFlags = correctionOptions.batchsize * runtimeOptions.nCorrectorThreads * 1000;
+	std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
 	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
 	const int iters = 1;
