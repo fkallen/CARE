@@ -2725,7 +2725,7 @@ void correct(const MinhashOptions& minhashOptions,
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
-#if 0
+#if 1
 #if 1
 	using ErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 #else
@@ -2739,7 +2739,7 @@ void correct(const MinhashOptions& minhashOptions,
 
 //#define DO_PROFILE
 
-#if 0
+#if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
                         : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
 #else
@@ -3040,8 +3040,6 @@ void correct(const MinhashOptions& minhashOptions,
 
 	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
-
-
       // initialize qscore-to-weight lookup table
   	init_weights();
 
@@ -3155,6 +3153,7 @@ void correct(const MinhashOptions& minhashOptions,
         cpucorrectorThreads[threadId].run();
     }
 
+
     GPUReadStorage_t gpuReadStorage;
     bool canUseGPUReadStorage = true;
     /*GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(readStorage,
@@ -3176,6 +3175,7 @@ void correct(const MinhashOptions& minhashOptions,
         canUseGPUReadStorage = true;
         std::cout << "Using gpu read storage, type " << GPUReadStorage_t::nameOf(bestGPUReadStorageType) << std::endl;
     }*/
+
     std::cout << "External gpu read storage" << std::endl;
     gpuReadStorage = GPUReadStorage_t::createFrom(readStorage,
                                                 Sequence_t::getNumBytes(sequenceFileProperties.maxSequenceLength),
@@ -3185,9 +3185,7 @@ void correct(const MinhashOptions& minhashOptions,
                                                 deviceIds.size() == 0 ? -1 : deviceIds[0]);
 
     std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
-    //std::cout << "Sequence length Type: " << gpuReadStorage.getNameOfSequenceLengthType() << std::endl;
     std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
-
 
     for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
