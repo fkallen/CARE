@@ -17,6 +17,12 @@ namespace shd{
     	int shift;
     	int nOps; //edit distance / number of operations
     	bool isValid;
+
+        int get_score() const { return score;}
+        int get_overlap() const { return overlap;}
+        int get_shift() const { return shift;}
+        int get_nOps() const { return nOps;}
+        bool get_isValid() const { return isValid;}
     };
 
     template<class Accessor>
