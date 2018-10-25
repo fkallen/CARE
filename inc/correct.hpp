@@ -19,6 +19,9 @@
 #include "bestalignment.hpp"
 
 
+#include "rangegenerator.hpp"
+
+
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -30,6 +33,7 @@
 
 //EXPERIMENTAL
 #include "gpu_only_path/gpu_correction_thread.hpp"
+#include "gpu_only_path/cpu_correction_thread.hpp"
 #include "gpu_only_path/readstorage_gpu.hpp"
 
 
@@ -3019,10 +3023,11 @@ void correct(const MinhashOptions& minhashOptions,
 	using ReadId_t = typename ReadStorage_t::ReadId_t;
     using GPUReadStorage_t = GPUReadStorage<ReadStorage_t>;
 
-	using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
+	//using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
+    using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
 
-	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
-
+	//using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
+    using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
 
 //#define DO_PROFILE
 
@@ -3104,12 +3109,14 @@ void correct(const MinhashOptions& minhashOptions,
     std::vector<BatchGenerator<ReadId_t>> cpubatchgenerators(nCpuThreads);
 	std::vector<care::gpu::BatchGenerator<ReadId_t>> gpubatchgenerators(nGpuThreads);
 
+    cpu::RangeGenerator<ReadId_t> readIdGenerator(sequenceFileProperties.nReads);
+
     std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
 	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
     std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
-	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(sequenceFileProperties.nReads / 7.0) : 0;
+/*	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(sequenceFileProperties.nReads / 7.0) : 0;
 	std::uint64_t ngpuReads = sequenceFileProperties.nReads - ncpuReads;
 	std::uint64_t nReadsPerGPUThread = nGpuThreads > 0 ? SDIV(ngpuReads, nGpuThreads) : 0;
     if(nGpuThreads == 0){
@@ -3118,17 +3125,18 @@ void correct(const MinhashOptions& minhashOptions,
     }
 
 	std::cout << "nCpuThreads: " << nCpuThreads << ", nGpuThreads: " << nGpuThreads << std::endl;
-	std::cout << "ncpuReads: " << ncpuReads << ", ngpuReads: " << ngpuReads << std::endl;
+	std::cout << "ncpuReads: " << ncpuReads << ", ngpuReads: " << ngpuReads << std::endl;*/
 
 	for(int threadId = 0; threadId < nCpuThreads; threadId++){
 
-        cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
+        //cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
         typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = 0;
         threadOpts.canUseGpu = false;
         threadOpts.outputfile = tmpfiles[threadId];
-        threadOpts.batchGen = &cpubatchgenerators[threadId];
+        //threadOpts.batchGen = &cpubatchgenerators[threadId]; //TODO
+        threadOpts.readIdGenerator = &readIdGenerator;
         threadOpts.minhasher = &minhasher;
         threadOpts.readStorage = &readStorage;
         threadOpts.coutLock = &writelock;
@@ -3183,15 +3191,16 @@ void correct(const MinhashOptions& minhashOptions,
 
     for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
-        gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPUThread,
-                                                                            std::min(sequenceFileProperties.nReads,
-                                                                            ncpuReads + (threadId+1) * nReadsPerGPUThread));
+        //gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPUThread,
+        //                                                                    std::min(sequenceFileProperties.nReads,
+        //                                                                    ncpuReads + (threadId+1) * nReadsPerGPUThread));
         typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
         threadOpts.threadId = threadId;
         threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
         threadOpts.canUseGpu = runtimeOptions.canUseGpu;
         threadOpts.outputfile = tmpfiles[nCpuThreads + threadId];
-        threadOpts.batchGen = &gpubatchgenerators[threadId];
+        //threadOpts.batchGen = &gpubatchgenerators[threadId];
+        threadOpts.readIdGenerator = &readIdGenerator;
         threadOpts.minhasher = &minhasher;
         threadOpts.readStorage = &readStorage;
         threadOpts.gpuReadStorage = &gpuReadStorage;
@@ -3229,7 +3238,7 @@ void correct(const MinhashOptions& minhashOptions,
 
         while(showProgress){
             ReadId_t progress = 0;
-            ReadId_t correctorProgress = 0;
+            /*ReadId_t correctorProgress = 0;
 
             for(int i = 0; i < nCpuThreads; i++){
                 correctorProgress += cpucorrectorThreads[i].nProcessedReads;
@@ -3239,11 +3248,12 @@ void correct(const MinhashOptions& minhashOptions,
                 correctorProgress += gpucorrectorThreads[i].nProcessedReads;
             }
 
-            progress = correctorProgress;
+            progress = correctorProgress;*/
+            progress = readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin();
 
             printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
                     ((progress * 1.0 / sequenceFileProperties.nReads) * 100.0),
-                    correctorProgress, sequenceFileProperties.nReads,
+                    progress, sequenceFileProperties.nReads,
                     int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
                     int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
                     int(runtime.count()) % 60);

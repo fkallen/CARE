@@ -231,14 +231,14 @@ struct BatchGenerator{
     template<class minhasher_t,
     		 class readStorage_t,
              class gpureadStorage_t,
-			 class batchgenerator_t>
+			 class readIdGenerator_t>
     struct ErrorCorrectionThreadOnlyGPU{
     using Minhasher_t = minhasher_t;
     	using ReadStorage_t = readStorage_t;
     	using Sequence_t = typename ReadStorage_t::Sequence_t;
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
-		using BatchGenerator_t = batchgenerator_t;
+		using ReadIdGenerator_t = readIdGenerator_t;
         using GPUReadStorage_t = gpureadStorage_t;
 
         static constexpr int primary_stream_index = 0;
@@ -317,7 +317,8 @@ struct BatchGenerator{
 		};
 
 		struct TransitionFunctionData{
-			BatchGenerator<ReadId_t>* mybatchgen;
+			//BatchGenerator<ReadId_t>* mybatchgen;
+            ReadIdGenerator_t* readIdGenerator;
 			double min_overlap_ratio;
 			int min_overlap;
 			double estimatedErrorrate;
@@ -351,7 +352,7 @@ struct BatchGenerator{
 			bool canUseGpu;
 
     		std::string outputfile;
-    		BatchGenerator_t* batchGen;
+    		ReadIdGenerator_t* readIdGenerator;
     		const Minhasher_t* minhasher;
     		const ReadStorage_t* readStorage;
             GPUReadStorage_t* gpuReadStorage;
@@ -405,7 +406,7 @@ struct BatchGenerator{
 
         TaskTimings detailedCorrectionTimings;
 
-		BatchGenerator<ReadId_t> mybatchgen;
+		//BatchGenerator<ReadId_t> mybatchgen;
 		int num_ids_per_add_tasks = 2;
 		int minimum_candidates_per_batch = 1000;
 
@@ -518,11 +519,11 @@ struct BatchGenerator{
 
 			//dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
-			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
+			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.readIdGenerator->empty()){
 
                 const auto* gpuReadStorage = transFuncData.gpuReadStorage;
 				const auto& minhasher = transFuncData.minhasher;
-				const auto readIds = transFuncData.mybatchgen->getNextReadIds(transFuncData.num_ids_per_add_tasks);
+				const auto readIds = transFuncData.readIdGenerator->next_n(transFuncData.num_ids_per_add_tasks);
 
 				for(ReadId_t id : readIds){
 					bool ok = false;
@@ -636,7 +637,7 @@ struct BatchGenerator{
 
             batch.tasks.erase(new_end, batch.tasks.end());*/
 
-			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.mybatchgen->empty()){
+			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.readIdGenerator->empty()){
 				//still more read ids to add
 
 				return BatchState::Unprepared;
@@ -1929,7 +1930,7 @@ struct BatchGenerator{
 			assert(threadOpts.canUseGpu);
 			assert(max_candidates > 0);
 
-			mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
+			//mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
 			makeTransitionFunctionTable();
 
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
@@ -2027,7 +2028,8 @@ struct BatchGenerator{
 
 			TransitionFunctionData transFuncData;
 
-			transFuncData.mybatchgen = &mybatchgen;
+			//transFuncData.mybatchgen = &mybatchgen;
+            transFuncData.readIdGenerator = threadOpts.readIdGenerator;
 			//transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
             //transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
@@ -2090,7 +2092,7 @@ struct BatchGenerator{
 
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
 			while(!stopAndAbort &&
-					!(std::all_of(batches.begin(), batches.end(), [](const auto& batch){return batch.state == BatchState::Finished;}) && mybatchgen.empty())){
+					!(std::all_of(batches.begin(), batches.end(), [](const auto& batch){return batch.state == BatchState::Finished;}) && threadOpts.readIdGenerator->empty())){
 
 				if(stacksize != 0)
 						assert(stacksize == 0);
@@ -2240,14 +2242,14 @@ struct BatchGenerator{
 
 				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
-				if(!mybatchgen.empty()){
+				if(!threadOpts.readIdGenerator->empty()){
 					//there are reads left to correct, so this batch can be reused again
 					mainBatch.reset();
 				}else{
 					mainBatch.state = BatchState::Finished;
 				}
 
-				nProcessedReads = mybatchgen.currentId - mybatchgen.firstId;
+				//nProcessedReads = threadOpts.readIdGenerator->.currentId - mybatchgen.firstId;
 
 				//rotate left to position next batch index 0
 				std::rotate(batches.begin(), batches.begin()+1, batches.end());
