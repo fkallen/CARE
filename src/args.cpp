@@ -101,13 +101,15 @@ namespace args{
         result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
 
+        
+#ifdef __NVCC__
+
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 
         for(const auto& s : deviceIdsStrings){
             result.deviceIds.emplace_back(std::stoi(s));
         }
 
-#ifdef __NVCC__
         int nDevices;
 
         cudaGetDeviceCount(&nDevices); CUERR;
