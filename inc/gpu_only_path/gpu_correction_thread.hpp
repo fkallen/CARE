@@ -752,7 +752,36 @@ struct BatchGenerator{
 					//copy subject length
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
 
-                    //for(const ReadId_t& candidate_read_id : task.candidate_read_ids){
+#if 1
+                    constexpr std::size_t prefetch_distance = 4;
+                    
+                    for(std::size_t i = 0; i < task.candidate_read_ids.size() && i < prefetch_distance; ++i){
+                        const ReadId_t next_candidate_read_id = task.candidate_read_ids[i];
+                        const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                        __builtin_prefetch(nextsequenceptr, 0, 0);
+                    }
+
+                    for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i){
+                        if(i + prefetch_distance < task.candidate_read_ids.size()){
+                            const ReadId_t next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
+                            const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                            __builtin_prefetch(nextsequenceptr, 0, 0);
+                        }
+
+                        const ReadId_t candidate_read_id = task.candidate_read_ids[i];
+                        const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
+                        const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+
+                        std::memcpy(arrays.h_candidate_sequences_data
+                                        + batch.copiedCandidates * arrays.encoded_sequence_pitch,
+                                    sequenceptr,
+                                    Sequence_t::getNumBytes(sequencelength));
+
+                        arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = sequencelength;
+
+                        ++batch.copiedCandidates;
+                    }
+#else
 					//for(auto it = task.candidate_read_ids_begin; it != task.candidate_read_ids_end; ++it){
                     auto it = task.candidate_read_ids_begin;
                     while(it != task.candidate_read_ids_end){
@@ -775,7 +804,7 @@ struct BatchGenerator{
 
 						++batch.copiedCandidates;
                     }
-
+#endif
 					//update prefix sum
 #if 0
 					arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
