@@ -753,8 +753,16 @@ struct BatchGenerator{
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
 
                     //for(const ReadId_t& candidate_read_id : task.candidate_read_ids){
-					for(auto it = task.candidate_read_ids_begin; it != task.candidate_read_ids_end; ++it){
-						ReadId_t candidate_read_id = *it;
+					//for(auto it = task.candidate_read_ids_begin; it != task.candidate_read_ids_end; ++it){
+                    auto it = task.candidate_read_ids_begin;
+                    while(it != task.candidate_read_ids_end){
+						const ReadId_t candidate_read_id = *it;
+                        ++it;
+                        if(it != task.candidate_read_ids_end){
+                            const ReadId_t next_candidate_read_id = *it;
+                            const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                            __builtin_prefetch(nextsequenceptr, 0, 0);
+                        }
                         const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
@@ -1091,7 +1099,23 @@ struct BatchGenerator{
     					const int* my_indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[batch.copiedTasks];
     					const int candidatesOfPreviousTasks = dataArrays.h_candidates_per_subject_prefixsum[batch.copiedTasks];
 
+                        constexpr int prefetch_distance = 4;
+
+                        for(int i = 0; i < my_num_indices && i < prefetch_distance; ++i){
+                            const int next_candidate_index = my_indices[i];
+                            const int next_local_candidate_index = next_candidate_index - candidatesOfPreviousTasks;
+                            const std::string* next_qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
+                            __builtin_prefetch(next_qual->c_str(), 0, 0);
+                        }
+
+
     					for(int i = 0; i < my_num_indices; ++i){
+                            if(i+prefetch_distance < my_num_indices){
+                                const int next_candidate_index = my_indices[i+prefetch_distance];
+        						const int next_local_candidate_index = next_candidate_index - candidatesOfPreviousTasks;
+                                const std::string* next_qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
+                                __builtin_prefetch(next_qual->c_str(), 0, 0);
+                            }
     						const int candidate_index = my_indices[i];
     						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
                             //const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids[local_candidate_index]);
