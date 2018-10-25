@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <array>
 #include <fstream>
+#include <cassert>
 
 #ifdef __NVCC__
 #include <thrust/host_vector.h>
