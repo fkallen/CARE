@@ -722,6 +722,16 @@ struct ReadStorageMinMemory{
        throw std::runtime_error("not supported");
    }
 
+   const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
+       auto ptr = fetchSequence_ptr(readNumber);
+       return (const char*)ptr->begin();
+   }
+
+   int fetchSequenceLength(ReadId_t readNumber) const{
+       auto ptr = fetchSequence_ptr(readNumber);
+       return ptr->length();
+   }
+
    void transform(){}
 
 };

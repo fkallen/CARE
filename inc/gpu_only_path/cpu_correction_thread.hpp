@@ -238,7 +238,7 @@ namespace cpu{
     		while(!stopAndAbort && !(threadOpts.readIdGenerator->empty() && readIds.empty())){
 
                 if(readIds.empty())
-                    readIds = threadOpts.readIdGenerator->next_n(1000);
+                    readIds = threadOpts.readIdGenerator->next_n(100);
 
                 if(readIds.empty())
                     continue;
@@ -258,8 +258,8 @@ namespace cpu{
                 if(!ok)
                     continue; //already corrected
 
-                const char* subjectptr = (const char*)threadOpts.readStorage->fetchSequence_ptr(task.readId)->begin();
-                const int subjectLength = 0;//threadOpts.readStorage->fetchSequenceLength(task.readId); //TODO
+                const char* subjectptr = threadOpts.readStorage->fetchSequenceData_ptr(task.readId);
+                const int subjectLength = threadOpts.readStorage->fetchSequenceLength(task.readId);
 
                 task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)subjectptr, subjectLength);
                 task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, max_candidates);
@@ -288,8 +288,8 @@ namespace cpu{
 
                 //calculate alignments
                 for(const ReadId_t candidateId: task.candidate_read_ids){
-                    const char* candidateptr = nullptr;//threadOpts.readStorage->fetchSequence_ptr(candidateId); //TODO
-                    const int candidateLength = 0;//threadOpts.readStorage->fetchSequenceLength(candidateId); //TODO
+                    const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
+                    const int candidateLength = threadOpts.readStorage->fetchSequenceLength(candidateId);
 
                     std::unique_ptr<std::uint8_t[]> reverse_complement_candidate = std::make_unique<std::uint8_t[]>(Sequence_t::getNumBytes(candidateLength));
 
@@ -380,6 +380,8 @@ namespace cpu{
                         bestAlignments[newsize] = bestAlignments[i];
                         bestAlignmentFlags[newsize] = bestAlignmentFlags[i];
                         bestCandidateReadIds[newsize] = bestCandidateReadIds[i];
+                        if(newsize != i)
+                            bestReverseComplements[newsize] = std::move(bestReverseComplements[i]);
 
                         ++newsize;
                     }
@@ -388,11 +390,12 @@ namespace cpu{
                 bestAlignments.resize(newsize);
                 bestAlignmentFlags.resize(newsize);
                 bestCandidateReadIds.resize(newsize);
+                bestReverseComplements.resize(newsize);
 
                 std::vector<int> bestCandidateLengths;
                 bestCandidateLengths.reserve(newsize);
                 for(const ReadId_t readId : bestCandidateReadIds)
-                    bestCandidateLengths.emplace_back(0);//threadOpts.readStorage->fetchSequenceLength(readId)); //TODO
+                    bestCandidateLengths.emplace_back(threadOpts.readStorage->fetchSequenceLength(readId));
 
                 //build multiple sequence alignment
 
@@ -418,7 +421,7 @@ namespace cpu{
                     if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
                         candidateSequencePtr = (const char*)bestReverseComplements[i].get();
                     }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
-                        candidateSequencePtr = nullptr;//threadOpts.readStorage->fetchSequence_ptr(bestCandidateReadIds[i]); //TODO
+                        candidateSequencePtr = threadOpts.readStorage->fetchSequenceData_ptr(bestCandidateReadIds[i]);
                     }else{
                         assert(false);
                     }
@@ -500,6 +503,9 @@ namespace cpu{
     		} // end batch processing
 
             featurestream.flush();
+            outputstream.flush();
+
+            std::cout << "CPU worker finished" << std::endl;            
     	}
     };
 

@@ -536,7 +536,7 @@ struct BatchGenerator{
 					transFuncData.unlock(id);
 
 					if(ok){
-                        const char* sequenceptr = gpuReadStorage->fetchSequence_ptr(id);
+                        const char* sequenceptr = gpuReadStorage->fetchSequenceData_ptr(id);
                         const int sequencelength = gpuReadStorage->fetchSequenceLength(id);
 
 						//batch.tasks.emplace_back(id);
@@ -743,7 +743,7 @@ struct BatchGenerator{
 #endif
 				}else{
 					//copy subject data
-                    const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequence_ptr(task.readId);
+                    const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(task.readId);
                     const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.readId);
 					std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
                                 sequenceptr,
@@ -755,7 +755,7 @@ struct BatchGenerator{
                     //for(const ReadId_t& candidate_read_id : task.candidate_read_ids){
 					for(auto it = task.candidate_read_ids_begin; it != task.candidate_read_ids_end; ++it){
 						ReadId_t candidate_read_id = *it;
-                        const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequence_ptr(candidate_read_id);
+                        const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
                         std::memcpy(arrays.h_candidate_sequences_data
@@ -2270,7 +2270,7 @@ struct BatchGenerator{
             outputstream.flush();
             featurestream.flush();
 
-			std::cout << "new gpu thread finished" << std::endl;
+			std::cout << "GPU worker (device " << threadOpts.deviceId << ") finished" << std::endl;
 
     	#if 0
     		{

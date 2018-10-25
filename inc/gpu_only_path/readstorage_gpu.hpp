@@ -501,7 +501,7 @@ struct GPUReadStorage{
     }
 
 
-    const char* fetchSequence_ptr(ReadId_t readNumber) const{
+    const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
         const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
 		return (const char*)sequence_ptr->begin();
 	}
