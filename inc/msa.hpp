@@ -11,6 +11,7 @@
 #include <functional>
 #include <algorithm>
 #include <array>
+#include <iostream>
 
 namespace care{
 namespace cpu{
@@ -145,7 +146,7 @@ public:
     void insert(int row, int column, const std::string& sequence, GetQualityWeight getQualityWeight){
         assert(row < nRows);
         assert(column < nColumns);
-        assert(column + int(sequence.length()) < nColumns);
+        assert(column + int(sequence.length()) <= nColumns);
 
         std::copy(sequence.begin(), sequence.end(), multiple_sequence_alignment.begin() + row * nColumns + column);
 
