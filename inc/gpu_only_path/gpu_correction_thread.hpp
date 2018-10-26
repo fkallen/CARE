@@ -319,6 +319,7 @@ struct BatchGenerator{
 		struct TransitionFunctionData{
 			//BatchGenerator<ReadId_t>* mybatchgen;
             ReadIdGenerator_t* readIdGenerator;
+            std::vector<ReadId_t>* readIdBuffer;
 			double min_overlap_ratio;
 			int min_overlap;
 			double estimatedErrorrate;
@@ -509,6 +510,8 @@ struct BatchGenerator{
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
+            std::vector<ReadId_t>* readIdBuffer = transFuncData.readIdBuffer;
+
 			auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
 				auto copybegin = position_to_erase;
 				std::advance(copybegin, 1);
@@ -519,111 +522,110 @@ struct BatchGenerator{
 
 			//dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
-			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.readIdGenerator->empty()){
+			while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
+                    && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())){
 
                 const auto* gpuReadStorage = transFuncData.gpuReadStorage;
 				const auto& minhasher = transFuncData.minhasher;
-				const auto readIds = transFuncData.readIdGenerator->next_n(transFuncData.num_ids_per_add_tasks);
-
-				for(ReadId_t id : readIds){
-					bool ok = false;
-					transFuncData.lock(id);
-					if ((*transFuncData.readIsCorrectedVector)[id] == 0) {
-						(*transFuncData.readIsCorrectedVector)[id] = 1;
-						ok = true;
-					}else{
-					}
-					transFuncData.unlock(id);
-
-					if(ok){
-                        const char* sequenceptr = gpuReadStorage->fetchSequenceData_ptr(id);
-                        const int sequencelength = gpuReadStorage->fetchSequenceLength(id);
-
-						//batch.tasks.emplace_back(id);
-
-						CorrectionTask_t task(id);
-
-						//auto& task = batch.tasks.back();
-
-						task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
-						task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
-
-						//task.candidate_read_ids.resize(transFuncData.max_candidates);
-						//auto vecend = minhasher->getCandidates(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.subject_string, transFuncData.max_candidates);
-						//task.candidate_read_ids.resize(std::distance(task.candidate_read_ids.begin(), vecend));
-
-						task.candidate_read_ids_begin = &(task.candidate_read_ids[0]);
-						task.candidate_read_ids_end = &(task.candidate_read_ids[task.candidate_read_ids.size()]);
 
 
-						//auto idsend = minhasher->getCandidates(dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates, dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates + transFuncData.max_candidates, task.subject_string, transFuncData.max_candidates);
+                if(readIdBuffer->empty())
+                    *readIdBuffer = transFuncData.readIdGenerator->next_n(1000);
 
-						//task.candidate_read_ids_begin = dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates; //&(task.candidate_read_ids[0]);
-						//task.candidate_read_ids_end = idsend; //&(task.candidate_read_ids[task.candidate_read_ids.size()]);
+                if(readIdBuffer->empty())
+                    continue;
 
-						//task.candidate_read_ids.resize(std::distance(dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates, idsend));
-						//std::copy(dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates, dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates + transFuncData.max_candidates, task.candidate_read_ids.begin());
+                ReadId_t id = readIdBuffer->back();
+                readIdBuffer->pop_back();
+
+				bool ok = false;
+				transFuncData.lock(id);
+				if ((*transFuncData.readIsCorrectedVector)[id] == 0) {
+					(*transFuncData.readIsCorrectedVector)[id] = 1;
+					ok = true;
+				}else{
+				}
+				transFuncData.unlock(id);
+
+				if(ok){
+                    const char* sequenceptr = gpuReadStorage->fetchSequenceData_ptr(id);
+                    const int sequencelength = gpuReadStorage->fetchSequenceLength(id);
+
+					//batch.tasks.emplace_back(id);
+
+					CorrectionTask_t task(id);
+
+					//auto& task = batch.tasks.back();
+
+					task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
+					task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
+
+					//task.candidate_read_ids.resize(transFuncData.max_candidates);
+					//auto vecend = minhasher->getCandidates(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.subject_string, transFuncData.max_candidates);
+					//task.candidate_read_ids.resize(std::distance(task.candidate_read_ids.begin(), vecend));
+
+					task.candidate_read_ids_begin = &(task.candidate_read_ids[0]);
+					task.candidate_read_ids_end = &(task.candidate_read_ids[task.candidate_read_ids.size()]);
+
+
+					//auto idsend = minhasher->getCandidates(dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates, dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates + transFuncData.max_candidates, task.subject_string, transFuncData.max_candidates);
+
+					//task.candidate_read_ids_begin = dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates; //&(task.candidate_read_ids[0]);
+					//task.candidate_read_ids_end = idsend; //&(task.candidate_read_ids[task.candidate_read_ids.size()]);
+
+					//task.candidate_read_ids.resize(std::distance(dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates, idsend));
+					//std::copy(dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates, dataArrays.h_candidate_read_ids + batch.initialNumberOfCandidates + transFuncData.max_candidates, task.candidate_read_ids.begin());
 
 
 
-						//remove self from candidates
-						//read ids are sorted
+					//remove self from candidates
+					//read ids are sorted
 #if 0
-						auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-						if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
-							task.candidate_read_ids.erase(readIdPos);
+					auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+					if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
+						task.candidate_read_ids.erase(readIdPos);
 
-						if(task.candidate_read_ids.size() == 0){
-							//no need for further processing without candidates
-							task.active = false;
-						}
+					if(task.candidate_read_ids.size() == 0){
+						//no need for further processing without candidates
+						task.active = false;
+					}
 
-						batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
-						assert(!task.active || batch.initialNumberOfCandidates > 0);
-                        assert(!task.active || int(task.candidate_read_ids.size()) > 0);
+					batch.initialNumberOfCandidates += int(task.candidate_read_ids.size());
+					assert(!task.active || batch.initialNumberOfCandidates > 0);
+                    assert(!task.active || int(task.candidate_read_ids.size()) > 0);
 #else
 
 
-						auto readIdPos = std::lower_bound(task.candidate_read_ids_begin, task.candidate_read_ids_end, task.readId);
+					auto readIdPos = std::lower_bound(task.candidate_read_ids_begin, task.candidate_read_ids_end, task.readId);
 
-						if(readIdPos != task.candidate_read_ids_end && *readIdPos == task.readId){
+					if(readIdPos != task.candidate_read_ids_end && *readIdPos == task.readId){
 
-							task.candidate_read_ids_end = erase_from_range(task.candidate_read_ids_begin, task.candidate_read_ids_end, readIdPos);
-							task.candidate_read_ids.resize(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
-						}
+						task.candidate_read_ids_end = erase_from_range(task.candidate_read_ids_begin, task.candidate_read_ids_end, readIdPos);
+						task.candidate_read_ids.resize(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+					}
 
-						//assert(task.candidate_read_ids_begin == &(task.candidate_read_ids[0]));
-						//assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
+					//assert(task.candidate_read_ids_begin == &(task.candidate_read_ids[0]));
+					//assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
 
-						std::size_t myNumCandidates = std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
-						//std::cout << myNumCandidates << " ids:" << std::endl;
-						//for(std::size_t i = 0; i < myNumCandidates; i++)
-						//	std::cout << task.candidate_read_ids_begin[i] << " ";
-						//std::cout << std::endl;
-						//assert(myNumCandidates == task.candidate_read_ids.size());
-						/*if(myNumCandidates == 0){
-							//no need for further processing without candidates
-							task.active = false;
-						}
+					std::size_t myNumCandidates = std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
 
-						batch.initialNumberOfCandidates += int(myNumCandidates);*/
+                    assert(myNumCandidates <= std::size_t(transFuncData.max_candidates));
 
-						if(myNumCandidates > 0){
-							batch.tasks.emplace_back(task);
-							batch.initialNumberOfCandidates += int(myNumCandidates);
+					if(myNumCandidates > 0){
+						batch.tasks.emplace_back(task);
+						batch.initialNumberOfCandidates += int(myNumCandidates);
 
-							//dataArrays.h_candidates_per_subject_prefixsum[batch.tasks.size()]
-							//		= dataArrays.h_candidates_per_subject_prefixsum[batch.tasks.size() - 1]
-							//			+ int(myNumCandidates);
-						}else{
-							task.active = false;
-						}
+						//dataArrays.h_candidates_per_subject_prefixsum[batch.tasks.size()]
+						//		= dataArrays.h_candidates_per_subject_prefixsum[batch.tasks.size() - 1]
+						//			+ int(myNumCandidates);
+					}else{
+						task.active = false;
+					}
 
-						assert(!task.active || batch.initialNumberOfCandidates > 0);
-                        assert(!task.active || int(myNumCandidates) > 0);
+					assert(!task.active || batch.initialNumberOfCandidates > 0);
+                    assert(!task.active || int(myNumCandidates) > 0);
 #endif
 
-					}
 				}
 
                 //only perform one iteration if pausable
@@ -631,13 +633,9 @@ struct BatchGenerator{
                     break;
 			}
 
-            /*auto new_end = std::remove_if(batch.tasks.begin(),
-                            batch.tasks.end(),
-                            [](const auto& t){return !t.active;});
 
-            batch.tasks.erase(new_end, batch.tasks.end());*/
-
-			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch && !transFuncData.readIdGenerator->empty()){
+			if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
+                            && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())){
 				//still more read ids to add
 
 				return BatchState::Unprepared;
@@ -646,6 +644,8 @@ struct BatchGenerator{
 				if(batch.initialNumberOfCandidates == 0){
 					return BatchState::Aborted;
 				}else{
+
+                    assert(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch + transFuncData.max_candidates);
 
 					//allocate data arrays
 
@@ -733,6 +733,7 @@ struct BatchGenerator{
 					//assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
 
                     const std::size_t h_candidate_read_ids_size = arrays.memCandidateIds / sizeof(ReadId_t);
+
                     assert(std::size_t(batch.copiedCandidates) + std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end) <= h_candidate_read_ids_size);
 
 					std::copy(task.candidate_read_ids_begin, task.candidate_read_ids_end, arrays.h_candidate_read_ids + batch.copiedCandidates);
@@ -2098,10 +2099,13 @@ struct BatchGenerator{
 			std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
 #endif
 
+            std::vector<ReadId_t> readIdBuffer;
+
 			TransitionFunctionData transFuncData;
 
 			//transFuncData.mybatchgen = &mybatchgen;
             transFuncData.readIdGenerator = threadOpts.readIdGenerator;
+            transFuncData.readIdBuffer = &readIdBuffer;
 			//transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
             //transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
@@ -2164,7 +2168,9 @@ struct BatchGenerator{
 
     		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
 			while(!stopAndAbort &&
-					!(std::all_of(batches.begin(), batches.end(), [](const auto& batch){return batch.state == BatchState::Finished;}) && threadOpts.readIdGenerator->empty())){
+					!(std::all_of(batches.begin(), batches.end(), [](const auto& batch){return batch.state == BatchState::Finished;})
+                        && readIdBuffer.empty()
+                        && threadOpts.readIdGenerator->empty())){
 
 				if(stacksize != 0)
 						assert(stacksize == 0);
