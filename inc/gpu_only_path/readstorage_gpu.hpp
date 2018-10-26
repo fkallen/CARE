@@ -158,7 +158,7 @@ struct GPUReadStorage{
         gpurs.cpu_read_storage = &cpurs;
 
         //return gpurs;
-	canUseManagedMemory = false;
+        canUseManagedMemory = false;
 
 		const std::uint64_t requiredSequenceMem = max_sequence_bytes * nSequences + sizeof(Length_t) * nSequences; //sequences and sequence lengths
         //const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
@@ -266,6 +266,7 @@ struct GPUReadStorage{
 			if(isCapableOfUsingManagedMemory && canUseManagedMemory){
 				const std::uint64_t requiredSequenceMem = max_sequence_bytes * nSequences;
 				const std::uint64_t requiredSequenceLengthsMem = sizeof(Length_t) * nSequences;
+#if 1
 				cudaMallocManaged(&gpurs.d_sequence_data, requiredSequenceMem); CUERR;
 				cudaMallocManaged(&gpurs.d_sequence_lengths, requiredSequenceLengthsMem); CUERR;
 
@@ -278,6 +279,12 @@ struct GPUReadStorage{
 								requiredSequenceLengthsMem,
 								cudaMemAdviseSetReadMostly,
 								0); CUERR; //last argument is ignored for cudaMemAdviseSetReadMostly
+#else
+
+                cudaMallocHost(&gpurs.d_sequence_data, requiredSequenceMem); CUERR;
+                cudaMallocHost(&gpurs.d_sequence_lengths, requiredSequenceLengthsMem); CUERR;
+
+#endif
 
 				for(ReadId_t readId = 0; readId < nSequences; ++readId){
 					const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
