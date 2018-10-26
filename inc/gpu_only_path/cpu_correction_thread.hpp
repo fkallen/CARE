@@ -10,6 +10,8 @@
 #include "../msa.hpp"
 #include "../qualityscoreweights.hpp"
 #include "../rangegenerator.hpp"
+#include "../featureextractor.hpp"
+#include "../inc/forestclassifier.hpp"
 
 #include <array>
 #include <chrono>
@@ -452,60 +454,139 @@ namespace cpu{
 
                 multipleSequenceAlignment.find_consensus();
 
-                //get corrected subject and write it to file
-                auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
+                std::vector<MSAFeature> MSAFeatures;
 
-                if(correctionResult.isCorrected){
-                    write_read(task.readId, correctionResult.correctedSequence);
-                    lock(task.readId);
-                    (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
-                    unlock(task.readId);
-                }else{
-                    //make subject available for correction as a candidate
-                    if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
+                if(correctionOptions.extractFeatures || !correctionOptions.classicMode){
+                    MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
+                                                    multipleSequenceAlignment.support.data(),
+                                                    multipleSequenceAlignment.coverage.data(),
+                                                    multipleSequenceAlignment.origCoverages.data(),
+                                                    multipleSequenceAlignment.columnProperties.columnsToCheck,
+                                                    multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
+                                                    multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
+                                                    task.subject_string,
+                                                    multipleSequenceAlignment.kmerlength, 0.0,
+                                                    correctionOptions.estimatedCoverage);
+
+
+                }
+
+                if(correctionOptions.extractFeatures){
+                    for(const auto& msafeature : MSAFeatures){
+                        featurestream << task.readId << '\t' << msafeature.position << '\n';
+                        featurestream << msafeature << '\n';
+                    }
+                }
+
+                if(correctionOptions.classicMode){
+
+                    //get corrected subject and write it to file
+                    auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
+
+                    if(correctionResult.isCorrected){
+                        write_read(task.readId, correctionResult.correctedSequence);
                         lock(task.readId);
-                        if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
-                            (*threadOpts.readIsCorrectedVector)[task.readId] = 0;
-                        }
+                        (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
                         unlock(task.readId);
-                    }
-                }
-
-                //get corrected candidates and write them to file
-                if(correctionOptions.correctCandidates && correctionResult.msaProperties.isHQ){
-                    auto correctedCandidates = multipleSequenceAlignment.getCorrectedCandidates(bestCandidateLengths,
-                                                                        bestAlignments,
-                                                                        correctionOptions.new_columns_to_correct);
-
-                    for(const auto& correctedCandidate : correctedCandidates){
-                        const ReadId_t candidateId = bestCandidateReadIds[correctedCandidate.index];
-                        bool savingIsOk = false;
-                        if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
-                            lock(candidateId);
-                            if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
-                                (*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
-                                savingIsOk = true;
+                    }else{
+                        //make subject available for correction as a candidate
+                        if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
+                            lock(task.readId);
+                            if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
+                                (*threadOpts.readIsCorrectedVector)[task.readId] = 0;
                             }
-                            unlock(candidateId);
-                        }
-                        if (savingIsOk) {
-                            if(bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                                write_read(candidateId, correctedCandidate.sequence);
-                            }else{
-                                const std::string fwd = SequenceString(correctedCandidate.sequence).reverseComplement().toString();
-                                write_read(candidateId, fwd);
-                            }
+                            unlock(task.readId);
                         }
                     }
-                }
 
+                    //get corrected candidates and write them to file
+                    if(correctionOptions.correctCandidates && correctionResult.msaProperties.isHQ){
+                        auto correctedCandidates = multipleSequenceAlignment.getCorrectedCandidates(bestCandidateLengths,
+                                                                            bestAlignments,
+                                                                            correctionOptions.new_columns_to_correct);
+
+                        for(const auto& correctedCandidate : correctedCandidates){
+                            const ReadId_t candidateId = bestCandidateReadIds[correctedCandidate.index];
+                            bool savingIsOk = false;
+                            if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
+                                lock(candidateId);
+                                if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
+                                    (*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
+                                    savingIsOk = true;
+                                }
+                                unlock(candidateId);
+                            }
+                            if (savingIsOk) {
+                                if(bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                                    write_read(candidateId, correctedCandidate.sequence);
+                                }else{
+                                    const std::string fwd = SequenceString(correctedCandidate.sequence).reverseComplement().toString();
+                                    write_read(candidateId, fwd);
+                                }
+                            }
+                        }
+                    }
+
+                }else{
+
+                    std::string corrected_subject = task.subject_string;
+                    bool isCorrected = false;
+
+                    for(const auto& msafeature : MSAFeatures){
+                        constexpr double maxgini = 0.05;
+                        constexpr double forest_correction_fraction = 0.5;
+
+                        const bool doCorrect = care::forestclassifier::shouldCorrect(
+                                                        //care::forestclassifier::Mode::CombinedAlignCov,
+                                                        //care::forestclassifier::Mode::CombinedDataCov,
+                                                        care::forestclassifier::Mode::Species,
+                                                        msafeature.position_support,
+                                                        msafeature.position_coverage,
+                                                        msafeature.alignment_coverage,
+                                                        msafeature.dataset_coverage,
+                                                        msafeature.min_support,
+                                                        msafeature.min_coverage,
+                                                        msafeature.max_support,
+                                                        msafeature.max_coverage,
+                                                        msafeature.mean_support,
+                                                        msafeature.mean_coverage,
+                                                        msafeature.median_support,
+                                                        msafeature.median_coverage,
+                                                        maxgini,
+                                                        forest_correction_fraction);
+
+                        if(doCorrect){
+                            isCorrected = true;
+
+                            const int globalIndex = multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
+                            corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
+                        }
+                    }
+
+                    if(isCorrected){
+                        write_read(task.readId, corrected_subject);
+                        lock(task.readId);
+                        (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
+                        unlock(task.readId);
+                    }else{
+                        //make subject available for correction as a candidate
+                        if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
+                            lock(task.readId);
+                            if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
+                                (*threadOpts.readIsCorrectedVector)[task.readId] = 0;
+                            }
+                            unlock(task.readId);
+                        }
+                    }
+
+                }
 
     		} // end batch processing
 
             featurestream.flush();
             outputstream.flush();
 
-            std::cout << "CPU worker finished" << std::endl;            
+            std::cout << "CPU worker finished" << std::endl;
     	}
     };
 
