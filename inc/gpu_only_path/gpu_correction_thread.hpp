@@ -2320,7 +2320,7 @@ struct BatchGenerator{
 
 				assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
-				if(!threadOpts.readIdGenerator->empty()){
+				if(!(threadOpts.readIdGenerator->empty() && readIdBuffer.empty())){
 					//there are reads left to correct, so this batch can be reused again
 					mainBatch.reset();
 				}else{
