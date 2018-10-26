@@ -732,6 +732,9 @@ struct BatchGenerator{
 					//assert(task.candidate_read_ids_begin == &(task.candidate_read_ids[0]));
 					//assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
 
+                    const std::size_t h_candidate_read_ids_size = arrays.memCandidateIds / sizeof(ReadId_t);
+                    assert(std::size_t(batch.copiedCandidates) + std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end) <= h_candidate_read_ids_size);
+
 					std::copy(task.candidate_read_ids_begin, task.candidate_read_ids_end, arrays.h_candidate_read_ids + batch.copiedCandidates);
 
                     batch.copiedCandidates += std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
@@ -745,21 +748,27 @@ struct BatchGenerator{
 					//copy subject data
                     const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(task.readId);
                     const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.readId);
+
+                    const std::size_t maxbytes = arrays.memSubjects / sizeof(char);
+                    assert(batch.copiedTasks * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= maxbytes);
+
 					std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
                                 sequenceptr,
-                                sequencelength);
+                                Sequence_t::getNumBytes(sequencelength));
 
 					//copy subject length
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
 
 #if 1
                     constexpr std::size_t prefetch_distance = 4;
-                    
+
                     for(std::size_t i = 0; i < task.candidate_read_ids.size() && i < prefetch_distance; ++i){
                         const ReadId_t next_candidate_read_id = task.candidate_read_ids[i];
                         const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
                         __builtin_prefetch(nextsequenceptr, 0, 0);
                     }
+
+                    const std::size_t candidatesequencedatabytes = arrays.memQueries / sizeof(char);
 
                     for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i){
                         if(i + prefetch_distance < task.candidate_read_ids.size()){
@@ -771,6 +780,8 @@ struct BatchGenerator{
                         const ReadId_t candidate_read_id = task.candidate_read_ids[i];
                         const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+
+                        assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
 
                         std::memcpy(arrays.h_candidate_sequences_data
                                         + batch.copiedCandidates * arrays.encoded_sequence_pitch,
@@ -1111,6 +1122,9 @@ struct BatchGenerator{
 
     				assert(batch.copiedTasks <= int(batch.tasks.size()));
 
+                    const std::size_t maxsubjectqualitychars = dataArrays.n_subjects * dataArrays.quality_pitch;
+                    const std::size_t maxcandidatequalitychars = dataArrays.n_queries * dataArrays.quality_pitch;
+
     				while(batch.copiedTasks < int(batch.tasks.size())){
 
 						const auto& task = batch.tasks[batch.copiedTasks];
@@ -1118,6 +1132,9 @@ struct BatchGenerator{
 
     					//copy subject quality
                         const std::string* subject_quality = gpuReadStorage->fetchQuality_ptr(task.readId);
+
+                        assert(batch.copiedTasks * arrays.quality_pitch + subject_quality->length() <= maxsubjectqualitychars);
+
     					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
     								subject_quality->c_str(),
     								subject_quality->length());
@@ -1149,6 +1166,8 @@ struct BatchGenerator{
     						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
                             //const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids[local_candidate_index]);
 							const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[local_candidate_index]);
+
+                            assert(batch.copiedCandidates * arrays.quality_pitch + qual->length() <= maxcandidatequalitychars);
 
     						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
     									qual->c_str(),
