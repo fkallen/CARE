@@ -986,12 +986,12 @@ struct BatchGenerator{
 
 
             //Determine indices where d_alignment_best_alignment_flags[i] != BestAlignment_t::None. this selects all good alignments
-            select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
+            //select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
 
             //Get number of indices per subject by creating histrogram.
             //The elements d_indices[d_num_indices] to d_indices[n_queries - 1] will be -1.
             //Thus, they will not be accounted for by the histrogram, since the histrogram bins (d_candidates_per_subject_prefixsum) are >= 0.
-            cub::DeviceHistogram::HistogramRange(dataArrays.d_temp_storage,
+            /*cub::DeviceHistogram::HistogramRange(dataArrays.d_temp_storage,
                                                 dataArrays.tmp_storage_allocation_size,
                                                 dataArrays.d_indices,
                                                 dataArrays.d_indices_per_subject,
@@ -1005,7 +1005,7 @@ struct BatchGenerator{
                                             dataArrays.d_indices_per_subject,
                                             dataArrays.d_indices_per_subject_prefixsum,
                                             dataArrays.n_subjects,
-                                            streams[primary_stream_index]); CUERR;
+                                            streams[primary_stream_index]); CUERR;*/
 
             //choose the most appropriate subset of alignments from the good alignments.
             //This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
@@ -1013,9 +1013,11 @@ struct BatchGenerator{
                                     dataArrays.d_alignment_best_alignment_flags,
                                     dataArrays.d_alignment_overlaps,
                                     dataArrays.d_alignment_nOps,
-                                    dataArrays.d_indices,
+                                    //dataArrays.d_indices,
+					cub::CountingInputIterator<int>(0),
                                     dataArrays.d_indices_per_subject,
-                                    dataArrays.d_indices_per_subject_prefixsum,
+                                    //dataArrays.d_indices_per_subject_prefixsum,
+					dataArrays.d_candidates_per_subject_prefixsum,
                                     dataArrays.n_subjects,
                                     dataArrays.n_queries,
                                     dataArrays.d_num_indices,
