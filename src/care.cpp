@@ -17,194 +17,208 @@
 
 namespace filesys = std::experimental::filesystem;
 
+
+#ifdef __NVCC__
+#include "../inc/gpu_only_path/correct.hpp"
+#endif
+
 namespace care{
 
-/*
-    Correct fileOptions.inputfile and save result to fileOptions.outputfile
-*/
-template<class minhasher_t,
-		 class readStorage_t,
-		 bool indels>
-void correctFile_impl(const MinhashOptions& minhashOptions,
-				  const AlignmentOptions& alignmentOptions,
-				  const GoodAlignmentProperties& goodAlignmentProperties,
-				  const CorrectionOptions& correctionOptions,
-				  const RuntimeOptions& runtimeOptions,
-				  const FileOptions& fileOptions,
-				  std::uint64_t nReads,
-				  std::vector<char>& readIsCorrectedVector,
-				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-				  std::size_t nLocksForProcessedFlags,
-				  const std::vector<int>& deviceIds){
-
-	constexpr bool indelAlignment = indels;
-
-	using Minhasher_t = minhasher_t;
-	using ReadStorage_t = readStorage_t;
-    using Sequence_t = typename ReadStorage_t::Sequence_t;
-
-    auto toGB = [](std::size_t bytes){
-        double gb = bytes / 1024. / 1024. / 1024.0;
-        return gb;
+    enum class Mode{
+        CPU,
+        GPU,
     };
 
-    std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
+    template<class minhasher_t,
+    		 class readStorage_t,
+    		 bool indels,
+             class StartCorrectionFunction>
+    void correctFileWithMode_impl(const MinhashOptions& minhashOptions,
+    				  const AlignmentOptions& alignmentOptions,
+    				  const GoodAlignmentProperties& goodAlignmentProperties,
+    				  const CorrectionOptions& correctionOptions,
+    				  const RuntimeOptions& runtimeOptions,
+    				  const FileOptions& fileOptions,
+    				  std::uint64_t nReads,
+    				  std::vector<char>& readIsCorrectedVector,
+    				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+    				  std::size_t nLocksForProcessedFlags,
+    				  StartCorrectionFunction startCorrection){
 
-    Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-    ReadStorage_t readStorage(correctionOptions.useQualityScores);
+    	constexpr bool indelAlignment = indels;
 
-    std::cout << "loading file and building data structures..." << std::endl;
+    	using Minhasher_t = minhasher_t;
+    	using ReadStorage_t = readStorage_t;
+        using Sequence_t = typename ReadStorage_t::Sequence_t;
 
-    TIMERSTARTCPU(load_and_build);
-    const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
-    build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
-    TIMERSTOPCPU(load_and_build);
+        auto toGB = [](std::size_t bytes){
+            double gb = bytes / 1024. / 1024. / 1024.0;
+            return gb;
+        };
 
-	std::cout << "----------------------------------------" << std::endl;
-    std::cout << "File: " << fileOptions.inputfile << std::endl;
-    std::cout << "Reads: " << props.nReads << std::endl;
-    std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
-    std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
-    std::cout << "----------------------------------------" << std::endl;
+        std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
-    if(fileOptions.save_binary_reads_to != ""){
-        readStorage.saveToFile(fileOptions.save_binary_reads_to);
-        std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
-    }
+        Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
+        ReadStorage_t readStorage(correctionOptions.useQualityScores);
 
-    if(fileOptions.save_hashtables_to != ""){
-        minhasher.saveToFile(fileOptions.save_hashtables_to);
-        std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
-    }
+        std::cout << "loading file and building data structures..." << std::endl;
 
-    readIsCorrectedVector.resize(props.nReads, 0);
+        TIMERSTARTCPU(load_and_build);
+        const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
+        build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
+        TIMERSTOPCPU(load_and_build);
 
+    	std::cout << "----------------------------------------" << std::endl;
+        std::cout << "File: " << fileOptions.inputfile << std::endl;
+        std::cout << "Reads: " << props.nReads << std::endl;
+        std::cout << "Minimum sequence length: " << props.minSequenceLength << std::endl;
+        std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
+        std::cout << "----------------------------------------" << std::endl;
 
-    std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
-    std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
-
-    correct<Minhasher_t,
-			ReadStorage_t,
-			indelAlignment>(minhashOptions, alignmentOptions,
-							goodAlignmentProperties, correctionOptions,
-							runtimeOptions, fileOptions, props,
-							minhasher, readStorage,
-							readIsCorrectedVector, locksForProcessedFlags,
-							nLocksForProcessedFlags, deviceIds);
-
-}
-
-void correctFile(const MinhashOptions& minhashOptions,
-				  const AlignmentOptions& alignmentOptions,
-				  const GoodAlignmentProperties& goodAlignmentProperties,
-				  const CorrectionOptions& correctionOptions,
-				  const RuntimeOptions& runtimeOptions,
-				  const FileOptions& fileOptions,
-				  std::uint64_t nReads,
-				  std::vector<char>& readIsCorrectedVector,
-				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-				  std::size_t nLocksForProcessedFlags,
-				  const std::vector<int>& deviceIds){
-
-    using Key_t = std::uint32_t; // asume minhashOptions.k <= 16
-    using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
-
-    using Minhasher_t = Minhasher<Key_t, ReadId_t>;
-
-    if(runtimeOptions.canUseGpu){
-        using NoIndelSequence_t = Sequence2BitHiLo;
-        using IndelSequence_t = Sequence2BitHiLo;
-        using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
-        using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
-
-        if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-    		constexpr bool indels = false;
-
-    		correctFile_impl<Minhasher_t,
-    						NoIndelReadStorage_t,
-    						indels>
-    						(
-    							minhashOptions,
-    							alignmentOptions,
-    							goodAlignmentProperties,
-    							correctionOptions,
-    							runtimeOptions,
-    							fileOptions,
-    							nReads,
-    							readIsCorrectedVector,
-    							locksForProcessedFlags,
-    							nLocksForProcessedFlags,
-    							deviceIds
-    						);
-    	}else{
-    		constexpr bool indels = true;
-
-    		correctFile_impl<Minhasher_t,
-    						IndelReadStorage_t,
-    						indels>
-    						(
-    							minhashOptions,
-    							alignmentOptions,
-    							goodAlignmentProperties,
-    							correctionOptions,
-    							runtimeOptions,
-    							fileOptions,
-    							nReads,
-    							readIsCorrectedVector,
-    							locksForProcessedFlags,
-    							nLocksForProcessedFlags,
-    							deviceIds
-    						);
-    	}
-    }else{
-        using NoIndelSequence_t = Sequence2BitHiLo;
-        using IndelSequence_t = Sequence2BitHiLo;
-        using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
-        using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
-
-        if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-            constexpr bool indels = false;
-
-            correctFile_impl<Minhasher_t,
-                            NoIndelReadStorage_t,
-                            indels>
-                            (
-                                minhashOptions,
-                                alignmentOptions,
-                                goodAlignmentProperties,
-                                correctionOptions,
-                                runtimeOptions,
-                                fileOptions,
-                                nReads,
-                                readIsCorrectedVector,
-                                locksForProcessedFlags,
-                                nLocksForProcessedFlags,
-                                deviceIds
-                            );
-        }else{
-            constexpr bool indels = true;
-
-            correctFile_impl<Minhasher_t,
-                            IndelReadStorage_t,
-                            indels>
-                            (
-                                minhashOptions,
-                                alignmentOptions,
-                                goodAlignmentProperties,
-                                correctionOptions,
-                                runtimeOptions,
-                                fileOptions,
-                                nReads,
-                                readIsCorrectedVector,
-                                locksForProcessedFlags,
-                                nLocksForProcessedFlags,
-                                deviceIds
-                            );
+        if(fileOptions.save_binary_reads_to != ""){
+            readStorage.saveToFile(fileOptions.save_binary_reads_to);
+            std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
         }
+
+        if(fileOptions.save_hashtables_to != ""){
+            minhasher.saveToFile(fileOptions.save_hashtables_to);
+            std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
+        }
+
+        readIsCorrectedVector.resize(props.nReads, 0);
+
+
+        std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
+        std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
+
+
+        startCorrection(minhasher, readStorage, props);
+
+        /*correct<Minhasher_t,
+    			ReadStorage_t,
+    			indelAlignment>(minhashOptions, alignmentOptions,
+    							goodAlignmentProperties, correctionOptions,
+    							runtimeOptions, fileOptions, props,
+    							minhasher, readStorage,
+    							readIsCorrectedVector, locksForProcessedFlags,
+    							nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
+
     }
 
 
-}
+    void correctFileWithMode(Mode mode,
+                    const MinhashOptions& minhashOptions,
+    				  const AlignmentOptions& alignmentOptions,
+    				  const GoodAlignmentProperties& goodAlignmentProperties,
+    				  const CorrectionOptions& correctionOptions,
+    				  const RuntimeOptions& runtimeOptions,
+    				  const FileOptions& fileOptions,
+    				  std::uint64_t nReads,
+    				  std::vector<char>& readIsCorrectedVector,
+    				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+    				  std::size_t nLocksForProcessedFlags){
+
+        using Key_t = std::uint32_t; // asume minhashOptions.k <= 16
+        using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
+
+        using Minhasher_t = Minhasher<Key_t, ReadId_t>;
+
+        if(mode == Mode::GPU){
+#ifdef __NVCC__
+            using NoIndelSequence_t = Sequence2BitHiLo;
+            //using IndelSequence_t = Sequence2BitHiLo;
+            using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+            //using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+
+            if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+        		constexpr bool indels = false;
+
+                auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
+                    //using Minhasher_t = decltype(minhasher);
+                    //using ReadStorage_t = decltype(readStorage);
+                    gpu::correct_gpu<Minhasher_t,
+            			NoIndelReadStorage_t,
+            			indels>(minhashOptions, alignmentOptions,
+            							goodAlignmentProperties, correctionOptions,
+            							runtimeOptions, fileOptions, props,
+            							minhasher, readStorage,
+            							readIsCorrectedVector, locksForProcessedFlags,
+            							nLocksForProcessedFlags);
+                };
+
+        		correctFileWithMode_impl<Minhasher_t, NoIndelReadStorage_t, indels>
+        						(
+        							minhashOptions,
+        							alignmentOptions,
+        							goodAlignmentProperties,
+        							correctionOptions,
+        							runtimeOptions,
+        							fileOptions,
+        							nReads,
+        							readIsCorrectedVector,
+        							locksForProcessedFlags,
+        							nLocksForProcessedFlags,
+                                    func
+        						);
+        	}else{
+        		//constexpr bool indels = true;
+
+        		std::cout << "Cannot correct indels with GPU version" << std::endl;
+                return;
+        	}
+#else
+            throw std::runtime_error("This should not happen in correctFileWithMode");
+#endif
+        }else if(mode == Mode::CPU){
+            using NoIndelSequence_t = Sequence2BitHiLo;
+            //using IndelSequence_t = Sequence2BitHiLo;
+            using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+            //using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+
+            if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+                constexpr bool indels = false;
+
+                auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
+                    correct_cpu<Minhasher_t,
+            			NoIndelReadStorage_t,
+            			indels>(minhashOptions, alignmentOptions,
+            							goodAlignmentProperties, correctionOptions,
+            							runtimeOptions, fileOptions, props,
+            							minhasher, readStorage,
+            							readIsCorrectedVector, locksForProcessedFlags,
+            							nLocksForProcessedFlags);
+                };
+
+                correctFileWithMode_impl<Minhasher_t,
+                                NoIndelReadStorage_t,
+                                indels>
+                                (
+                                    minhashOptions,
+                                    alignmentOptions,
+                                    goodAlignmentProperties,
+                                    correctionOptions,
+                                    runtimeOptions,
+                                    fileOptions,
+                                    nReads,
+                                    readIsCorrectedVector,
+                                    locksForProcessedFlags,
+                                    nLocksForProcessedFlags,
+                                    func
+                                );
+            }else{
+                //constexpr bool indels = true;
+
+                std::cout << "Cannot correct indels with CPU version" << std::endl;
+                return;
+            }
+        }
+
+
+    }
+
+
+
+
 
 void performCorrection(const cxxopts::ParseResult& args) {
 	//check arguments
@@ -307,12 +321,14 @@ void performCorrection(const cxxopts::ParseResult& args) {
 		}
 #endif
 
-		correctFile(minhashOptions, alignmentOptions,
+        Mode mode = runtimeOptions.canUseGpu ? Mode::GPU : Mode::CPU;
+
+		correctFileWithMode(mode, minhashOptions, alignmentOptions,
             goodAlignmentProperties, correctionOptions,
             runtimeOptions, iterFileOptions,
 			nReads,
             readIsCorrectedVector, locksForProcessedFlags,
-            nLocksForProcessedFlags, runtimeOptions.deviceIds);
+            nLocksForProcessedFlags);//, runtimeOptions.deviceIds);
 
 		iter++;
 
