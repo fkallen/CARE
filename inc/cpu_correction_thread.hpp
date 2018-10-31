@@ -1,17 +1,15 @@
 #ifndef CARE_GPU_CPU_CORRECTION_THREAD_HPP
 #define CARE_GPU_CPU_CORRECTION_THREAD_HPP
 
-#include "../options.hpp"
-#include "../batchelem.hpp"
-#include "../tasktiming.hpp"
-#include "../cpu_alignment.hpp"
-#include "../multiple_sequence_alignment.hpp"
-#include "../bestalignment.hpp"
-#include "../msa.hpp"
-#include "../qualityscoreweights.hpp"
-#include "../rangegenerator.hpp"
-#include "../featureextractor.hpp"
-#include "../inc/forestclassifier.hpp"
+#include "options.hpp"
+#include "tasktiming.hpp"
+#include "cpu_alignment.hpp"
+#include "bestalignment.hpp"
+#include "msa.hpp"
+#include "qualityscoreweights.hpp"
+#include "rangegenerator.hpp"
+#include "featureextractor.hpp"
+#include "forestclassifier.hpp"
 
 #include <array>
 #include <chrono>

@@ -31,9 +31,10 @@
 #include <future>
 
 
+#include "cpu_correction_thread.hpp"
+
 //EXPERIMENTAL
 #include "gpu_only_path/gpu_correction_thread.hpp"
-#include "gpu_only_path/cpu_correction_thread.hpp"
 #include "gpu_only_path/readstorage_gpu.hpp"
 
 

@@ -2,7 +2,11 @@
 #define CARE_CORRECT_GPU_HPP
 
 #include "../options.hpp"
+#include "../rangegenerator.hpp"
+
+#include "../cpu_correction_thread.hpp"
 #include "gpu_correction_thread.hpp"
+
 
 #include <cassert>
 #include <cstdint>
@@ -40,7 +44,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 	using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
 
-	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
+	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::RangeGenerator<ReadId_t>>;
 
 
 //#define DO_PROFILE
