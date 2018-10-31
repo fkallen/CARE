@@ -179,7 +179,7 @@ namespace care{
                 constexpr bool indels = false;
 
                 auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
-                    correct_cpu<Minhasher_t,
+                    cpu::correct_cpu<Minhasher_t,
             			NoIndelReadStorage_t,
             			indels>(minhashOptions, alignmentOptions,
             							goodAlignmentProperties, correctionOptions,
