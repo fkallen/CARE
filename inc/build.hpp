@@ -695,6 +695,10 @@ namespace care{
                 props.minSequenceLength = minSequenceLength;
 
                 readStorage.resize(props.nReads);
+				
+				//TIMERSTARTCPU(readstoragetransform);
+				//readStorage.transform(1);
+				//TIMERSTOPCPU(readstoragetransform);
 
                 return props;
             }else{
@@ -828,6 +832,8 @@ namespace care{
 			   std::uint64_t nReads,
 			   ReadStorage_t& readStorage,
 			   Minhasher_t& minhasher){
+		
+		using Sequence_t = typename ReadStorage_t::Sequence_t;
 
         minhasher.init(nReads);
 
@@ -841,10 +847,12 @@ namespace care{
             omp_set_num_threads(runtimeOptions.threads);
 
             #pragma omp parallel for
-            for(std::size_t i = 0; i < readStorage.sequences.size(); i++){
-                const auto& seq = readStorage.sequences[i];
-
-                minhasher.insertSequence(seq.toString(), i);
+            for(std::size_t readId = 0; readId < readStorage.getNumberOfSequences(); readId++){
+                //const auto& seq = readStorage.sequences[readId];
+				const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
+				const int sequencelength = readStorage.fetchSequenceLength(readId);
+				const std::string sequencestring = Sequence_t::Impl_t::toString(sequenceptr, sequencelength);
+                minhasher.insertSequence(sequencestring, readId);
             }
 
             omp_set_num_threads(oldnumthreads);

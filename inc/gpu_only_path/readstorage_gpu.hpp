@@ -148,7 +148,7 @@ struct GPUReadStorage{
         std::size_t totalMem;
         cudaMemGetInfo(&freeMem, &totalMem); CUERR;
 
-        const std::uint64_t nSequences = cpurs.sequences.size();
+        const std::uint64_t nSequences = cpurs.getNumberOfSequences();
 
         GPUReadStorage gpurs;
         gpurs.deviceId = deviceId;
@@ -165,8 +165,8 @@ struct GPUReadStorage{
 		const std::uint64_t requiredQualityMem = cpurs.useQualityScores ? max_sequence_length * nSequences : 0;
 		const std::uint64_t requiredTotalMem = requiredSequenceMem + requiredQualityMem;
 
-		const bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalMem * totalMem && requiredSequenceMem < freeMem);
-		const bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalMem * totalMem && requiredTotalMem < freeMem);
+		const bool isEnoughMemForSequences = false;//(requiredSequenceMem < maxPercentOfTotalMem * totalMem && requiredSequenceMem < freeMem);
+		const bool isEnoughMemForSequencesAndQualities = false;//(requiredTotalMem < maxPercentOfTotalMem * totalMem && requiredTotalMem < freeMem);
 
 		bool canTestSequences = false;
 
@@ -229,6 +229,14 @@ struct GPUReadStorage{
 					std::memcpy(h_tmp_seq + localcount * max_sequence_bytes,
 								sequence->begin(),
 								sequence->getNumBytes());
+					
+					/*const char* seqdata = cpurs.fetchSequenceData_ptr(readId);
+					const int len = cpurs.fetchSequenceLength(readId);
+					
+					std::memcpy(h_tmp_seq + localcount * max_sequence_bytes,
+								seqdata,
+								Sequence_t::getNumBytes(len));*/
+					
 					//h_tmp_lengths[localcount] = len;
 					std::memcpy(h_tmp_lengths + localcount * sizeof(Length_t),
 								&len,
@@ -509,13 +517,15 @@ struct GPUReadStorage{
 
 
     const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
-        const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
-		return (const char*)sequence_ptr->begin();
+        //const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
+		//return (const char*)sequence_ptr->begin();
+		return cpu_read_storage->fetchSequenceData_ptr(readNumber);
 	}
 
     int fetchSequenceLength(ReadId_t readNumber) const{
-        const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
-		return sequence_ptr->length();
+        //const typename CPUReadStorage::Sequence_t* sequence_ptr = cpu_read_storage->fetchSequence_ptr(readNumber);
+		//return sequence_ptr->length();
+		return cpu_read_storage->fetchSequenceLength(readNumber);
 	}
 
     const std::string* fetchQuality_ptr(ReadId_t readNumber) const{

@@ -86,7 +86,15 @@ namespace cpu{
                 typename minhasher_t::Handle handle;
 
                 for(ReadId_t readId = i; readId < sampleCount; readId += threads){
-                    std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
+                    //std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
+					const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
+					const int sequencelength = readStorage.fetchSequenceLength(readId);
+					const std::string sequencestring = Sequence_t::Impl_t::toString(sequenceptr, sequencelength);
+					//if(sequencestring != sequencestring2){
+					//	std::cout << sequencestring << '\n' << sequencestring2 << std::endl;
+					//	assert(false);
+					//}
+					
                     //auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
                     //std::int64_t count = std::int64_t(candidateList.size()) - 1;
 

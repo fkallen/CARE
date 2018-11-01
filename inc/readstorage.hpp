@@ -480,6 +480,12 @@ struct ReadStorageMinMemory{
 
     std::vector<std::string> qualityscores;
     std::vector<Sequence_t> sequences;
+	
+	std::vector<char> rawSequenceData;
+	std::vector<int> sequenceLengths;
+	std::size_t max_sequence_bytes = 0;
+	std::uint64_t nSequences = 0;
+	bool isTransformed = false;
 
     void saveToFile(const std::string& filename) const{
         std::ofstream stream(filename, std::ios::binary);
@@ -573,14 +579,14 @@ struct ReadStorageMinMemory{
     ReadStorageMinMemory& operator=(const ReadStorageMinMemory& other){
         useQualityScores = other.useQualityScores;
         qualityscores = other.qualityscores;
-        sequences = sequences;
+        sequences = other.sequences;
         return *this;
     }
 
     ReadStorageMinMemory& operator=(ReadStorageMinMemory&& other){
         useQualityScores = std::move(other.useQualityScores);
         qualityscores = std::move(other.qualityscores);
-        sequences = std::move(sequences);
+        sequences = std::move(other.sequences);
         return *this;
     }
 
@@ -591,6 +597,17 @@ struct ReadStorageMinMemory{
             return false;
         if(qualityscores.size() != other.qualityscores.size())
             return false;
+		if(rawSequenceData.size() != other.rawSequenceData.size())
+            return false;
+		if(sequenceLengths.size() != other.sequenceLengths.size())
+            return false;
+		if(max_sequence_bytes != other.max_sequence_bytes)
+            return false;
+		if(nSequences != other.nSequences)
+			return false;
+		if(isTransformed != other.isTransformed)
+            return false;
+		
         for(std::size_t i = 0; i < sequences.size(); i++){
             if(sequences[i] != other.sequences[i])
                 return false;
@@ -723,16 +740,76 @@ struct ReadStorageMinMemory{
    }
 
    const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
-       auto ptr = fetchSequence_ptr(readNumber);
-       return (const char*)ptr->begin();
+		/*if(isTransformed){
+			return &rawSequenceData[readNumber * max_sequence_bytes];
+		}else{*/
+			auto ptr = fetchSequence_ptr(readNumber);
+			return (const char*)ptr->begin();
+		//}
    }
 
    int fetchSequenceLength(ReadId_t readNumber) const{
-       auto ptr = fetchSequence_ptr(readNumber);
-       return ptr->length();
+		/*if(isTransformed){
+			return sequenceLengths[readNumber];
+		}else{*/
+			auto ptr = fetchSequence_ptr(readNumber);
+			return ptr->length();
+		//}
    }
+   
+	std::uint64_t getNumberOfSequences() const{
+		/*if(isTransformed)
+			return nSequences;
+		else*/
+			return sequences.size();
+	}
 
-   void transform(){}
+   void transform(int nThreads){
+		if(isTransformed) return;
+		int maxSequenceLength = 0;
+		int minSequenceLength = std::numeric_limits<int>::max();
+
+		const int oldnumthreads = omp_get_thread_num();
+
+		omp_set_num_threads(nThreads);
+
+		#pragma omp parallel for reduction(max:maxSequenceLength) reduction(min:minSequenceLength)
+		for(std::size_t i = 0; i < sequences.size(); i++){
+			const auto& seq = sequences[i];
+
+			int len = seq.length();
+			if(len > maxSequenceLength)
+				maxSequenceLength = len;
+			if(len < minSequenceLength)
+				minSequenceLength = len;
+		}
+
+		omp_set_num_threads(oldnumthreads);
+		
+		max_sequence_bytes = Sequence_t::getNumBytes(maxSequenceLength);
+		
+		rawSequenceData.resize(max_sequence_bytes * sequences.size());
+		sequenceLengths.resize(sequences.size());
+		
+		for(std::size_t i = 0; i < sequences.size(); ++i){
+			auto& seq = sequences[i];
+			const int length = seq.length();
+            const int bytes = seq.getNumBytes();
+			
+			sequenceLengths[i] = length;
+			
+			std::copy(seq.begin(), seq.end(), &rawSequenceData[i * max_sequence_bytes]);
+		}
+		
+		nSequences = sequences.size();
+
+		std::vector<Sequence_t> tmp{};
+		sequences.swap(tmp);
+		
+		isTransformed = true;
+		
+		assert(sequences.size() == 0);
+	}
 
 };
 
