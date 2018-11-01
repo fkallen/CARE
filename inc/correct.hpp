@@ -60,7 +60,7 @@ namespace cpu{
 
     	using Minhasher_t = minhasher_t;
     	using ReadStorage_t = readStorage_t;
-    	using Sequence_t = typename ReadStorage_t::Sequence_t;
+    	//using Sequence_t = typename ReadStorage_t::Sequence_t;
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, indels>;
 
