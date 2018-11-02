@@ -148,7 +148,7 @@ namespace care{
 
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
-#if 0
+#if 1
         std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
         case FileFormat::FASTQ:

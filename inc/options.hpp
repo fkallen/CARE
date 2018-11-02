@@ -68,6 +68,7 @@ namespace care{
         std::string outputfilename;
 		std::string outputfile;
 		std::uint64_t nReads;
+        int maximum_sequence_length;
         std::string save_binary_reads_to;
         std::string load_binary_reads_from;
         std::string save_hashtables_to;

@@ -22,7 +22,7 @@ public:
 	SkipException() : std::exception()
 	{
 	}
-	
+
 	virtual const char* what() const noexcept{
 		return std::exception::what();
 	}
@@ -66,11 +66,11 @@ public:
     std::uint64_t getReadnum() const{
         return readnum;
     }
-    
+
     void skipBytes(std::uint64_t nBytes){
 		skipBytes_impl(nBytes);
 	}
-	
+
 	void skipReads(std::uint64_t nReads){
 		skipReads_impl(nReads);
 	}
@@ -104,7 +104,7 @@ public:
 	std::string stmp;
 };
 
-//SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
+SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
 std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format);
 std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
 

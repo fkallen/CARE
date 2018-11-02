@@ -165,8 +165,8 @@ struct GPUReadStorage{
 		const std::uint64_t requiredQualityMem = cpurs.useQualityScores ? max_sequence_length * nSequences : 0;
 		const std::uint64_t requiredTotalMem = requiredSequenceMem + requiredQualityMem;
 
-		const bool isEnoughMemForSequences = false;//(requiredSequenceMem < maxPercentOfTotalMem * totalMem && requiredSequenceMem < freeMem);
-		const bool isEnoughMemForSequencesAndQualities = false;//(requiredTotalMem < maxPercentOfTotalMem * totalMem && requiredTotalMem < freeMem);
+		const bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalMem * totalMem && requiredSequenceMem < freeMem);
+		const bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalMem * totalMem && requiredTotalMem < freeMem);
 
 		bool canTestSequences = false;
 
@@ -219,7 +219,7 @@ struct GPUReadStorage{
 				ReadId_t localcount = 0;
 
 				for(ReadId_t readId = iter * copybatchsequences; readId < std::min((iter + 1) * copybatchsequences, nSequences); ++readId){
-					const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+					/*const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
 
 					assert(sequence->getNumBytes() <= max_sequence_bytes );
 					assert(sequence->length() <= std::numeric_limits<Length_t>::max());
@@ -228,15 +228,15 @@ struct GPUReadStorage{
 
 					std::memcpy(h_tmp_seq + localcount * max_sequence_bytes,
 								sequence->begin(),
-								sequence->getNumBytes());
-					
-					/*const char* seqdata = cpurs.fetchSequenceData_ptr(readId);
+								sequence->getNumBytes());*/
+
+					const char* seqdata = cpurs.fetchSequenceData_ptr(readId);
 					const int len = cpurs.fetchSequenceLength(readId);
-					
+
 					std::memcpy(h_tmp_seq + localcount * max_sequence_bytes,
 								seqdata,
-								Sequence_t::getNumBytes(len));*/
-					
+								Sequence_t::getNumBytes(len));
+
 					//h_tmp_lengths[localcount] = len;
 					std::memcpy(h_tmp_lengths + localcount * sizeof(Length_t),
 								&len,
@@ -295,7 +295,7 @@ struct GPUReadStorage{
 #endif
 
 				for(ReadId_t readId = 0; readId < nSequences; ++readId){
-					const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+					/*const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
 
 					assert(sequence->getNumBytes() <= max_sequence_bytes);
 					assert(sequence->length() <= std::numeric_limits<Length_t>::max());
@@ -305,6 +305,15 @@ struct GPUReadStorage{
 					std::memcpy(gpurs.d_sequence_data + readId * max_sequence_bytes,
 								sequence->begin(),
 								sequence->getNumBytes());
+					gpurs.d_sequence_lengths[readId] = len;*/
+
+                    const char* seqdata = cpurs.fetchSequenceData_ptr(readId);
+					const int len = cpurs.fetchSequenceLength(readId);
+
+					std::memcpy(gpurs.d_sequence_data + readId * max_sequence_bytes,
+								seqdata,
+								Sequence_t::getNumBytes(len));
+
 					gpurs.d_sequence_lengths[readId] = len;
 				}
 
@@ -323,7 +332,7 @@ struct GPUReadStorage{
 
 		if(canTestSequences){
 			//test code
-#if 0
+#if 1
 			{
 				char* h_test, *d_test;
 				cudaMallocHost(&h_test, max_sequence_bytes); CUERR;
@@ -339,13 +348,15 @@ struct GPUReadStorage{
 					cudaMemcpy(h_test, d_test, gpurs.max_sequence_bytes, D2H); CUERR;
 					cudaDeviceSynchronize(); CUERR;
 
-					const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+					//const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+                    const char* sequence = cpurs.fetchSequenceData_ptr(readId);
+                    const int len = cpurs.fetchSequenceLength(readId);
 
-					int result = std::memcmp(sequence->begin(), h_test, sequence->getNumBytes());
+					int result = std::memcmp(sequence, h_test, Sequence_t::getNumBytes(len));
 					if(result != 0){
 						std::cout << readId << std::endl;
-						for(int k = 0; k < sequence->getNumBytes(); ++k)
-							std::cout << int(sequence->begin()[k]) << " " << int(h_test[k]) << std::endl;
+						for(int k = 0; k < Sequence_t::getNumBytes(len); ++k)
+							std::cout << int(sequence[k]) << " " << int(h_test[k]) << std::endl;
 					}
 					assert(result == 0);
 				}
@@ -357,7 +368,7 @@ struct GPUReadStorage{
 			}
 #endif
 
-#if 0
+#if 1
             {
                 Length_t* h_test, *d_test;
                 cudaMallocHost(&h_test, sizeof(Length_t)); CUERR;
@@ -373,12 +384,12 @@ struct GPUReadStorage{
                     cudaMemcpy(h_test, d_test, sizeof(Length_t), D2H); CUERR;
                     cudaDeviceSynchronize(); CUERR;
 
-                    const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+                    const int length = cpurs.fetchSequenceLength(readId);
 
-                    bool equal = sequence->length() == *h_test;
+                    bool equal = length == *h_test;
                     if(!equal){
                         std::cout << readId << std::endl;
-                        std::cout << sequence->length() << " " << *h_test << std::endl;
+                        std::cout << length << " " << *h_test << std::endl;
                     }
                     assert(equal);
                 }
@@ -418,13 +429,20 @@ struct GPUReadStorage{
 					ReadId_t localcount = 0;
 
 					for(ReadId_t readId = iter * copybatchsequences; readId < std::min((iter + 1) * copybatchsequences, nSequences); ++readId){
-						const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
+						//const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
 
-						assert(int(qualityptr->size()) <= max_sequence_length);
+						//assert(int(qualityptr->size()) <= max_sequence_length);
 
-						std::memcpy(h_tmp + localcount * max_sequence_length,
-									qualityptr->data(),
-									qualityptr->size());
+						//std::memcpy(h_tmp + localcount * max_sequence_length,
+						//			qualityptr->data(),
+						//			qualityptr->size());
+
+                        const char* qualityptr = cpurs.fetchQuality2_ptr(readId);
+    					const int len = cpurs.fetchSequenceLength(readId);
+
+                        std::memcpy(h_tmp + localcount * max_sequence_length,
+									qualityptr,
+									len);
 
 						++localcount;
 					}
@@ -453,13 +471,20 @@ struct GPUReadStorage{
 									0); CUERR; //last argument is ignored for cudaMemAdviseSetReadMostly
 
 					for(ReadId_t readId = 0; readId < nSequences; ++readId){
-						const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
+						/*const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
 
 						assert(int(qualityptr->size()) <= max_sequence_length);
 
 						std::memcpy(gpurs.d_quality_data + readId * max_sequence_length,
 									qualityptr->data(),
-									qualityptr->size());
+									qualityptr->size());*/
+
+                        const char* qualityptr = cpurs.fetchQuality2_ptr(readId);
+    					const int len = cpurs.fetchSequenceLength(readId);
+
+                        std::memcpy(gpurs.d_quality_data + readId * max_sequence_length,
+									qualityptr,
+									len);
 					}
 
 					gpurs.qualityType = GPUReadStorage::Type::Managed;
@@ -470,7 +495,7 @@ struct GPUReadStorage{
 
 			if(canTestQualities){
 				//test code
-	#if 0
+	#if 1
 				{
 					char* h_test, *d_test;
 					cudaMallocHost(&h_test, max_sequence_length); CUERR;
@@ -486,13 +511,15 @@ struct GPUReadStorage{
 						cudaMemcpy(h_test, d_test, gpurs.max_sequence_length, D2H); CUERR;
 						cudaDeviceSynchronize(); CUERR;
 
-						const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
+						//const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
+                        const char* quality = cpurs.fetchQuality2_ptr(readId);
+                        const int len = cpurs.fetchSequenceLength(readId);
 
-						int result = std::memcmp(qualityptr->data(), h_test, max_sequence_length);
+						int result = std::memcmp(quality, h_test, len);
 						if(result != 0){
 							std::cout << readId << std::endl;
-							for(int k = 0; k < int(qualityptr->size()); ++k)
-								std::cout << int(qualityptr->begin()[k]) << " " << int(h_test[k]) << std::endl;
+							for(int k = 0; k < len; ++k)
+								std::cout << int(quality[k]) << " " << int(h_test[k]) << std::endl;
 						}
 						assert(result == 0);
 					}
@@ -527,6 +554,11 @@ struct GPUReadStorage{
 		//return sequence_ptr->length();
 		return cpu_read_storage->fetchSequenceLength(readNumber);
 	}
+
+    const char* fetchQuality2_ptr(ReadId_t readNumber) const{
+        const char* qualityptr = cpu_read_storage->fetchQuality2_ptr(readNumber);
+		return qualityptr;
+    }
 
     const std::string* fetchQuality_ptr(ReadId_t readNumber) const{
         const std::string* qualityptr = cpu_read_storage->fetchQuality_ptr(readNumber);

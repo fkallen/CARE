@@ -23,7 +23,7 @@ namespace filesys = std::experimental::filesystem;
 #endif
 
 namespace care{
-	
+
 	using Key_t = std::uint32_t; // asume minhashOptions.k <= 16
 	using ReadId_t = std::uint32_t; // asume nReads <= std::numeric_limits<std::uint32_t>::max()
 
@@ -34,11 +34,11 @@ namespace care{
             double gb = bytes / 1024. / 1024. / 1024.0;
             return gb;
         };
-		
+
 		std::cout << "reads take up " << toGB(readStorage.size()) << " GB." << std::endl;
         std::cout << "hash maps take up " << toGB(minhasher.numBytes()) << " GB." << std::endl;
-	}	
-	
+	}
+
 	void printFileProperties(const std::string& filename, const SequenceFileProperties& props){
 		std::cout << "----------------------------------------" << std::endl;
         std::cout << "File: " << filename << std::endl;
@@ -47,7 +47,7 @@ namespace care{
         std::cout << "Maximum sequence length: " << props.maxSequenceLength << std::endl;
         std::cout << "----------------------------------------" << std::endl;
 	}
-	
+
 	template<class minhasher_t,
     		 class readStorage_t>
 	void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t& readStorage, const FileOptions& fileOptions){
@@ -60,8 +60,8 @@ namespace care{
             minhasher.saveToFile(fileOptions.save_hashtables_to);
             std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
         }
-	}   
-    
+	}
+
 	template<class minhasher_t,
 				class readStorage_t,
 				bool indels,
@@ -72,6 +72,7 @@ namespace care{
 						const CorrectionOptions& correctionOptions,
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
+                        SequenceFileProperties& sequenceFileProperties,
 						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -87,7 +88,7 @@ namespace care{
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-		ReadStorage_t readStorage(correctionOptions.useQualityScores);
+		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
@@ -95,13 +96,13 @@ namespace care{
 		const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
 		build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
 		TIMERSTOPCPU(load_and_build);
-		
+
 		printFileProperties(fileOptions.inputfile, props);
 
 		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
 
 		readIsCorrectedVector.resize(props.nReads, 0);
-		
+
 		printDataStructureMemoryUsage(minhasher, readStorage);
 
 		startCorrection(minhasher, readStorage, props);
@@ -115,9 +116,9 @@ namespace care{
 								readIsCorrectedVector, locksForProcessedFlags,
 								nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
 
-	}    
-		
-		
+	}
+
+
 	template<class minhasher_t,
 				class readStorage_t,
 				bool indels,
@@ -128,6 +129,7 @@ namespace care{
 						const CorrectionOptions& correctionOptions,
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
+                        SequenceFileProperties& sequenceFileProperties,
 						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
@@ -143,7 +145,8 @@ namespace care{
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-		ReadStorage_t readStorage(correctionOptions.useQualityScores);
+        std::cout << "nReads = " << nReads << std::endl;
+		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 0);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
@@ -151,13 +154,13 @@ namespace care{
 		const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
 		build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
 		TIMERSTOPCPU(load_and_build);
-		
+
 		printFileProperties(fileOptions.inputfile, props);
 
 		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
 
 		readIsCorrectedVector.resize(props.nReads, 0);
-		
+
 		printDataStructureMemoryUsage(minhasher, readStorage);
 
 		startCorrection(minhasher, readStorage, props);
@@ -171,7 +174,7 @@ namespace care{
 								readIsCorrectedVector, locksForProcessedFlags,
 								nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
 
-	}      
+	}
 
 	void selectGpuCorrection(
 						const MinhashOptions& minhashOptions,
@@ -180,18 +183,19 @@ namespace care{
 						const CorrectionOptions& correctionOptions,
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
+                        SequenceFileProperties& sequenceFileProperties,
 						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 						std::size_t nLocksForProcessedFlags){
 
 	#ifdef __NVCC__
-		
+
 		using Minhasher_t = Minhasher<Key_t, ReadId_t>;
-		
+
 		using NoIndelSequence_t = Sequence2BitHiLo;
 		//using IndelSequence_t = Sequence2BitHiLo;
-		using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+		using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
 		//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
 
 		if(correctionOptions.correctionMode == CorrectionMode::Hamming){
@@ -218,6 +222,7 @@ namespace care{
 								correctionOptions,
 								runtimeOptions,
 								fileOptions,
+                                sequenceFileProperties,
 								nReads,
 								readIsCorrectedVector,
 								locksForProcessedFlags,
@@ -232,9 +237,9 @@ namespace care{
 		}
 	#else
 		throw std::runtime_error("This should not happen in correctFileWithMode");
-	#endif	
-		
-	}	
+	#endif
+
+	}
 
 
 	void selectCpuCorrection(
@@ -244,17 +249,18 @@ namespace care{
 						const CorrectionOptions& correctionOptions,
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
+                        SequenceFileProperties& sequenceFileProperties,
 						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 						std::size_t nLocksForProcessedFlags){
-		
-		
+
+
 		using Minhasher_t = Minhasher<Key_t, ReadId_t>;
 
 		using NoIndelSequence_t = Sequence2BitHiLo;
 		//using IndelSequence_t = Sequence2BitHiLo;
-		using NoIndelReadStorage_t = ReadStorageMinMemory<NoIndelSequence_t, ReadId_t>;
+		using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
 		//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
 
 		if(correctionOptions.correctionMode == CorrectionMode::Hamming){
@@ -281,6 +287,7 @@ namespace care{
 								correctionOptions,
 								runtimeOptions,
 								fileOptions,
+                                sequenceFileProperties,
 								nReads,
 								readIsCorrectedVector,
 								locksForProcessedFlags,
@@ -293,9 +300,9 @@ namespace care{
 			std::cout << "Cannot correct indels with CPU version" << std::endl;
 			return;
 		}
-		
+
 	}
-    
+
 
 
 	void performCorrection(const cxxopts::ParseResult& args) {
@@ -334,6 +341,17 @@ namespace care{
 			std::cout << "Determining number of reads" << std::endl;
 			nReads = getNumberOfReadsFast(fileOptions.inputfile, fileOptions.format);
 		}
+
+        SequenceFileProperties sequenceFileProperties;
+        /*sequenceFileProperties.maxSequenceLength = 0;
+        sequenceFileProperties.minSequenceLength = 0;
+        sequenceFileProperties.nReads = 0;
+
+        if(fileOptions.load_binary_reads_from == ""){
+            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0){
+                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+            }
+        }*/
 
 		std::vector<char> readIsCorrectedVector;
 		std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
@@ -385,10 +403,11 @@ namespace care{
 
 		#ifndef __NVCC__
 			std::cout << "Running CARE CPU" << std::endl;
-		
+
 			selectCpuCorrection(minhashOptions, alignmentOptions,
 				goodAlignmentProperties, correctionOptions,
 				runtimeOptions, iterFileOptions,
+                sequenceFileProperties,
 				nReads,
 				readIsCorrectedVector, locksForProcessedFlags,
 				nLocksForProcessedFlags);
@@ -401,19 +420,21 @@ namespace care{
 					std::cout << i << " ";
 
 				std::cout << std::endl;
-				
+
 				selectGpuCorrection(minhashOptions, alignmentOptions,
 									goodAlignmentProperties, correctionOptions,
 									runtimeOptions, iterFileOptions,
+                                    sequenceFileProperties,
 									nReads,
 									readIsCorrectedVector, locksForProcessedFlags,
 									nLocksForProcessedFlags);
-			}else{			
+			}else{
 				std::cout << "Running CARE CPU" << std::endl;
-				
+
 				selectCpuCorrection(minhashOptions, alignmentOptions,
 									goodAlignmentProperties, correctionOptions,
 									runtimeOptions, iterFileOptions,
+                                    sequenceFileProperties,
 									nReads,
 									readIsCorrectedVector, locksForProcessedFlags,
 									nLocksForProcessedFlags);

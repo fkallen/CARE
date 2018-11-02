@@ -101,7 +101,7 @@ namespace args{
         result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
 
-        
+
 #ifdef __NVCC__
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
@@ -163,6 +163,7 @@ namespace args{
 			throw std::runtime_error("Set invalid file format : " + result.fileformatstring);
 
 		result.nReads = pr["nReads"].as<std::uint64_t>();
+        result.maximum_sequence_length = pr["max_length"].as<int>();
         result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
         result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
         result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
