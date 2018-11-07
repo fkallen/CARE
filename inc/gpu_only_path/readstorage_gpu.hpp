@@ -3,6 +3,8 @@
 
 #include "../hpc_helpers.cuh"
 #include "../readstorage.hpp"
+#include "readstorage.hpp"
+
 
 #include <iostream>
 #include <limits>
@@ -332,7 +334,7 @@ struct GPUReadStorage{
 
 		if(canTestSequences){
 			//test code
-#if 1
+#if 0
 			{
 				char* h_test, *d_test;
 				cudaMallocHost(&h_test, max_sequence_bytes); CUERR;
@@ -368,7 +370,7 @@ struct GPUReadStorage{
 			}
 #endif
 
-#if 1
+#if 0
             {
                 Length_t* h_test, *d_test;
                 cudaMallocHost(&h_test, sizeof(Length_t)); CUERR;
@@ -495,7 +497,7 @@ struct GPUReadStorage{
 
 			if(canTestQualities){
 				//test code
-	#if 1
+	#if 0
 				{
 					char* h_test, *d_test;
 					cudaMallocHost(&h_test, max_sequence_length); CUERR;

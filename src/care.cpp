@@ -20,6 +20,7 @@ namespace filesys = std::experimental::filesystem;
 
 #ifdef __NVCC__
 #include "../inc/gpu_only_path/correct.hpp"
+#include "../inc/gpu_only_path/readstorage.hpp"
 #endif
 
 namespace care{
@@ -60,62 +61,6 @@ namespace care{
             minhasher.saveToFile(fileOptions.save_hashtables_to);
             std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
         }
-	}
-
-	template<class minhasher_t,
-				class readStorage_t,
-				bool indels,
-				class StartCorrectionFunction>
-	void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
-						const AlignmentOptions& alignmentOptions,
-						const GoodAlignmentProperties& goodAlignmentProperties,
-						const CorrectionOptions& correctionOptions,
-						const RuntimeOptions& runtimeOptions,
-						const FileOptions& fileOptions,
-                        SequenceFileProperties& sequenceFileProperties,
-						std::uint64_t nReads,
-						std::vector<char>& readIsCorrectedVector,
-						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-						std::size_t nLocksForProcessedFlags,
-						StartCorrectionFunction startCorrection){
-
-		constexpr bool indelAlignment = indels;
-
-		using Minhasher_t = minhasher_t;
-		using ReadStorage_t = readStorage_t;
-		using Sequence_t = typename ReadStorage_t::Sequence_t;
-
-		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
-
-		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
-
-		std::cout << "loading file and building data structures..." << std::endl;
-
-		TIMERSTARTCPU(load_and_build);
-		const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
-		build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
-		TIMERSTOPCPU(load_and_build);
-
-		printFileProperties(fileOptions.inputfile, props);
-
-		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
-
-		readIsCorrectedVector.resize(props.nReads, 0);
-
-		printDataStructureMemoryUsage(minhasher, readStorage);
-
-		startCorrection(minhasher, readStorage, props);
-
-		/*correct<Minhasher_t,
-				ReadStorage_t,
-				indelAlignment>(minhashOptions, alignmentOptions,
-								goodAlignmentProperties, correctionOptions,
-								runtimeOptions, fileOptions, props,
-								minhasher, readStorage,
-								readIsCorrectedVector, locksForProcessedFlags,
-								nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
-
 	}
 
 
@@ -176,73 +121,7 @@ namespace care{
 
 	}
 
-	void selectGpuCorrection(
-						const MinhashOptions& minhashOptions,
-						const AlignmentOptions& alignmentOptions,
-						const GoodAlignmentProperties& goodAlignmentProperties,
-						const CorrectionOptions& correctionOptions,
-						const RuntimeOptions& runtimeOptions,
-						const FileOptions& fileOptions,
-                        SequenceFileProperties& sequenceFileProperties,
-						std::uint64_t nReads,
-						std::vector<char>& readIsCorrectedVector,
-						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-						std::size_t nLocksForProcessedFlags){
-
-	#ifdef __NVCC__
-
-		using Minhasher_t = Minhasher<Key_t, ReadId_t>;
-
-		using NoIndelSequence_t = Sequence2BitHiLo;
-		//using IndelSequence_t = Sequence2BitHiLo;
-		using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
-		//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
-
-		if(correctionOptions.correctionMode == CorrectionMode::Hamming){
-			constexpr bool indels = false;
-
-			auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
-				//using Minhasher_t = decltype(minhasher);
-				//using ReadStorage_t = decltype(readStorage);
-				gpu::correct_gpu<Minhasher_t,
-					NoIndelReadStorage_t,
-					indels>(minhashOptions, alignmentOptions,
-									goodAlignmentProperties, correctionOptions,
-									runtimeOptions, fileOptions, props,
-									minhasher, readStorage,
-									readIsCorrectedVector, locksForProcessedFlags,
-									nLocksForProcessedFlags);
-			};
-
-			buildAndCorrect_gpu<Minhasher_t, NoIndelReadStorage_t, indels>
-							(
-								minhashOptions,
-								alignmentOptions,
-								goodAlignmentProperties,
-								correctionOptions,
-								runtimeOptions,
-								fileOptions,
-                                sequenceFileProperties,
-								nReads,
-								readIsCorrectedVector,
-								locksForProcessedFlags,
-								nLocksForProcessedFlags,
-								func
-							);
-		}else{
-			//constexpr bool indels = true;
-
-			std::cout << "Cannot correct indels with GPU version" << std::endl;
-			return;
-		}
-	#else
-		throw std::runtime_error("This should not happen in correctFileWithMode");
-	#endif
-
-	}
-
-
-	void selectCpuCorrection(
+    void selectCpuCorrection(
 						const MinhashOptions& minhashOptions,
 						const AlignmentOptions& alignmentOptions,
 						const GoodAlignmentProperties& goodAlignmentProperties,
@@ -302,6 +181,128 @@ namespace care{
 		}
 
 	}
+
+
+#ifdef __NVCC__
+
+	template<class minhasher_t,
+				class readStorage_t,
+				bool indels,
+				class StartCorrectionFunction>
+	void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
+						const AlignmentOptions& alignmentOptions,
+						const GoodAlignmentProperties& goodAlignmentProperties,
+						const CorrectionOptions& correctionOptions,
+						const RuntimeOptions& runtimeOptions,
+						const FileOptions& fileOptions,
+                        SequenceFileProperties& sequenceFileProperties,
+						std::uint64_t nReads,
+						std::vector<char>& readIsCorrectedVector,
+						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+						std::size_t nLocksForProcessedFlags,
+						StartCorrectionFunction startCorrection){
+
+		constexpr bool indelAlignment = indels;
+
+		using Minhasher_t = minhasher_t;
+		using ReadStorage_t = readStorage_t;
+		using Sequence_t = typename ReadStorage_t::Sequence_t;
+
+		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
+
+		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
+		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
+
+		std::cout << "loading file and building data structures..." << std::endl;
+
+		TIMERSTARTCPU(load_and_build);
+		const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
+		build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
+		TIMERSTOPCPU(load_and_build);
+
+		printFileProperties(fileOptions.inputfile, props);
+
+		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
+
+		readIsCorrectedVector.resize(props.nReads, 0);
+
+		printDataStructureMemoryUsage(minhasher, readStorage);
+
+		startCorrection(minhasher, readStorage, props);
+
+		/*correct<Minhasher_t,
+				ReadStorage_t,
+				indelAlignment>(minhashOptions, alignmentOptions,
+								goodAlignmentProperties, correctionOptions,
+								runtimeOptions, fileOptions, props,
+								minhasher, readStorage,
+								readIsCorrectedVector, locksForProcessedFlags,
+								nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
+
+	}
+
+	void selectGpuCorrection(
+						const MinhashOptions& minhashOptions,
+						const AlignmentOptions& alignmentOptions,
+						const GoodAlignmentProperties& goodAlignmentProperties,
+						const CorrectionOptions& correctionOptions,
+						const RuntimeOptions& runtimeOptions,
+						const FileOptions& fileOptions,
+                        SequenceFileProperties& sequenceFileProperties,
+						std::uint64_t nReads,
+						std::vector<char>& readIsCorrectedVector,
+						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+						std::size_t nLocksForProcessedFlags){
+
+		using Minhasher_t = Minhasher<Key_t, ReadId_t>;
+
+		using NoIndelSequence_t = Sequence2BitHiLo;
+		//using IndelSequence_t = Sequence2BitHiLo;
+		using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
+		//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+
+		if(correctionOptions.correctionMode == CorrectionMode::Hamming){
+			constexpr bool indels = false;
+
+			auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
+				//using Minhasher_t = decltype(minhasher);
+				//using ReadStorage_t = decltype(readStorage);
+				gpu::correct_gpu<Minhasher_t,
+					NoIndelReadStorage_t,
+					indels>(minhashOptions, alignmentOptions,
+									goodAlignmentProperties, correctionOptions,
+									runtimeOptions, fileOptions, props,
+									minhasher, readStorage,
+									readIsCorrectedVector, locksForProcessedFlags,
+									nLocksForProcessedFlags);
+			};
+
+			buildAndCorrect_gpu<Minhasher_t, NoIndelReadStorage_t, indels>
+							(
+								minhashOptions,
+								alignmentOptions,
+								goodAlignmentProperties,
+								correctionOptions,
+								runtimeOptions,
+								fileOptions,
+                                sequenceFileProperties,
+								nReads,
+								readIsCorrectedVector,
+								locksForProcessedFlags,
+								nLocksForProcessedFlags,
+								func
+							);
+		}else{
+			//constexpr bool indels = true;
+
+			std::cout << "Cannot correct indels with GPU version" << std::endl;
+			return;
+		}
+
+	}
+#endif
+
+
 
 
 

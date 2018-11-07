@@ -948,6 +948,8 @@ public:
                 return false;
             if(num_sequences != other.num_sequences)
                 return false;
+            if(useQualityScores != other.useQualityScores)
+                return false;
             if(sequence_data_bytes != other.sequence_data_bytes)
                 return false;
             if(sequence_lengths_bytes != other.sequence_lengths_bytes)

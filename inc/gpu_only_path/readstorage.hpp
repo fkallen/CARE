@@ -1,7 +1,8 @@
-#ifndef CARE_GPU_READ_STORAGE_HPP
-#define CARE_GPU_READ_STORAGE_HPP
+#ifndef CARE_GPU_CONTIG_READ_STORAGE_HPP
+#define CARE_GPU_CONTIG_READ_STORAGE_HPP
 
 #include "../hpc_helpers.cuh"
+#include "../readstorage.hpp"
 
 #include <iostream>
 #include <limits>
@@ -9,13 +10,24 @@
 #include <cstring>
 #include <cstdint>
 #include <memory>
+#include <algorithm>
+#include <map>
 
 namespace care{
 namespace gpu{
 
+#ifdef __NVCC__
+
     template<class sequence_t,
              class readId_t>
     struct ContiguousReadStorage{
+
+        using Length_t = int;
+        using Sequence_t = sequence_t;
+        using ReadId_t = readId_t;
+        using SequenceStatistics = cpu::SequenceStatistics;
+
+        static constexpr bool has_reverse_complement = false;
 
         enum class Type{
             None,
@@ -23,16 +35,35 @@ namespace gpu{
             Managed
         };
 
-        using Sequence_t = sequence_t;
-        using ReadId_t = readId_t;
+        struct GPUData{
+            char* d_sequence_data = nullptr;
+            Length_t* d_sequence_lengths = nullptr;
+            char* d_quality_data = nullptr;
 
-        static constexpr bool has_reverse_complement = false;
+            int id;
 
-        using Length_t = int;
+            ContiguousReadStorage::Type sequenceType = ContiguousReadStorage::Type::None;
+        	ContiguousReadStorage::Type qualityType = ContiguousReadStorage::Type::None;
 
-        std::unique_ptr<char[]> h_sequence_data = nullptr;
-        std::unique_ptr<Length_t[]> h_sequence_lengths = nullptr;
-        std::unique_ptr<char[]> h_quality_data = nullptr;
+            bool isValidSequenceData() const{
+                return sequenceType != ContiguousReadStorage::Type::None;
+            }
+
+            bool isValidQualityData() const{
+                return qualityType != ContiguousReadStorage::Type::None;
+            }
+        };
+
+
+
+        char* h_sequence_data = nullptr;
+        Length_t* h_sequence_lengths = nullptr;
+        char* h_quality_data = nullptr;
+        //managed gpu memory
+        char* d_sequence_data = nullptr;
+        Length_t* d_sequence_lengths = nullptr;
+        char* d_quality_data = nullptr;
+
         int max_sequence_length = 0;
         int max_sequence_bytes = 0;
         bool useQualityScores = false;
@@ -43,7 +74,10 @@ namespace gpu{
 
         ContiguousReadStorage::Type sequenceType = ContiguousReadStorage::Type::None;
     	ContiguousReadStorage::Type qualityType = ContiguousReadStorage::Type::None;
-        ContiguousReadStorage::Type sequencelengthType = ContiguousReadStorage::Type::None;
+
+        std::vector<int> deviceIds;
+        std::map<int, GPUData> gpuData;
+        bool hasMoved = false;
 
         std::string nameOf(ContiguousReadStorage::Type type) const {
             switch(type){
@@ -56,25 +90,98 @@ namespace gpu{
 
         ContiguousReadStorage(ReadId_t nSequences) : ContiguousReadStorage(nSequences, false){}
 
-        ContiguousReadStorage(ReadId_t nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0){
+        ContiguousReadStorage(ReadId_t nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0, {}){
         }
 
-        ContiguousReadStorage(ReadId_t nSequences, bool b, int maximum_sequence_length)
+        ContiguousReadStorage(ReadId_t nSequences, bool b, int maximum_sequence_length, const std::vector<int>& deviceIds)
             : max_sequence_length(maximum_sequence_length),
                 max_sequence_bytes(Sequence_t::getNumBytes(maximum_sequence_length)),
                 useQualityScores(b),
-                num_sequences(nSequences){
+                num_sequences(nSequences),
+                deviceIds(deviceIds){
 
+            constexpr bool allowUVM = true;
+            constexpr float maxPercentOfTotalGPUMem = 0.8;
 
-            h_sequence_data.reset(new char[std::size_t(num_sequences) * max_sequence_bytes]);
             sequence_data_bytes = sizeof(char) * std::size_t(num_sequences) * max_sequence_bytes;
-
-            h_sequence_lengths.reset(new Length_t[std::size_t(num_sequences)]);
             sequence_lengths_bytes = sizeof(Length_t) * std::size_t(num_sequences);
+            if(useQualityScores){
+                quality_data_bytes = sizeof(char) * std::size_t(num_sequences) * max_sequence_length;
+            }
+
+            int oldId;
+            cudaGetDevice(&oldId); CUERR;
+
+            bool everyDeviceSupportsUVM = deviceIds.size() > 0
+                            && std::all_of(deviceIds.begin(), deviceIds.end(), [](int deviceId){
+                                    cudaSetDevice(deviceId); CUERR;
+                                    cudaDeviceProp prop;
+                                    cudaGetDeviceProperties(&prop, deviceId);
+
+                                    return prop.major >= 6; // check if compute capability >= 6.0
+                                });
+
+            const std::uint64_t requiredSequenceMem = sequence_data_bytes + sequence_lengths_bytes; //sequences and sequence lengths
+    		const std::uint64_t requiredQualityMem = useQualityScores ? quality_data_bytes : 0;
+    		const std::uint64_t requiredTotalMem = requiredSequenceMem + requiredQualityMem;
+
+            bool everyDeviceCanStoreSequences = std::all_of(deviceIds.begin(), deviceIds.end(), [&](int deviceId){
+                cudaSetDevice(deviceId); CUERR;
+
+                std::size_t freeMem;
+                std::size_t totalMem;
+                cudaMemGetInfo(&freeMem, &totalMem); CUERR;
+
+                bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalGPUMem * totalMem && requiredSequenceMem < freeMem);
+
+                return isEnoughMemForSequences;
+            });
+
+            bool everyDeviceCanStoreBothSequencesAndQualities = std::all_of(deviceIds.begin(), deviceIds.end(), [&](int deviceId){
+                cudaSetDevice(deviceId); CUERR;
+
+                std::size_t freeMem;
+                std::size_t totalMem;
+                cudaMemGetInfo(&freeMem, &totalMem); CUERR;
+
+                bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalGPUMem * totalMem && requiredTotalMem < freeMem);
+
+                return isEnoughMemForSequencesAndQualities;
+            });
+
+            cudaSetDevice(oldId);
+
+            if(allowUVM && !everyDeviceCanStoreSequences){
+                cudaMallocManaged(&h_sequence_data, sequence_data_bytes); CUERR;
+                cudaMallocManaged(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
+
+                sequenceType = ContiguousReadStorage::Type::Managed;
+            }else if(!allowUVM && !everyDeviceCanStoreSequences){
+                cudaMallocHost(&h_sequence_data, sequence_data_bytes); CUERR;
+                cudaMallocHost(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
+
+                sequenceType = ContiguousReadStorage::Type::None;
+            }else{ // everyDeviceCanStoreSequences == true
+                cudaMallocHost(&h_sequence_data, sequence_data_bytes); CUERR;
+                cudaMallocHost(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
+
+                sequenceType = ContiguousReadStorage::Type::Full;
+            }
 
             if(useQualityScores){
-                h_quality_data.reset(new char[std::size_t(num_sequences) * max_sequence_length]);
-                quality_data_bytes = sizeof(char) * std::size_t(num_sequences) * max_sequence_length;
+                if(allowUVM && !everyDeviceCanStoreBothSequencesAndQualities){
+                    cudaMallocManaged(&h_quality_data, quality_data_bytes); CUERR;
+
+                    qualityType = ContiguousReadStorage::Type::Managed;
+                }else if(!allowUVM && !everyDeviceCanStoreBothSequencesAndQualities){
+                    cudaMallocHost(&h_quality_data, quality_data_bytes); CUERR;
+
+                    qualityType = ContiguousReadStorage::Type::None;
+                }else{ // everyDeviceCanStoreBothSequencesAndQualities == true
+                    cudaMallocHost(&h_quality_data, quality_data_bytes); CUERR;
+
+                    qualityType = ContiguousReadStorage::Type::Full;
+                }
             }
 
             std::fill(&h_sequence_data[0], &h_sequence_data[sequence_data_bytes], 0);
@@ -85,24 +192,19 @@ namespace gpu{
         ContiguousReadStorage(const ContiguousReadStorage& other) = delete;
         ContiguousReadStorage& operator=(const ContiguousReadStorage& other) = delete;
 
-        ContiguousReadStorage(ContiguousReadStorage&& other)
-            : h_sequence_data(std::move(other.h_sequence_data)),
-              h_sequence_lengths(std::move(other.h_sequence_lengths)),
-              h_quality_data(std::move(other.h_quality_data)),
-              max_sequence_length(other.max_sequence_length),
-              max_sequence_bytes(other.max_sequence_bytes),
-              useQualityScores(other.useQualityScores),
-              num_sequences(other.num_sequences),
-              sequence_data_bytes(other.sequence_data_bytes),
-              sequence_lengths_bytes(other.sequence_lengths_bytes),
-              quality_data_bytes(other.quality_data_bytes){
-
+        ContiguousReadStorage(ContiguousReadStorage&& other){
+            *this = std::move(other);
         }
 
         ContiguousReadStorage& operator=(ContiguousReadStorage&& other){
-            h_sequence_data = std::move(other.h_sequence_data);
-            h_sequence_lengths = std::move(other.h_sequence_lengths);
-            h_quality_data = std::move(other.h_quality_data);
+            destroy();
+
+            h_sequence_data = other.h_sequence_data;
+            h_sequence_lengths = other.h_sequence_lengths;
+            h_quality_data = other.h_quality_data;
+            d_sequence_data = other.d_sequence_data;
+            d_sequence_lengths = other.d_sequence_lengths;
+            d_quality_data = other.d_quality_data;
             max_sequence_length = other.max_sequence_length;
             max_sequence_bytes = other.max_sequence_bytes;
             useQualityScores = other.useQualityScores;
@@ -110,6 +212,13 @@ namespace gpu{
             sequence_data_bytes = other.sequence_data_bytes;
             sequence_lengths_bytes = other.sequence_lengths_bytes;
             quality_data_bytes = other.quality_data_bytes;
+            sequenceType = other.sequenceType;
+            qualityType = other.qualityType;
+            deviceIds = std::move(other.deviceIds);
+            gpuData = other.gpuData;
+            hasMoved = other.hasMoved;
+
+            other.hasMoved = true;
 
             return *this;
         }
@@ -129,13 +238,25 @@ namespace gpu{
                 return false;
             if(quality_data_bytes != other.quality_data_bytes)
                 return false;
+            if(useQualityScores != other.useQualityScores)
+                return false;
+            if(deviceIds != other.deviceIds)
+                return false;
+            if(sequenceType != other.sequenceType)
+                return false;
+            if(qualityType != other.qualityType)
+                return false;
+            if(hasMoved != other.hasMoved)
+                return false;
 
-            if(0 != std::memcmp(h_sequence_data.get(), other.h_sequence_data.get(), sequence_data_bytes))
+            if(0 != std::memcmp(h_sequence_data, other.h_sequence_data, sequence_data_bytes))
                 return false;
-            if(0 != std::memcmp(h_sequence_lengths.get(), other.h_sequence_lengths.get(), sequence_lengths_bytes))
+            if(0 != std::memcmp(h_sequence_lengths, other.h_sequence_lengths, sequence_lengths_bytes))
                 return false;
-            if(0 != std::memcmp(h_quality_data.get(), other.h_quality_data.get(), quality_data_bytes))
+            if(0 != std::memcmp(h_quality_data, other.h_quality_data, quality_data_bytes))
                 return false;
+
+            //don't compare gpu memory
 
             return true;
         }
@@ -145,15 +266,12 @@ namespace gpu{
         }
 
         std::size_t size() const{
-            //assert(std::size_t(num_sequences) * max_sequence_bytes == sequence_data_bytes);
-            //assert(std::size_t(num_sequences) * sizeof(Length_t) == sequence_lengths_bytes);
 
             std::size_t result = 0;
             result += sequence_data_bytes;
             result += sequence_lengths_bytes;
 
             if(useQualityScores){
-                //assert(std::size_t(num_sequences) * max_sequence_length * sizeof(char) == quality_data_bytes);
                 result += quality_data_bytes;
             }
 
@@ -167,9 +285,44 @@ namespace gpu{
         }
 
         void destroy(){
-            h_sequence_data.reset();
-            h_sequence_lengths.reset();
-            h_quality_data.reset();
+            if(!hasMoved){
+                if(sequenceType == ContiguousReadStorage::Type::Managed){
+                    cudaFree(h_sequence_data); CUERR;
+                    cudaFree(h_sequence_lengths); CUERR;
+                }else{
+                    cudaFreeHost(h_sequence_data); CUERR;
+                    cudaFreeHost(h_sequence_lengths); CUERR;
+
+                    if(sequenceType == ContiguousReadStorage::Type::Full){
+                        int oldId;
+                        cudaGetDevice(&oldId); CUERR;
+                        for(auto& p : gpuData){
+                            auto& data = p.second;
+                            cudaSetDevice(data.id); CUERR;
+                            cudaFree(data.d_sequence_data); CUERR;
+                            cudaFree(data.d_sequence_lengths); CUERR;
+                        }
+                        cudaSetDevice(oldId); CUERR;
+                    }
+                }
+
+                if(qualityType == ContiguousReadStorage::Type::Managed){
+                    cudaFree(h_quality_data); CUERR;
+                }else{
+                    cudaFreeHost(h_quality_data); CUERR;
+
+                    if(qualityType == ContiguousReadStorage::Type::Full){
+                        int oldId;
+                        cudaGetDevice(&oldId); CUERR;
+                        for(auto& p : gpuData){
+                            auto& data = p.second;
+                            cudaSetDevice(data.id); CUERR;
+                            cudaFree(data.d_quality_data); CUERR;
+                        }
+                        cudaSetDevice(oldId); CUERR;
+                    }
+                }
+            }
         }
 
 private:
@@ -232,8 +385,62 @@ public:
             return num_sequences;
         }
 
+        GPUData getGPUData(int deviceId){
+
+            auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+            if(it == deviceIds.end()){
+                GPUData data;
+                data.id = deviceId;
+                return data;
+            }else{
+                auto datait = std::find(gpuData.begin(), gpuData.end(), deviceId);
+                if(datait != gpuData.end()){
+                    return *datait;
+                }else{
+                    int oldId;
+                    cudaGetDevice(&oldId); CUERR;
+                    cudaSetDevice(deviceId); CUERR;
+
+                    GPUData data;
+                    data.id = deviceId;
+
+                    if(sequenceType == ContiguousReadStorage::Type::Managed){
+                        data.d_sequence_data = h_sequence_data;
+                        data.d_sequence_lengths = h_sequence_lengths;
+                        data.sequenceType == ContiguousReadStorage::Type::Managed;
+                    }else if(sequenceType == ContiguousReadStorage::Type::Full){
+                        cudaMalloc(&data.d_sequence_data, sequence_data_bytes); CUERR;
+                        cudaMalloc(&data.d_sequence_lengths, sequence_lengths_bytes); CUERR;
+
+                        cudaMemcpy(data.d_sequence_data, h_sequence_data, sequence_data_bytes, H2D); CUERR;
+                        cudaMemcpy(data.d_sequence_lengths, h_sequence_lengths, sequence_lengths_bytes, H2D); CUERR;
+
+                        data.sequenceType == ContiguousReadStorage::Type::Full;
+                    }
+
+                    if(qualityType == ContiguousReadStorage::Type::Managed){
+                        data.d_quality_data = h_quality_data;
+                        data.qualityType == ContiguousReadStorage::Type::Managed;
+                    }else if(sequenceType == ContiguousReadStorage::Type::Full){
+                        cudaMalloc(&data.d_quality_data, quality_data_bytes); CUERR;
+
+                        cudaMemcpy(data.d_quality_data, h_quality_data, quality_data_bytes, H2D); CUERR;
+
+                        data.qualityType == ContiguousReadStorage::Type::Full;
+                    }
+
+                    cudaSetDevice(oldId); CUERR;
+
+                    gpuData[deviceId] = data;
+
+                    return data;
+                }
+            }
+
+        }
+
         void saveToFile(const std::string& filename) const{
-            std::cout << "ContiguousReadStorage::saveToFile is not implemented yet!" << std::endl;
+            std::cout << "gpu::ContiguousReadStorage::saveToFile is not implemented yet!" << std::endl;
             /*std::ofstream stream(filename, std::ios::binary);
 
             auto writesequence = [&](const Sequence_t& seq){
@@ -262,7 +469,7 @@ public:
         }
 
         void loadFromFile(const std::string& filename){
-            throw std::runtime_error("ContiguousReadStorage::loadFromFile is not implemented yet!");
+            throw std::runtime_error("gpu::ContiguousReadStorage::loadFromFile is not implemented yet!");
             /*std::ifstream stream(filename);
             if(!stream)
                 throw std::runtime_error("cannot load binary sequences from file " + filename);
@@ -347,6 +554,8 @@ public:
         }
 
     };
+
+#endif
 
 }
 }
