@@ -3,17 +3,12 @@
 
 #include "options.hpp"
 
-#include "alignmentwrapper.hpp"
-#include "correctionwrapper.hpp"
-
-#include "batchelem.hpp"
 #include "graph.hpp"
-#include "multiple_sequence_alignment.hpp"
+
 #include "sequence.hpp"
 #include "sequencefileio.hpp"
 #include "qualityscoreweights.hpp"
 #include "tasktiming.hpp"
-#include "concatcontainer.hpp"
 
 #include "featureextractor.hpp"
 #include "bestalignment.hpp"

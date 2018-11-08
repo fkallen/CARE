@@ -6,11 +6,6 @@
 
 namespace care{
 
-    //forward declaration
-    namespace pileup{
-        struct PileupImage;
-    }
-
     struct MSAFeature{
         int position = -1;
 
@@ -30,10 +25,6 @@ namespace care{
     };
 
     std::ostream& operator<<(std::ostream& os, const MSAFeature& f);
-
-    std::vector<MSAFeature> extractFeatures(const pileup::PileupImage& pileup, const std::string& sequence,
-                                    int k, double support_threshold,
-                                    int dataset_coverage);
 
     std::vector<MSAFeature> extractFeatures(const char* consensusptr,
                                             const float* supportptr,

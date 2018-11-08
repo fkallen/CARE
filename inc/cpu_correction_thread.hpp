@@ -24,14 +24,14 @@
 namespace care{
 namespace cpu{
 
-    template<bool indels>
+    /*template<bool indels>
     struct alignment_result_type;
 
     template<>
     struct alignment_result_type<true>{using type = SGAResult;};
 
     template<>
-    struct alignment_result_type<false>{using type = SHDResult;};
+    struct alignment_result_type<false>{using type = SHDResult;};*/
 
     template<class minhasher_t,
     		 class readStorage_t,
@@ -114,8 +114,8 @@ namespace cpu{
     	using ReadStorage_t = readStorage_t;
     	using Sequence_t = typename ReadStorage_t::Sequence_t;
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
-        using AlignmentResult_t = typename alignment_result_type<indels>::type;
-        using BatchElem_t = BatchElem<ReadStorage_t, AlignmentResult_t>;
+        using AlignmentResult_t = SHDResult;//typename alignment_result_type<indels>::type;
+
         using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
         using RangeGenerator_t = RangeGenerator<ReadId_t>;
 
@@ -149,7 +149,6 @@ namespace cpu{
 
         std::uint64_t nProcessedReads = 0;
 
-        DetermineGoodAlignmentStats goodAlignmentStats;
         std::uint64_t minhashcandidates = 0;
         std::uint64_t duplicates = 0;
     	int nProcessedQueries = 0;

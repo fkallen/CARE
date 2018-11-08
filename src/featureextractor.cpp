@@ -1,5 +1,4 @@
 #include "../inc/featureextractor.hpp"
-#include "../inc/multiple_sequence_alignment.hpp"
 
 #include <iomanip>
 #include <limits>
@@ -28,78 +27,6 @@ namespace care{
         os << std::setprecision(3) << maybezero(f.median_coverage) << '\t';
 
         return os;
-    }
-
-
-
-    std::vector<MSAFeature> extractFeatures(const pileup::PileupImage& pileup, const std::string& sequence,
-                                    int k, double support_threshold,
-                                    int dataset_coverage){
-        auto isValidIndex = [&](int i){
-            return 0 <= i && i < pileup.columnProperties.columnsToCheck;
-        };
-
-        auto median = [](auto begin, auto end){
-            std::size_t n = std::distance(begin, end);
-            std::sort(begin, end);
-
-    		if(n % 2 == 0){
-    			return (*(begin + n / 2 - 1) + *(begin + n / 2) / 2);
-    		}else{
-    			return *(begin + n / 2 - 1);
-    		}
-        };
-
-        std::vector<MSAFeature> result;
-
-        const int alignment_coverage = *std::max_element(pileup.h_coverage.begin(), pileup.h_coverage.end());
-
-        for(int i = pileup.columnProperties.subjectColumnsBegin_incl;
-            i < pileup.columnProperties.subjectColumnsEnd_excl;
-            i++){
-
-            const int localindex = i - pileup.columnProperties.subjectColumnsBegin_incl;
-
-            if(pileup.h_support[i] >= support_threshold && pileup.h_consensus[i] != sequence[localindex]){
-
-                int begin = i-k/2;
-                int end = i+k/2;
-
-                for(int j = 0; j < k; j++){
-                    if(!isValidIndex(begin))
-                        begin++;
-                    if(!isValidIndex(end))
-                        end--;
-                }
-                end++;
-
-                MSAFeature f;
-                f.position = localindex;
-                f.position_support = pileup.h_support[i]; // support of the center of k-region (at read position "position")
-                f.position_coverage = pileup.h_origCoverage[i]; // coverage of the center of k-region (at read position "position")
-                f.alignment_coverage = alignment_coverage; // number of sequences in MSA. equivalent to the max possible value of coverage.
-                f.dataset_coverage = dataset_coverage;
-
-                f.min_support = *std::min_element(pileup.h_support.begin() + begin, pileup.h_support.begin() + end);
-                f.min_coverage = *std::min_element(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end);
-                f.max_support = *std::max_element(pileup.h_support.begin() + begin, pileup.h_support.begin() + end);
-                f.max_coverage = *std::max_element(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end);
-                f.mean_support = std::accumulate(pileup.h_support.begin() + begin, pileup.h_support.begin() + end, 0.0) / (end - begin);
-                f.mean_coverage = std::accumulate(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end, 0.0) / (end - begin);
-
-                std::array<double, 33> arr;
-
-                std::copy(pileup.h_support.begin() + begin, pileup.h_support.begin() + end, arr.begin());
-                f.median_support = median(arr.begin(), arr.begin() + (end-begin));
-
-                std::copy(pileup.h_coverage.begin() + begin, pileup.h_coverage.begin() + end, arr.begin());
-                f.median_coverage = median(arr.begin(), arr.begin() + (end-begin));
-
-                result.emplace_back(f);
-            }
-        }
-
-        return result;
     }
 
     std::vector<MSAFeature> extractFeatures(const char* consensusptr,
