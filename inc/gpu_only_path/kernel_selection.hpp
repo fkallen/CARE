@@ -46,10 +46,11 @@ namespace gpu{
     			static_assert(std::numeric_limits<typename GPUReadStorage_t::Length_t>::max() <= std::numeric_limits<int>::max());
 
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-                assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+                //assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
                 const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
     			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
+                const int readstorage_sequence_pitch = gpuReadStorage->getSequencePitch();
 
     			auto getNumBytes = [] __device__ (int sequencelength){
                     return Sequence2BitHiLo::getNumBytes(sequencelength);
@@ -57,13 +58,13 @@ namespace gpu{
 
                 auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
                     const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
-                    const char* result = d_sequence_data + subjectReadId * max_sequence_bytes;
+                    const char* result = d_sequence_data + subjectReadId * readstorage_sequence_pitch;
                     return result;
                 };
 
                 auto getCandidatePtr_sparse = [=] __device__ (ReadId_t candidateIndex){
                     const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
-                    const char* result = d_sequence_data + candidateReadId * max_sequence_bytes;
+                    const char* result = d_sequence_data + candidateReadId * readstorage_sequence_pitch;
                     return result;
                 };
 
@@ -382,7 +383,7 @@ namespace gpu{
                                 KernelLaunchHandle& kernelLaunchHandle){
 
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-                assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+                //assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
                 auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
                     return Sequence_t::get_as_nucleotide(data, length, index);
@@ -397,29 +398,31 @@ namespace gpu{
                 const char* d_quality_data = gpuReadStorageGpuData.isValidQualityData() ?
                                                 gpuReadStorageGpuData.d_quality_data :
                                                 nullptr;
+                const int readstorage_sequence_pitch = gpuReadStorage->getSequencePitch();
+                const int readstorage_quality_pitch = gpuReadStorage->getQualityPitch();
 
                 auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
                     const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
-                    const char* result = d_sequence_data + subjectReadId * max_sequence_bytes;
+                    const char* result = d_sequence_data + subjectReadId * readstorage_sequence_pitch;
                     return result;
                 };
 
                 auto getCandidatePtr_sparse = [=] __device__ (ReadId_t candidateIndex){
                     const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
-                    const char* result = d_sequence_data + candidateReadId * max_sequence_bytes;
+                    const char* result = d_sequence_data + candidateReadId * readstorage_sequence_pitch;
                     return result;
                 };
 
                 auto getSubjectQualityPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
                     const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
-                    const char* result = d_quality_data + subjectReadId * maximum_sequence_length;
+                    const char* result = d_quality_data + subjectReadId * readstorage_quality_pitch;
                     return result;
                 };
 
                 auto getCandidateQualityPtr_sparse = [=] __device__ (ReadId_t localCandidateIndex){
     				const int candidateIndex = d_indices[localCandidateIndex];
                     const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
-                    const char* result = d_quality_data + candidateReadId * maximum_sequence_length;
+                    const char* result = d_quality_data + candidateReadId * readstorage_quality_pitch;
                     return result;
                 };
 

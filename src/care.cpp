@@ -212,7 +212,7 @@ namespace care{
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
         //ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
-		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102, runtimeOptions.deviceIds);
+		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 101, runtimeOptions.deviceIds);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
