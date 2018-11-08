@@ -229,17 +229,16 @@ struct BatchGenerator{
 
 #ifdef __NVCC__
     template<class minhasher_t,
-    		 class readStorage_t,
-             class gpureadStorage_t,
+    		 class gpureadStorage_t,
 			 class readIdGenerator_t>
     struct ErrorCorrectionThreadOnlyGPU{
-    using Minhasher_t = minhasher_t;
-    	using ReadStorage_t = readStorage_t;
-    	using Sequence_t = typename ReadStorage_t::Sequence_t;
-    	using ReadId_t = typename ReadStorage_t::ReadId_t;
+        using Minhasher_t = minhasher_t;
+        using GPUReadStorage_t = gpureadStorage_t;
+    	using Sequence_t = typename GPUReadStorage_t::Sequence_t;
+    	using ReadId_t = typename GPUReadStorage_t::ReadId_t;
         using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
 		using ReadIdGenerator_t = readIdGenerator_t;
-        using GPUReadStorage_t = gpureadStorage_t;
+
 
         static constexpr int primary_stream_index = 0;
         static constexpr int secondary_stream_index = 1;
@@ -336,7 +335,7 @@ struct BatchGenerator{
 			int maxSequenceLength;
 			const Minhasher_t* minhasher;
             const GPUReadStorage_t* gpuReadStorage;
-            bool useGpuReadStorage;
+            typename GPUReadStorage_t::GPUData readStorageGpuData;
 			std::mutex* locksForProcessedFlags;
     		std::size_t nLocksForProcessedFlags;
             CorrectionOptions correctionOptions;
@@ -355,9 +354,7 @@ struct BatchGenerator{
     		std::string outputfile;
     		ReadIdGenerator_t* readIdGenerator;
     		const Minhasher_t* minhasher;
-    		const ReadStorage_t* readStorage;
             GPUReadStorage_t* gpuReadStorage;
-            bool canUseGPUReadStorage;
     		std::mutex* coutLock;
     		std::vector<char>* readIsProcessedVector;
     		std::vector<char>* readIsCorrectedVector;
@@ -714,7 +711,7 @@ struct BatchGenerator{
                 const auto& task = batch.tasks[batch.copiedTasks];
                 auto& arrays = dataArrays;
 
-				if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()){
+				if(transFuncData.readStorageGpuData.isValidSequenceData()){
 					//copy read Ids
 					arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
 #if 0
@@ -839,7 +836,7 @@ struct BatchGenerator{
 			if(batch.copiedTasks == int(batch.tasks.size())){
                 assert(batch.copiedTasks == int(batch.tasks.size()));
 
-                if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()){
+                if(transFuncData.readStorageGpuData.isValidSequenceData()){
                     dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
                     cudaMemcpyAsync(dataArrays.d_subject_read_ids,
@@ -953,7 +950,8 @@ struct BatchGenerator{
                                     //batch.maxSubjectLength,
                                     //batch.maxQueryLength,
                                     transFuncData.gpuReadStorage,
-                                    transFuncData.useGpuReadStorage,
+                                    transFuncData.readStorageGpuData,
+                                    true,
                                     streams[primary_stream_index],
                                     batch.kernelLaunchHandle);
 
@@ -979,7 +977,8 @@ struct BatchGenerator{
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
                         transFuncData.gpuReadStorage,
-                        transFuncData.useGpuReadStorage,
+                        transFuncData.readStorageGpuData,
+                        true,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
 
@@ -1068,7 +1067,7 @@ struct BatchGenerator{
 			cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
             if(transFuncData.correctionOptions.useQualityScores){
-                if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasQualities()){
+                if(transFuncData.readStorageGpuData.isValidQualityData()){
                     return BatchState::BuildMSA;
                 }else{
                     // need indices to copy individual quality scores
@@ -1118,7 +1117,7 @@ struct BatchGenerator{
 			if(transFuncData.correctionOptions.useQualityScores){
 
                 //if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
-				if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasQualities()){
+				if(transFuncData.readStorageGpuData.isValidQualityData()){
                     //we don't need to copy any quality strings. they are already present in the gpu read storage
                     return BatchState::StartClassicCorrection;
                 }else{
@@ -1268,7 +1267,8 @@ struct BatchGenerator{
                             dataArrays.n_subjects,
                             dataArrays.n_queries,
                             transFuncData.gpuReadStorage,
-                            transFuncData.useGpuReadStorage,
+                            transFuncData.readStorageGpuData,
+                            true,
                             streams[primary_stream_index],
                             batch.kernelLaunchHandle);
 
@@ -1305,7 +1305,8 @@ struct BatchGenerator{
         								dataArrays.msa_weights_pitch,
 										//true,
                                         transFuncData.gpuReadStorage,
-                                        transFuncData.useGpuReadStorage,
+                                        transFuncData.readStorageGpuData,
+                                        true,
                                         streams[primary_stream_index],
                                         batch.kernelLaunchHandle);
 
@@ -1475,7 +1476,8 @@ struct BatchGenerator{
             									new_columns_to_correct,
                                                 dataArrays.maximum_sequence_length,
                                                 transFuncData.gpuReadStorage,
-                                                transFuncData.useGpuReadStorage,
+                                                transFuncData.readStorageGpuData,
+                                                true,
                                                 streams[primary_stream_index],
                                                 batch.kernelLaunchHandle);
     				}
@@ -1595,7 +1597,7 @@ struct BatchGenerator{
             cudaError_t querystatus2 = cudaSuccess;
 
             if(transFuncData.correctionOptions.useQualityScores){
-                if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasQualities()){
+                if(transFuncData.readStorageGpuData.isValidQualityData()){
                     querystatus2 = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
                 }else{
                     // if we needed to copy individual quality scores, we already waited for indices to copy the quality scores. no need to wait again
@@ -2086,39 +2088,6 @@ struct BatchGenerator{
 				freeStreamsQueue.push(&streamArray);
 			for(auto& eventArray : cudaevents)
 				freeEventsQueue.push(&eventArray);
-#if 0
-            GPUReadStorage_t gpuReadStorage;
-			bool canUseGPUReadStorage = true;
-            /*GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(*threadOpts.readStorage,
-                                                                                    Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-                                                                                    fileProperties.maxSequenceLength,
-                                                                                    0.8f,
-                                                                                    threadOpts.deviceId);
-
-
-            if(bestGPUReadStorageType != GPUReadStorageType::None){
-				//bestGPUReadStorageType = GPUReadStorageType::Sequences;
-
-                gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
-																bestGPUReadStorageType,
-                                                                Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-                                                                fileProperties.maxSequenceLength,
-                                                                threadOpts.deviceId);
-
-				canUseGPUReadStorage = true;
-                std::cout << "Using gpu read storage, type " << GPUReadStorage_t::nameOf(bestGPUReadStorageType) << std::endl;
-            }*/
-
-			gpuReadStorage = GPUReadStorage_t::createFrom(*threadOpts.readStorage,
-														Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-														fileProperties.maxSequenceLength,
-														0.8f,
-														true,
-														threadOpts.deviceId);
-
-			std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
-			std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
-#endif
 
             std::vector<ReadId_t> readIdBuffer;
 
@@ -2127,11 +2096,9 @@ struct BatchGenerator{
 			//transFuncData.mybatchgen = &mybatchgen;
             transFuncData.readIdGenerator = threadOpts.readIdGenerator;
             transFuncData.readIdBuffer = &readIdBuffer;
-			//transFuncData.readStorage = threadOpts.readStorage;
 			transFuncData.minhasher = threadOpts.minhasher;
-            //transFuncData.gpuReadStorage = canUseGPUReadStorage ? &gpuReadStorage : nullptr;
-            transFuncData.gpuReadStorage = threadOpts.canUseGPUReadStorage ? threadOpts.gpuReadStorage : nullptr;
-            transFuncData.useGpuReadStorage = threadOpts.canUseGPUReadStorage;
+            transFuncData.gpuReadStorage = threadOpts.gpuReadStorage;
+            transFuncData.readStorageGpuData = threadOpts.gpuReadStorage->getGPUData(threadOpts.deviceId);
 			transFuncData.min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
 			transFuncData.min_overlap = goodAlignmentProperties.min_overlap;
 			transFuncData.estimatedErrorrate = correctionOptions.estimatedErrorrate;
@@ -2456,10 +2423,6 @@ struct BatchGenerator{
     	#endif
     		}
     	#endif
-
-            //if(canUseGPUReadStorage){
-            //    GPUReadStorage_t::destroy(gpuReadStorage);
-            //}
 
             for(auto& array : dataArrays){
                 array.reset();

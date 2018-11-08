@@ -91,7 +91,7 @@ namespace care{
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
         std::cout << "nReads = " << nReads << std::endl;
-		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 0);
+		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
@@ -211,7 +211,8 @@ namespace care{
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
+        //ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
+		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102, runtimeOptions.deviceIds);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
@@ -258,7 +259,7 @@ namespace care{
 
 		using NoIndelSequence_t = Sequence2BitHiLo;
 		//using IndelSequence_t = Sequence2BitHiLo;
-		using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
+		using NoIndelReadStorage_t = gpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
 		//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
 
 		if(correctionOptions.correctionMode == CorrectionMode::Hamming){
@@ -413,7 +414,7 @@ namespace care{
 				readIsCorrectedVector, locksForProcessedFlags,
 				nLocksForProcessedFlags);
 		#else
-			if(runtimeOptions.canUseGpu){
+			if(runtimeOptions.canUseGpu && runtimeOptions.deviceIds.size() > 0 && runtimeOptions.threadsForGPUs > 0){
 				std::cout << "Running CARE GPU" << std::endl;
 				std::cout << "Can use the following GPU device Ids: ";
 

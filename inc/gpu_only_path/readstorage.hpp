@@ -12,11 +12,33 @@
 #include <memory>
 #include <algorithm>
 #include <map>
+#include <mutex>
 
 namespace care{
 namespace gpu{
 
 #ifdef __NVCC__
+
+    __global__
+    void ContiguousReadStorage_sequence_test_kernel(char* result, const char* d_sequence_data, int max_sequence_bytes, std::uint64_t readId){
+        for(int i = threadIdx.x; i < max_sequence_bytes; i += blockDim.x){
+            result[i] = d_sequence_data[readId * max_sequence_bytes + i];
+        }
+    }
+
+    template<class Length_t>
+    __global__
+    void ContiguousReadStorage_sequencelength_test_kernel(Length_t* result, const Length_t* d_sequence_lengths, std::uint64_t readId){
+        if(threadIdx.x == 0)
+            result[0] = d_sequence_lengths[readId];
+    }
+
+    __global__
+    void ContiguousReadStorage_quality_test_kernel(char* result, const char* d_quality_data, int max_sequence_length, std::uint64_t readId){
+        for(int i = threadIdx.x; i < max_sequence_length; i += blockDim.x){
+            result[i] = d_quality_data[readId * max_sequence_length + i];
+        }
+    }
 
     template<class sequence_t,
              class readId_t>
@@ -79,6 +101,8 @@ namespace gpu{
         std::map<int, GPUData> gpuData;
         bool hasMoved = false;
 
+        std::mutex mutex;
+
         std::string nameOf(ContiguousReadStorage::Type type) const {
             switch(type){
                 case ContiguousReadStorage::Type::None: return "ContiguousReadStorage::Type::None";
@@ -86,6 +110,14 @@ namespace gpu{
                 case ContiguousReadStorage::Type::Managed: return "ContiguousReadStorage::Type::Managed";
                 default: return "Error. ContiguousReadStorage::nameOf default case";
             }
+        }
+
+        std::string getNameOfSequenceType() const{
+            return nameOf(sequenceType);
+        }
+
+        std::string getNameOfQualityType() const{
+            return nameOf(qualityType);
         }
 
         ContiguousReadStorage(ReadId_t nSequences) : ContiguousReadStorage(nSequences, false){}
@@ -102,6 +134,8 @@ namespace gpu{
 
             constexpr bool allowUVM = true;
             constexpr float maxPercentOfTotalGPUMem = 0.8;
+
+            std::cerr << "gpu::ContiguousReadStorage(...)";
 
             sequence_data_bytes = sizeof(char) * std::size_t(num_sequences) * max_sequence_bytes;
             sequence_lengths_bytes = sizeof(Length_t) * std::size_t(num_sequences);
@@ -385,20 +419,14 @@ public:
             return num_sequences;
         }
 
-        GPUData getGPUData(int deviceId){
+        void initGPUData(){
+            int oldId;
+            cudaGetDevice(&oldId); CUERR;
 
-            auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
-            if(it == deviceIds.end()){
-                GPUData data;
-                data.id = deviceId;
-                return data;
-            }else{
-                auto datait = std::find(gpuData.begin(), gpuData.end(), deviceId);
-                if(datait != gpuData.end()){
-                    return *datait;
-                }else{
-                    int oldId;
-                    cudaGetDevice(&oldId); CUERR;
+            for(auto deviceId : deviceIds){
+                auto datait = gpuData.find(deviceId);
+                if(datait == gpuData.end()){
+
                     cudaSetDevice(deviceId); CUERR;
 
                     GPUData data;
@@ -407,7 +435,7 @@ public:
                     if(sequenceType == ContiguousReadStorage::Type::Managed){
                         data.d_sequence_data = h_sequence_data;
                         data.d_sequence_lengths = h_sequence_lengths;
-                        data.sequenceType == ContiguousReadStorage::Type::Managed;
+                        data.sequenceType = ContiguousReadStorage::Type::Managed;
                     }else if(sequenceType == ContiguousReadStorage::Type::Full){
                         cudaMalloc(&data.d_sequence_data, sequence_data_bytes); CUERR;
                         cudaMalloc(&data.d_sequence_lengths, sequence_lengths_bytes); CUERR;
@@ -415,23 +443,154 @@ public:
                         cudaMemcpy(data.d_sequence_data, h_sequence_data, sequence_data_bytes, H2D); CUERR;
                         cudaMemcpy(data.d_sequence_lengths, h_sequence_lengths, sequence_lengths_bytes, H2D); CUERR;
 
-                        data.sequenceType == ContiguousReadStorage::Type::Full;
+                        data.sequenceType = ContiguousReadStorage::Type::Full;
                     }
 
                     if(qualityType == ContiguousReadStorage::Type::Managed){
                         data.d_quality_data = h_quality_data;
-                        data.qualityType == ContiguousReadStorage::Type::Managed;
+                        data.qualityType = ContiguousReadStorage::Type::Managed;
                     }else if(sequenceType == ContiguousReadStorage::Type::Full){
                         cudaMalloc(&data.d_quality_data, quality_data_bytes); CUERR;
 
                         cudaMemcpy(data.d_quality_data, h_quality_data, quality_data_bytes, H2D); CUERR;
 
-                        data.qualityType == ContiguousReadStorage::Type::Full;
+                        data.qualityType = ContiguousReadStorage::Type::Full;
                     }
 
                     cudaSetDevice(oldId); CUERR;
 
                     gpuData[deviceId] = data;
+
+            #if 1
+                    if(data.isValidSequenceData()){
+            			//verify sequence data
+                        {
+            				char* h_test, *d_test;
+            				cudaMallocHost(&h_test, max_sequence_bytes); CUERR;
+            				cudaMalloc(&d_test, max_sequence_bytes); CUERR;
+
+            				std::mt19937 gen;
+            				gen.seed(std::random_device()());
+            				std::uniform_int_distribution<ReadId_t> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
+
+            				for(ReadId_t i = 0; i < getNumberOfSequences(); i++){
+            					ReadId_t readId = i;//dist(gen);
+            					ContiguousReadStorage_sequence_test_kernel<<<1,32>>>(d_test, data.d_sequence_data, max_sequence_bytes, readId); CUERR;
+            					cudaMemcpy(h_test, d_test, max_sequence_bytes, D2H); CUERR;
+            					cudaDeviceSynchronize(); CUERR;
+
+            					//const Sequence_t* sequence = cpurs.fetchSequence_ptr(readId);
+                                const char* sequence = fetchSequenceData_ptr(readId);
+                                const int len = fetchSequenceLength(readId);
+
+            					int result = std::memcmp(sequence, h_test, Sequence_t::getNumBytes(len));
+            					if(result != 0){
+            						std::cout << readId << std::endl;
+            						for(int k = 0; k < Sequence_t::getNumBytes(len); ++k)
+            							std::cout << int(sequence[k]) << " " << int(h_test[k]) << std::endl;
+            					}
+            					assert(result == 0);
+            				}
+
+            				std::cout << "ContiguousReadStorage_sequence_test ok" << std::endl;
+
+            				cudaFree(d_test); CUERR;
+            				cudaFreeHost(h_test); CUERR;
+                        }
+                        {
+                            Length_t* h_test, *d_test;
+                            cudaMallocHost(&h_test, sizeof(Length_t)); CUERR;
+                            cudaMalloc(&d_test, sizeof(Length_t)); CUERR;
+
+                            std::mt19937 gen;
+                            gen.seed(std::random_device()());
+                            std::uniform_int_distribution<ReadId_t> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
+
+                            for(ReadId_t i = 0; i < getNumberOfSequences(); i++){
+                                ReadId_t readId = i;//dist(gen);
+                                ContiguousReadStorage_sequencelength_test_kernel<<<1,1>>>(d_test, data.d_sequence_lengths, readId); CUERR;
+                                cudaMemcpy(h_test, d_test, sizeof(Length_t), D2H); CUERR;
+                                cudaDeviceSynchronize(); CUERR;
+
+                                const int length = fetchSequenceLength(readId);
+
+                                bool equal = length == *h_test;
+                                if(!equal){
+                                    std::cout << readId << std::endl;
+                                    std::cout << length << " " << *h_test << std::endl;
+                                }
+                                assert(equal);
+                            }
+
+                            std::cout << "ContiguousReadStorage_sequencelength_test ok" << std::endl;
+
+                            cudaFree(d_test); CUERR;
+                            cudaFreeHost(h_test); CUERR;
+                        }
+                    }
+            #endif
+
+            #if 1
+                    if(data.isValidQualityData()){
+                        //verify quality scores
+
+                            char* h_test, *d_test;
+                            cudaMallocHost(&h_test, max_sequence_length); CUERR;
+                            cudaMalloc(&d_test, max_sequence_length); CUERR;
+
+                            std::mt19937 gen;
+                            gen.seed(std::random_device()());
+                            std::uniform_int_distribution<ReadId_t> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
+
+                            for(ReadId_t i = 0; i < getNumberOfSequences(); i++){
+                                ReadId_t readId = i;//dist(gen);
+                                ContiguousReadStorage_quality_test_kernel<<<1,128>>>(d_test, data.d_quality_data, max_sequence_length, readId); CUERR;
+                                cudaMemcpy(h_test, d_test, max_sequence_length, D2H); CUERR;
+                                cudaDeviceSynchronize(); CUERR;
+
+                                //const std::string* qualityptr = cpurs.fetchQuality_ptr(readId);
+                                const char* quality = fetchQuality2_ptr(readId);
+                                const int len = fetchSequenceLength(readId);
+
+                                int result = std::memcmp(quality, h_test, len);
+                                if(result != 0){
+                                    std::cout << readId << std::endl;
+                                    for(int k = 0; k < len; ++k)
+                                        std::cout << int(quality[k]) << " " << int(h_test[k]) << std::endl;
+                                }
+                                assert(result == 0);
+                            }
+
+                            std::cout << "ContiguousReadStorage_quality_test ok" << std::endl;
+
+                            cudaFree(d_test); CUERR;
+                            cudaFreeHost(h_test); CUERR;
+                        }
+            #endif
+                    }
+                }
+
+                cudaSetDevice(oldId); CUERR;
+            }
+
+        GPUData getGPUData(int deviceId){
+
+            auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+            if(it == deviceIds.end()){
+                GPUData data;
+                data.id = deviceId;
+                return data;
+            }else{
+                std::lock_guard<std::mutex> guard(mutex);
+
+                auto datait = gpuData.find(deviceId);
+                if(datait != gpuData.end()){
+                    return datait->second;
+                }else{
+                    std::cerr << "getGPUData(" << deviceId << ") not found";
+
+                    GPUData data;
+                    data.id = deviceId;
 
                     return data;
                 }

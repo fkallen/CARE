@@ -37,6 +37,7 @@ namespace gpu{
                                 double maxErrorRate,
                                 double min_overlap_ratio,
                                 const GPUReadStorage_t* gpuReadStorage,
+                                const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
                                 bool useGpuReadStorage,
                                 cudaStream_t stream,
                                 KernelLaunchHandle& kernelLaunchHandle){
@@ -47,8 +48,8 @@ namespace gpu{
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
-                const char* d_sequence_data = gpuReadStorage->d_sequence_data;
-    			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+                const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
+    			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
 
     			auto getNumBytes = [] __device__ (int sequencelength){
                     return Sequence2BitHiLo::getNumBytes(sequencelength);
@@ -121,7 +122,7 @@ namespace gpu{
                                 kernelLaunchHandle);
                 };
 
-                if(!useGpuReadStorage || !gpuReadStorage->hasSequences()){
+                if(!useGpuReadStorage || !gpuReadStorageGpuData.isValidSequenceData()){
                     callKernel( getSubjectPtr_dense,
                                 getCandidatePtr_dense,
     							getSubjectLength_dense,
@@ -162,13 +163,14 @@ namespace gpu{
                                 int n_subjects,
                                 int n_queries,
                                 const GPUReadStorage_t* gpuReadStorage,
+                                const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
                                 bool useGpuReadStorage,
                                 cudaStream_t stream,
                                 KernelLaunchHandle& kernelLaunchHandle){
 
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
-    			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+    			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
 
     			auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
     				const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
@@ -239,7 +241,7 @@ namespace gpu{
                     callKernel( getSubjectLength_dense,
                                 getCandidateLength_dense);
                 }else{
-                    if(gpuReadStorage->hasSequences()){
+                    if(gpuReadStorageGpuData.isValidSequenceData()){
                         callKernel( getSubjectLength_sparse,
     								getCandidateLength_sparse);
                     }else{
@@ -269,13 +271,14 @@ namespace gpu{
                                 int n_subjects, //
                                 int n_queries, //
                                 const GPUReadStorage_t* gpuReadStorage, //
+                                const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
                                 bool useGpuReadStorage, //
                                 cudaStream_t stream,
                                 KernelLaunchHandle& kernelLaunchHandle){ //
 
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
-    			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+    			const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
 
     			auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
     				const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
@@ -323,7 +326,7 @@ namespace gpu{
                     callKernel( getSubjectLength_dense,
                                 getCandidateLength_dense);
                 }else{
-                    if(gpuReadStorage->hasSequences()){
+                    if(gpuReadStorageGpuData.isValidSequenceData()){
                         callKernel( getSubjectLength_sparse,
     								getCandidateLength_sparse);
                     }else{
@@ -373,6 +376,7 @@ namespace gpu{
                                 size_t msa_row_pitch,
                                 size_t msa_weights_row_pitch,
                                 const GPUReadStorage_t* gpuReadStorage,
+                                const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
                                 bool useGpuReadStorage,
                                 cudaStream_t stream,
                                 KernelLaunchHandle& kernelLaunchHandle){
@@ -388,10 +392,10 @@ namespace gpu{
                     return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
                 };
 
-                const char* d_sequence_data = gpuReadStorage->d_sequence_data;
-                const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
-                const char* d_quality_data = gpuReadStorage->hasQualities() ?
-                                                gpuReadStorage->d_quality_data :
+                const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
+                const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
+                const char* d_quality_data = gpuReadStorageGpuData.isValidQualityData() ?
+                                                gpuReadStorageGpuData.d_quality_data :
                                                 nullptr;
 
                 auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
@@ -508,8 +512,8 @@ namespace gpu{
                                 getSubjectLength_dense,
                                 getCandidateLength_dense);
                 }else{
-                    if(gpuReadStorage->hasSequences()){
-                        if(gpuReadStorage->hasQualities()){
+                    if(gpuReadStorageGpuData.isValidSequenceData()){
+                        if(gpuReadStorageGpuData.isValidQualityData()){
                             callKernel( getSubjectPtr_sparse,
                                         getCandidatePtr_sparse,
                                         getSubjectQualityPtr_sparse,
@@ -525,7 +529,7 @@ namespace gpu{
                                         getCandidateLength_sparse);
                         }
                     }else{
-                        if(gpuReadStorage->hasQualities()){
+                        if(gpuReadStorageGpuData.isValidQualityData()){
                             callKernel( getSubjectPtr_dense,
                                         getCandidatePtr_dense,
                                         getSubjectQualityPtr_sparse,
@@ -582,13 +586,14 @@ namespace gpu{
                                 int new_columns_to_correct,
                                 int maximum_sequence_length,
                                 const GPUReadStorage_t* gpuReadStorage,
+                                const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
                                 bool useGpuReadStorage,
                                 cudaStream_t stream,
                                 KernelLaunchHandle& kernelLaunchHandle){
 
                 assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
-                const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorage->d_sequence_lengths;
+                const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
 
                 auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
                     return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
@@ -647,7 +652,7 @@ namespace gpu{
                     callKernel( make_unpacked_reverse_complement_inplace,
                                 getCandidateLength_dense);
                 }else{
-                    if(gpuReadStorage->hasSequences()){
+                    if(gpuReadStorageGpuData.isValidSequenceData()){
                         callKernel( make_unpacked_reverse_complement_inplace,
                                     getCandidateLength_sparse);
                     }else{

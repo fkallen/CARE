@@ -49,8 +49,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     	//using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
       using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
 
-    	//using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::gpu::BatchGenerator<ReadId_t>>;
-      using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
+      using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
+      //using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
 
       constexpr int maxCPUThreadsPerGPU = 64;
 
@@ -129,12 +129,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       }
 
       int nGpuThreads = std::min(nCorrectorThreads, runtimeOptions.threadsForGPUs);
-    	int nCpuThreads = nCorrectorThreads - nGpuThreads;
+      int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
       cpu::RangeGenerator<ReadId_t> readIdGenerator(sequenceFileProperties.nReads);
 
       std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
-    	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
+      std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
       std::vector<char> readIsProcessedVector(readIsCorrectedVector);
       std::mutex writelock;
 
@@ -176,39 +176,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           cpucorrectorThreads[threadId].run();
       }
 
+      readStorage.initGPUData();
 
-      GPUReadStorage_t gpuReadStorage;
-      bool canUseGPUReadStorage = true;
-      /*GPUReadStorageType bestGPUReadStorageType = GPUReadStorage_t::getBestPossibleType(readStorage,
-                                                                              Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-                                                                              fileProperties.maxSequenceLength,
-                                                                              0.8f,
-                                                                              threadOpts.deviceId);
+      std::cout << "Sequence Type: " << readStorage.getNameOfSequenceType() << std::endl;
+      std::cout << "Quality Type: " << readStorage.getNameOfQualityType() << std::endl;
 
-
-      if(bestGPUReadStorageType != GPUReadStorageType::None){
-          //bestGPUReadStorageType = GPUReadStorageType::Sequences;
-
-          gpuReadStorage = GPUReadStorage_t::createFrom(readStorage,
-                                                          bestGPUReadStorageType,
-                                                          Sequence_t::getNumBytes(fileProperties.maxSequenceLength),
-                                                          fileProperties.maxSequenceLength,
-                                                          threadOpts.deviceId);
-
-          canUseGPUReadStorage = true;
-          std::cout << "Using gpu read storage, type " << GPUReadStorage_t::nameOf(bestGPUReadStorageType) << std::endl;
-      }*/
-
-      std::cout << "External gpu read storage" << std::endl;
-      gpuReadStorage = GPUReadStorage_t::createFrom(readStorage,
-                                                  Sequence_t::getNumBytes(sequenceFileProperties.maxSequenceLength),
-                                                  sequenceFileProperties.maxSequenceLength,
-                                                  0.8f,
-                                                  true,
-                                                  deviceIds.size() == 0 ? -1 : deviceIds[0]);
-
-      std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
-      std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
+      assert(!(deviceIds.size() == 0 && nGpuThreads > 0));
 
       for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
@@ -223,9 +196,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           //threadOpts.batchGen = &gpubatchgenerators[threadId];
           threadOpts.readIdGenerator = &readIdGenerator;
           threadOpts.minhasher = &minhasher;
-          threadOpts.readStorage = &readStorage;
-          threadOpts.gpuReadStorage = &gpuReadStorage;
-          threadOpts.canUseGPUReadStorage = canUseGPUReadStorage;
+          threadOpts.gpuReadStorage = &readStorage;
           threadOpts.coutLock = &writelock;
           threadOpts.readIsProcessedVector = &readIsProcessedVector;
           threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
@@ -350,13 +321,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       //std::cout << "threads done" << std::endl;
 
 
-
-      minhasher.destroy();
-    	readStorage.destroy();
-
-      if(canUseGPUReadStorage){
-          GPUReadStorage_t::destroy(gpuReadStorage);
-      }
+    minhasher.destroy();
+    readStorage.destroy();
 
      // generators.clear();
      // ecthreads.clear();
