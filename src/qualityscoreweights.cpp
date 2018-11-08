@@ -1,6 +1,6 @@
-#include "../inc/qualityscoreweights.hpp"
+#include "../include/qualityscoreweights.hpp"
 
-#include "../inc/hpc_helpers.cuh"
+#include "../include/hpc_helpers.cuh"
 
 #include <cmath>
 

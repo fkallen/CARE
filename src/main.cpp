@@ -1,6 +1,6 @@
-#include "../inc/care.hpp"
+#include "../include/care.hpp"
 
-#include "../inc/cxxopts/cxxopts.hpp"
+#include "../include/cxxopts/cxxopts.hpp"
 
 
 #include <iostream>

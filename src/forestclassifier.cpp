@@ -1,14 +1,14 @@
-#include "../inc/forestclassifier.hpp"
+#include "../include/forestclassifier.hpp"
 
-#include "../inc/combinedforestaligncov.hpp"
-#include "../inc/combinedforestdatacov.hpp"
+#include "../include/combinedforestaligncov.hpp"
+#include "../include/combinedforestdatacov.hpp"
 
-#include "../inc/celeganssrr543736.hpp"
-#include "../inc/celeganssrx218989.hpp"
-#include "../inc/ecolisrr490124.hpp"
-#include "../inc/dmelanogastersrr82337.hpp"
-#include "../inc/dmelanogastersrr988075.hpp"
-#include "../inc/humanerx069715.hpp"
+#include "../include/celeganssrr543736.hpp"
+#include "../include/celeganssrx218989.hpp"
+#include "../include/ecolisrr490124.hpp"
+#include "../include/dmelanogastersrr82337.hpp"
+#include "../include/dmelanogastersrr988075.hpp"
+#include "../include/humanerx069715.hpp"
 
 #include <utility>
 #include <stdexcept>

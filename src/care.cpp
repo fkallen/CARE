@@ -1,12 +1,12 @@
-#include "../inc/care.hpp"
+#include "../include/care.hpp"
 
-#include "../inc/args.hpp"
-#include "../inc/build.hpp"
-#include "../inc/correct.hpp"
-#include "../inc/minhasher.hpp"
-#include "../inc/options.hpp"
-#include "../inc/readstorage.hpp"
-#include "../inc/sequence.hpp"
+#include "../include/args.hpp"
+#include "../include/build.hpp"
+#include "../include/correct.hpp"
+#include "../include/minhasher.hpp"
+#include "../include/options.hpp"
+#include "../include/readstorage.hpp"
+#include "../include/sequence.hpp"
 
 #include <vector>
 #include <iostream>
@@ -19,8 +19,8 @@ namespace filesys = std::experimental::filesystem;
 
 
 #ifdef __NVCC__
-#include "../inc/gpu_only_path/correct.hpp"
-#include "../inc/gpu_only_path/readstorage.hpp"
+#include "../include/gpu_only_path/correct.hpp"
+#include "../include/gpu_only_path/readstorage.hpp"
 #endif
 
 namespace care{

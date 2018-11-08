@@ -3,8 +3,8 @@ CUDACC=nvcc
 HOSTLINKER=g++
 
 CXXFLAGS = -std=c++14
-CFLAGS = -Wall -fopenmp -g -Iinc -O3
-CFLAGS_DEBUG = -Wall -fopenmp -g -Iinc
+CFLAGS = -Wall -fopenmp -g -Iinclude -O3
+CFLAGS_DEBUG = -Wall -fopenmp -g -Iinclude
 
 CUB_INCLUDE = -I/home/fekallen/cub-1.8.0
 
@@ -69,7 +69,7 @@ buildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-buildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
+buildgpu/kernels.o : include/gpu_only_path/kernels.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
@@ -81,7 +81,7 @@ debugbuildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
-debugbuildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
+debugbuildgpu/kernels.o : include/gpu_only_path/kernels.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 

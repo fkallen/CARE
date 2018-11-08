@@ -1,5 +1,5 @@
-#include "../inc/sequencefileio.hpp"
-#include "../inc/hpc_helpers.cuh"
+#include "../include/sequencefileio.hpp"
+#include "../include/hpc_helpers.cuh"
 
 #include <iostream>
 #include <limits>

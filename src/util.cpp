@@ -1,4 +1,4 @@
-#include "../inc/util.hpp"
+#include "../include/util.hpp"
 
 #include <algorithm>
 

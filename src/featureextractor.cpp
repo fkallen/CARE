@@ -1,4 +1,4 @@
-#include "../inc/featureextractor.hpp"
+#include "../include/featureextractor.hpp"
 
 #include <iomanip>
 #include <limits>
