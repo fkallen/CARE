@@ -19,8 +19,8 @@ namespace filesys = std::experimental::filesystem;
 
 
 #ifdef __NVCC__
-#include "../include/gpu_only_path/correct.hpp"
-#include "../include/gpu_only_path/readstorage.hpp"
+#include "../include/gpu/correct.hpp"
+#include "../include/gpu/readstorage.hpp"
 #endif
 
 namespace care{

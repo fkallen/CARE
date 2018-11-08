@@ -69,7 +69,7 @@ buildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-buildgpu/kernels.o : include/gpu_only_path/kernels.cu | makedir
+buildgpu/kernels.o : include/gpu/kernels.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
@@ -81,7 +81,7 @@ debugbuildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
-debugbuildgpu/kernels.o : include/gpu_only_path/kernels.cu | makedir
+debugbuildgpu/kernels.o : include/gpu/kernels.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
