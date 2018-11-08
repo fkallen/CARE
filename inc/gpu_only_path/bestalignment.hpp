@@ -6,10 +6,12 @@
 namespace care{
 namespace gpu{
 
+#ifdef __NVCC__
+
     enum class BestAlignment_t : char{Forward=1, ReverseComplement=2, None=3};
 
     template<int dummy = 0>
-    HOSTDEVICEQUALIFIER
+    __host__ __device__
     BestAlignment_t choose_best_alignment(int fwd_alignment_overlap,
                                         int revc_alignment_overlap,
                                         int fwd_alignment_nops,
@@ -26,14 +28,14 @@ namespace gpu{
 
         const int minimumOverlap = int(subjectlength * min_overlap_ratio) > min_overlap
                         ? int(subjectlength * min_overlap_ratio) : min_overlap;
-						
+
 		// choose alignment with smallest error rate in overlap and overlaplength >= minimumOverlap and error rate in overlap < maxErrorRate
-		
+
         if(fwd_alignment_isvalid && fwd_alignment_overlap >= minimumOverlap){
             if(revc_alignment_isvalid && revc_alignment_overlap >= minimumOverlap){
                 const double ratio = (double)fwd_alignment_nops / fwd_alignment_overlap;
                 const double revcomplratio = (double)revc_alignment_nops / revc_alignment_overlap;
-				
+
                 if(ratio < revcomplratio){
                     if(ratio < maxErrorRate){
                         retval = BestAlignment_t::Forward;
@@ -68,7 +70,7 @@ namespace gpu{
         return retval;
     }
 
-
+#endif
 
 }
 }

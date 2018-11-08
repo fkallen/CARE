@@ -174,7 +174,7 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     memQueries = n_quer * sequencepitch;
     memQueryLengths = SDIV(n_quer * sizeof(int), sequencepitch) * sequencepitch;
     const std::size_t memResults = SDIV(sizeof(Attributes_t) * n_results, sequencepitch) * sequencepitch;
-    const std::size_t memBestAlignmentFlags = SDIV(sizeof(BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
+    const std::size_t memBestAlignmentFlags = SDIV(sizeof(care::cpu::BestAlignment_t) * n_results, sequencepitch) * sequencepitch;
     const std::size_t memOps = SDIV(sizeof(Op_t) * n_results * max_ops_per_alignment, sequencepitch) * sequencepitch;
     const std::size_t memUnpackedQueries = SDIV(sizeof(char) * n_quer * max_sequence_length, sequencepitch) * sequencepitch;
 
@@ -209,7 +209,7 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     d_queriesdata = (char*)(((char*)d_NqueriesPrefixSum) + memNqueriesPrefixSum);
     d_querylengths = (int*)(((char*)d_queriesdata) + memQueries);
     d_results = (Attributes_t*)(((char*)d_querylengths) + memQueryLengths);
-    d_bestAlignmentFlags = (BestAlignment_t*)(((char*)d_results) + memResults);
+    d_bestAlignmentFlags = (care::cpu::BestAlignment_t*)(((char*)d_results) + memResults);
     d_ops = (Op_t*)(((char*)d_bestAlignmentFlags) + memBestAlignmentFlags);
     d_unpacked_queries = (char*)(((char*)d_ops) + memOps);
 
@@ -219,7 +219,7 @@ void SGAdata::resize(int n_sub, int n_quer, int n_res, double factor){
     h_queriesdata = (char*)(((char*)h_NqueriesPrefixSum) + memNqueriesPrefixSum);
     h_querylengths = (int*)(((char*)h_queriesdata) + memQueries);
     h_results = (Attributes_t*)(((char*)h_querylengths) + memQueryLengths);
-    h_bestAlignmentFlags = (BestAlignment_t*)(((char*)h_results) + memResults);
+    h_bestAlignmentFlags = (care::cpu::BestAlignment_t*)(((char*)h_results) + memResults);
     h_ops = (Op_t*)(((char*)h_bestAlignmentFlags) + memBestAlignmentFlags);
     h_unpacked_queries = (char*)(((char*)h_ops) + memOps);
 
