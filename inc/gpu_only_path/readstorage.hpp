@@ -132,7 +132,7 @@ namespace gpu{
                 num_sequences(nSequences),
                 deviceIds(deviceIds){
 
-            constexpr bool allowUVM = true;
+            constexpr bool allowUVM = false;//true;
             constexpr float maxPercentOfTotalGPUMem = 0.8;
 
             std::cerr << "gpu::ContiguousReadStorage(...)";
@@ -145,7 +145,7 @@ namespace gpu{
 
             int oldId;
             cudaGetDevice(&oldId); CUERR;
-
+            //TODO use this
             bool everyDeviceSupportsUVM = deviceIds.size() > 0
                             && std::all_of(deviceIds.begin(), deviceIds.end(), [](int deviceId){
                                     cudaSetDevice(deviceId); CUERR;
@@ -168,7 +168,7 @@ namespace gpu{
 
                 bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalGPUMem * totalMem && requiredSequenceMem < freeMem);
 
-                return isEnoughMemForSequences;
+                return false;//isEnoughMemForSequences;
             });
 
             bool everyDeviceCanStoreBothSequencesAndQualities = std::all_of(deviceIds.begin(), deviceIds.end(), [&](int deviceId){
@@ -180,7 +180,7 @@ namespace gpu{
 
                 bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalGPUMem * totalMem && requiredTotalMem < freeMem);
 
-                return isEnoughMemForSequencesAndQualities;
+                return false;//isEnoughMemForSequencesAndQualities;
             });
 
             cudaSetDevice(oldId);
@@ -461,7 +461,7 @@ public:
 
                     gpuData[deviceId] = data;
 
-            #if 1
+            #if 0
                     if(data.isValidSequenceData()){
             			//verify sequence data
                         {
@@ -530,7 +530,7 @@ public:
                     }
             #endif
 
-            #if 1
+            #if 0
                     if(data.isValidQualityData()){
                         //verify quality scores
 
