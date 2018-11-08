@@ -754,7 +754,6 @@ namespace care{
     template<class ReadStorage_t>
     SequenceFileProperties build_readstorage(const FileOptions& fileOptions,
                const RuntimeOptions& runtimeOptions,
-               std::uint64_t nReads,
                ReadStorage_t& readStorage){
 
         if(fileOptions.load_binary_reads_from != ""){
@@ -957,7 +956,7 @@ namespace care{
                 }
 
                 SequenceFileProperties props;
-                props.nReads = nReads;//reader->getReadnum();
+                props.nReads = reader->getReadnum();
                 props.maxSequenceLength = 0;
                 props.minSequenceLength = std::numeric_limits<int>::max();
 

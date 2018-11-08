@@ -75,7 +75,6 @@ namespace care{
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
                         SequenceFileProperties& sequenceFileProperties,
-						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 						std::size_t nLocksForProcessedFlags,
@@ -90,25 +89,24 @@ namespace care{
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-        std::cout << "nReads = " << nReads << std::endl;
-		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
+		ReadStorage_t readStorage(sequenceFileProperties.nReads, correctionOptions.useQualityScores, sequenceFileProperties.maxSequenceLength);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
 		TIMERSTARTCPU(load_and_build);
-		const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
-		build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
+		sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+		build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
 		TIMERSTOPCPU(load_and_build);
 
-		printFileProperties(fileOptions.inputfile, props);
+		printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
 		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
 
-		readIsCorrectedVector.resize(props.nReads, 0);
+		readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
 
 		printDataStructureMemoryUsage(minhasher, readStorage);
 
-		startCorrection(minhasher, readStorage, props);
+		startCorrection(minhasher, readStorage, sequenceFileProperties);
 
 		/*correct<Minhasher_t,
 				ReadStorage_t,
@@ -129,7 +127,6 @@ namespace care{
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
                         SequenceFileProperties& sequenceFileProperties,
-						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 						std::size_t nLocksForProcessedFlags){
@@ -167,7 +164,6 @@ namespace care{
 								runtimeOptions,
 								fileOptions,
                                 sequenceFileProperties,
-								nReads,
 								readIsCorrectedVector,
 								locksForProcessedFlags,
 								nLocksForProcessedFlags,
@@ -196,7 +192,6 @@ namespace care{
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
                         SequenceFileProperties& sequenceFileProperties,
-						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 						std::size_t nLocksForProcessedFlags,
@@ -211,25 +206,27 @@ namespace care{
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
 		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
-        //ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 102);
-		ReadStorage_t readStorage(nReads, correctionOptions.useQualityScores, 101, runtimeOptions.deviceIds);
+		ReadStorage_t readStorage(sequenceFileProperties.nReads,
+                                    correctionOptions.useQualityScores,
+                                    sequenceFileProperties.maxSequenceLength,
+                                    runtimeOptions.deviceIds);
 
 		std::cout << "loading file and building data structures..." << std::endl;
 
 		TIMERSTARTCPU(load_and_build);
-		const SequenceFileProperties props = build_readstorage(fileOptions, runtimeOptions, nReads, readStorage);
-		build_minhasher(fileOptions, runtimeOptions, props.nReads, readStorage, minhasher);
+		sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+		build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
 		TIMERSTOPCPU(load_and_build);
 
-		printFileProperties(fileOptions.inputfile, props);
+		printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
 		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
 
-		readIsCorrectedVector.resize(props.nReads, 0);
+		readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
 
 		printDataStructureMemoryUsage(minhasher, readStorage);
 
-		startCorrection(minhasher, readStorage, props);
+		startCorrection(minhasher, readStorage, sequenceFileProperties);
 
 		/*correct<Minhasher_t,
 				ReadStorage_t,
@@ -250,7 +247,6 @@ namespace care{
 						const RuntimeOptions& runtimeOptions,
 						const FileOptions& fileOptions,
                         SequenceFileProperties& sequenceFileProperties,
-						std::uint64_t nReads,
 						std::vector<char>& readIsCorrectedVector,
 						std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 						std::size_t nLocksForProcessedFlags){
@@ -287,7 +283,6 @@ namespace care{
 								runtimeOptions,
 								fileOptions,
                                 sequenceFileProperties,
-								nReads,
 								readIsCorrectedVector,
 								locksForProcessedFlags,
 								nLocksForProcessedFlags,
@@ -338,22 +333,25 @@ namespace care{
 		//create output directory
 		filesys::create_directories(fileOptions.outputdirectory);
 
-		std::uint64_t nReads = fileOptions.nReads;
-		if(nReads == 0 && fileOptions.load_binary_reads_from == ""){ // if load_binary_reads_from != "", we use number of reads from binaryreadfile
-			std::cout << "Determining number of reads" << std::endl;
-			nReads = getNumberOfReadsFast(fileOptions.inputfile, fileOptions.format);
-		}
-
         SequenceFileProperties sequenceFileProperties;
-        /*sequenceFileProperties.maxSequenceLength = 0;
+        sequenceFileProperties.maxSequenceLength = 0;
         sequenceFileProperties.minSequenceLength = 0;
         sequenceFileProperties.nReads = 0;
 
         if(fileOptions.load_binary_reads_from == ""){
             if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0){
+                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
                 sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+            }else{
+                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+                sequenceFileProperties.minSequenceLength = 0;
+                sequenceFileProperties.nReads = fileOptions.nReads;
             }
-        }*/
+        }
+
+        std::cerr << "sequenceFileProperties.maxSequenceLength = " << sequenceFileProperties.maxSequenceLength << '\n';
+        std::cerr << "sequenceFileProperties.minSequenceLength = " << sequenceFileProperties.minSequenceLength << '\n';
+        std::cerr << "sequenceFileProperties.nReads = " << sequenceFileProperties.nReads << '\n';
 
 		std::vector<char> readIsCorrectedVector;
 		std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
@@ -410,7 +408,6 @@ namespace care{
 				goodAlignmentProperties, correctionOptions,
 				runtimeOptions, iterFileOptions,
                 sequenceFileProperties,
-				nReads,
 				readIsCorrectedVector, locksForProcessedFlags,
 				nLocksForProcessedFlags);
 		#else
@@ -427,7 +424,6 @@ namespace care{
 									goodAlignmentProperties, correctionOptions,
 									runtimeOptions, iterFileOptions,
                                     sequenceFileProperties,
-									nReads,
 									readIsCorrectedVector, locksForProcessedFlags,
 									nLocksForProcessedFlags);
 			}else{
@@ -437,7 +433,6 @@ namespace care{
 									goodAlignmentProperties, correctionOptions,
 									runtimeOptions, iterFileOptions,
                                     sequenceFileProperties,
-									nReads,
 									readIsCorrectedVector, locksForProcessedFlags,
 									nLocksForProcessedFlags);
 			}

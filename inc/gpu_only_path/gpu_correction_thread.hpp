@@ -407,8 +407,8 @@ struct BatchGenerator{
 		//BatchGenerator<ReadId_t> mybatchgen;
 		//int num_ids_per_add_tasks = 2;
 		//int minimum_candidates_per_batch = 1000;
-        int num_ids_per_add_tasks = 1;
-        int minimum_candidates_per_batch = 1;
+        int num_ids_per_add_tasks = 2;
+        int minimum_candidates_per_batch = 1000;
 
 
 		using FuncTableEntry = BatchState (*)(Batch& batch,
@@ -2145,7 +2145,7 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 1;
+    		constexpr int nParallelBatches = 4;
 			constexpr int sideBatchStepsPerWaitIter = 1;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
