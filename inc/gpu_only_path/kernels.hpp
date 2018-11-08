@@ -3,8 +3,8 @@
 
 #include "../hpc_helpers.cuh"
 #include "bestalignment.hpp"
-#include "msa.hpp"
 #include "../qualityscoreweights.hpp"
+#include "../msa.hpp"
 
 #include <stdexcept>
 #include <cassert>
@@ -20,6 +20,7 @@ namespace gpu{
 
 
 #ifdef __NVCC__
+    using MSAColumnProperties = care::cpu::MultipleSequenceAlignment::ColumnProperties;
 
     enum class KernelId{
         PopcountSHDExp,
@@ -1324,11 +1325,11 @@ void call_msa_correct_subject_kernel_async(
                                                 getCandidateLength); CUERR;
 
     }
-    
-    
-    
-    
-    
+
+
+
+
+
     template<int BLOCKSIZE, class IndexGenerator_t>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
@@ -1377,7 +1378,7 @@ void call_msa_correct_subject_kernel_async(
 				//const int candidate_index = my_indices[index];
 				const int candidate_index = d_indices[firstIndex + index];
 				if(d_alignment_best_alignment_flags[candidate_index] != BestAlignment_t::None){
-					
+
 					const int alignment_overlap = d_alignment_overlaps[candidate_index];
 					const int alignment_nops = d_alignment_nOps[candidate_index];
 
@@ -1391,7 +1392,7 @@ void call_msa_correct_subject_kernel_async(
 							counts[i-2] += (mismatchratio < i * mismatchratioBaseFactor);
 						}
 					}
-                
+
 				}
 			}
 
@@ -1435,7 +1436,7 @@ void call_msa_correct_subject_kernel_async(
 				//const int candidate_index = my_indices[index];
 				const int candidate_index = d_indices[firstIndex + index];
 				if(d_alignment_best_alignment_flags[candidate_index] != BestAlignment_t::None){
-					
+
 					const int alignment_overlap = d_alignment_overlaps[candidate_index];
 					const int alignment_nops = d_alignment_nOps[candidate_index];
 
@@ -1444,7 +1445,7 @@ void call_msa_correct_subject_kernel_async(
 					const bool remove = mismatchratio >= mismatchratioThreshold;
 					if(remove)
 						d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
-					
+
 				}
 			}
         }

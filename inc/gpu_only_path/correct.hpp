@@ -36,25 +36,21 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 				  std::size_t nLocksForProcessedFlags){
 
-      assert(indels == false);
+    static_assert(indels == false, "indels != false");
 
-      std::cout << "correct_gpu_new" << std::endl;
+    std::cout << "correct_gpu_new" << std::endl;
 
     using Minhasher_t = minhasher_t;
     using ReadStorage_t = readStorage_t;
     using Sequence_t = typename ReadStorage_t::Sequence_t;
     using ReadId_t = typename ReadStorage_t::ReadId_t;
-      using GPUReadStorage_t = GPUReadStorage<ReadStorage_t>;
 
-    	//using CPUErrorCorrectionThread_t = ErrorCorrectionThreadCombined<Minhasher_t, ReadStorage_t, indels>;
-      using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
+    using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
+    using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
 
-      using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
-      //using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, GPUReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
+    constexpr int maxCPUThreadsPerGPU = 64;
 
-      constexpr int maxCPUThreadsPerGPU = 64;
-
-      const auto& deviceIds = runtimeOptions.deviceIds;
+    const auto& deviceIds = runtimeOptions.deviceIds;
 
     //#define DO_PROFILE
 
