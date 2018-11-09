@@ -100,7 +100,7 @@ namespace shd{
 
             shiftamount -= completeInts * 8 * sizeof(unsigned int);
 
-            assert(shiftamount < 8 * sizeof(unsigned int));
+            assert(shiftamount < int(8 * sizeof(unsigned int)));
 
             for(int i = 0; i < size - completeInts - 1; ++i){
                 array[i] = (array[i] >> shiftamount) | (array[i+1] << (8 * sizeof(unsigned int) - shiftamount));

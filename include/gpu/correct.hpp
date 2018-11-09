@@ -8,6 +8,8 @@
 #include "../candidatedistribution.hpp"
 
 #include "gpu_correction_thread.hpp"
+#include <gpu/qualityscoreweights.hpp>
+#include <qualityscoreweights.hpp>
 
 
 #include <cassert>
@@ -64,7 +66,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
         // initialize qscore-to-weight lookup table
-    	init_weights();
+        gpu::init_weights(deviceIds);
 
       //SequenceFileProperties sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
@@ -150,8 +152,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           //cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
           typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
           threadOpts.threadId = threadId;
-          threadOpts.deviceId = 0;
-          threadOpts.canUseGpu = false;
+
           threadOpts.outputfile = tmpfiles[threadId];
           threadOpts.readIdGenerator = &readIdGenerator;
           threadOpts.minhasher = &minhasher;

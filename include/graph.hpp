@@ -92,6 +92,8 @@ namespace errorgraph{
     	std::vector<int> topoIndices; // the vertex ids topologically sorted
     	std::vector<int> finalPath;
 
+        care::cpu::QualityScoreConversion qualityConversion;
+
         // add new node, but don't add edges yet
     	// return the index of the new node in the vertices vector
     	int addNewNode(const char base) noexcept
@@ -127,7 +129,8 @@ namespace errorgraph{
                 topoIndices.emplace_back(newindex);
 
                 const double initialWeight = quality_of_sequence_to_correct != nullptr
-                                            ? qscore_to_weight[(unsigned char)(*quality_of_sequence_to_correct)[i]]
+                                            //? cpu::qscore_to_weight[(unsigned char)(*quality_of_sequence_to_correct)[i]]
+                                            ? qualityConversion.getWeight((*quality_of_sequence_to_correct)[i])
                                             : 1.0;
 
                 vertices[newindex - 1].edges.emplace_back(newindex, initialWeight);
@@ -213,7 +216,7 @@ namespace errorgraph{
             						double qweight = weight;
             						if(qualitypointer != nullptr){
             							if(qindex < (*alignmentiter)->get_query_begin_incl() + (*alignmentiter)->get_overlap()){
-            								qweight *= qscore_to_weight[(unsigned char)(*qualitypointer)[qindex]];
+            								qweight *= qualityConversion.getWeight((*qualitypointer)[qindex]);//qscore_to_weight[(unsigned char)(*qualitypointer)[qindex]];
             							}
             						}
             						prev_node = makeLink(prev_node, j + 1, sequence_to_correct[j], qweight);
@@ -229,7 +232,7 @@ namespace errorgraph{
             						double qweight = weight;
             						if(qualitypointer != nullptr){
             							if(qindex < (*alignmentiter)->get_query_begin_incl() + (*alignmentiter)->get_overlap()){
-            								qweight *= qscore_to_weight[(unsigned char)(*qualitypointer)[qindex]];
+            								qweight *= qualityConversion.getWeight((*qualitypointer)[qindex]);//qscore_to_weight[(unsigned char)(*qualitypointer)[qindex]];
             							}
             						}
             						prev_node = makeLink(prev_node, unknown_destination_index, c, qweight);

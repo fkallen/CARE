@@ -1023,8 +1023,8 @@ public:
 
         void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
             assert(readNumber < getNumberOfSequences());
-            assert(sequence.length() <= maximum_allowed_sequence_length);
-            assert(quality.length() <= maximum_allowed_sequence_length);
+            assert(int(sequence.length()) <= maximum_allowed_sequence_length);
+            assert(int(quality.length()) <= maximum_allowed_sequence_length);
             assert(sequence.length() == quality.length());
 
     		insertSequence(readNumber, sequence);

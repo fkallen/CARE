@@ -3,7 +3,7 @@
 
 #include "../hpc_helpers.cuh"
 #include "bestalignment.hpp"
-#include "../qualityscoreweights.hpp"
+#include <gpu/qualityscoreweights.hpp>
 #include "../msa.hpp"
 
 #include <stdexcept>

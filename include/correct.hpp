@@ -69,7 +69,7 @@ namespace cpu{
     	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
           // initialize qscore-to-weight lookup table
-      	init_weights();
+      	//cpu::init_weights();
 
         //SequenceFileProperties sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
@@ -140,10 +140,8 @@ namespace cpu{
             //cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
             typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
             threadOpts.threadId = threadId;
-            threadOpts.deviceId = 0;
-            threadOpts.canUseGpu = false;
+
             threadOpts.outputfile = tmpfiles[threadId];
-            //threadOpts.batchGen = &cpubatchgenerators[threadId]; //TODO
             threadOpts.readIdGenerator = &readIdGenerator;
             threadOpts.minhasher = &minhasher;
             threadOpts.readStorage = &readStorage;

@@ -121,10 +121,6 @@ namespace cpu{
 
     	struct CorrectionThreadOptions{
     		int threadId;
-    		int deviceId;
-    		int gpuThresholdSHD;
-    		int gpuThresholdSGA;
-            bool canUseGpu = false;
 
     		std::string outputfile;
     		RangeGenerator_t* readIdGenerator;
@@ -231,6 +227,8 @@ namespace cpu{
                                                                             correctionOptions.kmerlength,
                                                                             correctionOptions.estimatedCoverage,
                                                                             correctionOptions.estimatedErrorrate);
+
+            cpu::QualityScoreConversion qualityConversion;
 
             std::vector<ReadId_t> readIds;
 
@@ -407,7 +405,8 @@ namespace cpu{
                 const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality2_ptr(task.readId) : nullptr;
 
                 multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
-                    return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
+                    //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
+                    return qualityConversion.getWeight((subjectQualityPtr)[i]);
                 });
 
                 const float desiredAlignmentMaxErrorRate = goodAlignmentProperties.maxErrorRate;
@@ -439,11 +438,13 @@ namespace cpu{
 
                     if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
                         multipleSequenceAlignment.insertCandidate(candidateSequence, shift, [&](int i){
-                            return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[length - 1 - i]] * defaultweight;
+                            //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[length - 1 - i]] * defaultweight;
+                            return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
                         });
                     }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
                         multipleSequenceAlignment.insertCandidate(candidateSequence, shift, [&](int i){
-                            return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[i]] * defaultweight;
+                            //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[i]] * defaultweight;
+                            return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
                         });
                     }else{
                         assert(false);

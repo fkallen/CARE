@@ -1,7 +1,7 @@
-#include "kernels.hpp"
-#include "msa.hpp"
-#include "bestalignment.hpp"
-#include "../hpc_helpers.cuh"
+#include <gpu/kernels.hpp>
+#include <msa.hpp>
+#include <gpu/bestalignment.hpp>
+#include <hpc_helpers.cuh>
 
 #include <cassert>
 
@@ -22,7 +22,7 @@ namespace gpu{
     }
 
 
-    
+
 
 
     __global__
