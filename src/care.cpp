@@ -49,19 +49,29 @@ namespace care{
         std::cout << "----------------------------------------" << std::endl;
 	}
 
-	template<class minhasher_t,
-    		 class readStorage_t>
-	void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t& readStorage, const FileOptions& fileOptions){
-		if(fileOptions.save_binary_reads_to != ""){
-            readStorage.saveToFile(fileOptions.save_binary_reads_to);
-            std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
+        template<class readStorage_t>
+        void saveReadStorageToFile(const readStorage_t& readStorage, const FileOptions& fileOptions){
+            if(fileOptions.save_binary_reads_to != ""){
+                readStorage.saveToFile(fileOptions.save_binary_reads_to);
+                std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
+            }
+	}
+
+	template<class minhasher_t>
+        void saveMinhasherToFile(const minhasher_t& minhasher, const FileOptions& fileOptions){
+            if(fileOptions.save_hashtables_to != ""){
+                minhasher.saveToFile(fileOptions.save_hashtables_to);
+                std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
+            }
         }
 
-        if(fileOptions.save_hashtables_to != ""){
-            minhasher.saveToFile(fileOptions.save_hashtables_to);
-            std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
+        template<class minhasher_t,
+                 class readStorage_t>
+        void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t& readStorage, const FileOptions& fileOptions){
+            saveReadStorageToFile(readStorage, fileOptions);
+	    saveMinhasherToFile(minhasher, fileOptions);
         }
-	}
+
 
 
 	template<class minhasher_t,
@@ -95,12 +105,14 @@ namespace care{
 
 		TIMERSTARTCPU(load_and_build);
 		sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+		saveReadStorageToFile(readStorage, fileOptions);
 		build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
+		saveMinhasherToFile(minhasher, fileOptions);
 		TIMERSTOPCPU(load_and_build);
 
 		printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
-		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
+//		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
 
 		readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
 
@@ -215,12 +227,14 @@ namespace care{
 
 		TIMERSTARTCPU(load_and_build);
 		sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+		saveReadStorageToFile(readStorage, fileOptions);
 		build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
+		saveMinhasherToFile(minhasher, fileOptions);
 		TIMERSTOPCPU(load_and_build);
 
 		printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
-		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
+//		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
 
 		readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
 
