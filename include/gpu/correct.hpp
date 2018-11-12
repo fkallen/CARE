@@ -93,6 +93,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               TIMERSTOPCPU(candidateestimation);
 
               candidateDistribution = cpu::estimateDist(candidateHistogram);
+			  
+			  //cpu::estimateDist2(candidateHistogram);
 
               std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
               std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
@@ -136,17 +138,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::vector<char> readIsProcessedVector(readIsCorrectedVector);
       std::mutex writelock;
 
-    /*	std::uint64_t ncpuReads = nCpuThreads > 0 ? std::uint64_t(sequenceFileProperties.nReads / 7.0) : 0;
-    	std::uint64_t ngpuReads = sequenceFileProperties.nReads - ncpuReads;
-    	std::uint64_t nReadsPerGPUThread = nGpuThreads > 0 ? SDIV(ngpuReads, nGpuThreads) : 0;
-      if(nGpuThreads == 0){
-          ncpuReads += ngpuReads;
-          ngpuReads = 0;
-      }
-
-    	std::cout << "nCpuThreads: " << nCpuThreads << ", nGpuThreads: " << nGpuThreads << std::endl;
-    	std::cout << "ncpuReads: " << ncpuReads << ", ngpuReads: " << ngpuReads << std::endl;*/
-
     	for(int threadId = 0; threadId < nCpuThreads; threadId++){
 
           //cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
@@ -182,15 +173,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       for(int threadId = 0; threadId < nGpuThreads; threadId++){
 
-          //gpubatchgenerators[threadId] = care::gpu::BatchGenerator<ReadId_t>(ncpuReads + threadId * nReadsPerGPUThread,
-          //                                                                    std::min(sequenceFileProperties.nReads,
-          //                                                                    ncpuReads + (threadId+1) * nReadsPerGPUThread));
           typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
           threadOpts.threadId = threadId;
           threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
           threadOpts.canUseGpu = runtimeOptions.canUseGpu;
           threadOpts.outputfile = tmpfiles[nCpuThreads + threadId];
-          //threadOpts.batchGen = &gpubatchgenerators[threadId];
           threadOpts.readIdGenerator = &readIdGenerator;
           threadOpts.minhasher = &minhasher;
           threadOpts.gpuReadStorage = &readStorage;

@@ -750,10 +750,18 @@ struct BatchGenerator{
 
                     const std::size_t maxbytes = arrays.memSubjects / sizeof(char);
                     assert(batch.copiedTasks * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= maxbytes);
-
+#if 1
 					std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
                                 sequenceptr,
                                 Sequence_t::getNumBytes(sequencelength));
+#else
+
+					cudaMemcpyAsync(arrays.d_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
+                                sequenceptr,
+                                Sequence_t::getNumBytes(sequencelength),
+								H2D,
+								streams[primary_stream_index]);
+#endif
 
 					//copy subject length
 					arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
@@ -792,27 +800,40 @@ struct BatchGenerator{
                         ++batch.copiedCandidates;
                     }
 #else
-					//for(auto it = task.candidate_read_ids_begin; it != task.candidate_read_ids_end; ++it){
-                    auto it = task.candidate_read_ids_begin;
-                    while(it != task.candidate_read_ids_end){
-						const ReadId_t candidate_read_id = *it;
-                        ++it;
-                        if(it != task.candidate_read_ids_end){
-                            const ReadId_t next_candidate_read_id = *it;
+
+					constexpr std::size_t prefetch_distance = 4;
+
+                    for(std::size_t i = 0; i < task.candidate_read_ids.size() && i < prefetch_distance; ++i){
+                        const ReadId_t next_candidate_read_id = task.candidate_read_ids[i];
+                        const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                        __builtin_prefetch(nextsequenceptr, 0, 0);
+                    }
+
+                    const std::size_t candidatesequencedatabytes = arrays.memQueries / sizeof(char);
+                    
+					for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i){
+						if(i + prefetch_distance < task.candidate_read_ids.size()){
+                            const ReadId_t next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
                             const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
                             __builtin_prefetch(nextsequenceptr, 0, 0);
                         }
+
+                        const ReadId_t candidate_read_id = task.candidate_read_ids[i];
                         const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-                        std::memcpy(arrays.h_candidate_sequences_data
-										+ batch.copiedCandidates * arrays.encoded_sequence_pitch,
-									sequenceptr,
-									Sequence_t::getNumBytes(sequencelength));
+                        assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+
+                        cudaMemcpyAsync(arrays.d_candidate_sequences_data
+                                        + batch.copiedCandidates * arrays.encoded_sequence_pitch,
+                                    sequenceptr,
+                                    Sequence_t::getNumBytes(sequencelength),
+                                    H2D,
+									streams[primary_stream_index]);
 
                         arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = sequencelength;
 
-						++batch.copiedCandidates;
+                        ++batch.copiedCandidates;
                     }
 #endif
 					//update prefix sum
@@ -857,13 +878,43 @@ struct BatchGenerator{
                                     H2D,
                                     streams[primary_stream_index]); CUERR;
                 }else{
-
+#if 1
                 cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
     							dataArrays.alignment_transfer_data_host,
     							dataArrays.alignment_transfer_data_usable_size,
     							H2D,
     							streams[primary_stream_index]); CUERR;
+#else				
+                    dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
+                    /*cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                                    dataArrays.h_subject_read_ids,
+                                    dataArrays.memSubjectIds,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;*/
+
+                    /*cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
+                                    dataArrays.h_candidate_read_ids,
+                                    dataArrays.memCandidateIds,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;*/
+					cudaMemcpyAsync(dataArrays.d_subject_sequences_lengths,
+                                    dataArrays.h_subject_sequences_lengths,
+                                    dataArrays.memSubjectLengths,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;
+					cudaMemcpyAsync(dataArrays.d_candidate_sequences_lengths,
+                                    dataArrays.h_candidate_sequences_lengths,
+                                    dataArrays.memQueryLengths,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;
+                    cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
+                                    dataArrays.h_candidates_per_subject_prefixsum,
+                                    dataArrays.memNqueriesPrefixSum,
+                                    H2D,
+                                    streams[primary_stream_index]); CUERR;	
+					
+#endif
                 }
 
                 /*cudaMemcpyAsync(dataArrays.d_candidate_read_ids,

@@ -116,7 +116,7 @@ namespace gpu{
                 num_sequences(nSequences),
                 deviceIds(deviceIds){
 
-            constexpr bool allowUVM = true;
+            constexpr bool allowUVM = false;
             constexpr float maxPercentOfTotalGPUMem = 0.8;
 
             std::cerr << "gpu::ContiguousReadStorage(...)\n";
