@@ -649,13 +649,13 @@ namespace care{
 
                     readStorage.insertRead(readIndex, read.sequence, read.quality);
                     progress++;
-					
-#if 0
+
+#if 1
 					using Sequence_t = typename ReadStorage_t::Sequence_t;
-					auto rsLength = readStorage.fetchSequenceLength(readnum);
-					auto rsSequenceptr = readStorage.fetchSequenceData_ptr(readnum);
+					auto rsLength = readStorage.fetchSequenceLength(readIndex);
+					auto rsSequenceptr = readStorage.fetchSequenceData_ptr(readIndex);
 					auto rsSequenceString = Sequence_t::Impl_t::toString((const std::uint8_t*)rsSequenceptr, rsLength);
-					
+
 					assert(read.sequence.length() == size_t(rsLength));
 					assert(read.sequence == rsSequenceString);
 #endif
@@ -737,16 +737,16 @@ namespace care{
             #endif
 
             					readStorage.insertRead(readnum, read.sequence, read.quality);
-								
-#if 0
+
+#if 1
 								using Sequence_t = typename ReadStorage_t::Sequence_t;
 								auto rsLength = readStorage.fetchSequenceLength(readnum);
 								auto rsSequenceptr = readStorage.fetchSequenceData_ptr(readnum);
 								auto rsSequenceString = Sequence_t::Impl_t::toString((const std::uint8_t*)rsSequenceptr, rsLength);
-								
+
 								assert(read.sequence.length() == size_t(rsLength));
 								assert(read.sequence == rsSequenceString);
-#endif								
+#endif
 
             					int len = int(read.sequence.length());
             					if(len > maxSequenceLength)

@@ -119,7 +119,7 @@ namespace gpu{
             constexpr bool allowUVM = false;
             constexpr float maxPercentOfTotalGPUMem = 0.8;
 
-            std::cerr << "gpu::ContiguousReadStorage(...)\n";
+            std::cerr << "gpu::ContiguousReadStorage(" << nSequences << ", " << useQualityScores << ", " << maximum_allowed_sequence_length << ") " << maximum_allowed_sequence_bytes << "\n";
 
             sequence_data_bytes = sizeof(char) * std::size_t(num_sequences) * maximum_allowed_sequence_bytes;
             sequence_lengths_bytes = sizeof(Length_t) * std::size_t(num_sequences);
@@ -716,6 +716,9 @@ public:
             quality_data_bytes = loaded_quality_data_bytes;
             sequenceType = loaded_sequenceType;
             qualityType = loaded_qualityType;
+
+            std::cerr << "gpu::loadFromFile: " << num_sequences << ", " << maximum_allowed_sequence_length << ", " << maximum_allowed_sequence_bytes << '\n';
+
         }
 
         std::string nameOf(ContiguousReadStorage::Type type) const {
