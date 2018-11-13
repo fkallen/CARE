@@ -8,8 +8,8 @@ namespace care{
 namespace cpu{
 
     struct QualityScoreConversion{
-        static constexpr int ASCII_BASE = 33;
-        static constexpr double MIN_WEIGHT = 0.001;
+        int ASCII_BASE = 33;
+        double MIN_WEIGHT = 0.001;
 
         using Array_t = std::array<double, 256>;
 

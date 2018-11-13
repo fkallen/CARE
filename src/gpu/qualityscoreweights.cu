@@ -14,9 +14,9 @@ namespace gpu{
     #endif
 
     void init_weights(const std::vector<int>& deviceIds){
+        cpu::QualityScoreConversion conversion;
         #ifdef __NVCC__
 
-            cpu::QualityScoreConversion conversion;
 
             auto weights = conversion.getWeights();
             assert(weights.size() == 256);
