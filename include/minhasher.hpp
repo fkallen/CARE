@@ -79,6 +79,18 @@ namespace care{
 				keyToIndexMap.resize(size, KeyIndexMap::EmptySlot);
 			}
 
+            bool operator==(const KeyIndexMap& rhs) const{
+                if(size != rhs.size)
+                    return false;
+                if(keyToIndexMap != rhs.keyToIndexMap)
+                    return false;
+                return true;
+            }
+
+            bool operator!=(const KeyIndexMap& rhs) const{
+                return !(*this == rhs);
+            }
+
 			void insert(Key_t key, Index_t value) noexcept{
 				std::uint64_t probes = 1;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
@@ -195,6 +207,32 @@ namespace care{
 				keys.resize(size);
 				values.resize(size);
 			}
+
+            bool operator==(const KeyValueMapFixedSize& rhs) const{
+                if(size != rhs.size)
+                    return false;
+                if(nKeys != rhs.nKeys)
+                    return false;
+                if(nValues != rhs.nValues)
+                    return false;
+                if(noMoreWrites != rhs.noMoreWrites)
+                    return false;
+                if(keys != rhs.keys)
+                    return false;
+                if(values != rhs.values)
+                    return false;
+                if(countsPrefixSum != rhs.countsPrefixSum)
+                    return false;
+                if(load != rhs.load)
+                    return load;
+                if(keyIndexMap != rhs.keyIndexMap)
+                    return false;
+                return true;
+            }
+
+            bool operator!=(const KeyValueMapFixedSize& rhs) const{
+                return !(*this == rhs);
+            }
 
 			void resize(Index_t size_){
 				assert(!noMoreWrites);
@@ -704,6 +742,24 @@ struct Minhasher {
 	MinhashOptions minparams;
 	ReadId_t nReads;
     bool canUseGpu = false;
+
+    bool operator==(const Minhasher& rhs) const{
+        if(minparams != rhs.minparams)
+            return false;
+        if(nReads != rhs.nReads)
+            return false;
+        if(minhashTables.size() != rhs.minhashTables.size())
+            return false;
+        for(std::size_t i = 0; i < minhashTables.size(); i++){
+            if(*minhashTables[i] != *rhs.minhashTables[i])
+                return false;
+        }
+        return true;
+    }
+
+    bool operator!=(const Minhasher& rhs) const{
+        return !(*this == rhs);
+    }
 
 	struct Handle{
 		std::vector<Value_t> allUniqueResults;
