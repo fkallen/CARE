@@ -1003,7 +1003,7 @@ public:
 private:
         void insertSequence(ReadId_t readNumber, const std::string& sequence){
             Sequence_t seq(sequence);
-            std::memcpy(&h_sequence_data[readNumber * maximum_allowed_sequence_bytes],
+            std::memcpy(&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)],
                         seq.begin(),
                         seq.getNumBytes());
 
@@ -1030,7 +1030,7 @@ public:
     		insertSequence(readNumber, sequence);
 
     		if(useQualityScores){
-                std::memcpy(&h_quality_data[readNumber * maximum_allowed_sequence_length],
+                std::memcpy(&h_quality_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_length)],
                             quality.c_str(),
                             sizeof(char) * quality.length());
     		}
@@ -1038,7 +1038,7 @@ public:
 
         const char* fetchQuality2_ptr(ReadId_t readNumber) const{
             if(useQualityScores){
-                return &h_quality_data[readNumber * maximum_allowed_sequence_length];
+                return &h_quality_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_length)];
             }else{
                 return nullptr;
             }
@@ -1049,7 +1049,7 @@ public:
         }
 
        const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
-    		return &h_sequence_data[readNumber * maximum_allowed_sequence_bytes];
+    		return &h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
        }
 
        int fetchSequenceLength(ReadId_t readNumber) const{
