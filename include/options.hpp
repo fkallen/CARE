@@ -15,8 +15,11 @@ namespace care{
         int maps = 2;
         int k = 16;
         double min_hits_per_candidate = 0.0;
-        bool operator==(const MinhashOptions& other){
+        bool operator==(const MinhashOptions& other) const{
             return maps == other.maps && k == other.k && min_hits_per_candidate == other.min_hits_per_candidate;
+        };
+        bool operator!=(const MinhashOptions& other) const{
+            return !(*this == other);
         };
     };
 
