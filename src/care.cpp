@@ -98,7 +98,7 @@ namespace care{
 
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
-		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
+		Minhasher_t minhasher(minhashOptions);
 		ReadStorage_t readStorage(sequenceFileProperties.nReads, correctionOptions.useQualityScores, sequenceFileProperties.maxSequenceLength);
 
 		std::cout << "loading file and building data structures..." << std::endl;
@@ -217,7 +217,7 @@ namespace care{
 
 		std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
-		Minhasher_t minhasher(minhashOptions, runtimeOptions.canUseGpu);
+		Minhasher_t minhasher(minhashOptions, runtimeOptions.deviceIds);
 		ReadStorage_t readStorage(sequenceFileProperties.nReads,
                                     correctionOptions.useQualityScores,
                                     sequenceFileProperties.maxSequenceLength,
@@ -228,8 +228,32 @@ namespace care{
 		TIMERSTARTCPU(load_and_build);
 		sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
 		saveReadStorageToFile(readStorage, fileOptions);
+if(0){
+        readStorage.saveToFile("savetest.bin");
+
+        ReadStorage_t readStorageLoaded(sequenceFileProperties.nReads,
+                                    correctionOptions.useQualityScores,
+                                    sequenceFileProperties.maxSequenceLength,
+                                    runtimeOptions.deviceIds);
+
+        readStorageLoaded.loadFromFile("savetest.bin");
+
+        assert(readStorage == readStorageLoaded);
+        std::cerr << "readstorage save test ok\n";
+}
 		build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
 		saveMinhasherToFile(minhasher, fileOptions);
+
+if(0){
+        minhasher.saveToFile("savetest.bin");
+
+        Minhasher_t minhasherLoaded(minhashOptions);
+        minhasherLoaded.init(sequenceFileProperties.nReads);
+        minhasherLoaded.loadFromFile("savetest.bin");
+
+        assert(minhasher == minhasherLoaded);
+        std::cerr << "minhasher save test ok\n";
+}
 		TIMERSTOPCPU(load_and_build);
 
 		printFileProperties(fileOptions.inputfile, sequenceFileProperties);

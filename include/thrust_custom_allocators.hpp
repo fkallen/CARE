@@ -4,107 +4,62 @@
 #include <stdexcept>
 #include <exception>
 #include <iostream>
-#include <vector>
 
 #ifdef __NVCC__
 
-struct DefaultDeviceAllocator
+#include <thrust/device_malloc_allocator.h>
+
+template<class T, bool allowFallback = true>
+struct ThrustFallbackDeviceAllocator : thrust::device_malloc_allocator<T>
 {
-	using value_type = char;
-	
-	std::vector<char*> allocations;
-	int nAllocations = 0;
-	
-	DefaultDeviceAllocator() {}
+	using value_type = T;
 
-	~DefaultDeviceAllocator(){
-		if(nAllocations > 0){
-			std::cout << "Would have leaked " << nAllocations << " allocations from DefaultDeviceAllocator." << std::endl;
-			for(auto ptr : allocations)
-				cudaFree(ptr);
-			
-			nAllocations = 0;
-		}		
+	using super_t = thrust::device_malloc_allocator<T>;
+
+	using pointer = typename super_t::pointer;
+	using size_type = typename super_t::size_type;
+	using reference = typename super_t::reference;
+	using const_reference = typename super_t::const_reference;
+
+	pointer allocate(size_type n){
+		//std::cerr << "alloc" << std::endl;
+
+		T* ptr = nullptr;
+		cudaError_t status = cudaMalloc(&ptr, n * sizeof(T));
+		if(status == cudaSuccess){
+			//std::cerr << "cudaMalloc\n";
+		}else{
+			cudaGetLastError(); //reset the error of failed allocation
+
+	    	if(!allowFallback){
+    			throw std::bad_alloc();
+    		}
+
+	    	status = cudaMallocManaged(&ptr, n * sizeof(T));
+    		if(status != cudaSuccess){
+    			throw std::bad_alloc();
+    		}
+    		int deviceId = 0;
+    		status = cudaGetDevice(&deviceId);
+    		if(status != cudaSuccess){
+    			throw std::bad_alloc();
+    		}
+    		status = cudaMemAdvise(ptr, n * sizeof(T), cudaMemAdviseSetAccessedBy, deviceId);
+    		if(status != cudaSuccess){
+    			throw std::bad_alloc();
+    		}
+			//std::cerr << "cudaMallocManaged\n";
+		}
+		return thrust::device_pointer_cast(ptr);
 	}
 
-	char* allocate(std::ptrdiff_t num_bytes){
-		//std::cout << "alloc" << std::endl;
-		char* ptr = nullptr;
-		cudaError_t status = cudaMalloc(&ptr, num_bytes);
-		if(status != cudaSuccess){
-			throw std::bad_alloc(); //("cudaMalloc: " + cudaGetErrorString(status));
-		}
-		allocations.emplace_back(ptr);
-		++nAllocations;
-		return ptr;
-	}
+    void deallocate(pointer ptr, size_type n){
+    	//std::cerr << "dealloc" << std::endl;
 
-    void deallocate(char* ptr, std::size_t n){
-		//std::cout << "dealloc" << std::endl;
-		cudaError_t status = cudaFree(ptr);
-		if(status != cudaSuccess){
-			throw std::bad_alloc(); //("cudaFree: " + cudaGetErrorString(status));
-		}
-		auto it = std::find(allocations.begin(), allocations.end(), ptr);
-		if(it != allocations.end()){
-			--nAllocations;
-			allocations.erase(it);
-		}
-    }
-};
-
-struct ManagedDeviceAllocator
-{
-	using value_type = char;
-	
-	std::vector<char*> allocations;
-	int nAllocations = 0;
-	
-	ManagedDeviceAllocator() {}
-
-	~ManagedDeviceAllocator(){
-		if(nAllocations > 0){
-			std::cout << "Would have leaked " << nAllocations << " allocations from ManagedDeviceAllocator." << std::endl;
-			for(auto ptr : allocations)
-				cudaFree(ptr);
-			
-			nAllocations = 0;
-		}
-	}
-
-	char* allocate(std::ptrdiff_t num_bytes){
-		//std::cout << "alloc" << std::endl;
-		char* ptr = nullptr;
-		cudaError_t status = cudaMallocManaged(&ptr, num_bytes);
-		if(status != cudaSuccess){
-			throw std::bad_alloc(); //("cudaMallocManaged: " + cudaGetErrorString(status));
-		}
-		int deviceId = 0;
-		status = cudaGetDevice(&deviceId);
-		if(status != cudaSuccess){
-			throw std::bad_alloc();
-		}
-		status = cudaMemAdvise(ptr, num_bytes, cudaMemAdviseSetAccessedBy, deviceId);
-		if(status != cudaSuccess){
-			throw std::bad_alloc();
-		}
-		allocations.emplace_back(ptr);
-		++nAllocations;
-		return ptr;
-	}
-
-    void deallocate(char* ptr, size_t n)
-    {
-		//std::cout << "dealloc" << std::endl;
-		cudaError_t status = cudaFree(ptr);
-		if(status != cudaSuccess){
-			throw std::bad_alloc(); //("cudaFree: " + cudaGetErrorString(status));
-		}
-		auto it = std::find(allocations.begin(), allocations.end(), ptr);
-		if(it != allocations.end()){
-			--nAllocations;
-			allocations.erase(it);
-		}
+    	cudaError_t status = cudaFree(ptr.get());
+    	if(status != cudaSuccess){
+    		throw std::bad_alloc();
+    	}
     }
 };
 
