@@ -11,6 +11,7 @@
 #include <gpu/qualityscoreweights.hpp>
 #include <qualityscoreweights.hpp>
 
+#include <cuda_profiler_api.h>
 
 #include <cassert>
 #include <cstdint>
@@ -54,7 +55,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
     const auto& deviceIds = runtimeOptions.deviceIds;
 
-    //#define DO_PROFILE
+    #define DO_PROFILE
 
     #if 1
       const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
@@ -93,7 +94,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               TIMERSTOPCPU(candidateestimation);
 
               candidateDistribution = cpu::estimateDist(candidateHistogram);
-			  
+
 			  //cpu::estimateDist2(candidateHistogram);
 
               std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
@@ -245,7 +246,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     #else
 
       constexpr int sleepiterbegin = 1;
-      constexpr int sleepiterend = 10;
+      constexpr int sleepiterend = 3;
 
       int sleepiter = 0;
 

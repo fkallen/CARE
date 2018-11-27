@@ -287,6 +287,13 @@ struct BatchGenerator{
 			int copiedTasks = 0; // used if state == CandidatesPresent
 			int copiedCandidates = 0; // used if state == CandidatesPresent
 
+
+            std::vector<ReadId_t> allReadIdsOfTasks;
+            std::vector<ReadId_t> allReadIdsOfTasks_tmp;
+            std::vector<char> collectedCandidateReads;
+            int numsortedCandidateIds = 0;
+            int numsortedCandidateIdTasks = 0;
+
 			DataArrays<Sequence_t, ReadId_t>* dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>* streams;
 			std::array<cudaEvent_t, nEventsPerBatch>* events;
@@ -295,10 +302,16 @@ struct BatchGenerator{
 
 			void reset(){
 				tasks.clear();
+                allReadIdsOfTasks.clear();
+                allReadIdsOfTasks_tmp.clear();
+                collectedCandidateReads.clear();
+
 				initialNumberOfCandidates = 0;
 				state = BatchState::Unprepared;
 				copiedTasks = 0;
 				copiedCandidates = 0;
+                numsortedCandidateIds = 0;
+                numsortedCandidateIdTasks = 0;
 			}
 		};
 
@@ -685,7 +698,7 @@ struct BatchGenerator{
 					dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
 					dataArrays.zero_gpu(streams[primary_stream_index]);
 
-					batch.initialNumberOfCandidates = -1;
+					batch.initialNumberOfCandidates = 0;
 
 					return BatchState::CopyReads;
 				}
@@ -706,6 +719,100 @@ struct BatchGenerator{
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
+
+            if(batch.copiedTasks == 0){
+                push_range("newsortids", 0);
+
+
+                std::size_t totalNumIds = 0;
+                for(int i = 0; i < int(batch.tasks.size()); i++){
+                    const auto& task = batch.tasks[i];
+                    totalNumIds += std::distance(task.candidate_read_ids_begin,
+                                            task.candidate_read_ids_end);
+                }
+
+                batch.allReadIdsOfTasks.reserve(totalNumIds);
+                batch.allReadIdsOfTasks_tmp.reserve(totalNumIds);
+
+                while(batch.numsortedCandidateIdTasks < int(batch.tasks.size())){
+                    const auto& task = batch.tasks[batch.numsortedCandidateIdTasks];
+                    const std::size_t numIds = std::distance(task.candidate_read_ids_begin,
+                                                        task.candidate_read_ids_end);
+
+                    std::copy(task.candidate_read_ids_begin,
+                                task.candidate_read_ids_end,
+                                batch.allReadIdsOfTasks.begin() + batch.numsortedCandidateIds);
+
+                    batch.numsortedCandidateIds += numIds;
+                    ++batch.numsortedCandidateIdTasks;
+                }
+
+                std::vector<ReadId_t> indexList(batch.numsortedCandidateIds);
+                std::iota(indexList.begin(), indexList.end(), ReadId_t(0));
+                std::sort(indexList.begin(), indexList.end(),
+                        [&](auto index1, auto index2){
+                            return batch.allReadIdsOfTasks[index1] < batch.allReadIdsOfTasks[index2];
+                        });
+
+                std::vector<char> readsSortedById(dataArrays.encoded_sequence_pitch * batch.numsortedCandidateIds, 0);
+
+                constexpr std::size_t prefetch_distance = 4;
+
+                for(int i = 0; i < batch.numsortedCandidateIds && i < prefetch_distance; ++i){
+                    const ReadId_t next_candidate_read_id = batch.allReadIdsOfTasks[indexList[i]];
+                    const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                    __builtin_prefetch(nextsequenceptr, 0, 0);
+                }
+
+                const std::size_t candidatesequencedatabytes = dataArrays.memQueries / sizeof(char);
+
+                for(int i = 0; i < batch.numsortedCandidateIds; ++i){
+                    if(i + prefetch_distance < batch.numsortedCandidateIds){
+                        const ReadId_t next_candidate_read_id = batch.allReadIdsOfTasks[indexList[i + prefetch_distance]];
+                        const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                        __builtin_prefetch(nextsequenceptr, 0, 0);
+                    }
+
+                    const ReadId_t candidate_read_id = batch.allReadIdsOfTasks[indexList[i]];
+                    const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
+                    const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+
+                    assert(i * dataArrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+
+                    std::memcpy(readsSortedById.data()
+                                    + i * dataArrays.encoded_sequence_pitch,
+                                sequenceptr,
+                                Sequence_t::getNumBytes(sequencelength));
+                }
+
+                batch.collectedCandidateReads.resize(dataArrays.encoded_sequence_pitch * batch.numsortedCandidateIds);
+                for(int i = 0; i < batch.numsortedCandidateIds; ++i){
+                    std::memcpy(batch.collectedCandidateReads.data()
+                                    + indexList[i] * dataArrays.encoded_sequence_pitch,
+                                readsSortedById.data()
+                                    + i * dataArrays.encoded_sequence_pitch,
+                                dataArrays.encoded_sequence_pitch);
+                }
+
+                pop_range();
+            }
+
+            /*while(batch.sortedTaskCandidateIds < int(batch.tasks.size())){
+                const auto& task = batch.tasks[batch.sortedTaskCandidateIds];
+                std::size_t oldSize = batch.allReadIdsOfTasks.size();
+                std::size_t numCandidatesOfTask = std::distance(task.candidate_read_ids_begin,
+                                                                task.candidate_read_ids_end);
+                batch.allReadIdsOfTasks_tmp.resize(oldSize + numCandidatesOfTask);
+                std::merge(batch.allReadIdsOfTasks.begin(),
+                                            batch.allReadIdsOfTasks.end(),
+                                            task.candidate_read_ids_begin,
+                                            task.candidate_read_ids_end,
+                                            batch.allReadIdsOfTasks_tmp.begin());
+
+                std::swap(batch.allReadIdsOfTasks, batch.allReadIdsOfTasks_tmp);
+
+                ++batch.sortedTaskCandidateIds;
+            }*/
 
 			//copy one task
             while(batch.copiedTasks < int(batch.tasks.size())){
@@ -810,7 +917,7 @@ struct BatchGenerator{
                     }
 
                     const std::size_t candidatesequencedatabytes = arrays.memQueries / sizeof(char);
-                    
+
 					for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i){
 						if(i + prefetch_distance < task.candidate_read_ids.size()){
                             const ReadId_t next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
@@ -878,13 +985,23 @@ struct BatchGenerator{
                                     H2D,
                                     streams[primary_stream_index]); CUERR;
                 }else{
+
+                    /*int memcmpresult = std::memcmp(batch.collectedCandidateReads.data(),
+                                                    dataArrays.h_candidate_sequences_data,
+                                                    dataArrays.encoded_sequence_pitch * batch.numsortedCandidateIds);
+                    if(memcmpresult == 0){
+                        std::cerr << "ok\n";
+                    }else{
+                        std::cerr << "not ok\n";
+                    }*/
+
 #if 1
                 cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
     							dataArrays.alignment_transfer_data_host,
     							dataArrays.alignment_transfer_data_usable_size,
     							H2D,
     							streams[primary_stream_index]); CUERR;
-#else				
+#else
                     dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
 
                     /*cudaMemcpyAsync(dataArrays.d_subject_read_ids,
@@ -912,8 +1029,8 @@ struct BatchGenerator{
                                     dataArrays.h_candidates_per_subject_prefixsum,
                                     dataArrays.memNqueriesPrefixSum,
                                     H2D,
-                                    streams[primary_stream_index]); CUERR;	
-					
+                                    streams[primary_stream_index]); CUERR;
+
 #endif
                 }
 
@@ -2195,7 +2312,7 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 4;
+    		constexpr int nParallelBatches = 1;
 			constexpr int sideBatchStepsPerWaitIter = 1;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
