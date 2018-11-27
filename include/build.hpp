@@ -650,7 +650,7 @@ namespace care{
                     readStorage.insertRead(readIndex, read.sequence, read.quality);
                     progress++;
 
-#if 1
+#if 0
 					using Sequence_t = typename ReadStorage_t::Sequence_t;
 					auto rsLength = readStorage.fetchSequenceLength(readIndex);
 					auto rsSequenceptr = readStorage.fetchSequenceData_ptr(readIndex);
@@ -738,7 +738,7 @@ namespace care{
 
             					readStorage.insertRead(readnum, read.sequence, read.quality);
 
-#if 1
+#if 0
 								using Sequence_t = typename ReadStorage_t::Sequence_t;
 								auto rsLength = readStorage.fetchSequenceLength(readnum);
 								auto rsSequenceptr = readStorage.fetchSequenceData_ptr(readnum);
