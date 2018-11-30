@@ -485,15 +485,20 @@ namespace care{
                 assert(nKeys == keys.size());
                 assert(nValues == values.size());
 
-                for(const auto& key : keys)
-                    outstream.write(reinterpret_cast<const char*>(&key), sizeof(Key_t));
-                for(const auto& val : values)
-                    outstream.write(reinterpret_cast<const char*>(&val), sizeof(Value_t));
+                //for(const auto& key : keys)
+                //    outstream.write(reinterpret_cast<const char*>(&key), sizeof(Key_t));
+                //for(const auto& val : values)
+                //    outstream.write(reinterpret_cast<const char*>(&val), sizeof(Value_t));
+
+                outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
+                outstream.write(reinterpret_cast<const char*>(values.data()), sizeof(Value_t) * nValues);
 
                 std::size_t nCounts = countsPrefixSum.size();
                 outstream.write(reinterpret_cast<const char*>(&nCounts), sizeof(std::size_t));
-                for(const auto& count : countsPrefixSum)
-                    outstream.write(reinterpret_cast<const char*>(&count), sizeof(Index_t));
+                //for(const auto& count : countsPrefixSum)
+                //    outstream.write(reinterpret_cast<const char*>(&count), sizeof(Index_t));
+                outstream.write(reinterpret_cast<const char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
+
             }
 
             void readFromStream(std::ifstream& instream){
@@ -512,16 +517,22 @@ namespace care{
                 values.resize(nValues);
                 countsPrefixSum.resize(nKeys+1);
 
-                for(auto& key : keys)
-                    instream.read(reinterpret_cast<char*>(&key), sizeof(Key_t));
-                for(auto& val : values)
-                    instream.read(reinterpret_cast<char*>(&val), sizeof(Value_t));
+                //for(auto& key : keys)
+                //    instream.read(reinterpret_cast<char*>(&key), sizeof(Key_t));
+                //for(auto& val : values)
+                //    instream.read(reinterpret_cast<char*>(&val), sizeof(Value_t));
+
+                instream.read(reinterpret_cast<char*>(keys.data()), sizeof(Key_t) * nKeys);
+                instream.read(reinterpret_cast<char*>(values.data()), sizeof(Value_t) * nValues);
 
                 std::size_t nCounts = countsPrefixSum.size();
                 instream.read(reinterpret_cast<char*>(&nCounts), sizeof(std::size_t));
                 countsPrefixSum.resize(nCounts);
-                for(auto& count : countsPrefixSum)
-                    instream.read(reinterpret_cast<char*>(&count), sizeof(Index_t));
+                //for(auto& count : countsPrefixSum)
+                //    instream.read(reinterpret_cast<char*>(&count), sizeof(Index_t));
+
+                instream.read(reinterpret_cast<char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
+
             }
 
             std::size_t numBytes() const{
