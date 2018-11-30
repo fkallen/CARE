@@ -4,6 +4,136 @@
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
+#include <functional>
+
+
+/*
+    Removes elements from sorted range which occure less than k times.
+    Returns end of the new range
+*/
+
+template<class Iter, class Equal>
+Iter remove_by_count(Iter first,
+                    Iter last,
+                    std::size_t k,
+                    Equal equal){
+
+    using T = typename Iter::value_type;
+
+    if(std::distance(first, last) == 0) return first;
+
+    Iter copytobegin = first;
+    Iter copyfrombegin = first;
+    Iter copyfromend = first;
+    ++copyfromend;
+
+    const T* curElem = &(*copyfrombegin);
+    std::size_t count = 1;
+
+    while(copyfromend != last){
+
+        if(equal(*curElem, *copyfromend)){
+            ++count;
+        }else{
+            if(count < k){
+                copyfrombegin = copyfromend;
+            }else{
+                copytobegin = std::copy(copyfrombegin, copyfromend, copytobegin);
+                copyfrombegin = copyfromend;
+            }
+
+            curElem = &(*copyfromend);
+            count = 1;
+        }
+
+        ++copyfromend;
+    }
+
+    //handle last element
+    if(count >= k)
+        copytobegin = std::copy(copyfrombegin, copyfromend, copytobegin);
+
+    return copytobegin;
+}
+
+template<class Iter>
+Iter remove_by_count(Iter first,
+                        Iter last,
+                        std::size_t k){
+    using T = typename Iter::value_type;
+    return remove_by_count(first, last, k, std::equal_to<T>{});
+}
+
+/*
+    Removes elements from sorted range which occure less than k times.
+    If a range of equals elements is greater than or equal to k, only the first element of this range is kept.
+    Returns end of the new range.
+    The new range is empty if there are more than max_num_elements unique elements
+*/
+
+template<class Iter, class Equal>
+Iter remove_by_count_unique_with_limit(Iter first,
+                    Iter last,
+                    std::size_t k,
+                    std::size_t max_num_elements,
+                    Equal equal){
+    using T = typename Iter::value_type;
+
+    constexpr std::size_t elements_to_copy = 1;
+
+    if(std::distance(first, last) == 0) return first;
+    if(elements_to_copy > k) return first;
+
+    Iter copytobegin = first;
+    Iter copyfrombegin = first;
+    Iter copyfromend = first;
+    ++copyfromend;
+
+    std::size_t num_copied_elements = 0;
+
+    const T* curElem = &(*copyfrombegin);
+    std::size_t count = 1;
+
+    while(copyfromend != last && num_copied_elements <= max_num_elements){
+
+        if(equal(*curElem, *copyfromend)){
+            ++count;
+        }else{
+            if(count < k){
+                copyfrombegin = copyfromend;
+            }else{
+                copytobegin = std::copy_n(copyfrombegin, elements_to_copy, copytobegin);
+                copyfrombegin = copyfromend;
+                num_copied_elements += elements_to_copy;
+            }
+
+            curElem = &(*copyfromend);
+            count = 1;
+        }
+
+        ++copyfromend;
+    }
+
+    //handle last element
+    if(count >= k)
+        copytobegin = std::copy_n(copyfrombegin, elements_to_copy, copytobegin);
+
+    if(num_copied_elements > max_num_elements)
+        return first;
+
+    return copytobegin;
+}
+
+template<class Iter>
+Iter remove_by_count_unique_with_limit(Iter first,
+                    Iter last,
+                    std::size_t k,
+                    std::size_t max_num_elements){
+
+    using T = typename Iter::value_type;
+    return remove_by_count_unique_with_limit(first, last, k, max_num_elements, std::equal_to<T>{});
+}
+
 
 /*
     Essentially performs std::set_union(first1, last1, first2, last2, d_first)
