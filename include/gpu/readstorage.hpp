@@ -153,7 +153,7 @@ namespace gpu{
                 cudaMemGetInfo(&freeMem, &totalMem); CUERR;
 
                 bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalGPUMem * totalMem && requiredSequenceMem < freeMem);
-#if 0
+#if 1
                 return isEnoughMemForSequences;
 #else
                 return false;
@@ -169,7 +169,7 @@ namespace gpu{
 
                 bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalGPUMem * totalMem && requiredTotalMem < freeMem);
 
-#if 0
+#if 1
                 return isEnoughMemForSequencesAndQualities;
 #else
                 return false;

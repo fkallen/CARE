@@ -55,7 +55,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
     const auto& deviceIds = runtimeOptions.deviceIds;
 
-    #define DO_PROFILE
+    //#define DO_PROFILE
 
     #if 1
       const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
@@ -82,6 +82,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           std::cout << "estimating candidate cutoff" << std::endl;
 
           cpu::Dist<std::int64_t, std::int64_t> candidateDistribution;
+          cpu::Dist2<std::int64_t, std::int64_t> candidateDistribution2;
 
           {
               TIMERSTARTCPU(candidateestimation);
@@ -95,7 +96,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
               candidateDistribution = cpu::estimateDist(candidateHistogram);
 
-			  //cpu::estimateDist2(candidateHistogram);
+			  candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
 
               std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
               std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
@@ -116,6 +117,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                                                           + 2.5 * estimatedDeviationAlignedCandidates;
 
           max_candidates = estimatedAlignmentCountThreshold;
+          //max_candidates = candidateDistribution2.percentRanges[90].first;
       }
 
       std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
