@@ -6,6 +6,8 @@
 #include <iterator>
 #include <functional>
 #include <cmath>
+#include <numeric>
+#include <vector>
 
 template<class OutputIt, class Iter>
 OutputIt k_way_merge_naive(OutputIt destinationbegin, const std::vector<Iter>& iters){
