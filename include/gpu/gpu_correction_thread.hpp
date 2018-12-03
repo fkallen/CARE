@@ -517,6 +517,8 @@ struct BatchGenerator{
 			assert(batch.state == BatchState::Unprepared);
             assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
 
+            constexpr int number_of_minhash_hits = 1;
+
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 			//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
@@ -569,7 +571,7 @@ struct BatchGenerator{
 					//auto& task = batch.tasks.back();
 
 					task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
-					task.candidate_read_ids = minhasher->getCandidates(task.subject_string, transFuncData.max_candidates);
+					task.candidate_read_ids = minhasher->getCandidates(task.subject_string, number_of_minhash_hits, transFuncData.max_candidates);
 
 					//task.candidate_read_ids.resize(transFuncData.max_candidates);
 					//auto vecend = minhasher->getCandidates(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.subject_string, transFuncData.max_candidates);
@@ -719,7 +721,7 @@ struct BatchGenerator{
 			std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 			dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
-
+#if 0
             if(batch.copiedTasks == 0){
                 push_range("newsortids", 0);
 
@@ -796,6 +798,7 @@ struct BatchGenerator{
 
                 pop_range();
             }
+#endif
 
             /*while(batch.sortedTaskCandidateIds < int(batch.tasks.size())){
                 const auto& task = batch.tasks[batch.sortedTaskCandidateIds];
@@ -2312,7 +2315,7 @@ struct BatchGenerator{
                 throw std::runtime_error("Could not open output feature file");
 
 
-    		constexpr int nParallelBatches = 1;
+    		constexpr int nParallelBatches = 4;
 			constexpr int sideBatchStepsPerWaitIter = 1;
 
 			cudaSetDevice(threadOpts.deviceId); CUERR;
