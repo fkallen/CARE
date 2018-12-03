@@ -5,7 +5,200 @@
 #include <cstdint>
 #include <iterator>
 #include <functional>
+#include <cmath>
 
+template<class OutputIt, class Iter>
+OutputIt k_way_merge_naive(OutputIt destinationbegin, const std::vector<Iter>& iters){
+    static_assert(std::is_same<typename OutputIt::value_type, typename Iter::value_type>::value, "");
+
+    using T = typename Iter::value_type;
+
+    // at least one range is invalid
+    if(iters.size() % 2 == 1)
+        return destinationbegin;
+
+    if(iters.size() == 0)
+        return destinationbegin;
+
+    if(iters.size() == 2)
+        return std::copy(iters[0], iters[1], destinationbegin);
+
+    if(iters.size() == 4)
+        return std::merge(iters[0], iters[1], iters[2], iters[3], destinationbegin);
+
+    std::size_t nranges = iters.size()/2;
+
+    std::size_t num_elements = 0;
+    for(std::size_t i = 0; i < iters.size() / 2; i++){
+        num_elements += std::distance(iters[2*i + 0], iters[2*i+1]);
+    }
+
+    std::vector<T> tmpbuffer(num_elements);
+    std::size_t merged_elements = 0;
+
+    for(std::size_t i = 0; i < nranges; i++){
+	auto src_begin = i % 2 == 0 ? tmpbuffer.begin() : destinationbegin;
+	auto src_end = src_begin + merged_elements;
+	auto dest_begin = i % 2 == 0 ? destinationbegin : tmpbuffer.begin();
+
+        auto dest_end = std::merge(src_begin, src_end,
+                                    iters[2*i + 0], iters[2*i+1],
+                                    dest_begin);
+
+	merged_elements = std::distance(dest_begin, dest_end);
+    }
+
+    auto destinationend = destinationbegin + merged_elements;
+
+    if(nranges % 2 == 0){
+        destinationend = std::copy(tmpbuffer.begin(), tmpbuffer.begin() + merged_elements, destinationbegin);
+    }
+
+    return destinationend;
+}
+
+template<class OutputIt, class Iter>
+OutputIt k_way_merge_naive_sortonce(OutputIt destinationbegin, const std::vector<Iter>& iters){
+    static_assert(std::is_same<typename OutputIt::value_type, typename Iter::value_type>::value, "");
+
+    using T = typename Iter::value_type;
+
+    // at least one range is invalid
+    if(iters.size() % 2 == 1)
+        return destinationbegin;
+
+    if(iters.size() == 0)
+        return destinationbegin;
+
+    if(iters.size() == 2)
+        return std::copy(iters[0], iters[1], destinationbegin);
+
+    if(iters.size() == 4)
+        return std::merge(iters[0], iters[1], iters[2], iters[3], destinationbegin);
+
+    std::size_t nranges = iters.size()/2;
+
+    std::size_t num_elements = 0;
+    for(std::size_t i = 0; i < iters.size() / 2; i++){
+        num_elements += std::distance(iters[2*i + 0], iters[2*i+1]);
+    }
+
+    std::vector<int> indices(nranges);
+    std::iota(indices.begin(), indices.end(), int(0));
+
+    std::sort(indices.begin(), indices.end(), [&](auto l, auto r){
+        auto ldist = std::distance(iters[2*l + 0], iters[2*l+1]);
+        auto rdist = std::distance(iters[2*r + 0], iters[2*r+1]);
+        return ldist < rdist;
+    });
+
+    std::vector<T> tmpbuffer(num_elements);
+    std::size_t merged_elements = 0;
+
+    for(std::size_t i = 0; i < nranges; i++){
+	const int rangeid = indices[i];
+
+	auto src_begin = i % 2 == 0 ? tmpbuffer.begin() : destinationbegin;
+	auto src_end = src_begin + merged_elements;
+	auto dest_begin = i % 2 == 0 ? destinationbegin : tmpbuffer.begin();
+
+        auto dest_end = std::merge(src_begin, src_end,
+                                    iters[2*rangeid + 0], iters[2*rangeid+1],
+                                    dest_begin);
+
+	merged_elements = std::distance(dest_begin, dest_end);
+    }
+
+    auto destinationend = destinationbegin + merged_elements;
+
+    if(nranges % 2 == 0){
+        destinationend = std::copy(tmpbuffer.begin(), tmpbuffer.begin() + merged_elements, destinationbegin);
+    }
+
+    return destinationend;
+}
+
+template<class OutputIt, class Iter>
+OutputIt k_way_merge_sorted(OutputIt destinationbegin, std::vector<Iter> iters){
+    static_assert(std::is_same<typename OutputIt::value_type, typename Iter::value_type>::value, "");
+
+    using T = typename Iter::value_type;
+
+    // at least one range is invalid
+    if(iters.size() % 2 == 1)
+        return destinationbegin;
+
+    if(iters.size() == 0)
+        return destinationbegin;
+
+    if(iters.size() == 2)
+        return std::copy(iters[0], iters[1], destinationbegin);
+
+    if(iters.size() == 4)
+        return std::merge(iters[0], iters[1], iters[2], iters[3], destinationbegin);
+
+    std::size_t nranges = iters.size()/2;
+
+    std::size_t num_elements = 0;
+    for(std::size_t i = 0; i < iters.size() / 2; i++){
+        num_elements += std::distance(iters[2*i + 0], iters[2*i+1]);
+    }
+
+    std::vector<int> indices(nranges);
+
+    std::vector<std::vector<T>> buffers(nranges-1);
+    //for(auto& buffer : buffers)
+	//buffer.reserve(num_elements);
+
+    auto destinationend = destinationbegin;
+
+    int pending_merges = nranges-1;
+
+    while(pending_merges > 0){
+	//for(int i = 0; i < pending_merges+1; i++)
+	//	std::cout << "range " << i << ", " << std::distance(iters[2*i + 0], iters[2*i+1]) << " elements" << std::endl;
+
+	if(pending_merges > 1){
+		indices.resize(pending_merges+1);
+	    	std::iota(indices.begin(), indices.end(), int(0));
+
+		std::sort(indices.begin(), indices.end(), [&](auto l, auto r){
+			auto ldist = std::distance(iters[2*l + 0], iters[2*l+1]);
+			auto rdist = std::distance(iters[2*r + 0], iters[2*r+1]);
+			return ldist < rdist;
+		});
+
+		int lindex = indices[0];
+		int rindex = indices[1];
+
+		std::size_t ldist = std::distance(iters[2*lindex + 0], iters[2*lindex+1]);
+		std::size_t rdist = std::distance(iters[2*rindex + 0], iters[2*rindex+1]);
+
+		int bufferindex = nranges-1 - pending_merges;
+		auto& buffer = buffers[bufferindex];
+		buffer.resize(ldist+rdist);
+
+		std::merge(iters[2*lindex + 0], iters[2*lindex+1],
+		           iters[2*rindex + 0], iters[2*rindex+1],
+		           buffer.begin());
+
+		iters[2*lindex+0] = buffer.begin();
+		iters[2*lindex+1] = buffer.end();
+		iters.erase(iters.begin() + (2*rindex+0), iters.begin() + (2*rindex+1) + 1);
+
+	}else{
+		int lindex = 0;
+		int rindex = 1;
+		destinationend = std::merge(iters[2*lindex + 0], iters[2*lindex+1],
+					   iters[2*rindex + 0], iters[2*rindex+1],
+					   destinationbegin);
+	}
+
+	--pending_merges;
+    }
+
+    return destinationend;
+}
 
 /*
     Removes elements from sorted range which occure less than k times.
