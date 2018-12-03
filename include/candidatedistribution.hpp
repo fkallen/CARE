@@ -11,7 +11,7 @@
 
 namespace care{
 namespace cpu{
-    
+
     template<class T, class Count>
     struct Dist{
         T max;
@@ -19,6 +19,11 @@ namespace cpu{
         T stddev;
         Count maxCount;
         Count averageCount;
+    };
+
+    template<class T, class Count>
+    struct Dist2{
+        std::vector<std::pair<T, Count>> percentRanges;
     };
 
     template<class T, class Count>
@@ -66,75 +71,38 @@ namespace cpu{
 
         return distribution;
     }
-    
-	template<class T, class Count>
-    Dist<T,Count> estimateDist2(const std::map<T,Count>& map){
-        Dist<T, Count> distribution;
 
-        Count sum = 0;
+	template<class T, class Count>
+    Dist2<T,Count> estimateDist2(const std::map<T,Count>& map){
+
+        Dist2<T, Count> distribution;
+        distribution.percentRanges.resize(101);
+
         std::vector<std::pair<T, Count>> vec(map.begin(), map.end());
         std::sort(vec.begin(), vec.end(), [](const auto& a, const auto& b){
-            return a.second < b.second;
-        });
-
-        auto it = std::max_element(vec.begin(), vec.end(), [](const auto& a, const auto& b){
-            return a.second < b.second;
-        });
-		
-		distribution.max = it->first;
-        distribution.maxCount = it->second;
-		
-		Count leftCandidates = 0;
-		Count rightCandidates = 0;
-		for(const auto& pair : map){
-			if(pair.first <= distribution.max)
-				leftCandidates += pair.second;
-			if(pair.first > distribution.max)
-				rightCandidates += pair.second;
-		}
-		Count totalCandidates = leftCandidates + rightCandidates;
-				
-		std::sort(vec.begin(), vec.end(), [](const auto& a, const auto& b){
             return a.first < b.first;
         });
-		
-		it = std::lower_bound(vec.begin(),
-						vec.end(),
-						std::make_pair(T{}, distribution.max),
-						[](const auto& a, const auto& b){
-							return a.first < b.first;
-						});
-#if 0		
-		std::size_t boundary = std::distance(vec.begin(), it);
-		Count candidatesUntilBoundary = leftCandidates;
-		
-		for(int i = 0; i < 10; i++){
-			double fac = i / 10.0;
-			while(candidatesUntilBoundary < fac * totalCandidates && boundary < vec.size() - 1){
-				boundary++;
-				candidatesUntilBoundary += vec[boundary].second;
-			}
 
-			std::cout << (i * 10) << " % boundary element: " << vec[boundary].first << ", " << vec[boundary].second << std::endl;
+		Count totalCandidates = 0;
+
+        for(const auto& pair : vec){
+			totalCandidates += pair.second;
 		}
-		
-#else
-		
+
 		std::size_t boundary = 0;
 		Count candidatesUntilBoundary = 0;
-		
+
 		for(int i = 0; i <= 100; i++){
 			double fac = i / 100.0;
-			while(candidatesUntilBoundary < fac * totalCandidates && boundary < vec.size()){				
+			while(candidatesUntilBoundary < fac * totalCandidates && boundary < vec.size()){
 				candidatesUntilBoundary += vec[boundary].second;
 				boundary++;
 			}
 
 			std::size_t b = boundary > 0 ? boundary-1 : boundary;
 			std::cout << (i) << " % boundary element: " << vec[b].first << ", " << vec[b].second << std::endl;
+            distribution.percentRanges[i] = vec[b];
 		}
-
-#endif
 
         return distribution;
     }
@@ -166,11 +134,12 @@ namespace cpu{
 					//	std::cout << sequencestring << '\n' << sequencestring2 << std::endl;
 					//	assert(false);
 					//}
-					
+
                     //auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
                     //std::int64_t count = std::int64_t(candidateList.size()) - 1;
 
                     std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, handle);
+                    //std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, 2);
                     if(count > 0)
                         --count;
 
