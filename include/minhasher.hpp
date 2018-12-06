@@ -22,6 +22,7 @@
 #include <array>
 #include <fstream>
 #include <cassert>
+#include <iterator>
 
 #ifdef __NVCC__
 #include <thrust/host_vector.h>
@@ -853,70 +854,333 @@ struct Minhasher {
 			}
 		}
 	}
+// ###########################
 
-	std::int64_t getNumberOfCandidates(const std::string& sequence) const noexcept{
-		Handle handle;
-		return getNumberOfCandidates(sequence, handle);
-	}
+    /*
+        Query candidate ids
+    */
 
-	std::int64_t getNumberOfCandidates(const std::string& sequence, Handle& handle) const noexcept{
-		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
-			return 0;
+    /*
+        Convenience wrapper
+    */
+    std::vector<Result_t> getCandidates(const std::string& sequence,
+                                        int num_hits,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        std::vector<Result_t> result;
 
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-		//TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
-		//TIMERSTOPCPU(minhashfunc);
-
-
-        handle.allUniqueResults.clear();
-        handle.tmp.clear();
-
-        for(int map = 0; map < minparams.maps; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-			//TIMERSTARTCPU(get_ranged);
-            auto entries_range = minhashTables[map]->get_ranged(key);
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-			//TIMERSTOPCPU(get_ranged);
-
-            if(map == 0){
-				//TIMERSTARTCPU(reserve);
-                handle.tmp.reserve(minparams.maps * n_entries);
-                handle.allUniqueResults.reserve(minparams.maps * n_entries);
-				//TIMERSTOPCPU(reserve);
-            }
-
-            //TIMERSTARTCPU(resizebeforeunion);
-            handle.tmp.resize(handle.allUniqueResults.size() + n_entries);
-			//TIMERSTOPCPU(resizebeforeunion);
-
-			//TIMERSTARTCPU(setunion);
-            auto union_end = std::set_union(entries_range.first,
-                                                entries_range.second,
-                                                handle.allUniqueResults.begin(),
-                                                handle.allUniqueResults.end(),
-                                                handle.tmp.begin());
-			//TIMERSTOPCPU(setunion);
-
-			//TIMERSTARTCPU(resizeafterunion);
-			handle.tmp.resize(std::distance(handle.tmp.begin(), union_end));
-			//TIMERSTOPCPU(resizeafterunion);
-
-			//TIMERSTARTCPU(swap);
-			std::swap(handle.tmp, handle.allUniqueResults);
-			//TIMERSTOPCPU(swap);
+        if(num_hits == 1){
+            result = getCandidates_any_map(sequence, max_number_candidates);
+        }else if(num_hits == minparams.maps){
+            result = getCandidates_all_maps(sequence, max_number_candidates);
+        }else{
+            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
         }
 
-        assert(handle.allUniqueResults.size() <= std::numeric_limits<std::int64_t>::max());
+        return result;
+    }
 
-		return std::int64_t(handle.allUniqueResults.size());
+    std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
 
-	}
+        std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+        bool isForwardStrand[maximum_number_of_maps]{0};
+        //TIMERSTARTCPU(minhashfunc);
+        minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
+
+
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+        //TIMERSTARTCPU(getcandrest);
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            auto entries_range = minhashTables[map]->get_ranged(key);
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+            if(map == 0){
+                //allUniqueResults.reserve(minparams.maps * entries.size());
+                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+            }
+
+            tmp.resize(allUniqueResults.size() + n_entries);
+            auto union_end = set_union_n_or_empty(entries_range.first,
+                                                entries_range.second,
+                                                allUniqueResults.begin(),
+                                                allUniqueResults.end(),
+                                                max_number_candidates,
+                                                tmp.begin());
+            if(tmp.begin() == union_end){
+                return {};
+            }else{
+                tmp.resize(std::distance(tmp.begin(), union_end));
+                std::swap(tmp, allUniqueResults);
+            }
+        }
+
+        return allUniqueResults;
+    }
+
+    template<class Iter>
+    Iter getCandidates_any_map(Iter begin, Iter end, const std::string& sequence,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+
+        const std::size_t totalresultrangesize = std::distance(begin, end);
+
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return begin;
+
+        std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+        bool isForwardStrand[maximum_number_of_maps]{0};
+        //TIMERSTARTCPU(minhashfunc);
+        minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
+
+        //Iter curBegin = begin;
+        Iter curEnd = begin;
+
+        //std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+        //TIMERSTARTCPU(getcandrest);
+        for(int map = 0; map < minparams.maps && std::uint64_t(std::distance(begin, curEnd)) < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            auto entries_range = minhashTables[map]->get_ranged(key);
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+            if(map == 0){
+                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+                //allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+            }
+
+            tmp.resize(std::distance(begin, curEnd) + n_entries);
+            auto union_end = set_union_n_or_empty(entries_range.first,
+                                                entries_range.second,
+                                                begin,
+                                                curEnd,
+                                                max_number_candidates,
+                                                tmp.begin());
+            if(tmp.begin() == union_end){
+                return begin;
+            }else{
+                tmp.resize(std::distance(tmp.begin(), union_end));
+                if(tmp.size() > totalresultrangesize)
+                    std::cout << tmp.size() << " > " << totalresultrangesize << std::endl;
+                assert(tmp.size() <= totalresultrangesize);
+                curEnd = std::swap_ranges(tmp.begin(), tmp.end(), begin);
+            }
+        }
+
+        return curEnd;
+    }
+
+    /*
+        This version of getCandidates returns only read ids which are found in at least num_hits maps
+    */
+    std::vector<Result_t> getCandidates_some_maps2(const std::string& sequence,
+                                        int num_hits,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
+
+        if(num_hits > minparams.maps || num_hits < 1)
+            return {};
+
+        std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+        bool isForwardStrand[maximum_number_of_maps]{0};
+        //TIMERSTARTCPU(minhashfunc);
+        minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
+
+        std::size_t total_num_ids = 0;
+        std::vector<const Value_t*> iters;
+        iters.reserve(minparams.maps*2);
+        for(int map = 0; map < minparams.maps; ++map){
+            Key_t key = hashValues[map] & key_mask;
+
+            auto entries_range = minhashTables[map]->get_ranged(key);
+
+            iters.emplace_back(entries_range.first);
+            iters.emplace_back(entries_range.second);
+
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+            //std::cout << "map " << map << ", ids " << n_entries << std::endl;
+            total_num_ids += n_entries;
+        }
+
+        std::vector<Value_t> allCandidateIds(total_num_ids);
+
+        //the following two function can probably be fused
+
+        //merge ids from all maps into vector
+        auto allCandidateIdsNewEnd = k_way_merge_naive_sortonce(allCandidateIds.begin(), iters);
+
+        //remove all ids which occure less than num_hits times.
+        allCandidateIdsNewEnd = remove_by_count_unique_with_limit(allCandidateIds.begin(),
+                                                                        allCandidateIdsNewEnd,
+                                                                        num_hits,
+                                                                        max_number_candidates);
+
+        std::vector<Value_t> result(allCandidateIds.begin(), allCandidateIdsNewEnd);
+
+        return result;
+    }
+
+    std::vector<Result_t> getCandidates_some_maps(const std::string& sequence,
+                                        int num_hits,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
+
+        if(num_hits > minparams.maps || num_hits < 1)
+            return {};
+
+        std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+        bool isForwardStrand[maximum_number_of_maps]{0};
+        //TIMERSTARTCPU(minhashfunc);
+        minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
+
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+        //TIMERSTARTCPU(getcandrest);
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            auto entries_range = minhashTables[map]->get_ranged(key);
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+            if(map == 0){
+                //allUniqueResults.reserve(minparams.maps * entries.size());
+                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+            }
+
+            tmp.resize(allUniqueResults.size() + n_entries);
+            auto merge_end = merge_with_count_theshold(entries_range.first,
+                                                entries_range.second,
+                                                allUniqueResults.begin(),
+                                                allUniqueResults.end(),
+                                                num_hits,
+                                                max_number_candidates,
+                                                tmp.begin());
+            if(tmp.begin() == merge_end){
+                return {};
+            }else{
+                tmp.resize(std::distance(tmp.begin(), merge_end));
+                std::swap(tmp, allUniqueResults);
+            }
+        }
+
+        //std::copy(allUniqueResults.begin(), allUniqueResults.end(), std::ostream_iterator<Value_t>(std::cout, " "));
+	    //std::cout << std::endl;
+
+        auto resultEnd = remove_by_count_unique_with_limit(allUniqueResults.begin(),
+                                                            allUniqueResults.end(),
+                                                            num_hits,
+                                                            max_number_candidates);
+
+        allUniqueResults.erase(resultEnd, allUniqueResults.end());
+
+        //std::copy(allUniqueResults.begin(), allUniqueResults.end(), std::ostream_iterator<Value_t>(std::cout, " "));
+	    //std::cout << std::endl;
+
+        //char a;
+        //std::cin >> a;
+
+        return allUniqueResults;
+    }
+
+    /*
+        This version of getCandidates returns only read ids which are found in all maps
+    */
+    std::vector<Result_t> getCandidates_all_maps(const std::string& sequence,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
+
+        std::uint64_t hashValues[maximum_number_of_maps]{0};
+
+        bool isForwardStrand[maximum_number_of_maps]{0};
+        //TIMERSTARTCPU(minhashfunc);
+        minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
+
+        std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+        //TIMERSTARTCPU(getcandrest);
+        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
+            Key_t key = hashValues[map] & key_mask;
+
+            auto entries_range = minhashTables[map]->get_ranged(key);
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+            if(map == 0){
+                //allUniqueResults.reserve(minparams.maps * entries.size());
+                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+            }
+
+            tmp.resize(allUniqueResults.size() + n_entries);
+            auto intersection_end = set_intersection_n_or_empty(entries_range.first,
+                                                entries_range.second,
+                                                allUniqueResults.begin(),
+                                                allUniqueResults.end(),
+                                                max_number_candidates,
+                                                tmp.begin());
+            if(tmp.begin() == intersection_end){
+                return {};
+            }else{
+                tmp.resize(std::distance(tmp.begin(), intersection_end));
+                std::swap(tmp, allUniqueResults);
+            }
+        }
+
+        return allUniqueResults;
+    }
+
+// #############################
+
+/*
+    Query number of candidates
+*/
+
+    std::int64_t getNumberOfCandidates(const std::string& sequence,
+                                        int num_hits) const noexcept{
+
+        const std::uint64_t max_number_candidates = std::numeric_limits<std::uint64_t>::max();
+
+        std::vector<Result_t> result;
+
+        if(num_hits == 1){
+            result = getCandidates_any_map(sequence, max_number_candidates);
+        }else if(num_hits == minparams.maps){
+            result = getCandidates_all_maps(sequence, max_number_candidates);
+        }else{
+            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
+        }
+
+        assert(result.size() <= std::numeric_limits<std::int64_t>::max());
+
+        return std::int64_t(result.size());
+    }
 
     std::int64_t getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept{
 		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
@@ -950,175 +1214,7 @@ struct Minhasher {
 
 	}
 
-	std::vector<Result_t> getCandidates(const std::string& sequence,
-										std::uint64_t max_number_candidates) const noexcept{
-		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
-			return {};
-
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-		//TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
-		//TIMERSTOPCPU(minhashfunc);
-
-
-        std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            auto entries_range = minhashTables[map]->get_ranged(key);
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(allUniqueResults.size() + n_entries);
-            auto union_end = set_union_n_or_empty(entries_range.first,
-                                                entries_range.second,
-                                                allUniqueResults.begin(),
-                                                allUniqueResults.end(),
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == union_end){
-                return {};
-            }else{
-                tmp.resize(std::distance(tmp.begin(), union_end));
-                std::swap(tmp, allUniqueResults);
-            }
-        }
-
-		return allUniqueResults;
-	}
-
-	template<class Iter>
-	Iter getCandidates(Iter begin, Iter end, const std::string& sequence,
-										std::uint64_t max_number_candidates) const noexcept{
-		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-
-		const std::size_t totalresultrangesize = std::distance(begin, end);
-
-		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
-			return begin;
-
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-		//TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
-		//TIMERSTOPCPU(minhashfunc);
-
-		//Iter curBegin = begin;
-		Iter curEnd = begin;
-
-        //std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && std::uint64_t(std::distance(begin, curEnd)) < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            auto entries_range = minhashTables[map]->get_ranged(key);
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                //allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(std::distance(begin, curEnd) + n_entries);
-            auto union_end = set_union_n_or_empty(entries_range.first,
-                                                entries_range.second,
-                                                begin,
-                                                curEnd,
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == union_end){
-                return begin;
-            }else{
-                tmp.resize(std::distance(tmp.begin(), union_end));
-				if(tmp.size() > totalresultrangesize)
-					std::cout << tmp.size() << " > " << totalresultrangesize << std::endl;
-				assert(tmp.size() <= totalresultrangesize);
-				curEnd = std::swap_ranges(tmp.begin(), tmp.end(), begin);
-            }
-        }
-
-		return curEnd;
-	}
-
-    /*
-        This version of getCandidates returns only read ids which are found in at least num_hits maps
-    */
-    std::vector<Result_t> getCandidates(const std::string& sequence,
-                                        int num_hits,
-										std::uint64_t max_number_candidates) const noexcept{
-		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
-			return {};
-
-        if(num_hits > minparams.maps || num_hits < 1)
-            return {};
-
-        if(num_hits == 1){
-            return getCandidates(sequence, max_number_candidates);
-        }
-
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-		//TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
-		//TIMERSTOPCPU(minhashfunc);
-
-
-        std::vector<Value_t> allCandidateIds;
-        std::vector<Value_t> tmp2;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            auto entries_range = minhashTables[map]->get_ranged(key);
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                allCandidateIds.reserve(minparams.maps * n_entries);
-                tmp2.reserve(minparams.maps * n_entries);
-            }
-
-            tmp2.resize(allCandidateIds.size() + n_entries);
-            std::merge(entries_range.first, entries_range.second,
-                        allCandidateIds.begin(), allCandidateIds.end(),
-                        tmp2.begin());
-            std::swap(allCandidateIds, tmp2);
-        }
-
-        //remove all candidates which do not appear num_hits times and make list unique.
-        auto allCandidateIdsNewEnd = remove_by_count_unique_with_limit(allCandidateIds.begin(),
-                                                                        allCandidateIds.end(),
-                                                                        num_hits,
-                                                                        max_number_candidates);
-
-        allCandidateIds.erase(allCandidateIdsNewEnd, allCandidateIds.end());
-
-		return allCandidateIds;
-	}
-
-    std::int64_t getNumberOfCandidates(const std::string& sequence, int num_hits) const noexcept{
-        auto candidates = getCandidates(sequence,
-                                            num_hits,
-    										std::numeric_limits<std::uint64_t>::max());
-        return std::int64_t(candidates.size());
-    }
-
+//###################################################
 
 	void resize(std::uint64_t nReads_){
 		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
