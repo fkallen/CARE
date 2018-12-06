@@ -111,6 +111,7 @@ namespace cpu{
     std::map<std::int64_t, std::int64_t> getCandidateCountHistogram(const minhasher_t& minhasher,
                                                                     const readStorage_t& readStorage,
                                                                     std::uint64_t candidatesToCheck,
+                                                                    int num_hits,
                                                                     int threads){
 
         using ReadStorage_t = readStorage_t;
@@ -138,7 +139,7 @@ namespace cpu{
                     //auto candidateList = minhasher.getCandidates(sequencestring, std::numeric_limits<std::uint64_t>::max());
                     //std::int64_t count = std::int64_t(candidateList.size()) - 1;
 
-                    std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, handle);
+                    std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, num_hits);
                     //std::int64_t count = minhasher.getNumberOfCandidates(sequencestring, 2);
                     if(count > 0)
                         --count;

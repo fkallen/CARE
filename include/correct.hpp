@@ -59,7 +59,6 @@ namespace cpu{
     	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, indels>;
 
-
     #if 1
         const int nCorrectorThreads = runtimeOptions.nCorrectorThreads;
     #else
@@ -91,6 +90,7 @@ namespace cpu{
                         = getCandidateCountHistogram(minhasher,
                                                     readStorage,
                                                     sequenceFileProperties.nReads / 10,
+                                                    correctionOptions.hits_per_candidate,
                                                     runtimeOptions.threads);
 
                 TIMERSTOPCPU(candidateestimation);

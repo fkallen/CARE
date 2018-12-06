@@ -90,6 +90,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                       = cpu::getCandidateCountHistogram(minhasher,
                                                   readStorage,
                                                   sequenceFileProperties.nReads / 10,
+                                                  correctionOptions.hits_per_candidate,
                                                   runtimeOptions.threads);
 
               TIMERSTOPCPU(candidateestimation);

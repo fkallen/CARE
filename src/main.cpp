@@ -1,10 +1,13 @@
-#include "../include/care.hpp"
+#include <care.hpp>
 
 #include "../include/cxxopts/cxxopts.hpp"
-
+#include "../include/args.hpp"
+#include "../include/options.hpp"
 
 #include <iostream>
 #include <string>
+
+using namespace care;
 
 int main(int argc, const char** argv){
 
@@ -74,6 +77,8 @@ int main(int argc, const char** argv){
         			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
         ("load-hashtables-from", "Load binary dump of hash tables from disk",
         			cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+        ("hits_per_candidate", "A read must be hit in at least hits_per_candidate maps to be considered a candidate",
+        			cxxopts::value<int>()->default_value("1")->implicit_value("1"))
 	;
 
     options.parse_positional({"deviceIds"});
@@ -81,11 +86,36 @@ int main(int argc, const char** argv){
 	auto parseresults = options.parse(argc, argv);
 
 	if(help){
-	      	std::cout << options.help({"", "Group"}) << std::endl;
-		exit(0);
+        std::cout << options.help({"", "Group"}) << std::endl;
+        exit(0);
 	}
 
-	care::performCorrection(parseresults);
+    MinhashOptions minhashOptions = args::to<care::MinhashOptions>(parseresults);
+    AlignmentOptions alignmentOptions = args::to<AlignmentOptions>(parseresults);
+    GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
+    CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
+    RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
+    FileOptions fileOptions = args::to<FileOptions>(parseresults);
+
+    if(!args::isValid(minhashOptions)) throw std::runtime_error("care::performCorrection: Invalid minhashOptions!");
+    if(!args::isValid(alignmentOptions)) throw std::runtime_error("care::performCorrection: Invalid alignmentOptions!");
+    if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("care::performCorrection: Invalid goodAlignmentProperties!");
+    if(!args::isValid(correctionOptions)) throw std::runtime_error("care::performCorrection: Invalid correctionOptions!");
+    if(!args::isValid(runtimeOptions)) throw std::runtime_error("care::performCorrection: Invalid runtimeOptions!");
+    if(!args::isValid(fileOptions)) throw std::runtime_error("care::performCorrection: Invalid fileOptions!");
+
+    if(correctionOptions.correctCandidates && correctionOptions.extractFeatures){
+        std::cout << "Warning! correctCandidates=true cannot be used with extractFeatures=true. Using correctCandidates=false" << std::endl;
+        correctionOptions.correctCandidates = false;
+    }
+
+    care::performCorrection(minhashOptions,
+                        alignmentOptions,
+                        correctionOptions,
+                        runtimeOptions,
+                        fileOptions,
+                        goodAlignmentProperties);
+	//care::performCorrection(parseresults);
 
 #ifdef __NVCC__
     int ngpus;

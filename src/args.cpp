@@ -85,6 +85,7 @@ namespace args{
             3, //new_columns_to_correct
             pr["extractFeatures"].as<bool>(),
             pr["classicMode"].as<bool>(),
+            pr["hits_per_candidate"].as<int>()
         };
 
         return result;
@@ -238,6 +239,11 @@ namespace args{
         if(opt.batchsize < 1 /*|| corOpts.batchsize > 16*/){
             valid = false;
             std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
+        }
+
+        if(opt.hits_per_candidate < 1){
+            valid = false;
+            std::cout << "Error: hits_per_candidate must be greater than 0, is " + std::to_string(opt.hits_per_candidate) << std::endl;
         }
 
         return valid;

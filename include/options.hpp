@@ -50,6 +50,7 @@ namespace care{
         int new_columns_to_correct = 0;
         bool extractFeatures = false;
         bool classicMode = false;
+        int hits_per_candidate = 1;
     };
 
 	struct RuntimeOptions{

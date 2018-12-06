@@ -1,6 +1,6 @@
 #include "../include/care.hpp"
 
-#include "../include/args.hpp"
+//#include "../include/args.hpp"
 #include "../include/build.hpp"
 #include "../include/correct.hpp"
 #include "../include/minhasher.hpp"
@@ -339,7 +339,13 @@ if(0){
 
 
 
-
+    void performCorrection(MinhashOptions minhashOptions,
+                            AlignmentOptions alignmentOptions,
+                            CorrectionOptions correctionOptions,
+                            RuntimeOptions runtimeOptions,
+                            FileOptions fileOptions,
+                            GoodAlignmentProperties goodAlignmentProperties){
+#if 0
 	void performCorrection(const cxxopts::ParseResult& args) {
 		//check arguments
 		/*if(!args::areValid(args)){
@@ -367,7 +373,7 @@ if(0){
 			std::cout << "Warning! correctCandidates=true cannot be used with extractFeatures=true. Using correctCandidates=false" << std::endl;
 			correctionOptions.correctCandidates = false;
 		}
-
+#endif
 		//create output directory
 		filesys::create_directories(fileOptions.outputdirectory);
 

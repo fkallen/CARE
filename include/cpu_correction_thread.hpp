@@ -259,7 +259,7 @@ namespace cpu{
                 const int subjectLength = threadOpts.readStorage->fetchSequenceLength(task.readId);
 
                 task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)subjectptr, subjectLength);
-                task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, max_candidates);
+                task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, correctionOptions.hits_per_candidate, max_candidates);
 
                 //remove our own read id from candidate list. candidate_read_ids is sorted.
                 auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);

@@ -517,7 +517,7 @@ struct BatchGenerator{
 			assert(batch.state == BatchState::Unprepared);
             assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
 
-            constexpr int number_of_minhash_hits = 1;
+            const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
 			DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 			std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -571,7 +571,7 @@ struct BatchGenerator{
 					//auto& task = batch.tasks.back();
 
 					task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
-					task.candidate_read_ids = minhasher->getCandidates(task.subject_string, number_of_minhash_hits, transFuncData.max_candidates);
+					task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.max_candidates);
 
 					//task.candidate_read_ids.resize(transFuncData.max_candidates);
 					//auto vecend = minhasher->getCandidates(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.subject_string, transFuncData.max_candidates);
