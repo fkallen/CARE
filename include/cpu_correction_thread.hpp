@@ -232,8 +232,13 @@ namespace cpu{
 
             std::vector<ReadId_t> readIds;
 
-    		while(!stopAndAbort && !(threadOpts.readIdGenerator->empty() && readIds.empty())){
+            //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
+            std::map<int, int> totalnumcandidatesmap;
+            int iterasdf = 0;
+
+    		while(!stopAndAbort && !(threadOpts.readIdGenerator->empty() && readIds.empty())){
+iterasdf++;
                 if(readIds.empty())
                     readIds = threadOpts.readIdGenerator->next_n(100);
 
@@ -268,10 +273,18 @@ namespace cpu{
 
                 std::size_t myNumCandidates = task.candidate_read_ids.size();
 
+                //totalnumcandidatesmap[myNumCandidates]++;
+                /*if(iterasdf == 1000000){
+                    for(auto p : totalnumcandidatesmap){
+                        std::cerr << p.first << " " << p.second << '\n';
+                    }
+                    break;
+                }*/
                 if(myNumCandidates == 0){
                     continue; //no candidates to use for correction
                 }
 
+                //std::cerr << "Read " << task.readId << ", candidates: " << myNumCandidates << '\n';
 
                 std::vector<AlignmentResult_t> bestAlignments;
                 std::vector<BestAlignment_t> bestAlignmentFlags;
@@ -354,6 +367,9 @@ namespace cpu{
                 if(!std::any_of(counts.begin(), counts.end(), [](auto c){return c > 0;}))
                     continue; //no good alignments
 
+                //std::cerr << "Read " << task.readId << ", good alignments after bining: " << std::accumulate(counts.begin(), counts.end(), int(0)) << '\n';
+                //std::cerr << "Read " << task.readId << ", bins: " << counts[0] << " " << counts[1] << " " << counts[2] << '\n';
+
                 const double goodAlignmentsCountThreshold = correctionOptions.estimatedCoverage * correctionOptions.m_coverage;
                 double mismatchratioThreshold = 0;
                 if (counts[0] >= goodAlignmentsCountThreshold) {
@@ -363,7 +379,10 @@ namespace cpu{
                 } else if (counts[2] >= goodAlignmentsCountThreshold) {
                     mismatchratioThreshold = 4 * mismatchratioBaseFactor;
                 } else {
-                    continue;  //no correction possible
+                    if(correctionOptions.hits_per_candidate > 1){
+                        mismatchratioThreshold = 4 * mismatchratioBaseFactor;
+                    }else
+                        continue;  //no correction possible
                 }
 
                 //filter alignments
@@ -383,6 +402,9 @@ namespace cpu{
                         ++newsize;
                     }
                 }
+
+                //std::cerr << "Read " << task.readId << ", good alignments after bin filtering: " << newsize << '\n';
+
 
                 bestAlignments.resize(newsize);
                 bestAlignmentFlags.resize(newsize);

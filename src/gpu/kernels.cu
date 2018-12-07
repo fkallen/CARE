@@ -376,6 +376,7 @@ namespace gpu{
                             if(j != i && j >= 0 && j < subjectLength){
                                 avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
                                 kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
                                 c++;
                             }
                         }

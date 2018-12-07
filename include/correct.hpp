@@ -83,6 +83,7 @@ namespace cpu{
             std::cout << "estimating candidate cutoff" << std::endl;
 
             Dist<std::int64_t, std::int64_t> candidateDistribution;
+            cpu::Dist2<std::int64_t, std::int64_t> candidateDistribution2;
 
             {
                 TIMERSTARTCPU(candidateestimation);
@@ -96,6 +97,7 @@ namespace cpu{
                 TIMERSTOPCPU(candidateestimation);
 
                 candidateDistribution = estimateDist(candidateHistogram);
+                //candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
 
                 std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
                 std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
@@ -116,6 +118,8 @@ namespace cpu{
                                                             + 2.5 * estimatedDeviationAlignedCandidates;
 
             max_candidates = estimatedAlignmentCountThreshold;
+            //max_candidates = candidateDistribution2.percentRanges[90].first;
+            //std::exit(0);
         }
 
         std::cout << "Using candidate cutoff: " << max_candidates << std::endl;

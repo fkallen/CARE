@@ -162,6 +162,10 @@ namespace cpu{
             }
         }
 
+        //for(auto p : allncandidates){
+        //    std::cerr << p.first << " " << p.second << '\n';
+        //}
+
         return allncandidates;
     }
 }

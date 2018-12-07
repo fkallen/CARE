@@ -97,7 +97,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
               candidateDistribution = cpu::estimateDist(candidateHistogram);
 
-			  candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
+			  //candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
 
               std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
               std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});

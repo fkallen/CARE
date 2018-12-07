@@ -1429,6 +1429,8 @@ void call_msa_correct_subject_kernel_async(
 				mismatchratioThreshold = 4 * mismatchratioBaseFactor;
 			} else {
 				mismatchratioThreshold = -1; //this will invalidate all alignments for subject
+                //mismatchratioThreshold = 4 * mismatchratioBaseFactor; //use alignments from every bin
+                //mismatchratioThreshold = 1.1;
 			}
 
 			// Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
