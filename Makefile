@@ -3,8 +3,8 @@ CUDACC=nvcc
 HOSTLINKER=g++
 
 CXXFLAGS = -std=c++14
-CFLAGS = -Wall -fopenmp -g -Iinc -O3
-CFLAGS_DEBUG = -Wall -fopenmp -g -Iinc
+CFLAGS = -Wall -fopenmp -g -Iinclude -O3
+CFLAGS_DEBUG = -Wall -fopenmp -g -Iinclude
 
 CUB_INCLUDE = -I/home/fekallen/cub-1.8.0
 
@@ -20,15 +20,22 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs
 
-SOURCES = $(wildcard src/*.cpp)
-OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES))
-OBJECTS_GPU = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES)) buildgpu/kernels.o
-OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, debugbuildcpu/%.o, $(SOURCES))
-OBJECTS_GPU_DEBUG = $(patsubst src/%.cpp, debugbuildgpu/%.o, $(SOURCES)) debugbuildgpu/kernels.o
+SOURCES_CPU = $(wildcard src/*.cpp)
+SOURCES_GPU = $(wildcard src/gpu/*.cu)
+OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU))
+OBJECTS_GPU = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES_CPU)) buildgpu/kernels.o  buildgpu/qualityscoreweights.o
+OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, debugbuildcpu/%.o, $(SOURCES_CPU))
+OBJECTS_GPU_DEBUG = $(patsubst src/%.cpp, debugbuildgpu/%.o, $(SOURCES_CPU)) debugbuildgpu/kernels.o debugbuildgpu/qualityscoreweights.o
+
+
+#$(info $$SOURCES_CPU is [${SOURCES_CPU}])
+#$(info $$SOURCES_GPU is [${SOURCES_GPU}])
+#$(info $$OBJECTS_GPU is [${OBJECTS_GPU}])
+
 
 PATH_CORRECTOR=$(shell pwd)
 
-INC_CORRECTOR=$(PATH_CORRECTOR)/inc
+INC_CORRECTOR=$(PATH_CORRECTOR)/include
 
 GPU_VERSION = errorcorrector_gpu
 CPU_VERSION = errorcorrector_cpu
@@ -69,7 +76,11 @@ buildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-buildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
+buildgpu/kernels.o : src/gpu/kernels.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+
+buildgpu/qualityscoreweights.o : src/gpu/qualityscoreweights.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
@@ -81,7 +92,11 @@ debugbuildgpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
-debugbuildgpu/kernels.o : inc/gpu_only_path/kernels.cu | makedir
+debugbuildgpu/kernels.o : src/gpu/kernels.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+
+debugbuildgpu/qualityscoreweights.o : src/gpu/qualityscoreweights.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 

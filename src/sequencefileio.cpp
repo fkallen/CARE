@@ -1,5 +1,5 @@
-#include "../inc/sequencefileio.hpp"
-#include "../inc/hpc_helpers.cuh"
+#include "../include/sequencefileio.hpp"
+#include "../include/hpc_helpers.cuh"
 
 #include <iostream>
 #include <limits>
@@ -148,7 +148,7 @@ namespace care{
 
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
-#if 0
+#if 1
         std::unique_ptr<SequenceFileReader> reader;
         switch (format) {
         case FileFormat::FASTQ:
@@ -192,13 +192,11 @@ namespace care{
 			}
         }
 
-        tpb = std::chrono::system_clock::now();
-		duration = tpb - tpa;
-		std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-
-        tpb = std::chrono::system_clock::now();
-		duration = tpb - tpa;
-		std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+        if(count > 0){
+            tpb = std::chrono::system_clock::now();
+		    duration = tpb - tpa;
+		    std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
+        }
 
         prop.nReads = reader->getReadnum();
 #else
@@ -629,8 +627,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     std::string command = commandbuilder.str();
     TIMERSTARTCPU(sort_during_merge);
     int r1 = std::system(command.c_str());
-    std::cout << r1 << std::endl;
+
     TIMERSTOPCPU(sort_during_merge);
+    if(r1 != 0){
+        throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+    }
 
     std::unique_ptr<SequenceFileReader> reader;
     switch (originalFormat) {

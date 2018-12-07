@@ -1,6 +1,6 @@
-#include "../inc/args.hpp"
-#include "../inc/hpc_helpers.cuh"
-#include "../inc/util.hpp"
+#include "../include/args.hpp"
+#include "../include/hpc_helpers.cuh"
+#include "../include/util.hpp"
 
 #include <iostream>
 #include <thread>
@@ -85,6 +85,7 @@ namespace args{
             3, //new_columns_to_correct
             pr["extractFeatures"].as<bool>(),
             pr["classicMode"].as<bool>(),
+            pr["hits_per_candidate"].as<int>()
         };
 
         return result;
@@ -95,10 +96,14 @@ namespace args{
         RuntimeOptions result;
 
 		result.threads = pr["threads"].as<int>();
+        result.threadsForGPUs = pr["threadsForGPUs"].as<int>();
 		result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
+
+
+#ifdef __NVCC__
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 
@@ -106,7 +111,6 @@ namespace args{
             result.deviceIds.emplace_back(std::stoi(s));
         }
 
-#ifdef __NVCC__
         int nDevices;
 
         cudaGetDeviceCount(&nDevices); CUERR;
@@ -160,10 +164,11 @@ namespace args{
 			throw std::runtime_error("Set invalid file format : " + result.fileformatstring);
 
 		result.nReads = pr["nReads"].as<std::uint64_t>();
+        result.maximum_sequence_length = pr["max_length"].as<int>();
         result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
         result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
-
-
+        result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
+        result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
 
         return result;
 	}
@@ -236,6 +241,11 @@ namespace args{
             std::cout << "Error: batchsize must be in range [1, ], is " + std::to_string(opt.batchsize) << std::endl;
         }
 
+        if(opt.hits_per_candidate < 1){
+            valid = false;
+            std::cout << "Error: hits_per_candidate must be greater than 0, is " + std::to_string(opt.hits_per_candidate) << std::endl;
+        }
+
         return valid;
     }
 
@@ -246,6 +256,16 @@ namespace args{
         if(opt.threads < 1){
             valid = false;
             std::cout << "Error: threads must be > 0, is " + std::to_string(opt.threads) << std::endl;
+        }
+
+        if(opt.threadsForGPUs < 0){
+            valid = false;
+            std::cout << "Error: threadsForGPUs must be >= 0, is " + std::to_string(opt.threadsForGPUs) << std::endl;
+        }
+
+        if(opt.threadsForGPUs > opt.threads){
+            valid = false;
+            std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
         }
 
         return valid;

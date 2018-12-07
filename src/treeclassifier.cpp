@@ -1,9 +1,9 @@
-#include "../inc/treeclassifier.hpp"
+#include "../include/treeclassifier.hpp"
 
-#include "../inc/celeganssrr543736.hpp"
-#include "../inc/celeganssrx218989.hpp"
-#include "../inc/ecolisrr490124.hpp"
-#include "../inc/dmelanogastersrr82337.hpp"
+#include "../include/celeganssrr543736.hpp"
+#include "../include/celeganssrx218989.hpp"
+#include "../include/ecolisrr490124.hpp"
+#include "../include/dmelanogastersrr82337.hpp"
 
 #include <stdexcept>
 
