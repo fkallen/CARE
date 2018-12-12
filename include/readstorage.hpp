@@ -487,16 +487,12 @@ public:
     		}
     	}
 
-        const char* fetchQuality2_ptr(ReadId_t readNumber) const{
+        const char* fetchQuality_ptr(ReadId_t readNumber) const{
             if(useQualityScores){
                 return &h_quality_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_length)];
             }else{
                 return nullptr;
             }
-        }
-
-        const std::string* fetchQuality_ptr(ReadId_t readNumber) const{
-            return nullptr;
         }
 
        const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
@@ -514,9 +510,9 @@ public:
         void saveToFile(const std::string& filename) const{
             std::ofstream stream(filename, std::ios::binary);
 
-            int ser_id = serialization_id;
+            //int ser_id = serialization_id;
             std::size_t lengthsize = sizeof(Length_t);
-            stream.write(reinterpret_cast<const char*>(&ser_id), sizeof(int));
+            //stream.write(reinterpret_cast<const char*>(&ser_id), sizeof(int));
             stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_length), sizeof(int));
             stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_bytes), sizeof(int));
@@ -536,10 +532,10 @@ public:
             if(!stream)
                 throw std::runtime_error("Cannot open file " + filename);
 
-            int ser_id = serialization_id;
+            //int ser_id = serialization_id;
             std::size_t lengthsize = sizeof(Length_t);
 
-            int loaded_serialization_id = 0;
+            //int loaded_serialization_id = 0;
             std::size_t loaded_lengthsize = 0;
             int loaded_maximum_allowed_sequence_length = 0;
             int loaded_maximum_allowed_sequence_bytes = 0;
@@ -549,7 +545,7 @@ public:
             std::size_t loaded_sequence_lengths_bytes = 0;
             std::size_t loaded_quality_data_bytes = 0;
 
-            stream.read(reinterpret_cast<char*>(&loaded_serialization_id), sizeof(int));
+            //stream.read(reinterpret_cast<char*>(&loaded_serialization_id), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_length), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_bytes), sizeof(int));
@@ -559,12 +555,14 @@ public:
             stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));
 
-            if(loaded_serialization_id != ser_id)
-                throw std::runtime_error("Wrong serialization id!");
+            //if(loaded_serialization_id != ser_id)
+            //    throw std::runtime_error("Wrong serialization id!");
             if(loaded_lengthsize != lengthsize)
                 throw std::runtime_error("Wrong size of length type!");
             if(useQualityScores && !loaded_useQualityScores)
                 throw std::runtime_error("Quality scores are required but not present in binary sequence file!");
+            if(!useQualityScores && loaded_useQualityScores)
+                std::cerr << "The loaded compressed read file contains quality scores, but program does not use them!\n";
 
             destroy();
 

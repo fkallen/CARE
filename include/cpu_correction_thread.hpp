@@ -423,8 +423,7 @@ iterasdf++;
                                                 bestAlignmentFlags,
                                                 bestAlignments);
 
-                //const std::string* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
-                const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality2_ptr(task.readId) : nullptr;
+                const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
 
                 multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
                     //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
@@ -450,7 +449,7 @@ iterasdf++;
                     const int length = bestCandidateLengths[i];
                     const std::string candidateSequence = Sequence_t::Impl_t::toString((const std::uint8_t*)candidateSequencePtr, length);
                     const char* candidateQualityPtr = correctionOptions.useQualityScores ?
-                                                            threadOpts.readStorage->fetchQuality2_ptr(bestCandidateReadIds[i])
+                                                            threadOpts.readStorage->fetchQuality_ptr(bestCandidateReadIds[i])
                                                             : nullptr;
 
                     const int shift = bestAlignments[i].shift;

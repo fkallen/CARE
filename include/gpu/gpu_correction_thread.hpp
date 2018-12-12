@@ -1305,16 +1305,9 @@ struct BatchGenerator{
     					auto& arrays = dataArrays;
 
     					//copy subject quality
-                        /*const std::string* subject_quality = gpuReadStorage->fetchQuality_ptr(task.readId);
-
-                        assert(batch.copiedTasks * arrays.quality_pitch + subject_quality->length() <= maxsubjectqualitychars);
-
-    					std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
-    								subject_quality->c_str(),
-    								subject_quality->length());*/
 
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.readId);
-                        const char* subject_quality = gpuReadStorage->fetchQuality2_ptr(task.readId);
+                        const char* subject_quality = gpuReadStorage->fetchQuality_ptr(task.readId);
                         assert(batch.copiedTasks * arrays.quality_pitch + sequencelength <= maxsubjectqualitychars);
                         std::memcpy(arrays.h_subject_qualities + batch.copiedTasks * arrays.quality_pitch,
     								subject_quality,
@@ -1331,9 +1324,8 @@ struct BatchGenerator{
                         for(int i = 0; i < my_num_indices && i < prefetch_distance; ++i){
                             const int next_candidate_index = my_indices[i];
                             const int next_local_candidate_index = next_candidate_index - candidatesOfPreviousTasks;
-                            //const std::string* next_qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
-                            //__builtin_prefetch(next_qual->c_str(), 0, 0);
-                            const char* next_qual = gpuReadStorage->fetchQuality2_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
+
+                            const char* next_qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
                             __builtin_prefetch(next_qual, 0, 0);
                         }
 
@@ -1342,24 +1334,16 @@ struct BatchGenerator{
                             if(i+prefetch_distance < my_num_indices){
                                 const int next_candidate_index = my_indices[i+prefetch_distance];
         						const int next_local_candidate_index = next_candidate_index - candidatesOfPreviousTasks;
-                                //const std::string* next_qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
-                                //__builtin_prefetch(next_qual->c_str(), 0, 0);
-                                const char* next_qual = gpuReadStorage->fetchQuality2_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
+                                const char* next_qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[next_local_candidate_index]);
                                 __builtin_prefetch(next_qual, 0, 0);
                             }
     						const int candidate_index = my_indices[i];
     						const int local_candidate_index = candidate_index - candidatesOfPreviousTasks;
-                            //const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids[local_candidate_index]);
-							//const std::string* qual = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[local_candidate_index]);
 
                             //assert(batch.copiedCandidates * arrays.quality_pitch + qual->length() <= maxcandidatequalitychars);
 
-    						/*std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
-    									qual->c_str(),
-    									qual->length());*/
-
                             const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.candidate_read_ids_begin[local_candidate_index]);
-                            const char* candidate_quality = gpuReadStorage->fetchQuality2_ptr(task.candidate_read_ids_begin[local_candidate_index]);
+                            const char* candidate_quality = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[local_candidate_index]);
                             assert(batch.copiedCandidates * arrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
                             std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
                                         candidate_quality,
