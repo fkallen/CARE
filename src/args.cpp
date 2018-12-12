@@ -102,44 +102,14 @@ namespace args{
         result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
 
-
-#ifdef __NVCC__
-
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 
         for(const auto& s : deviceIdsStrings){
             result.deviceIds.emplace_back(std::stoi(s));
         }
 
-        int nDevices;
-
-        cudaGetDeviceCount(&nDevices); CUERR;
-
-        std::vector<int> invalidIds;
-
-        for(int id : result.deviceIds){
-            if(id >= nDevices){
-                invalidIds.emplace_back(id);
-                std::cout << "Found invalid device Id: " << id << std::endl;
-            }
-        }
-
-        if(invalidIds.size() > 0){
-            std::cout << "Available GPUs on your machine:" << std::endl;
-            for(int j = 0; j < nDevices; j++){
-                cudaDeviceProp prop;
-                cudaGetDeviceProperties(&prop, j); CUERR;
-                std::cout << "Id " << j << " : " << prop.name << std::endl;
-            }
-
-            for(int invalidid : invalidIds){
-                result.deviceIds.erase(std::find(result.deviceIds.begin(), result.deviceIds.end(), invalidid));
-            }
-        }
-
         result.canUseGpu = result.deviceIds.size() > 0;
 
-#endif
         return result;
 	}
 

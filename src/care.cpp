@@ -228,32 +228,8 @@ namespace care{
 		TIMERSTARTCPU(load_and_build);
 		sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
 		saveReadStorageToFile(readStorage, fileOptions);
-if(0){
-        readStorage.saveToFile("savetest.bin");
-
-        ReadStorage_t readStorageLoaded(sequenceFileProperties.nReads,
-                                    correctionOptions.useQualityScores,
-                                    sequenceFileProperties.maxSequenceLength,
-                                    runtimeOptions.deviceIds);
-
-        readStorageLoaded.loadFromFile("savetest.bin");
-
-        assert(readStorage == readStorageLoaded);
-        std::cerr << "readstorage save test ok\n";
-}
 		build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
 		saveMinhasherToFile(minhasher, fileOptions);
-
-if(0){
-        minhasher.saveToFile("savetest.bin");
-
-        Minhasher_t minhasherLoaded(minhashOptions);
-        minhasherLoaded.init(sequenceFileProperties.nReads);
-        minhasherLoaded.loadFromFile("savetest.bin");
-
-        assert(minhasher == minhasherLoaded);
-        std::cerr << "minhasher save test ok\n";
-}
 		TIMERSTOPCPU(load_and_build);
 
 		printFileProperties(fileOptions.inputfile, sequenceFileProperties);
@@ -455,6 +431,34 @@ if(0){
 				readIsCorrectedVector, locksForProcessedFlags,
 				nLocksForProcessedFlags);
 		#else
+            int nDevices;
+
+            cudaGetDeviceCount(&nDevices); CUERR;
+
+            std::vector<int> invalidIds;
+
+            for(int id : runtimeOptions.deviceIds){
+                if(id >= nDevices){
+                    invalidIds.emplace_back(id);
+                    std::cout << "Found invalid device Id: " << id << std::endl;
+                }
+            }
+
+            if(invalidIds.size() > 0){
+                std::cout << "Available GPUs on your machine:" << std::endl;
+                for(int j = 0; j < nDevices; j++){
+                    cudaDeviceProp prop;
+                    cudaGetDeviceProperties(&prop, j); CUERR;
+                    std::cout << "Id " << j << " : " << prop.name << std::endl;
+                }
+
+                for(int invalidid : invalidIds){
+                    runtimeOptions.deviceIds.erase(std::find(runtimeOptions.deviceIds.begin(), runtimeOptions.deviceIds.end(), invalidid));
+                }
+            }
+
+            runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
+
 			if(runtimeOptions.canUseGpu && runtimeOptions.deviceIds.size() > 0 && runtimeOptions.threadsForGPUs > 0){
 				std::cout << "Running CARE GPU" << std::endl;
 				std::cout << "Can use the following GPU device Ids: ";

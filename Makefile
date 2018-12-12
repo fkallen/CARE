@@ -20,13 +20,18 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
 LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs
 
-SOURCES_CPU = $(wildcard src/*.cpp)
-SOURCES_GPU = $(wildcard src/gpu/*.cu)
-OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU))
-OBJECTS_GPU = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES_CPU)) buildgpu/kernels.o  buildgpu/qualityscoreweights.o
-OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, debugbuildcpu/%.o, $(SOURCES_CPU))
-OBJECTS_GPU_DEBUG = $(patsubst src/%.cpp, debugbuildgpu/%.o, $(SOURCES_CPU)) debugbuildgpu/kernels.o debugbuildgpu/qualityscoreweights.o
 
+SOURCES_CPU = $(wildcard src/*.cpp)
+SOURCES_GPU = src/gpu/kernels.cu src/gpu/qualityscoreweights.cu src/care.cpp
+
+OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU))
+OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU))
+OBJECTS_GPU_ = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES_GPU))
+OBJECTS_GPU = $(patsubst src/gpu/%.cu, buildgpu/%.o, $(OBJECTS_GPU_))
+OBJECTS_GPU_DEBUG = $(patsubst buildgpu/%.o, buildgpu/%.dbg.o, $(OBJECTS_GPU))
+
+OBJECTS_CPU_AND_GPU = $(filter-out buildcpu/care.o,$(OBJECTS_CPU))
+OBJECTS_CPU_AND_GPU_DEBUG = $(filter-out buildcpu/care.dbg.o,$(OBJECTS_CPU_DEBUG))
 
 #$(info $$SOURCES_CPU is [${SOURCES_CPU}])
 #$(info $$SOURCES_GPU is [${SOURCES_GPU}])
@@ -52,17 +57,17 @@ gpud:	$(GPU_VERSION_DEBUG)
 
 
 
-$(GPU_VERSION) : $(OBJECTS_GPU)
-	@echo Linking $(GPU_VERSION)
-	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU) $(LDFLAGSGPU) -o $(GPU_VERSION)
+$(GPU_VERSION) : $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU)
+	@echo Linking $(GPU_VERSION) from $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU)
+	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSGPU) -o $(GPU_VERSION)
 
 $(CPU_VERSION) : $(OBJECTS_CPU)
 	@echo Linking $(CPU_VERSION)
 	@$(HOSTLINKER) $(OBJECTS_CPU) $(LDFLAGSCPU) -o $(CPU_VERSION)
 
-$(GPU_VERSION_DEBUG) : $(OBJECTS_GPU_DEBUG)
+$(GPU_VERSION_DEBUG) : $(OBJECTS_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 	@echo Linking $(GPU_VERSION_DEBUG)
-	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU_DEBUG) $(LDFLAGSGPU) -o $(GPU_VERSION_DEBUG)
+	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG) $(LDFLAGSGPU) -o $(GPU_VERSION_DEBUG)
 
 $(CPU_VERSION_DEBUG) : $(OBJECTS_CPU_DEBUG)
 	@echo Linking $(CPU_VERSION_DEBUG)
@@ -72,9 +77,9 @@ buildcpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CXX) $(CXXFLAGS) $(CFLAGS) -c $< -o $@
 
-buildgpu/%.o : src/%.cpp | makedir
+buildcpu/%.dbg.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -c $< -o $@
 
 buildgpu/kernels.o : src/gpu/kernels.cu | makedir
 	@echo Compiling $< to $@
@@ -84,21 +89,21 @@ buildgpu/qualityscoreweights.o : src/gpu/qualityscoreweights.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-debugbuildcpu/%.o : src/%.cpp | makedir
+buildgpu/care.o : src/care.cpp | makedir
 	@echo Compiling $< to $@
-	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-debugbuildgpu/%.o : src/%.cpp | makedir
+buildgpu/kernels.dbg.o : src/gpu/kernels.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-debugbuildgpu/kernels.o : src/gpu/kernels.cu | makedir
+buildgpu/qualityscoreweights.dbg.o : src/gpu/qualityscoreweights.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-debugbuildgpu/qualityscoreweights.o : src/gpu/qualityscoreweights.cu | makedir
+buildgpu/care.dbg.o : src/care.cpp | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
 minhashertest:
 	@echo Building minhashertest
