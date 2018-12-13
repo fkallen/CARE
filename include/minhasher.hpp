@@ -34,7 +34,7 @@
 #include <thrust/inner_product.h>
 #include <thrust/sort.h>
 
-#include "thrust_custom_allocators.hpp"
+#include "gpu/thrust_custom_allocators.hpp"
 #endif
 
 namespace care{
