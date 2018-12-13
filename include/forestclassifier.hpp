@@ -85,9 +85,6 @@ namespace care{
             return *this;
         }
 
-
-
-
         bool shouldCorrect(double position_support,
                             double position_coverage,
                             double alignment_coverage,
@@ -103,36 +100,6 @@ namespace care{
                             double maxgini,
                             double correction_fraction) const noexcept{
 
-#if 0
-            auto forestresult = shouldCorrect_forest(position_support,
-                                                    position_coverage,
-                                                    alignment_coverage / dataset_coverage,
-                                                    dataset_coverage / dataset_coverage,
-                                                    min_support,
-                                                    min_coverage / (alignment_coverage * dataset_coverage),
-                                                    max_support,
-                                                    max_coverage / (alignment_coverage * dataset_coverage),
-                                                    mean_support,
-                                                    mean_coverage / (alignment_coverage * dataset_coverage),
-                                                    median_support,
-                                                    median_coverage / (alignment_coverage * dataset_coverage),
-                                                    maxgini);
-#else
-
-
-        /*    auto forestresult = shouldCorrect_forest(position_support,
-                                                    position_coverage,
-                                                    alignment_coverage,
-                                                    dataset_coverage,
-                                                    min_support,
-                                                    min_coverage / (alignment_coverage),
-                                                    max_support,
-                                                    max_coverage / (alignment_coverage),
-                                                    mean_support,
-                                                    mean_coverage / (alignment_coverage),
-                                                    median_support,
-                                                    median_coverage / (alignment_coverage),
-                                                    maxgini);*/
 
         auto forestresult = shouldCorrect_forest(position_support,
                                                 position_coverage,
@@ -148,7 +115,6 @@ namespace care{
                                                 median_coverage,
                                                 maxgini);
 
-#endif
             const int count_correct = forestresult.second;
             const int count_dontcorrect = forestresult.first;
 
@@ -157,35 +123,6 @@ namespace care{
         }
 
     };
-
-
-namespace forestclassifier{
-
-
-
-    enum class Mode{
-        CombinedAlignCov,
-        CombinedDataCov,
-        Species,
-    };
-
-    bool shouldCorrect(Mode mode,
-                                double position_support,
-                                double position_coverage,
-                                double alignment_coverage,
-                                double dataset_coverage,
-                                double min_support,
-                                double min_coverage,
-                                double max_support,
-                                double max_coverage,
-                                double mean_support,
-                                double mean_coverage,
-                                double median_support,
-                                double median_coverage,
-                                double maxgini,
-                                double correction_fraction);
-
-}
 }
 
 
