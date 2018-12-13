@@ -131,9 +131,6 @@ struct ContiguousReadStorage {
 		num_sequences(nSequences),
 		deviceIds(deviceIds){
 
-		constexpr bool allowUVM = false;
-		constexpr float maxPercentOfTotalGPUMem = 0.8;
-
 		std::cerr << "gpu::ContiguousReadStorage(" << nSequences << ", " << useQualityScores << ", " << maximum_allowed_sequence_length << ") " << maximum_allowed_sequence_bytes << "\n";
 
 		sequence_data_bytes = sizeof(char) * std::size_t(num_sequences) * std::size_t(maximum_allowed_sequence_bytes);
@@ -146,92 +143,6 @@ struct ContiguousReadStorage {
 
 		const std::size_t requiredSequenceMem = sequence_data_bytes + sequence_lengths_bytes; //sequences and sequence lengths
 		const std::size_t requiredQualityMem = useQualityScores ? quality_data_bytes : 0;
-		//const std::uint64_t requiredTotalMem = requiredSequenceMem + requiredQualityMem;
-#if 0
-		int oldId;
-		cudaGetDevice(&oldId); CUERR;
-
-		const bool everyDeviceSupportsUVM = deviceIds.size() > 0
-		                                    && std::all_of(deviceIds.begin(), deviceIds.end(), [](int deviceId){
-					cudaSetDevice(deviceId); CUERR;
-					cudaDeviceProp prop;
-					cudaGetDeviceProperties(&prop, deviceId);
-
-					return prop.major >= 6 && prop.concurrentManagedAccess == 1;
-				});
-
-		const bool useUVM = allowUVM && everyDeviceSupportsUVM;
-
-		const std::uint64_t requiredSequenceMem = sequence_data_bytes + sequence_lengths_bytes; //sequences and sequence lengths
-		const std::uint64_t requiredQualityMem = useQualityScores ? quality_data_bytes : 0;
-		const std::uint64_t requiredTotalMem = requiredSequenceMem + requiredQualityMem;
-
-		const bool everyDeviceCanStoreSequences = std::all_of(deviceIds.begin(), deviceIds.end(), [&](int deviceId){
-					cudaSetDevice(deviceId); CUERR;
-
-					std::size_t freeMem;
-					std::size_t totalMem;
-					cudaMemGetInfo(&freeMem, &totalMem); CUERR;
-
-					bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalGPUMem * totalMem && requiredSequenceMem < freeMem);
-#if 1
-					return isEnoughMemForSequences;
-#else
-					return false;
-#endif
-				});
-
-		const bool everyDeviceCanStoreBothSequencesAndQualities = std::all_of(deviceIds.begin(), deviceIds.end(), [&](int deviceId){
-					cudaSetDevice(deviceId); CUERR;
-
-					std::size_t freeMem;
-					std::size_t totalMem;
-					cudaMemGetInfo(&freeMem, &totalMem); CUERR;
-
-					bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalGPUMem * totalMem && requiredTotalMem < freeMem);
-
-#if 1
-					return isEnoughMemForSequencesAndQualities;
-#else
-					return false;
-#endif
-				});
-
-		cudaSetDevice(oldId);
-
-		if(useUVM && !everyDeviceCanStoreSequences) {
-			cudaMallocManaged(&h_sequence_data, sequence_data_bytes); CUERR;
-			cudaMallocManaged(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
-
-			sequenceType = ContiguousReadStorage::Type::Managed;
-		}else if(!useUVM && !everyDeviceCanStoreSequences) {
-			cudaMallocHost(&h_sequence_data, sequence_data_bytes); CUERR;
-			cudaMallocHost(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
-
-			sequenceType = ContiguousReadStorage::Type::None;
-		}else{ // everyDeviceCanStoreSequences == true
-			cudaMallocHost(&h_sequence_data, sequence_data_bytes); CUERR;
-			cudaMallocHost(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
-
-			sequenceType = ContiguousReadStorage::Type::Full;
-		}
-
-		if(useQualityScores) {
-			if(useUVM && !everyDeviceCanStoreBothSequencesAndQualities) {
-				cudaMallocManaged(&h_quality_data, quality_data_bytes); CUERR;
-
-				qualityType = ContiguousReadStorage::Type::Managed;
-			}else if(!useUVM && !everyDeviceCanStoreBothSequencesAndQualities) {
-				cudaMallocHost(&h_quality_data, quality_data_bytes); CUERR;
-
-				qualityType = ContiguousReadStorage::Type::None;
-			}else{ // everyDeviceCanStoreBothSequencesAndQualities == true
-				cudaMallocHost(&h_quality_data, quality_data_bytes); CUERR;
-
-				qualityType = ContiguousReadStorage::Type::Full;
-			}
-		}
-#endif
 
 		dataProperties = findDataProperties(requiredSequenceMem, requiredQualityMem);
 
