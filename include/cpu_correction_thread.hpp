@@ -137,6 +137,7 @@ namespace cpu{
         GoodAlignmentProperties goodAlignmentProperties;
         CorrectionOptions correctionOptions;
         CorrectionThreadOptions threadOpts;
+        FileOptions fileOptions;
 
         SequenceFileProperties fileProperties;
 
@@ -231,6 +232,11 @@ namespace cpu{
             cpu::QualityScoreConversion qualityConversion;
 
             std::vector<ReadId_t> readIds;
+
+            ForestClassifier forestClassifier;
+            if(!correctionOptions.classicMode){
+                forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
+            }
 
             //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
@@ -556,10 +562,7 @@ iterasdf++;
                         constexpr double maxgini = 0.05;
                         constexpr double forest_correction_fraction = 0.5;
 
-                        const bool doCorrect = care::forestclassifier::shouldCorrect(
-                                                        //care::forestclassifier::Mode::CombinedAlignCov,
-                                                        //care::forestclassifier::Mode::CombinedDataCov,
-                                                        care::forestclassifier::Mode::Species,
+                        const bool doCorrect = forestClassifier.shouldCorrect(
                                                         msafeature.position_support,
                                                         msafeature.position_coverage,
                                                         msafeature.alignment_coverage,

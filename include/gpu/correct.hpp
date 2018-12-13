@@ -163,6 +163,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		cpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
 		cpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
 		cpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+        cpucorrectorThreads[threadId].fileOptions = fileOptions;
 		cpucorrectorThreads[threadId].threadOpts = threadOpts;
 		cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
 		cpucorrectorThreads[threadId].max_candidates = max_candidates;
@@ -196,6 +197,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		gpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
 		gpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
 		gpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+        gpucorrectorThreads[threadId].fileOptions = fileOptions;
 		gpucorrectorThreads[threadId].threadOpts = threadOpts;
 		gpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
 		gpucorrectorThreads[threadId].max_candidates = max_candidates;

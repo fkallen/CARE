@@ -17,8 +17,8 @@ CUDA_ARCH = -gencode=arch=compute_61,code=sm_61
 
 
 
-LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt
-LDFLAGSCPU = -lpthread -lgomp -lstdc++fs
+LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -ldl
+LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl
 
 
 SOURCES_CPU = $(wildcard src/*.cpp)
@@ -33,9 +33,17 @@ OBJECTS_GPU_DEBUG = $(patsubst buildgpu/%.o, buildgpu/%.dbg.o, $(OBJECTS_GPU))
 OBJECTS_CPU_AND_GPU = $(filter-out buildcpu/care.o,$(OBJECTS_CPU))
 OBJECTS_CPU_AND_GPU_DEBUG = $(filter-out buildcpu/care.dbg.o,$(OBJECTS_CPU_DEBUG))
 
+
+SOURCES_FORESTS = $(wildcard src/forests/*.cpp)
+OBJECTS_FORESTS = $(patsubst src/forests/%.cpp, forests/%.so, $(SOURCES_FORESTS))
+OBJECTS_FORESTS_DEBUG = $(patsubst src/forests/%.cpp, forests/%.dbg.so, $(SOURCES_FORESTS))
+
 #$(info $$SOURCES_CPU is [${SOURCES_CPU}])
 #$(info $$SOURCES_GPU is [${SOURCES_GPU}])
 #$(info $$OBJECTS_GPU is [${OBJECTS_GPU}])
+
+#$(info $$OBJECTS_FORESTS is [${OBJECTS_FORESTS}])
+#$(info $$OBJECTS_FORESTS_DEBUG is [${OBJECTS_FORESTS_DEBUG}])
 
 
 PATH_CORRECTOR=$(shell pwd)
@@ -55,9 +63,10 @@ gpu:	$(GPU_VERSION)
 cpud:	$(CPU_VERSION_DEBUG)
 gpud:	$(GPU_VERSION_DEBUG)
 
+forests:	$(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
 
 $(GPU_VERSION) : $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU)
-	@echo Linking $(GPU_VERSION) from $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU)
+	@echo Linking $(GPU_VERSION)
 	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSGPU) -o $(GPU_VERSION)
 
 $(CPU_VERSION) : $(OBJECTS_CPU)
@@ -104,6 +113,14 @@ buildgpu/care.dbg.o : src/care.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
+forests/%.so : src/forests/%.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS) -shared -fPIC $< -o $@
+
+forests/%.dbg.so : src/forests/%.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -shared -fPIC $< -o $@
+
 minhashertest:
 	@echo Building minhashertest
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" tests/minhashertest/main.cpp src/sequencefileio.cpp $(LDFLAGSGPU) -o tests/minhashertest/main
@@ -123,7 +140,10 @@ makedir:
 	@mkdir -p buildgpu
 	@mkdir -p debugbuildcpu
 	@mkdir -p debugbuildgpu
+	@mkdir -p forests
 
 .PHONY: minhashertest
 
 .PHONY: makedirs
+
+-PHONY: forests

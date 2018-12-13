@@ -158,6 +158,7 @@ namespace cpu{
             cpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
             cpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
             cpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+            cpucorrectorThreads[threadId].fileOptions = fileOptions;
             cpucorrectorThreads[threadId].threadOpts = threadOpts;
             cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
             cpucorrectorThreads[threadId].max_candidates = max_candidates;

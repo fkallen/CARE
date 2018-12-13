@@ -4,6 +4,7 @@
 #include "../include/args.hpp"
 #include "../include/options.hpp"
 
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -79,6 +80,8 @@ int main(int argc, const char** argv){
 		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 		("hits_per_candidate", "A read must be hit in at least hits_per_candidate maps to be considered a candidate",
 		cxxopts::value<int>()->default_value("1")->implicit_value("1"))
+        ("forest", "A read must be hit in at least hits_per_candidate maps to be considered a candidate",
+		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 	;
 
 	options.parse_positional({"deviceIds"});
@@ -97,17 +100,28 @@ int main(int argc, const char** argv){
 	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
 	FileOptions fileOptions = args::to<FileOptions>(parseresults);
 
-	if(!args::isValid(minhashOptions)) throw std::runtime_error("care::performCorrection: Invalid minhashOptions!");
-	if(!args::isValid(alignmentOptions)) throw std::runtime_error("care::performCorrection: Invalid alignmentOptions!");
-	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("care::performCorrection: Invalid goodAlignmentProperties!");
-	if(!args::isValid(correctionOptions)) throw std::runtime_error("care::performCorrection: Invalid correctionOptions!");
-	if(!args::isValid(runtimeOptions)) throw std::runtime_error("care::performCorrection: Invalid runtimeOptions!");
-	if(!args::isValid(fileOptions)) throw std::runtime_error("care::performCorrection: Invalid fileOptions!");
+	if(!args::isValid(minhashOptions)) throw std::runtime_error("Invalid minhashOptions!");
+	if(!args::isValid(alignmentOptions)) throw std::runtime_error("Invalid alignmentOptions!");
+	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
+	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
+	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
+	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
 
 	if(correctionOptions.correctCandidates && correctionOptions.extractFeatures) {
-		std::cout << "Warning! correctCandidates=true cannot be used with extractFeatures=true. Using correctCandidates=false" << std::endl;
+		std::cout << "Warning! correctCandidates=true cannot be used with extractFeatures=true. Using correctCandidates=false." << std::endl;
 		correctionOptions.correctCandidates = false;
 	}
+
+    if(!correctionOptions.classicMode){
+        if(fileOptions.forestfilename == ""){
+            throw std::runtime_error("Must specify shared object file for forest when classicMode = false.");
+        }else{
+            std::ifstream is(fileOptions.forestfilename);
+            if(!is){
+                throw std::runtime_error("Cannot open shared object file for forest.");
+            }
+        }
+    }
 
 	care::performCorrection(minhashOptions,
 				alignmentOptions,

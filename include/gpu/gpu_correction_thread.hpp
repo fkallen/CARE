@@ -359,6 +359,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 		std::function<void(const ReadId_t, const std::string&)> write_read_to_stream;
 		std::function<void(const ReadId_t)> lock;
 		std::function<void(const ReadId_t)> unlock;
+
+        ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
 	};
 
 	struct CorrectionThreadOptions {
@@ -381,7 +383,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 	GoodAlignmentProperties goodAlignmentProperties;
 	CorrectionOptions correctionOptions;
 	CorrectionThreadOptions threadOpts;
-
+    FileOptions fileOptions;
 	SequenceFileProperties fileProperties;
 
 	std::uint64_t max_candidates = 0;
@@ -1705,7 +1707,8 @@ public:
 				for(const auto& msafeature : MSAFeatures) {
 					constexpr double maxgini = 0.05;
 					constexpr double forest_correction_fraction = 0.5;
-
+    //care::ForestClassifier fc("./forests/testforest.so");
+#if 0
 					const bool doCorrect = care::forestclassifier::shouldCorrect(
 								//care::forestclassifier::Mode::CombinedAlignCov,
 								//care::forestclassifier::Mode::CombinedDataCov,
@@ -1724,7 +1727,22 @@ public:
 								msafeature.median_coverage,
 								maxgini,
 								forest_correction_fraction);
-
+#else
+                    const bool doCorrect = transFuncData.fc.shouldCorrect(msafeature.position_support,
+                                                msafeature.position_coverage,
+                                                msafeature.alignment_coverage,
+                                                msafeature.dataset_coverage,
+                                                msafeature.min_support,
+                                                msafeature.min_coverage,
+                                                msafeature.max_support,
+                                                msafeature.max_coverage,
+                                                msafeature.mean_support,
+                                                msafeature.mean_coverage,
+                                                msafeature.median_support,
+                                                msafeature.median_coverage,
+                                                maxgini,
+                                                forest_correction_fraction);
+#endif
 					if(doCorrect) {
 						task.corrected = true;
 
@@ -2398,6 +2416,11 @@ public:
 					       ReadId_t index = readId % transFuncData.nLocksForProcessedFlags;
 					       transFuncData.locksForProcessedFlags[index].unlock();
 				       };
+
+        if(!correctionOptions.classicMode){
+           transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
+        }
+
 
 		std::array<Batch, nParallelBatches> batches;
 

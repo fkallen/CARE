@@ -2,6 +2,7 @@ buildcpu/
 buildgpu/
 debugbuildcpu/
 debugbuildgpu/
+forests/
 tools/
 errorcorrector_cpu
 errorcorrector_gpu

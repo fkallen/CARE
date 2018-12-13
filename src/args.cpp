@@ -139,6 +139,7 @@ namespace args{
         result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
         result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
         result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
+        result.forestfilename = pr["forest"].as<std::string>();
 
         return result;
 	}
