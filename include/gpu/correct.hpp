@@ -18,323 +18,325 @@
 #include <memory>
 #include <vector>
 
-namespace care{
-namespace gpu{
+namespace care {
+namespace gpu {
 
 
 
 template<class minhasher_t,
-		 class readStorage_t,
-		 bool indels>
+         class readStorage_t,
+         bool indels>
 void correct_gpu(const MinhashOptions& minhashOptions,
-				  const AlignmentOptions& alignmentOptions,
-				  const GoodAlignmentProperties& goodAlignmentProperties,
-				  const CorrectionOptions& correctionOptions,
-				  const RuntimeOptions& runtimeOptions,
-				  const FileOptions& fileOptions,
-                  const SequenceFileProperties& sequenceFileProperties,
-                  minhasher_t& minhasher,
-                  readStorage_t& readStorage,
-				  std::vector<char>& readIsCorrectedVector,
-				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-				  std::size_t nLocksForProcessedFlags){
+			const AlignmentOptions& alignmentOptions,
+			const GoodAlignmentProperties& goodAlignmentProperties,
+			const CorrectionOptions& correctionOptions,
+			const RuntimeOptions& runtimeOptions,
+			const FileOptions& fileOptions,
+			const SequenceFileProperties& sequenceFileProperties,
+			minhasher_t& minhasher,
+			readStorage_t& readStorage,
+			std::vector<char>& readIsCorrectedVector,
+			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+			std::size_t nLocksForProcessedFlags){
 
-    static_assert(indels == false, "indels != false");
+	static_assert(indels == false, "indels != false");
 
-    std::cout << "correct_gpu_new" << std::endl;
+	std::cout << "correct_gpu_new" << std::endl;
 
-    using Minhasher_t = minhasher_t;
-    using ReadStorage_t = readStorage_t;
-    using Sequence_t = typename ReadStorage_t::Sequence_t;
-    using ReadId_t = typename ReadStorage_t::ReadId_t;
+	using Minhasher_t = minhasher_t;
+	using ReadStorage_t = readStorage_t;
+	using Sequence_t = typename ReadStorage_t::Sequence_t;
+	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
-    using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
-    using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<ReadId_t>>;
+	using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
+	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<ReadId_t> >;
 
-    constexpr int maxCPUThreadsPerGPU = 64;
+	constexpr int maxCPUThreadsPerGPU = 64;
 
-    const auto& deviceIds = runtimeOptions.deviceIds;
+	const auto& deviceIds = runtimeOptions.deviceIds;
 
-    //#define DO_PROFILE
+	//#define DO_PROFILE
 
     #if 1
-      const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
-                          : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
+	const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
+	                              : std::min(runtimeOptions.nCorrectorThreads, maxCPUThreadsPerGPU * int(deviceIds.size()));
     #else
-    	const int nCorrectorThreads = 1;
+	const int nCorrectorThreads = 1;
     #endif
 
-    	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
+	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
-        // initialize qscore-to-weight lookup table
-        gpu::init_weights(deviceIds);
+	// initialize qscore-to-weight lookup table
+	gpu::init_weights(deviceIds);
 
-      //SequenceFileProperties sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+	//SequenceFileProperties sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
 
-      /*
-          Make candidate statistics
-      */
+	/*
+	    Make candidate statistics
+	 */
 
-      std::uint64_t max_candidates = runtimeOptions.max_candidates;
-      //std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
+	std::uint64_t max_candidates = runtimeOptions.max_candidates;
+	//std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
 
-      if(max_candidates == 0){
-          std::cout << "estimating candidate cutoff" << std::endl;
+	if(max_candidates == 0) {
+		std::cout << "estimating candidate cutoff" << std::endl;
 
-          cpu::Dist<std::int64_t, std::int64_t> candidateDistribution;
-          cpu::Dist2<std::int64_t, std::int64_t> candidateDistribution2;
+		cpu::Dist<std::int64_t, std::int64_t> candidateDistribution;
+		cpu::Dist2<std::int64_t, std::int64_t> candidateDistribution2;
 
-          {
-              TIMERSTARTCPU(candidateestimation);
-              std::map<std::int64_t, std::int64_t> candidateHistogram
-                      = cpu::getCandidateCountHistogram(minhasher,
-                                                  readStorage,
-                                                  sequenceFileProperties.nReads / 10,
-                                                  correctionOptions.hits_per_candidate,
-                                                  runtimeOptions.threads);
+		{
+			TIMERSTARTCPU(candidateestimation);
+			std::map<std::int64_t, std::int64_t> candidateHistogram
+			        = cpu::getCandidateCountHistogram(minhasher,
+						readStorage,
+						sequenceFileProperties.nReads / 10,
+						correctionOptions.hits_per_candidate,
+						runtimeOptions.threads);
 
-              TIMERSTOPCPU(candidateestimation);
+			TIMERSTOPCPU(candidateestimation);
 
-              candidateDistribution = cpu::estimateDist(candidateHistogram);
+			candidateDistribution = cpu::estimateDist(candidateHistogram);
 
-			  //candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
+			//candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
 
-              std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
-              std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
+			std::vector<std::pair<std::int64_t, std::int64_t> > vec(candidateHistogram.begin(), candidateHistogram.end());
+			std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){
+						return p1.second < p2.second;
+					});
 
-              std::ofstream of("ncandidates.txt");
-              for(const auto& p : vec)
-                  of << p.first << " " << p.second << '\n';
-              of.flush();
-          }
+			std::ofstream of("ncandidates.txt");
+			for(const auto& p : vec)
+				of << p.first << " " << p.second << '\n';
+			of.flush();
+		}
 
-          std::cout << "candidates.max " << candidateDistribution.max << std::endl;
-          std::cout << "candidates.average " << candidateDistribution.average << std::endl;
-          std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
+		std::cout << "candidates.max " << candidateDistribution.max << std::endl;
+		std::cout << "candidates.average " << candidateDistribution.average << std::endl;
+		std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
 
-          const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
-          const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
-          const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
-                                                          + 2.5 * estimatedDeviationAlignedCandidates;
+		const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
+		const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
+		const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
+		                                                       + 2.5 * estimatedDeviationAlignedCandidates;
 
-          max_candidates = estimatedAlignmentCountThreshold;
-          //max_candidates = candidateDistribution2.percentRanges[90].first;
-      }
+		max_candidates = estimatedAlignmentCountThreshold;
+		//max_candidates = candidateDistribution2.percentRanges[90].first;
+	}
 
-      std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
+	std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
 
-      /*
-          Spawn correction threads
-      */
+	/*
+	    Spawn correction threads
+	 */
 
-      std::vector<std::string> tmpfiles;
-      for(int i = 0; i < nCorrectorThreads; i++){
-          tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
-      }
+	std::vector<std::string> tmpfiles;
+	for(int i = 0; i < nCorrectorThreads; i++) {
+		tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
+	}
 
-      int nGpuThreads = std::min(nCorrectorThreads, runtimeOptions.threadsForGPUs);
-      int nCpuThreads = nCorrectorThreads - nGpuThreads;
+	int nGpuThreads = std::min(nCorrectorThreads, runtimeOptions.threadsForGPUs);
+	int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
-      cpu::RangeGenerator<ReadId_t> readIdGenerator(sequenceFileProperties.nReads);
+	cpu::RangeGenerator<ReadId_t> readIdGenerator(sequenceFileProperties.nReads);
 
-      std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
-      std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
-      std::vector<char> readIsProcessedVector(readIsCorrectedVector);
-      std::mutex writelock;
+	std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
+	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
+	std::vector<char> readIsProcessedVector(readIsCorrectedVector);
+	std::mutex writelock;
 
-    	for(int threadId = 0; threadId < nCpuThreads; threadId++){
+	for(int threadId = 0; threadId < nCpuThreads; threadId++) {
 
-          //cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
-          typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
-          threadOpts.threadId = threadId;
+		//cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
+		typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
+		threadOpts.threadId = threadId;
 
-          threadOpts.outputfile = tmpfiles[threadId];
-          threadOpts.readIdGenerator = &readIdGenerator;
-          threadOpts.minhasher = &minhasher;
-          threadOpts.readStorage = &readStorage;
-          threadOpts.coutLock = &writelock;
-          threadOpts.readIsProcessedVector = &readIsProcessedVector;
-          threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
-          threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
-          threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
+		threadOpts.outputfile = tmpfiles[threadId];
+		threadOpts.readIdGenerator = &readIdGenerator;
+		threadOpts.minhasher = &minhasher;
+		threadOpts.readStorage = &readStorage;
+		threadOpts.coutLock = &writelock;
+		threadOpts.readIsProcessedVector = &readIsProcessedVector;
+		threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
+		threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
+		threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
 
-          cpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
-          cpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
-          cpucorrectorThreads[threadId].correctionOptions = correctionOptions;
-          cpucorrectorThreads[threadId].threadOpts = threadOpts;
-          cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
-          cpucorrectorThreads[threadId].max_candidates = max_candidates;
+		cpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
+		cpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
+		cpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+		cpucorrectorThreads[threadId].threadOpts = threadOpts;
+		cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
+		cpucorrectorThreads[threadId].max_candidates = max_candidates;
 
-          cpucorrectorThreads[threadId].run();
-      }
+		cpucorrectorThreads[threadId].run();
+	}
 
-      readStorage.initGPUData();
+	readStorage.initGPUData();
 
-      std::cout << "Sequence Type: " << readStorage.getNameOfSequenceType() << std::endl;
-      std::cout << "Quality Type: " << readStorage.getNameOfQualityType() << std::endl;
+	std::cout << "Sequence Type: " << readStorage.getNameOfSequenceType() << std::endl;
+	std::cout << "Quality Type: " << readStorage.getNameOfQualityType() << std::endl;
 
-      assert(!(deviceIds.size() == 0 && nGpuThreads > 0));
+	assert(!(deviceIds.size() == 0 && nGpuThreads > 0));
 
-      for(int threadId = 0; threadId < nGpuThreads; threadId++){
+	for(int threadId = 0; threadId < nGpuThreads; threadId++) {
 
-          typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
-          threadOpts.threadId = threadId;
-          threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
-          threadOpts.canUseGpu = runtimeOptions.canUseGpu;
-          threadOpts.outputfile = tmpfiles[nCpuThreads + threadId];
-          threadOpts.readIdGenerator = &readIdGenerator;
-          threadOpts.minhasher = &minhasher;
-          threadOpts.gpuReadStorage = &readStorage;
-          threadOpts.coutLock = &writelock;
-          threadOpts.readIsProcessedVector = &readIsProcessedVector;
-          threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
-          threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
-          threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
+		typename GPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
+		threadOpts.threadId = threadId;
+		threadOpts.deviceId = deviceIds.size() == 0 ? -1 : deviceIds[threadId % deviceIds.size()];
+		threadOpts.canUseGpu = runtimeOptions.canUseGpu;
+		threadOpts.outputfile = tmpfiles[nCpuThreads + threadId];
+		threadOpts.readIdGenerator = &readIdGenerator;
+		threadOpts.minhasher = &minhasher;
+		threadOpts.gpuReadStorage = &readStorage;
+		threadOpts.coutLock = &writelock;
+		threadOpts.readIsProcessedVector = &readIsProcessedVector;
+		threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
+		threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
+		threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
 
-          gpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
-          gpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
-          gpucorrectorThreads[threadId].correctionOptions = correctionOptions;
-          gpucorrectorThreads[threadId].threadOpts = threadOpts;
-          gpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
-          gpucorrectorThreads[threadId].max_candidates = max_candidates;
+		gpucorrectorThreads[threadId].alignmentOptions = alignmentOptions;
+		gpucorrectorThreads[threadId].goodAlignmentProperties = goodAlignmentProperties;
+		gpucorrectorThreads[threadId].correctionOptions = correctionOptions;
+		gpucorrectorThreads[threadId].threadOpts = threadOpts;
+		gpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
+		gpucorrectorThreads[threadId].max_candidates = max_candidates;
 
-          gpucorrectorThreads[threadId].run();
-      }
+		gpucorrectorThreads[threadId].run();
+	}
 
-      std::cout << "Correcting..." << std::endl;
+	std::cout << "Correcting..." << std::endl;
 
 
     #ifndef DO_PROFILE
 
-      bool showProgress = runtimeOptions.showProgress;
+	bool showProgress = runtimeOptions.showProgress;
 
-      std::thread progressThread = std::thread([&]() -> void{
-          if(!showProgress)
-              return;
+	std::thread progressThread = std::thread([&]() -> void {
+				if(!showProgress)
+					return;
 
-          std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
-          std::chrono::duration<double> runtime = std::chrono::seconds(0);
-          std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
+				std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
+				std::chrono::duration<double> runtime = std::chrono::seconds(0);
+				std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
 
-          while(showProgress){
-              ReadId_t progress = 0;
-              /*ReadId_t correctorProgress = 0;
+				while(showProgress) {
+				        ReadId_t progress = 0;
+				        /*ReadId_t correctorProgress = 0;
 
-              for(int i = 0; i < nCpuThreads; i++){
-                  correctorProgress += cpucorrectorThreads[i].nProcessedReads;
-              }
+				           for(int i = 0; i < nCpuThreads; i++){
+				            correctorProgress += cpucorrectorThreads[i].nProcessedReads;
+				           }
 
-              for(int i = 0; i < nGpuThreads; i++){
-                  correctorProgress += gpucorrectorThreads[i].nProcessedReads;
-              }
+				           for(int i = 0; i < nGpuThreads; i++){
+				            correctorProgress += gpucorrectorThreads[i].nProcessedReads;
+				           }
 
-              progress = correctorProgress;*/
-              progress = readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin();
+				           progress = correctorProgress;*/
+				        progress = readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin();
 
-              printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
-                      ((progress * 1.0 / sequenceFileProperties.nReads) * 100.0),
-                      progress, sequenceFileProperties.nReads,
-                      int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                      int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                      int(runtime.count()) % 60);
-              std::cout << std::flush;
+				        printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
+								((progress * 1.0 / sequenceFileProperties.nReads) * 100.0),
+								progress, sequenceFileProperties.nReads,
+								int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+								int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+								int(runtime.count()) % 60);
+				        std::cout << std::flush;
 
-              if(progress < sequenceFileProperties.nReads){
-                    std::this_thread::sleep_for(sleepinterval);
-                    runtime = std::chrono::system_clock::now() - timepoint_begin;
-              }
-          }
-      });
+				        if(progress < sequenceFileProperties.nReads) {
+				                std::this_thread::sleep_for(sleepinterval);
+				                runtime = std::chrono::system_clock::now() - timepoint_begin;
+					}
+				}
+			});
 
     #else
 
-      constexpr int sleepiterbegin = 1;
-      constexpr int sleepiterend = 3;
+	constexpr int sleepiterbegin = 1;
+	constexpr int sleepiterend = 3;
 
-      int sleepiter = 0;
+	int sleepiter = 0;
 
-      std::chrono::duration<double> runtime = std::chrono::seconds(0);
-      std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
+	std::chrono::duration<double> runtime = std::chrono::seconds(0);
+	std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
 
-      while(true){
+	while(true) {
 
-          std::this_thread::sleep_for(sleepinterval);
+		std::this_thread::sleep_for(sleepinterval);
 
-          sleepiter++;
+		sleepiter++;
 
-          #ifdef __NVCC__
-              if(sleepiter == sleepiterbegin)
-                  cudaProfilerStart(); CUERR;
-          #endif
+	  #ifdef __NVCC__
+		if(sleepiter == sleepiterbegin)
+			cudaProfilerStart(); CUERR;
+	  #endif
 
 
-          #ifdef __NVCC__
-          if(sleepiter == sleepiterend){
-              cudaProfilerStop(); CUERR;
+	  #ifdef __NVCC__
+		if(sleepiter == sleepiterend) {
+			cudaProfilerStop(); CUERR;
 
-    			for(int i = 0; i < nCpuThreads; i++){
-                  cpucorrectorThreads[i].stopAndAbort = true;
-    				cpucorrectorThreads[i].join();
-              }
+			for(int i = 0; i < nCpuThreads; i++) {
+				cpucorrectorThreads[i].stopAndAbort = true;
+				cpucorrectorThreads[i].join();
+			}
 
-              for(int i = 0; i < nGpuThreads; i++){
-                  gpucorrectorThreads[i].stopAndAbort = true;
-    				gpucorrectorThreads[i].join();
-              }
+			for(int i = 0; i < nGpuThreads; i++) {
+				gpucorrectorThreads[i].stopAndAbort = true;
+				gpucorrectorThreads[i].join();
+			}
 
-              std::exit(0);
-          }
-          #endif
+			std::exit(0);
+		}
+	  #endif
 
-      }
+	}
     #endif
 
-    TIMERSTARTCPU(correction);
+	TIMERSTARTCPU(correction);
 
-      for (auto& thread : cpucorrectorThreads)
-          thread.join();
+	for (auto& thread : cpucorrectorThreads)
+		thread.join();
 
-    	for (auto& thread : gpucorrectorThreads)
-          thread.join();
+	for (auto& thread : gpucorrectorThreads)
+		thread.join();
 
     #ifndef DO_PROFILE
-      showProgress = false;
-      progressThread.join();
-      if(runtimeOptions.showProgress)
-          printf("Progress: %3.2f %%\n", 100.00);
+	showProgress = false;
+	progressThread.join();
+	if(runtimeOptions.showProgress)
+		printf("Progress: %3.2f %%\n", 100.00);
     #endif
 
-    TIMERSTOPCPU(correction);
+	TIMERSTOPCPU(correction);
 
-      //std::cout << "threads done" << std::endl;
+	//std::cout << "threads done" << std::endl;
 
 
-    minhasher.destroy();
-    readStorage.destroy();
+	minhasher.destroy();
+	readStorage.destroy();
 
-     // generators.clear();
-     // ecthreads.clear();
-      readIsProcessedVector.clear();
-      readIsProcessedVector.shrink_to_fit();
+	// generators.clear();
+	// ecthreads.clear();
+	readIsProcessedVector.clear();
+	readIsProcessedVector.shrink_to_fit();
 
-      std::cout << "begin merge" << std::endl;
-      TIMERSTARTCPU(merge);
+	std::cout << "begin merge" << std::endl;
+	TIMERSTARTCPU(merge);
 
-      mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+	mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
 
-      TIMERSTOPCPU(merge);
+	TIMERSTOPCPU(merge);
 
-      deleteFiles(tmpfiles);
+	deleteFiles(tmpfiles);
 
-      if(!correctionOptions.extractFeatures){
-          std::vector<std::string> featureFiles(tmpfiles);
-          for(auto& s : featureFiles)
-              s = s + "_features";
-          deleteFiles(featureFiles);
-      }
+	if(!correctionOptions.extractFeatures) {
+		std::vector<std::string> featureFiles(tmpfiles);
+		for(auto& s : featureFiles)
+			s = s + "_features";
+		deleteFiles(featureFiles);
+	}
 
-      std::cout << "end merge" << std::endl;
-    }
+	std::cout << "end merge" << std::endl;
+}
 
 }
 }
