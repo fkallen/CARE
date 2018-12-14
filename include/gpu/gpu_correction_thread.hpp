@@ -29,6 +29,8 @@
 
 #ifdef __NVCC__
 #include <cub/cub.cuh>
+#include <thrust/inner_product.h>
+#include <thrust/iterator/counting_iterator.h>
 #endif
 
 //#define CARE_GPU_DEBUG
@@ -40,43 +42,6 @@
 
 namespace care {
 namespace gpu {
-
-template<class ReadId_t>
-struct BatchGenerator {
-	BatchGenerator(){
-	}
-
-	BatchGenerator(ReadId_t firstId, ReadId_t lastIdExcl)
-		: firstId(firstId), lastIdExcl(lastIdExcl), currentId(firstId){
-		if(firstId >= lastIdExcl) throw std::runtime_error("BatchGenerator: firstId >= lastIdExcl");
-	}
-
-	std::vector<ReadId_t> getNextReadIds(int maxnumreadIds){
-		std::vector<ReadId_t> result;
-		while(int(result.size()) < maxnumreadIds && currentId < lastIdExcl) {
-			result.push_back(currentId);
-			currentId++;
-		}
-		return result;
-	}
-
-	bool empty() const {
-		return currentId == lastIdExcl;
-	}
-
-	ReadId_t firstId;
-	ReadId_t lastIdExcl;
-	ReadId_t currentId;
-};
-
-
-
-
-
-
-
-
-
 
 
 template<class Sequence_t, class ReadId_t>
@@ -254,7 +219,6 @@ struct ErrorCorrectionThreadOnlyGPU {
 	};
 
 	struct TransitionFunctionData {
-		//BatchGenerator<ReadId_t>* mybatchgen;
 		ReadIdGenerator_t* readIdGenerator;
 		std::vector<ReadId_t>* readIdBuffer;
 		double min_overlap_ratio;
@@ -344,9 +308,6 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 	TaskTimings detailedCorrectionTimings;
 
-	//BatchGenerator<ReadId_t> mybatchgen;
-	//int num_ids_per_add_tasks = 2;
-	//int minimum_candidates_per_batch = 1000;
 	int num_ids_per_add_tasks = 2;
 	int minimum_candidates_per_batch = 1000;
 
@@ -895,6 +856,24 @@ public:
 		//if batch is fully copied, transfer to gpu
 		if(batch.copiedTasks == int(batch.tasks.size())) {
 			assert(batch.copiedTasks == int(batch.tasks.size()));
+
+            /*thrust::counting_iterator<int> countiterbegin(0);
+
+            const int nUniqueSequences = std::inner_product(
+                                                    countiterbegin,
+                                                    countiterbegin + batch.copiedCandidates - 1,
+                                                    countiterbegin + 1,
+                                                    int(1),
+                                                    thrust::plus<int>(),
+                                                    [&](auto l, auto r){
+                                                        return 0 != std::memcmp(dataArrays.h_candidate_sequences_data + l * dataArrays.encoded_sequence_pitch,
+                                                                                dataArrays.h_candidate_sequences_data + r * dataArrays.encoded_sequence_pitch,
+                                                                                dataArrays.encoded_sequence_pitch);
+                                                    });
+
+            std::cout << "Batch candidates: " << batch.copiedCandidates << ", unique: " << nUniqueSequences << std::endl;*/
+
+
 
 			if(transFuncData.readStorageGpuData.isValidSequenceData()) {
 				dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
@@ -2229,7 +2208,6 @@ public:
 		assert(threadOpts.canUseGpu);
 		assert(max_candidates > 0);
 
-		//mybatchgen = BatchGenerator<ReadId_t>(threadOpts.batchGen->firstId, threadOpts.batchGen->lastIdExcl);
 		makeTransitionFunctionTable();
 
 		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
