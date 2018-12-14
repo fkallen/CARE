@@ -253,7 +253,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     #else
 
 	constexpr int sleepiterbegin = 1;
-	constexpr int sleepiterend = 3;
+	constexpr int sleepiterend = 10;
 
 	int sleepiter = 0;
 

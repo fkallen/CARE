@@ -158,6 +158,8 @@ struct ContiguousReadStorage {
 		case ContiguousReadStorage::Type::None:
 			cudaMallocHost(&h_sequence_data, sequence_data_bytes); CUERR;
 			cudaMallocHost(&h_sequence_lengths, sequence_lengths_bytes); CUERR;
+            //h_sequence_data = new char[sequence_data_bytes];
+            //h_sequence_lengths = new Length_t[num_sequences];
 			break;
 		default: throw std::runtime_error("Found unknown sequence type");
 		}
@@ -172,6 +174,7 @@ struct ContiguousReadStorage {
 				break;
 			case ContiguousReadStorage::Type::None:
 				cudaMallocHost(&h_quality_data, quality_data_bytes); CUERR;
+                //h_quality_data = new char[quality_data_bytes];
 				break;
 			default: throw std::runtime_error("Found unknown sequence type");
 			}
@@ -288,8 +291,7 @@ struct ContiguousReadStorage {
 				cudaFree(h_sequence_data); CUERR;
 				cudaFree(h_sequence_lengths); CUERR;
 			}else{
-				cudaFreeHost(h_sequence_data); CUERR;
-				cudaFreeHost(h_sequence_lengths); CUERR;
+
 
 				if(dataProperties.sequenceType == ContiguousReadStorage::Type::Full) {
 					int oldId;
@@ -301,13 +303,21 @@ struct ContiguousReadStorage {
 						cudaFree(data.d_sequence_lengths); CUERR;
 					}
 					cudaSetDevice(oldId); CUERR;
-				}
+
+                    cudaFreeHost(h_sequence_data); CUERR;
+    				cudaFreeHost(h_sequence_lengths); CUERR;
+				}else if(dataProperties.sequenceType == ContiguousReadStorage::Type::None){
+                    //delete [] h_sequence_data;
+                    //delete [] h_sequence_lengths;
+                    cudaFreeHost(h_sequence_data); CUERR;
+    				cudaFreeHost(h_sequence_lengths); CUERR;
+                }
 			}
 
 			if(dataProperties.qualityType == ContiguousReadStorage::Type::Managed) {
 				cudaFree(h_quality_data); CUERR;
 			}else{
-				cudaFreeHost(h_quality_data); CUERR;
+
 
 				if(dataProperties.qualityType == ContiguousReadStorage::Type::Full) {
 					int oldId;
@@ -318,7 +328,12 @@ struct ContiguousReadStorage {
 						cudaFree(data.d_quality_data); CUERR;
 					}
 					cudaSetDevice(oldId); CUERR;
-				}
+
+                    cudaFreeHost(h_quality_data); CUERR;
+				}else if(dataProperties.qualityType == ContiguousReadStorage::Type::None){
+                    //delete [] h_quality_data;
+                    cudaFreeHost(h_quality_data); CUERR;
+                }
 			}
 		}
 
@@ -620,11 +635,8 @@ public:
 					cudaMemGetInfo(&freeMem, &totalMem); CUERR;
 
 					bool isEnoughMemForSequences = (requiredSequenceMem < maxPercentOfTotalGPUMem * totalMem && requiredSequenceMem < freeMem);
-#if 1
-					return isEnoughMemForSequences;
-#else
-					return false;
-#endif
+
+		            return isEnoughMemForSequences;
 				});
 
 		const bool everyDeviceCanStoreBothSequencesAndQualities = std::all_of(deviceIds.begin(), deviceIds.end(), [&](int deviceId){
@@ -636,11 +648,7 @@ public:
 
 					bool isEnoughMemForSequencesAndQualities = (requiredTotalMem < maxPercentOfTotalGPUMem * totalMem && requiredTotalMem < freeMem);
 
-#if 1
 					return isEnoughMemForSequencesAndQualities;
-#else
-					return false;
-#endif
 				});
 
 		cudaSetDevice(oldId);
@@ -664,7 +672,10 @@ public:
 				result.qualityType = ContiguousReadStorage::Type::Full;
 			}
 		}
-
+#if 0
+        result.sequenceType = ContiguousReadStorage::Type::None;
+        result.qualityType = ContiguousReadStorage::Type::None;
+#endif
 		return result;
 	}
 
