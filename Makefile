@@ -103,15 +103,15 @@ buildgpu/care.o : src/care.cpp | makedir
 
 buildgpu/kernels.dbg.o : src/gpu/kernels.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 buildgpu/qualityscoreweights.dbg.o : src/gpu/qualityscoreweights.cu | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 buildgpu/care.dbg.o : src/care.cpp | makedir
 	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 forests/%.so : src/forests/%.cpp | makedir
 	@echo Compiling $< to $@
