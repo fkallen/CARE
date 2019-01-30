@@ -27,7 +27,7 @@ fi
 deviceIds="--deviceIds=0"
 #deviceIds=""
 
-datapath=/home/fekallen/arbeit/evaluationtool
+datapath=/home/fekallen/storage/evaluationtool
 
 #input file
 inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
@@ -42,6 +42,7 @@ coverage=21
 #inputfile=$datapath/datasets/E.coli_ERA000206.fastq
 #coverage=612
 
+#31642176 reads, cutoff 570
 #inputfile=$datapath/datasets/C.elegans_SRX218989.fastq
 #coverage=31
 
@@ -51,6 +52,7 @@ coverage=21
 #inputfile=$datapath/datasets/D.melanogaster_SRR823377.fastq
 #coverage=52
 
+#75938276 reads, cutoff 1547
 #inputfile=$datapath/datasets/D.melanogaster_SRR988075.fastq
 #coverage=64
 
