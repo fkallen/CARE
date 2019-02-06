@@ -2072,8 +2072,8 @@ public:
 						(*transFuncData.readIsCorrectedVector)[task.readId] = 0;
 					}
 					transFuncData.unlock(task.readId);
-					pop_range();
 				}
+                pop_range();
 			}
 			push_range("correctedcandidates", 6);
 			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
