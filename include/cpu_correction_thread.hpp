@@ -157,6 +157,8 @@ namespace cpu{
     	int sobadcouldnotcorrect = 0;
     	int verygoodalignment = 0;
 
+        std::map<int, int> numCandidatesOfUncorrectedSubjects;
+
         std::chrono::duration<double> getCandidatesTimeTotal;
     	std::chrono::duration<double> mapMinhashResultsToSequencesTimeTotal;
     	std::chrono::duration<double> getAlignmentsTimeTotal;
@@ -509,12 +511,18 @@ iterasdf++;
                     //get corrected subject and write it to file
                     auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
 
+                    /*if(!correctionResult.isCorrected || correctionResult.correctedSequence == task.subject_string){
+                        const std::size_t numCandidates = task.candidate_read_ids.size();
+                        numCandidatesOfUncorrectedSubjects[numCandidates]++;
+                    }*/
+
                     if(correctionResult.isCorrected){
                         write_read(task.readId, correctionResult.correctedSequence);
                         lock(task.readId);
                         (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
                         unlock(task.readId);
                     }else{
+
                         //make subject available for correction as a candidate
                         if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
                             lock(task.readId);
@@ -609,7 +617,14 @@ iterasdf++;
             featurestream.flush();
             outputstream.flush();
 
+            lock(0);
             std::cout << "CPU worker finished" << std::endl;
+
+
+                /*for(const auto& pair : numCandidatesOfUncorrectedSubjects){
+                    std::cerr << pair.first << '\t' << pair.second << '\n';
+                }*/
+            unlock(0);
     	}
     };
 
