@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <sstream>
+#include <cstdlib>
 
 namespace care {
 namespace gpu {
@@ -330,12 +332,44 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 	deleteFiles(tmpfiles);
 
-	if(!correctionOptions.extractFeatures) {
-		std::vector<std::string> featureFiles(tmpfiles);
-		for(auto& s : featureFiles)
-			s = s + "_features";
-		deleteFiles(featureFiles);
-	}
+    std::vector<std::string> featureFiles(tmpfiles);
+    for(auto& s : featureFiles)
+        s = s + "_features";
+
+    //concatenate feature files of each thread into one file
+
+    if(correctionOptions.extractFeatures){
+        std::stringstream commandbuilder;
+
+        commandbuilder << "cat";
+
+        for(const auto& featureFile : featureFiles){
+            commandbuilder << " \"" << featureFile << "\"";
+        }
+
+        commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
+
+        const std::string command = commandbuilder.str();
+        TIMERSTARTCPU(concat_feature_files);
+        int r1 = std::system(command.c_str());
+        TIMERSTOPCPU(concat_feature_files);
+
+        if(r1 != 0){
+            std::cerr << "Warning. Feature files could not be concatenated!\n";
+            std::cerr << "This command returned a non-zero error value: \n";
+            std::cerr << command +  '\n';
+            std::cerr << "Please concatenate the following files manually\n";
+            for(const auto& s : featureFiles)
+                std::cerr << s << '\n';
+        }else{
+            deleteFiles(featureFiles);
+        }
+    }else{
+        deleteFiles(featureFiles);
+    }
+
+
+
 
 	std::cout << "end merge" << std::endl;
 }
