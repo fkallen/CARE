@@ -25,7 +25,7 @@ namespace care{
         ForestClassifier(){}
 
         ForestClassifier(std::string soFilename_) : soFilename(std::move(soFilename_)){
-            std::cerr << soFilename << '\n';
+            //std::cerr << soFilename << '\n';
             bool failure = false;
 
             soHandle = dlopen(soFilename.c_str(), RTLD_NOW);
