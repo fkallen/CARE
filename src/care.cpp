@@ -499,11 +499,26 @@ void performCorrection(MinhashOptions minhashOptions,
 		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
 		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 
+        //rename feature file
+        if(correctionOptions.extractFeatures){
+            std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd_features";
+            std::string outputfeaturename = fileOptions.outputfile + "_features";
+
+    		std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
+        }
+
 		if(!keepIntermediateResults && iters > 1)
 			deleteFiles({fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even"});
 	}else{
 		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
 		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
+
+        if(correctionOptions.extractFeatures){
+            std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
+            std::string outputfeaturename = fileOptions.outputfile + "_features";
+
+    		std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
+        }
 
 		if(!keepIntermediateResults && iters > 1)
 			deleteFiles({fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd"});
@@ -511,6 +526,13 @@ void performCorrection(MinhashOptions minhashOptions,
 	#else
 	std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iters-1);
 	std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
+
+    if(correctionOptions.extractFeatures){
+        std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iters-1) + "_features";
+        std::string outputfeaturename = fileOptions.outputfile + "_features";
+        
+        std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
+    }
 
 	if(!keepIntermediateResults) {
 		std::vector<std::string> filestodelete;
