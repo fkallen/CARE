@@ -101,7 +101,9 @@ struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 		};
 
 		auto callKernel = [&](auto subjectpointer, auto candidatepointer, auto subjectlength, auto candidatelength){
-					  call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
+                      //call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed_async(
+					  //call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_async(
+                      call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved_async(
 								  d_alignment_scores,
 								  d_alignment_overlaps,
 								  d_alignment_shifts,
