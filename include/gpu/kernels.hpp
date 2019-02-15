@@ -1445,10 +1445,18 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 		}
 #else
 
+        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+            myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
+        }
+
+        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+            myTileQuery[no_bank_conflict_index(lane)] = queryBackup[lane];
+        }
+
         int previousShift = std::numeric_limits<int>::min();
 
         for(int shift = threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE) {
-            if(previousShift == std::numeric_limits<int>::min()) {
+            /*if(previousShift == std::numeric_limits<int>::min()) {
                 //save subject in shared memory
                 for(int lane = 0; lane < max_sequence_ints; lane += 1) {
                     myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
@@ -1465,14 +1473,16 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
                 for(int lane = 0; lane < max_sequence_ints; lane += 1) {
                     storeptr[no_bank_conflict_index(lane)] = loadptr[lane];
                 }
-            }
+            }*/
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
             const int max_errors = int(double(overlapsize) * maxErrorRate);
 
-            unsigned int* const shiftptr_hi = shift > 0 ? subjectdata_hi : querydata_hi;
-            unsigned int* const shiftptr_lo = shift > 0 ? subjectdata_lo : querydata_lo;
-            const int size = shift > 0 ? subjectints / 2 : queryints / 2;
-            const int shiftamount = abs(shift);
+            unsigned int* const shiftptr_hi = shift >= 0 ? subjectdata_hi : querydata_hi;
+            unsigned int* const shiftptr_lo = shift >= 0 ? subjectdata_lo : querydata_lo;
+            const int size = shift >= 0 ? subjectints / 2 : queryints / 2;
+            const int shiftamount = previousShift == std::numeric_limits<int>::min()
+                                        ? shift
+                                        : BLOCKSIZE;
 
             shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
             shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
@@ -1498,10 +1508,14 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             previousShift = shift;
         }
 
+        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+            myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
+        }
+
         previousShift = std::numeric_limits<int>::min();
 
-        for(int shift = -1-threadIdx.x; shift >= -querybases + minoverlap; shift -= BLOCKSIZE) {
-            if(previousShift == std::numeric_limits<int>::min()) {
+        for(int shift = -1-int(threadIdx.x); shift >= -querybases + minoverlap; shift -= BLOCKSIZE) {
+            /*if(previousShift == std::numeric_limits<int>::min()) {
                 //save subject in shared memory
                 for(int lane = 0; lane < max_sequence_ints; lane += 1) {
                     myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
@@ -1518,14 +1532,15 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
                 for(int lane = 0; lane < max_sequence_ints; lane += 1) {
                     storeptr[no_bank_conflict_index(lane)] = loadptr[lane];
                 }
-            }
+            }*/
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
             const int max_errors = int(double(overlapsize) * maxErrorRate);
 
-            unsigned int* const shiftptr_hi = shift > 0 ? subjectdata_hi : querydata_hi;
-            unsigned int* const shiftptr_lo = shift > 0 ? subjectdata_lo : querydata_lo;
-            const int size = shift > 0 ? subjectints / 2 : queryints / 2;
-            const int shiftamount = abs(shift);
+            unsigned int* const shiftptr_hi = shift >= 0 ? subjectdata_hi : querydata_hi;
+            unsigned int* const shiftptr_lo = shift >= 0 ? subjectdata_lo : querydata_lo;
+            const int size = shift >= 0 ? subjectints / 2 : queryints / 2;
+            const int shiftamount = previousShift == std::numeric_limits<int>::min()
+                                        ? abs(shift) : BLOCKSIZE;
 
             shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
             shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
