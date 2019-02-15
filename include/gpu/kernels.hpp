@@ -1384,6 +1384,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 		unsigned int* querydata_hi = myTileQuery;
 		unsigned int* querydata_lo = myTileQuery + queryints / 2 * BLOCKSIZE;
 
+
+
+#if 0
         int previousShift = -querybases + minoverlap + threadIdx.x;
 
 
@@ -1440,7 +1443,115 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 
 			previousShift = shift;
 		}
+#else
 
+        int previousShift = std::numeric_limits<int>::min();
+
+        for(int shift = threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE) {
+            if(previousShift == std::numeric_limits<int>::min()) {
+                //save subject in shared memory
+                for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+                    myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
+                }
+
+                //save query in shared memory
+                for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+                    myTileQuery[no_bank_conflict_index(lane)] = queryBackup[lane];
+                }
+            }else{
+                unsigned int* storeptr = previousShift > 0 ? myTileSubject : myTileQuery;
+                const unsigned int* loadptr = previousShift > 0 ? subjectBackup : queryBackup;
+
+                for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+                    storeptr[no_bank_conflict_index(lane)] = loadptr[lane];
+                }
+            }
+            const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+            const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+            unsigned int* const shiftptr_hi = shift > 0 ? subjectdata_hi : querydata_hi;
+            unsigned int* const shiftptr_lo = shift > 0 ? subjectdata_lo : querydata_lo;
+            const int size = shift > 0 ? subjectints / 2 : queryints / 2;
+            const int shiftamount = abs(shift);
+
+            shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
+            shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
+
+            int score = hammingdistanceHiLo(
+                        subjectdata_hi,
+                        subjectdata_lo,
+                        querydata_hi,
+                        querydata_lo,
+                        max(0, subjectbases - abs(shift)),
+                        max(0, querybases - abs(shift)),
+                        max_errors);
+
+            score = (score < max_errors ?
+                     score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
+                     : std::numeric_limits<int>::max());                         // too many errors, discard
+
+            if(score < bestScore) {
+                bestScore = score;
+                bestShift = shift;
+            }
+
+            previousShift = shift;
+        }
+
+        previousShift = std::numeric_limits<int>::min();
+
+        for(int shift = -1-threadIdx.x; shift >= -querybases + minoverlap; shift -= BLOCKSIZE) {
+            if(previousShift == std::numeric_limits<int>::min()) {
+                //save subject in shared memory
+                for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+                    myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
+                }
+
+                //save query in shared memory
+                for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+                    myTileQuery[no_bank_conflict_index(lane)] = queryBackup[lane];
+                }
+            }else{
+                unsigned int* storeptr = previousShift > 0 ? myTileSubject : myTileQuery;
+                const unsigned int* loadptr = previousShift > 0 ? subjectBackup : queryBackup;
+
+                for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+                    storeptr[no_bank_conflict_index(lane)] = loadptr[lane];
+                }
+            }
+            const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+            const int max_errors = int(double(overlapsize) * maxErrorRate);
+
+            unsigned int* const shiftptr_hi = shift > 0 ? subjectdata_hi : querydata_hi;
+            unsigned int* const shiftptr_lo = shift > 0 ? subjectdata_lo : querydata_lo;
+            const int size = shift > 0 ? subjectints / 2 : queryints / 2;
+            const int shiftamount = abs(shift);
+
+            shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
+            shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
+
+            int score = hammingdistanceHiLo(
+                        subjectdata_hi,
+                        subjectdata_lo,
+                        querydata_hi,
+                        querydata_lo,
+                        max(0, subjectbases - abs(shift)),
+                        max(0, querybases - abs(shift)),
+                        max_errors);
+
+            score = (score < max_errors ?
+                     score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
+                     : std::numeric_limits<int>::max());                         // too many errors, discard
+
+            if(score < bestScore) {
+                bestScore = score;
+                bestShift = shift;
+            }
+
+            previousShift = shift;
+        }
+
+#endif
 		int2 myval = make_int2(bestScore, bestShift);
 
 		myval = BlockReduceInt2(temp_storage.reduce).Reduce(myval, [](auto a, auto b){
