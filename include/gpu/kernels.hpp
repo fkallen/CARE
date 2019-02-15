@@ -1375,6 +1375,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 	unsigned int* const myTileSubject = (unsigned int*)(sharedSubject) + threadIdx.x;
 	unsigned int* const myTileQuery = (unsigned int*)(sharedQuery) + threadIdx.x;
 
+    unsigned int* const mySequence = myTileSubject;
+
 	const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
 
 	for(unsigned resultIndex = blockIdx.x; resultIndex < n_candidates * 2; resultIndex += gridDim.x) {
@@ -1428,13 +1430,20 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 
 
 
-        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+        /*for(int lane = 0; lane < max_sequence_ints; lane += 1) {
             myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
         }
 
         for(int lane = 0; lane < max_sequence_ints; lane += 1) {
             myTileQuery[no_bank_conflict_index(lane)] = queryBackup[lane];
+        }*/
+
+        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+            mySequence[no_bank_conflict_index(lane)] = subjectBackup[lane];
         }
+
+        unsigned int* mySequence_hi = mySequence;
+        unsigned int* mySequence_lo = mySequence + subjectints / 2 * BLOCKSIZE;
 
         int previousShift = std::numeric_limits<int>::min();
 
@@ -1442,8 +1451,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
             const int max_errors = int(double(overlapsize) * maxErrorRate);
 
-            unsigned int* const shiftptr_hi = subjectdata_hi;
-            unsigned int* const shiftptr_lo = subjectdata_lo;
+            unsigned int* const shiftptr_hi = mySequence_hi;
+            unsigned int* const shiftptr_lo = mySequence_lo;
             const int size = subjectints / 2;
             const int shiftamount = previousShift == std::numeric_limits<int>::min()
                                         ? shift
@@ -1452,24 +1461,14 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
             shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
 
-            /*int score = hammingdistanceHiLo(
-                        subjectdata_hi,
-                        subjectdata_lo,
-                        queryBackup,
-                        queryBackup + queryints / 2 * BLOCKSIZE,
-                        max(0, subjectbases - abs(shift)),
-                        max(0, querybases - abs(shift)),
-                        max_errors);*/
-
             int score = hammingdistanceHiLo2(
-                        subjectdata_hi,
-                        subjectdata_lo,
+                        mySequence_hi,
+                        mySequence_lo,
                         queryBackup,
                         queryBackup + queryints / 2,
                         max(0, subjectbases - abs(shift)),
                         max(0, querybases - abs(shift)),
                         max_errors);
-
 
             score = (score < max_errors ?
                      score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
@@ -1483,9 +1482,16 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             previousShift = shift;
         }
 
-        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+        /*for(int lane = 0; lane < max_sequence_ints; lane += 1) {
             myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
+        }*/
+
+        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+            mySequence[no_bank_conflict_index(lane)] = queryBackup[lane];
         }
+
+        mySequence_hi = mySequence;
+        mySequence_lo = mySequence + queryints / 2 * BLOCKSIZE;
 
         previousShift = std::numeric_limits<int>::min();
 
@@ -1493,8 +1499,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
             const int max_errors = int(double(overlapsize) * maxErrorRate);
 
-            unsigned int* const shiftptr_hi = querydata_hi;
-            unsigned int* const shiftptr_lo = querydata_lo;
+            unsigned int* const shiftptr_hi = mySequence_hi;
+            unsigned int* const shiftptr_lo = mySequence_lo;
             const int size = queryints / 2;
             const int shiftamount = previousShift == std::numeric_limits<int>::min()
                                         ? abs(shift) : BLOCKSIZE;
@@ -1502,18 +1508,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
             shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
 
-            /*int score = hammingdistanceHiLo(
-                        subjectBackup,
-                        subjectBackup + subjectints / 2 * BLOCKSIZE,
-                        querydata_hi,
-                        querydata_lo,
-                        max(0, subjectbases - abs(shift)),
-                        max(0, querybases - abs(shift)),
-                        max_errors);*/
-
             int score = hammingdistanceHiLo2(
-                            querydata_hi,
-                            querydata_lo,
+                            mySequence_hi,
+                            mySequence_lo,
                             subjectBackup,
                             subjectBackup + subjectints / 2,
                             max(0, querybases - abs(shift)),
