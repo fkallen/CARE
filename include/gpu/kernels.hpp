@@ -1365,17 +1365,10 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 	extern __shared__ unsigned int sharedmemory[];
 
 	//set up shared memory pointers
-	char* const sharedSubject = (char*)(sharedmemory);
-	char* const sharedQuery = (char*)(((char*)sharedSubject) + max_sequence_bytes * BLOCKSIZE);
 
-	unsigned int* const subjectBackup = (unsigned int*)(((char*)sharedQuery) + max_sequence_bytes * BLOCKSIZE);
-	unsigned int* const queryBackup = (unsigned int*)(((char*)subjectBackup) + max_sequence_bytes);
-
-	//set up shared memory per tile
-	unsigned int* const myTileSubject = (unsigned int*)(sharedSubject) + threadIdx.x;
-	unsigned int* const myTileQuery = (unsigned int*)(sharedQuery) + threadIdx.x;
-
-    unsigned int* const mySequence = myTileSubject;
+    unsigned int* const subjectBackup = (unsigned int*)((char*)sharedmemory);
+    unsigned int* const queryBackup = (unsigned int*)(((char*)subjectBackup) + max_sequence_bytes);
+    unsigned int* const mySequence = ((unsigned int*)(((char*)queryBackup) + max_sequence_bytes)) + threadIdx.x;
 
 	const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
 
@@ -1390,18 +1383,18 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 				break;
 		}
 
-		//save subject in shared memory
+
 		const int subjectbases = getSubjectLength(subjectIndex);
 		const char* subjectptr = getSubjectPtr(subjectIndex);
+        const int querybases = getCandidateLength(queryIndex);
 		const char* candidateptr = getCandidatePtr(queryIndex);
 
+        //save subject in shared memory
 		for(int lane = threadIdx.x; lane < max_sequence_ints; lane += BLOCKSIZE) {
 			subjectBackup[lane] = ((unsigned int*)(subjectptr))[lane];
 		}
 
 		//save query in shared memory
-		const int querybases = getCandidateLength(queryIndex);
-
 		for(int lane = threadIdx.x; lane < max_sequence_ints; lane += BLOCKSIZE) {
 			queryBackup[lane] = ((unsigned int*)(candidateptr))[lane];
 		}
@@ -1423,21 +1416,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
 		int bestScore = totalbases;                 // score is number of mismatches
 		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
 
-		unsigned int* subjectdata_hi = myTileSubject;
-		unsigned int* subjectdata_lo = myTileSubject + subjectints / 2 * BLOCKSIZE;
-		unsigned int* querydata_hi = myTileQuery;
-		unsigned int* querydata_lo = myTileQuery + queryints / 2 * BLOCKSIZE;
-
-
-
-        /*for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-            myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
-        }
-
-        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-            myTileQuery[no_bank_conflict_index(lane)] = queryBackup[lane];
-        }*/
-
+        //initialize threadlocal smem array with subject
         for(int lane = 0; lane < max_sequence_ints; lane += 1) {
             mySequence[no_bank_conflict_index(lane)] = subjectBackup[lane];
         }
@@ -1482,10 +1461,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2(
             previousShift = shift;
         }
 
-        /*for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-            myTileSubject[no_bank_conflict_index(lane)] = subjectBackup[lane];
-        }*/
-
+        //initialize threadlocal smem array with query
         for(int lane = 0; lane < max_sequence_ints; lane += 1) {
             mySequence[no_bank_conflict_index(lane)] = queryBackup[lane];
         }
@@ -1925,7 +1901,7 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improv
     		getCandidateLength); CUERR;
 
     	const int blocksize = 32;
-    	const std::size_t smem = sizeof(char) * (2*max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
+    	const std::size_t smem = sizeof(char) * (max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
 
     	int max_blocks_per_device = 1;
 
@@ -1941,7 +1917,7 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improv
     		#define getProp(blocksize) { \
             		KernelLaunchConfig kernelLaunchConfig; \
             		kernelLaunchConfig.threads_per_block = (blocksize); \
-            		kernelLaunchConfig.smem = sizeof(char) * (2*max_sequence_bytes * (blocksize) + 2 * max_sequence_bytes); \
+            		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * (blocksize) + 2 * max_sequence_bytes); \
             		KernelProperties kernelProperties; \
             		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
             					cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_exp_improved2<(blocksize), B, \
