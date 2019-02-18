@@ -24,6 +24,7 @@ using MSAColumnProperties = care::cpu::MultipleSequenceAlignment::ColumnProperti
 
 enum class KernelId {
 	PopcountSHD,
+    PopcountSHDtransposed,
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
@@ -772,7 +773,7 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
 
     	dim3 block(blocksize, 1, 1);
     	dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1);         // one block per candidate
-        //dim3 grid(1,1,1);
+        //dim3 grid(32,1,1);
 
     	switch(blocksize) {
     	case 32: mycall(32); break;
@@ -789,6 +790,401 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
 	    #undef mycall
 
 }
+
+
+
+
+
+
+template<int BLOCKSIZE, class B, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectLength, class GetCandidateLength>
+__global__
+void
+cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
+			int* alignment_scores,
+			int* alignment_overlaps,
+			int* alignment_shifts,
+			int* alignment_nOps,
+			bool* alignment_isValid,
+			//const int* subject_sequences_lengths,
+			//const int* candidate_sequences_lengths,
+			const int* candidates_per_subject_prefixsum,
+			int n_subjects,
+			int n_candidates,
+			int max_sequence_bytes,
+			int min_overlap,
+			double maxErrorRate,
+			double min_overlap_ratio,
+			B getNumBytes,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectLength getSubjectLength,
+			GetCandidateLength getCandidateLength){
+
+	auto no_bank_conflict_index = [](int logical_index) -> int {
+					      return logical_index * BLOCKSIZE;
+	};
+
+	auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength){
+
+						       auto reverse_complement_int = [](auto n) {
+											     n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+											     n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+											     n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+											     n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+											     n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+											     return ~n;
+										     };
+
+						       const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
+						       const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
+
+						       unsigned int* const hi = sequence;
+						       unsigned int* const lo = &sequence[no_bank_conflict_index(ints/2)];
+
+						       const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
+						       for(int i = 0; i < intsPerHalf/2; ++i) {
+							       const unsigned int hifront = reverse_complement_int(hi[no_bank_conflict_index(i)]);
+							       const unsigned int hiback = reverse_complement_int(hi[no_bank_conflict_index(intsPerHalf - 1 - i)]);
+							       hi[no_bank_conflict_index(i)] = hiback;
+							       hi[no_bank_conflict_index(intsPerHalf - 1 - i)] = hifront;
+
+							       const unsigned int lofront = reverse_complement_int(lo[no_bank_conflict_index(i)]);
+							       const unsigned int loback = reverse_complement_int(lo[no_bank_conflict_index(intsPerHalf - 1 - i)]);
+							       lo[no_bank_conflict_index(i)] = loback;
+							       lo[no_bank_conflict_index(intsPerHalf - 1 - i)] = lofront;
+						       }
+						       if(intsPerHalf % 2 == 1) {
+							       const int middleindex = intsPerHalf/2;
+							       hi[no_bank_conflict_index(middleindex)] = reverse_complement_int(hi[no_bank_conflict_index(middleindex)]);
+							       lo[no_bank_conflict_index(middleindex)] = reverse_complement_int(lo[no_bank_conflict_index(middleindex)]);
+						       }
+
+						       if(unusedBitsInt != 0) {
+							       for(int i = 0; i < intsPerHalf - 1; ++i) {
+								       hi[no_bank_conflict_index(i)] = (hi[no_bank_conflict_index(i)] >> unusedBitsInt) | (hi[no_bank_conflict_index(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
+								       lo[no_bank_conflict_index(i)] = (lo[no_bank_conflict_index(i)] >> unusedBitsInt) | (lo[no_bank_conflict_index(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
+							       }
+
+							       hi[no_bank_conflict_index(intsPerHalf - 1)] >>= unusedBitsInt;
+							       lo[no_bank_conflict_index(intsPerHalf - 1)] >>= unusedBitsInt;
+						       }
+					       };
+
+	auto shiftEncodedBasesLeftBy = [&](unsigned int* array, int size, int shiftamount){
+					       const int completeInts = shiftamount / (8 * sizeof(unsigned int));
+
+					       for(int i = 0; i < size - completeInts; i += 1) {
+						       array[no_bank_conflict_index(i)] = array[no_bank_conflict_index(completeInts + i)];
+					       }
+
+					       for(int i = size - completeInts; i < size; i += 1) {
+						       array[no_bank_conflict_index(i)] = 0;
+					       }
+
+					       shiftamount -= completeInts * 8 * sizeof(unsigned int);
+
+					       for(int i = 0; i < size - completeInts - 1; i += 1) {
+						       const unsigned int a = array[no_bank_conflict_index(i)];
+						       const unsigned int b = array[no_bank_conflict_index(i+1)];
+
+						       array[no_bank_conflict_index(i)] = (a >> shiftamount) | (b << (8 * sizeof(unsigned int) - shiftamount));
+					       }
+
+					       array[no_bank_conflict_index(size - completeInts - 1)] >>= shiftamount;
+				       };
+
+	auto hammingdistanceHiLo = [&](
+		const unsigned int* lhi,
+		const unsigned int* llo,
+		const unsigned int* rhi,
+		const unsigned int* rlo,
+		int lhi_bitcount,
+		int rhi_bitcount,
+		int max_errors){
+
+					   const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
+
+					   if(overlap_bitcount == 0)
+						   return max_errors+1;
+
+					   const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
+					   const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
+
+					   int result = 0;
+
+					   for(int i = 0; i < partitions - 1 && result < max_errors; i += 1) {
+						   const unsigned int hixor = lhi[no_bank_conflict_index(i)] ^ rhi[no_bank_conflict_index(i)];
+						   const unsigned int loxor = llo[no_bank_conflict_index(i)] ^ rlo[no_bank_conflict_index(i)];
+						   const unsigned int bits = hixor | loxor;
+						   result += __popc(bits);
+					   }
+
+					   if(result >= max_errors)
+						   return result;
+
+					   // i == partitions - 1
+
+					   const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
+					   const unsigned int hixor = lhi[no_bank_conflict_index(partitions - 1)] ^ rhi[no_bank_conflict_index(partitions - 1)];
+					   const unsigned int loxor = llo[no_bank_conflict_index(partitions - 1)] ^ rlo[no_bank_conflict_index(partitions - 1)];
+					   const unsigned int bits = hixor | loxor;
+					   result += __popc(bits & mask);
+
+					   return result;
+				   };
+
+	// sizeof(char) * (2 * max_sequence_bytes * blocksize);
+	extern __shared__ unsigned int sharedmemory[];
+
+
+	//set up shared memory pointers
+	char* const sharedSubject = (char*)(sharedmemory);
+	char* const sharedQuery = (char*)(((char*)sharedSubject) + max_sequence_bytes * BLOCKSIZE);
+
+	//set up shared memory per tile
+	unsigned int* const mySubject = (unsigned int*)(sharedSubject) + threadIdx.x;
+	unsigned int* const myQuery = (unsigned int*)(sharedQuery) + threadIdx.x;
+
+	const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
+
+	for(unsigned resultIndex = blockIdx.x * BLOCKSIZE + threadIdx.x; resultIndex < n_candidates * 2; resultIndex += BLOCKSIZE * gridDim.x) {
+
+		const int queryIndex = resultIndex < n_candidates ? resultIndex : resultIndex - n_candidates;
+
+		//find subjectindex
+		int subjectIndex = 0;
+		for(; subjectIndex < n_subjects; subjectIndex++) {
+			if(queryIndex < candidates_per_subject_prefixsum[subjectIndex+1])
+				break;
+		}
+
+		//save subject in shared memory
+		const int subjectbases = getSubjectLength(subjectIndex);
+		const char* subjectptr = getSubjectPtr(subjectIndex);
+		const char* candidateptr = getCandidatePtr(queryIndex);
+
+		for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+			mySubject[no_bank_conflict_index(lane)] = ((unsigned int*)(subjectptr))[lane];
+		}
+
+		//save query in shared memory
+		const int querybases = getCandidateLength(queryIndex);
+
+		for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+			myQuery[no_bank_conflict_index(lane)] = ((unsigned int*)(candidateptr))[lane];
+		}
+
+		//queryIndex != resultIndex -> reverse complement
+		if(queryIndex != resultIndex) {
+			make_reverse_complement_inplace(myQuery, querybases);
+		}
+
+		__syncthreads();
+
+		//begin SHD algorithm
+
+		const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
+		const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
+		const int totalbases = subjectbases + querybases;
+		const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+
+		int bestScore = totalbases;                 // score is number of mismatches
+		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
+
+		unsigned int* const subjectdata_hi = mySubject;
+		unsigned int* const subjectdata_lo = mySubject + subjectints / 2 * BLOCKSIZE;
+		unsigned int* const querydata_hi = myQuery;
+		unsigned int* const querydata_lo = myQuery + queryints / 2 * BLOCKSIZE;
+
+        auto hammingdistanceofshift = [&](int shift, unsigned int* const shiftptr_hi, unsigned int* const shiftptr_lo, const int size){
+            const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+			const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int shiftamount = abs(shift);
+            shiftEncodedBasesLeftBy(shiftptr_hi, size, 1);
+			shiftEncodedBasesLeftBy(shiftptr_lo, size, 1);
+            int score = hammingdistanceHiLo(
+						subjectdata_hi,
+						subjectdata_lo,
+						querydata_hi,
+						querydata_lo,
+						max(0, subjectbases - abs(shift)),
+						max(0, querybases - abs(shift)),
+						max_errors);
+
+			score = (score < max_errors ?
+			         score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
+			         : std::numeric_limits<int>::max());                         // too many errors, discard
+
+			return score;
+        };
+
+        for(int shift = 1; shift < subjectbases - minoverlap + 1; shift += 1){
+            const int score = hammingdistanceofshift(shift, subjectdata_hi, subjectdata_lo, subjectints / 2);
+            /*
+                bestScore = (score < bestScore) * score + (score >= bestScore) * bestScore
+                bestShift = (score < bestScore) * shift + (score >= bestScore) * bestShift
+            */
+            if(score < bestScore) {
+				bestScore = score;
+				bestShift = shift;
+			}
+        }
+
+        //shift > 0 means that subject was shifted. now, restore subject to original sequence
+        //since query is shifted for negative shift amounts.
+        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
+            mySubject[lane] = ((unsigned int*)(subjectptr))[lane];
+        }
+
+        for(int shift = 0; shift >= -querybases + minoverlap; shift -= 1){
+            const int score = hammingdistanceofshift(shift, querydata_hi, querydata_lo, queryints / 2);
+            if(score < bestScore) {
+				bestScore = score;
+				bestShift = shift;
+			}
+        }
+
+		const int queryoverlapbegin_incl = max(-bestShift, 0);
+		const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+		const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+		const int opnr = bestScore - totalbases + 2*overlapsize;
+
+		alignment_scores[resultIndex] = bestScore;
+		alignment_overlaps[resultIndex] = overlapsize;
+		alignment_shifts[resultIndex] = bestShift;
+		alignment_nOps[resultIndex] = opnr;
+		alignment_isValid[resultIndex] = (bestShift != -querybases);
+	}
+}
+
+
+
+
+
+template<class B, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectLength, class GetCandidateLength>
+void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed_async(
+			int* d_alignment_scores,
+			int* d_alignment_overlaps,
+			int* d_alignment_shifts,
+			int* d_alignment_nOps,
+			bool* d_alignment_isValid,
+			const int* d_candidates_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			int max_sequence_bytes,
+			int min_overlap,
+			double maxErrorRate,
+			double min_overlap_ratio,
+			B getNumBytes,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectLength getSubjectLength,
+			GetCandidateLength getCandidateLength,
+			cudaStream_t stream,
+			KernelLaunchHandle& handle){
+
+	    #define mycall(blocksize) cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed<(blocksize)> \
+	        <<<grid, block, smem, stream>>>( \
+    		d_alignment_scores, \
+    		d_alignment_overlaps, \
+    		d_alignment_shifts, \
+    		d_alignment_nOps, \
+    		d_alignment_isValid, \
+    		d_candidates_per_subject_prefixsum, \
+    		n_subjects, \
+    		n_queries, \
+    		max_sequence_bytes, \
+    		min_overlap, \
+    		maxErrorRate, \
+    		min_overlap_ratio, \
+    		getNumBytes, \
+    		getSubjectPtr, \
+    		getCandidatePtr, \
+    		getSubjectLength, \
+    		getCandidateLength); CUERR;
+
+    	const int blocksize = 64;
+    	const std::size_t smem = sizeof(char) * (2*max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
+
+    	int max_blocks_per_device = 1;
+
+    	KernelLaunchConfig kernelLaunchConfig;
+    	kernelLaunchConfig.threads_per_block = blocksize;
+    	kernelLaunchConfig.smem = smem;
+
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDtransposed);
+    	if(iter == handle.kernelPropertiesMap.end()) {
+
+    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+    		#define getProp(blocksize) { \
+            		KernelLaunchConfig kernelLaunchConfig; \
+            		kernelLaunchConfig.threads_per_block = (blocksize); \
+            		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * (blocksize) + 2 * max_sequence_bytes); \
+            		KernelProperties kernelProperties; \
+            		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+            					cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed<(blocksize), B, \
+            					                                                                GetSubjectPtr, GetCandidatePtr, \
+            					                                                                GetSubjectLength, GetCandidateLength>, \
+            					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+            		mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+    		getProp(32);
+    		getProp(64);
+    		getProp(96);
+    		getProp(128);
+    		getProp(160);
+    		getProp(192);
+    		getProp(224);
+    		getProp(256);
+
+    		const auto& kernelProperties = mymap[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+    		handle.kernelPropertiesMap[KernelId::PopcountSHDtransposed] = std::move(mymap);
+
+    		#undef getProp
+    	}else{
+    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    	}
+
+    	dim3 block(blocksize, 1, 1);
+    	dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1);         // one block per candidate
+
+    	switch(blocksize) {
+    	case 32: mycall(32); break;
+    	case 64: mycall(64); break;
+    	case 96: mycall(96); break;
+    	case 128: mycall(128); break;
+    	case 160: mycall(160); break;
+    	case 192: mycall(192); break;
+    	case 224: mycall(224); break;
+    	case 256: mycall(256); break;
+    	default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed with wrong blocksize due to a bug.");
+    	}
+
+	    #undef mycall
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
