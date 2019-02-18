@@ -1267,6 +1267,169 @@ private:
 			}
 		}
 	}
+
+    void minhashfunc_other(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept{
+        assert(minparams.k <= 16);
+
+        auto make_kmer_encoded = [](const std::string& sequence, int k){
+
+            constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
+            constexpr std::uint32_t BASE_A = 0x00000000;
+            constexpr std::uint32_t BASE_C = 0x00000001;
+            constexpr std::uint32_t BASE_G = 0x00000002;
+            constexpr std::uint32_t BASE_T = 0x00000003;
+
+            const int l = std::min(k, int(sequence.length()));
+
+            std::uint32_t kmer_enc = 0;
+
+            for(int i = 0; i < l; i++){
+                const int pos = i % basesPerInt;
+                switch(sequence[i]) {
+                case 'A':
+                        kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
+                        break;
+                case 'C':
+                        kmer_enc |= BASE_C << (2*((basesPerInt - 1)-pos));
+                        break;
+                case 'G':
+                        kmer_enc |= BASE_G << (2*((basesPerInt - 1)-pos));
+                        break;
+                case 'T':
+                        kmer_enc |= BASE_T << (2*((basesPerInt - 1)-pos));
+                        break;
+                default:
+                        kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
+                        break;
+                }
+            }
+
+            return kmer_enc;
+        };
+
+        auto make_next_kmer_enc = [](std::uint32_t kmer_enc, int k, const char nextbase){
+            constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
+            constexpr std::uint32_t BASE_A = 0x00000000;
+            constexpr std::uint32_t BASE_C = 0x00000001;
+            constexpr std::uint32_t BASE_G = 0x00000002;
+            constexpr std::uint32_t BASE_T = 0x00000003;
+
+            kmer_enc <<= 2;
+
+            const int pos = (k-1) % basesPerInt;
+            switch(nextbase) {
+            case 'A':
+                    kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
+                    break;
+            case 'C':
+                    kmer_enc |= BASE_C << (2*((basesPerInt - 1)-pos));
+                    break;
+            case 'G':
+                    kmer_enc |= BASE_G << (2*((basesPerInt - 1)-pos));
+                    break;
+            case 'T':
+                    kmer_enc |= BASE_T << (2*((basesPerInt - 1)-pos));
+                    break;
+            default:
+                    kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
+                    break;
+            }
+            return kmer_enc;
+        };
+
+        auto make_reverse_complement_int = [](std::uint32_t s){
+            s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
+            s = ((s >> 4)  & 0x0F0F0F0Fu) | ((s & 0x0F0F0F0Fu) << 4);
+            s = ((s >> 8)  & 0x00FF00FFu) | ((s & 0x00FF00FFu) << 8);
+            s = ((s >> 16) & 0x0000FFFFu) | ((s & 0x0000FFFFu) << 16);
+            return (std::uint32_t(-1) - s) >> (8 * sizeof(s) - (16 << 1));
+        };
+
+        auto thomas_mueller_hash = [](std::uint32_t x){
+            x = ((x >> 16) ^ x) * 0x45d9f3b;
+            x = ((x >> 16) ^ x) * 0x45d9f3b;
+            x = ((x >> 16) ^ x);
+            return x;
+        };
+
+        auto nvidia_hash = [](std::uint32_t x) {
+            x = (x + 0x7ed55d16) + (x << 12);
+            x = (x ^ 0xc761c23c) ^ (x >> 19);
+            x = (x + 0x165667b1) + (x <<  5);
+            x = (x + 0xd3a2646c) ^ (x <<  9);
+            x = (x + 0xfd7046c5) + (x <<  3);
+            x = (x ^ 0xb55a4f09) ^ (x >> 16);
+            return x;
+        };
+
+        auto hashfunc = [&](std::uint32_t x, int i){
+            if(i % 2 == 0){
+                return thomas_mueller_hash(x);
+            }else{
+                return nvidia_hash(x);
+            }
+        };
+
+        std::uint32_t kmer = make_kmer_encoded(sequence, minparams.k);
+        std::uint32_t revcompl = make_reverse_complement_int(kmer);
+
+        //std::cout << "kmer " << kmer << std::endl;
+        //std::cout << "revcompl " << revcompl << std::endl;
+
+        auto updatehashes = [&](bool first){
+            std::uint32_t hashfwd = hashfunc(kmer,0);
+            std::uint32_t hashrc = hashfunc(revcompl,0);
+
+            std::uint32_t hash = hashfwd;
+            bool isForward = true;
+            if(hashrc < hashfwd){
+                hash = hashrc;
+                isForward = false;
+            }
+
+            if(first){
+                minhashSignature[0] = hash;
+                isForwardStrand[0] = isForward;
+            }else{
+                if (minhashSignature[0] > hash){
+                    minhashSignature[0] = hash;
+                    isForwardStrand[0] = isForward;
+                }
+            }
+
+            for (int j = 1; j < minparams.maps; ++j) {
+                hashfwd = hashfunc(hashfwd,j);
+                hashrc = hashfunc(hashrc,j);
+                hash = hashfwd;
+                bool isForward = true;
+                if(hashrc < hashfwd){
+                    hash = hashrc;
+                    isForward = false;
+                }
+
+                if(first){
+                    minhashSignature[j] = hash;
+                    isForwardStrand[j] = isForward;
+                }else{
+                    if (minhashSignature[j] > hash){
+                        minhashSignature[j] = hash;
+                        isForwardStrand[j] = isForward;
+                    }
+                }
+            }
+        };
+
+        updatehashes(true);
+
+        for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
+
+			kmer = make_next_kmer_enc(kmer, minparams.k, sequence[i + minparams.k]);
+            revcompl = make_reverse_complement_int(kmer);
+
+            updatehashes((false));
+		}
+
+	}
 };
 
 
@@ -1934,7 +2097,7 @@ struct MinhasherAllReads {
 	void insertSequence(const std::string& sequence, ReadId_t readnum){
 
 	}
-	
+
     /*
         Query candidate ids
     */
@@ -1954,7 +2117,7 @@ struct MinhasherAllReads {
         return result;
     }
 
-    
+
 
     /*
         This version of getCandidates returns only read ids which are found in at least num_hits maps
