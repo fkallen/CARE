@@ -1833,6 +1833,191 @@ private:
 	}
 };
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+template<class Key_t, class ReadId_t>
+struct MinhasherAllReads {
+	static_assert(std::is_integral<Key_t>::value, "Minhasher Key_t must be integral");
+	static_assert(std::is_integral<ReadId_t>::value, "Minhasher ReadId_t must be integral");
+
+    using Index_t = ReadId_t; //read id type
+    using Value_t = Index_t; //Value type for hashmap
+    using Result_t = Index_t; // Return value for minhash query
+    using Map_t = std::unordered_map<Key_t, std::vector<ReadId_t>>; //internal map type
+
+	static constexpr int bits_key = sizeof(Key_t) * 8;
+	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
+    static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
+    static constexpr int maximum_number_of_maps = 16;
+    static constexpr int maximum_kmer_length = minhasherdetail::max_k<Key_t>::value;
+
+	ReadId_t nReads;
+	std::vector<Result_t> result;
+	MinhashOptions minparams;
+
+
+    MinhasherAllReads() : MinhasherAllReads(MinhashOptions{2,16}){}
+
+    MinhasherAllReads(const MinhashOptions& parameters) : minparams(parameters)
+	{
+	}
+
+	MinhasherAllReads(const MinhashOptions& parameters, const std::vector<int>& deviceIds_) : minparams(parameters)
+	{
+	}
+
+    bool operator==(const MinhasherAllReads& rhs) const{
+        if(nReads != rhs.nReads)
+            return false;
+        return true;
+    }
+
+    bool operator!=(const MinhasherAllReads& rhs) const{
+        return !(*this == rhs);
+    }
+
+	struct Handle{
+		std::vector<Value_t> allUniqueResults;
+        std::vector<Value_t> tmp;
+	};
+
+    std::size_t numBytes() const{
+        return 0;
+    }
+
+
+
+    void saveToFile(const std::string& filename) const{
+    }
+
+    void loadFromFile(const std::string& filename){
+    }
+
+	void init(std::uint64_t nReads_){
+		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
+		if(nReads_-1 > max_read_num)
+			throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
+
+		nReads = nReads_;
+		result.resize(nReads);
+		std::iota(result.begin(), result.end(), Result_t(0));
+	}
+
+	void clear(){
+		nReads = 0;
+	}
+
+	void destroy(){
+		clear();
+	}
+
+	void insertSequence(const std::string& sequence, ReadId_t readnum){
+
+	}
+	
+    /*
+        Query candidate ids
+    */
+
+    /*
+        Convenience wrapper
+    */
+    std::vector<Result_t> getCandidates(const std::string& sequence,
+                                        int num_hits,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        return result;
+    }
+
+    std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        return result;
+    }
+
+    
+
+    /*
+        This version of getCandidates returns only read ids which are found in at least num_hits maps
+    */
+    std::vector<Result_t> getCandidates_some_maps2(const std::string& sequence,
+                                        int num_hits,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        return result;
+    }
+
+    std::vector<Result_t> getCandidates_some_maps(const std::string& sequence,
+                                        int num_hits,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+       return result;
+    }
+
+    /*
+        This version of getCandidates returns only read ids which are found in all maps
+    */
+    std::vector<Result_t> getCandidates_all_maps(const std::string& sequence,
+                                        std::uint64_t max_number_candidates) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        return result;
+    }
+
+// #############################
+
+/*
+    Query number of candidates
+*/
+
+    std::int64_t getNumberOfCandidates(const std::string& sequence,
+                                        int num_hits) const noexcept{
+
+        return std::int64_t(result.size());
+    }
+
+    std::int64_t getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept{
+		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+		// we do not consider reads which are shorter than k
+
+		return std::int64_t(result.size());
+
+	}
+
+//###################################################
+
+	void resize(std::uint64_t nReads_){
+		init(nReads_);
+	}
+
+	void transform(){
+
+	}
+
+};
+
+
 }
 
 #endif
