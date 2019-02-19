@@ -494,6 +494,8 @@ void performCorrection(MinhashOptions minhashOptions,
 	//rename final result to requested output file name and delete intermediate files
 	bool keepIntermediateResults = false;
 
+    TIMERSTARTCPU(finalizing_files);
+
 	#ifdef DO_ALTERNATE
 	if(iters % 2 == 0) {
 		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
@@ -530,7 +532,7 @@ void performCorrection(MinhashOptions minhashOptions,
     if(correctionOptions.extractFeatures){
         std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iters-1) + "_features";
         std::string outputfeaturename = fileOptions.outputfile + "_features";
-        
+
         std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
     }
 
@@ -542,7 +544,7 @@ void performCorrection(MinhashOptions minhashOptions,
 	}
 	#endif
 
-
+    TIMERSTOPCPU(finalizing_files);
 }
 
 

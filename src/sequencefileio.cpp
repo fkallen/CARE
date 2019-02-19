@@ -536,6 +536,9 @@ void sortResultFileUsingDisk(const std::string& filename, std::uint32_t chunksiz
 void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                       FileFormat originalFormat,
                       const std::vector<std::string>& filesToMerge, const std::string& outputfile){
+
+
+    bool oldsyncflag = std::ios::sync_with_stdio(false);
 #if 0
     constexpr std::uint32_t chunksize = 5000000;
 
@@ -647,6 +650,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     std::string correctionline;
     //loop over correction sequences
+    TIMERSTARTCPU(actualmerging);
     while(std::getline(correctionsstream, correctionline)){
         std::stringstream ss(correctionline);
         std::uint64_t correctionReadId;
@@ -689,9 +693,13 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     outputstream.flush();
     outputstream.close();
 
+    TIMERSTOPCPU(actualmerging);
+
     deleteFiles({tempfile});
 
 #endif
+
+    std::ios::sync_with_stdio(oldsyncflag);
 }
 
 

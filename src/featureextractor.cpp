@@ -12,6 +12,7 @@ namespace care{
             return d < 1e-10 ? 0.0 : d;
         };
 
+        //os << f.position << '\t';
         os << std::setprecision(3) << maybezero(f.position_support) << '\t';
         os << f.position_coverage << '\t';
         os << f.alignment_coverage << '\t';
@@ -56,6 +57,11 @@ namespace care{
     		}
         };
 
+        auto almost_equal = [](auto a, auto b){
+            constexpr double prec = 1e-6;
+            return std::abs(a-b) < prec;
+        };
+
         std::vector<MSAFeature> result;
 
         const int alignment_coverage = *std::max_element(coverageptr, coverageptr + columnsToCheck);
@@ -64,7 +70,11 @@ namespace care{
 
             const int localindex = i - subjectColumnsBegin_incl;
 
-            if(supportptr[i] >= support_threshold && consensusptr[i] != sequence[localindex]){
+            if(supportptr[i] >= 0.5 && consensusptr[i] != sequence[localindex]){
+            //if(supportptr[i] >= support_threshold && consensusptr[i] != sequence[localindex]){
+            //if(!almost_equal(supportptr[i], 1.0)){
+            //if(true){
+            //if(origcoverageptr[i] <= 5 && consensusptr[i] != sequence[localindex]){
 
                 int begin = i-k/2;
                 int end = i+k/2;
