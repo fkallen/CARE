@@ -575,6 +575,29 @@ void print_multiple_sequence_alignment_sorted_by_shift(std::ostream& out, const 
     }
 }
 
+template<class F>
+void print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::ostream& out, const char* data, const char* consensus,
+                                                                        int nrows, int ncolumns, std::size_t rowpitch, F get_shift_of_row){
+    std::vector<int> indices(nrows);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    std::sort(indices.begin(), indices.end(),
+            [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+    for(auto i : indices)
+        out << get_shift_of_row(i) << ' ';
+    out << '\n';
+    assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
+    for(int row = 0; row < nrows; row++) {
+        int sortedrow = indices[row];
+        for(int col = 0; col < ncolumns; col++) {
+            const char c = data[sortedrow * rowpitch + col];
+            const char c2 = c == consensus[col] ? '=' : c;
+            out << (c2 == '\0' ? '0' : c2);
+        }
+        out << '\n';
+    }
+}
+
 std::array<int, 5> onehotbase(char base);
 void print_multiple_sequence_alignment(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch);
 
