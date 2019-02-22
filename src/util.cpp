@@ -1,9 +1,29 @@
 #include "../include/util.hpp"
 
 #include <algorithm>
-
+#include <array>
 
 #define SDIV(x,y)(((x)+(y)-1)/(y))
+
+std::array<int, 5> onehotbase(char base){
+        std::array<int, 5> arr = {0,0,0,0,0};
+        if(base == 'A' || base == 'a') arr[0] = 1;
+        if(base == 'C' || base == 'c') arr[1] = 1;
+        if(base == 'G' || base == 'g') arr[2] = 1;
+        if(base == 'T' || base == 't') arr[3] = 1;
+        if(base == 'N' || base == 'n') arr[4] = 1;
+        return arr;
+}
+
+void print_multiple_sequence_alignment(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch){
+    for(int row = 0; row < nrows; row++) {
+        for(int col = 0; col < ncolumns; col++) {
+            const char c = data[row * rowpitch + col];
+            out << (c == '\0' ? '0' : c);
+        }
+        out << '\n';
+    }
+}
 
 void shiftBitsLeftBy(unsigned char* array, int bytes, int shiftamount){
 	constexpr int maxshiftPerIter = 7;

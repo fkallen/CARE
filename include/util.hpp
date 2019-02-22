@@ -2,12 +2,14 @@
 #define CARE_UTIL_HPP
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <iterator>
 #include <functional>
 #include <cmath>
 #include <numeric>
 #include <vector>
+#include <cassert>
 
 /*
     Merge ranges [first1, last1) and [first2, last2) into range beginning at d_first.
@@ -552,8 +554,29 @@ OutputIt set_intersection_n_or_empty(InputIt1 first1, InputIt1 last1,
 }
 
 
+template<class F>
+void print_multiple_sequence_alignment_sorted_by_shift(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch, F get_shift_of_row){
+    std::vector<int> indices(nrows);
+    std::iota(indices.begin(), indices.end(), 0);
 
+    std::sort(indices.begin(), indices.end(),
+            [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+    for(auto i : indices)
+        out << get_shift_of_row(i) << ' ';
+    out << '\n';
+    assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
+    for(int row = 0; row < nrows; row++) {
+        int sortedrow = indices[row];
+        for(int col = 0; col < ncolumns; col++) {
+            const char c = data[sortedrow * rowpitch + col];
+            out << (c == '\0' ? '0' : c);
+        }
+        out << '\n';
+    }
+}
 
+std::array<int, 5> onehotbase(char base);
+void print_multiple_sequence_alignment(std::ostream& out, const char* data, int nrows, int ncolumns, std::size_t rowpitch);
 
 /*
     Bit shifts of bit array
