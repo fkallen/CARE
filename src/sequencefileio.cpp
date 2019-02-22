@@ -538,7 +538,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                       const std::vector<std::string>& filesToMerge, const std::string& outputfile){
 
 
-    bool oldsyncflag = std::ios::sync_with_stdio(false);
+    bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
 #if 0
     constexpr std::uint32_t chunksize = 5000000;
 
