@@ -1202,7 +1202,6 @@ void cuda_find_best_alignment_kernel_exp(
 			int n_queries,
 			double min_overlap_ratio,
 			int min_overlap,
-			double maxErrorRate,
 			AlignmentComp comp,
 			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength){
@@ -1268,7 +1267,6 @@ void call_cuda_find_best_alignment_kernel_async_exp(
 			int n_queries,
 			double min_overlap_ratio,
 			int min_overlap,
-			double maxErrorRate,
 			AlignmentComp d_comp,
 			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength,
@@ -1336,7 +1334,6 @@ void call_cuda_find_best_alignment_kernel_async_exp(
 		n_queries,
 		min_overlap_ratio,
 		min_overlap,
-		maxErrorRate,
 		d_comp,
 		getSubjectLength,
 		getCandidateLength); CUERR;

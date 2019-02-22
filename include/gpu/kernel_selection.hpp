@@ -156,7 +156,6 @@ struct FindBestAlignmentChooserExp {
 				const int* d_candidates_per_subject_prefixsum,
 				double min_overlap_ratio,
 				int min_overlap,
-				double maxErrorRate,
 				double estimatedErrorrate,
 				const ReadId_t* d_subject_read_ids,
 				const ReadId_t* d_candidate_read_ids,
@@ -215,7 +214,7 @@ struct FindBestAlignmentChooserExp {
 						querylength,
 						min_overlap_ratio,
 						min_overlap,
-						estimatedErrorrate * 4.0);
+						estimatedErrorrate * 4.0f);
 		};
 
 		auto callKernel = [&](auto subjectlength, auto querylength){
@@ -231,7 +230,6 @@ struct FindBestAlignmentChooserExp {
 								  n_queries,
 								  min_overlap_ratio,
 								  min_overlap,
-								  maxErrorRate,
 								  best_alignment_comp,
 								  subjectlength,
 								  querylength,
