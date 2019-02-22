@@ -20,9 +20,9 @@ BestAlignment_t choose_best_alignment(int fwd_alignment_overlap,
 			bool revc_alignment_isvalid,
 			int subjectlength,
 			int querylength,
-			double min_overlap_ratio,
+			float min_overlap_ratio,
 			int min_overlap,
-			double maxErrorRate){
+			float maxErrorRate){
 
 	BestAlignment_t retval = BestAlignment_t::None;
 
@@ -33,8 +33,8 @@ BestAlignment_t choose_best_alignment(int fwd_alignment_overlap,
 
 	if(fwd_alignment_isvalid && fwd_alignment_overlap >= minimumOverlap) {
 		if(revc_alignment_isvalid && revc_alignment_overlap >= minimumOverlap) {
-			const double ratio = (double)fwd_alignment_nops / fwd_alignment_overlap;
-			const double revcomplratio = (double)revc_alignment_nops / revc_alignment_overlap;
+			const float ratio = (float)fwd_alignment_nops / fwd_alignment_overlap;
+			const float revcomplratio = (float)revc_alignment_nops / revc_alignment_overlap;
 
 			if(ratio < revcomplratio) {
 				if(ratio < maxErrorRate) {
@@ -55,13 +55,13 @@ BestAlignment_t choose_best_alignment(int fwd_alignment_overlap,
 				}
 			}
 		}else{
-			if((double)fwd_alignment_nops / fwd_alignment_overlap < maxErrorRate) {
+			if((float)fwd_alignment_nops / fwd_alignment_overlap < maxErrorRate) {
 				retval = BestAlignment_t::Forward;
 			}
 		}
 	}else{
 		if(revc_alignment_isvalid && revc_alignment_overlap >= minimumOverlap) {
-			if((double)revc_alignment_nops / revc_alignment_overlap < maxErrorRate) {
+			if((float)revc_alignment_nops / revc_alignment_overlap < maxErrorRate) {
 				retval = BestAlignment_t::ReverseComplement;
 			}
 		}

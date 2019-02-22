@@ -185,7 +185,7 @@ public:
                     default: counts[4]++; break;
                 }
 
-                const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * nColumns + column] : 1.0;
+                const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * nColumns + column] : 1.0f;
                 switch(base){
                     case 'A': weights[0] += weight; break;
                     case 'C': weights[1] += weight; break;
@@ -230,9 +230,9 @@ public:
     }
 
     MSAProperties getMSAProperties() const{
-        const double avg_support_threshold = 1.0-1.0*estimatedErrorrate;
-        const double min_support_threshold = 1.0-3.0*estimatedErrorrate;
-        const double min_coverage_threshold = m_coverage / 6.0 * estimatedCoverage;
+        const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
         const int subjectlength = columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl;
 
@@ -306,8 +306,8 @@ public:
             for(int i = 0; i < subjectlength; i++){
                 const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
 
-                if(support[globalIndex] > 0.5 && origCoverages[globalIndex] < min_coverage_threshold){
-                    double avgsupportkregion = 0;
+                if(support[globalIndex] > 0.5f && origCoverages[globalIndex] < min_coverage_threshold){
+                    float avgsupportkregion = 0;
                     int c = 0;
                     bool kregioncoverageisgood = true;
 
@@ -320,7 +320,7 @@ public:
                     }
 
                     avgsupportkregion /= c;
-                    if(kregioncoverageisgood && avgsupportkregion >= 1.0-estimatedErrorrate){
+                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
                         result.correctedSequence[i] = consensus[globalIndex];
                         foundAColumn = true;
                     }
@@ -356,7 +356,7 @@ public:
                 && queryColumnsBegin_incl <= columnProperties.subjectColumnsBegin_incl + new_columns_to_correct
                 && queryColumnsEnd_excl <= columnProperties.subjectColumnsEnd_excl + new_columns_to_correct){
 
-                float newColMinSupport = 1.0;
+                float newColMinSupport = 1.0f;
                 int newColMinCov = std::numeric_limits<int>::max();
 
                 //check new columns left of subject

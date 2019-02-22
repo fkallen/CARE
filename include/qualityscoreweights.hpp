@@ -9,9 +9,9 @@ namespace cpu{
 
     struct QualityScoreConversion{
         int ASCII_BASE = 33;
-        double MIN_WEIGHT = 0.001;
+        float MIN_WEIGHT = 0.001f;
 
-        using Array_t = std::array<double, 256>;
+        using Array_t = std::array<float, 256>;
 
         Array_t qscore_to_error_prob;
         Array_t qscore_to_weight;
@@ -21,19 +21,19 @@ namespace cpu{
                 if(i < ASCII_BASE)
                     qscore_to_error_prob[i] = 1.0;
                 else
-                    qscore_to_error_prob[i] = std::pow(10.0, -(i-ASCII_BASE)/10.0);
+                    qscore_to_error_prob[i] = std::pow(10.0f, -(i-ASCII_BASE)/10.0f);
             }
 
             for(int i = 0; i < 256; i++){
-                qscore_to_weight[i] = std::max(MIN_WEIGHT, 1.0 - qscore_to_error_prob[i]);
+                qscore_to_weight[i] = std::max(MIN_WEIGHT, 1.0f - qscore_to_error_prob[i]);
             }
         }
 
-        double getErrorProbability(char c) const{
+        float getErrorProbability(char c) const{
             return qscore_to_error_prob[static_cast<unsigned char>(c)];
         }
 
-        double getWeight(char c) const{
+        float getWeight(char c) const{
             return qscore_to_weight[static_cast<unsigned char>(c)];
         }
 

@@ -32,18 +32,18 @@ namespace shd{
                                 const char* query,
                                 int querylength,
                                 int min_overlap,
-                                double maxErrorRate,
-                                double min_overlap_ratio,
+                                float maxErrorRate,
+                                float min_overlap_ratio,
                                 Accessor getChar)  noexcept{
 
         const int totalbases = subjectlength + querylength;
-        const int minoverlap = std::max(min_overlap, int(double(subjectlength) * min_overlap_ratio));
+        const int minoverlap = std::max(min_overlap, int(float(subjectlength) * min_overlap_ratio));
         int bestScore = totalbases; // score is number of mismatches
         int bestShift = -querylength; // shift of query relative to subject. shift < 0 if query begins before subject
 
         for(int shift = -querylength + minoverlap; shift < subjectlength - minoverlap + 1; shift++){
             const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
-            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int max_errors = int(float(overlapsize) * maxErrorRate);
             int score = 0;
 
             for(int j = std::max(-shift, 0); j < std::min(querylength, subjectlength - shift) && score < max_errors; j++){
@@ -83,8 +83,8 @@ namespace shd{
                                 const char* query,
                                 int querylength,
                                 int min_overlap,
-                                double maxErrorRate,
-                                double min_overlap_ratio,
+                                float maxErrorRate,
+                                float min_overlap_ratio,
                                 B getNumBytes) noexcept{
 
         auto shiftEncodedBasesLeftBy = [](unsigned int* array, int size, int shiftamount){
@@ -145,7 +145,7 @@ namespace shd{
         const int subjectbytes = getNumBytes(subjectlength);
         const int querybytes = getNumBytes(querylength);
         const int totalbases = subjectlength + querylength;
-        const int minoverlap = std::max(min_overlap, int(double(subjectlength) * min_overlap_ratio));
+        const int minoverlap = std::max(min_overlap, int(float(subjectlength) * min_overlap_ratio));
 
         int bestScore = totalbases; // score is number of mismatches
         int bestShift = -querylength; // shift of query relative to subject. shift < 0 if query begins before subject
@@ -172,7 +172,7 @@ namespace shd{
         {
             const int shift = 0;
             const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
-            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             int score = hammingdistanceHiLo(subjectdata_hi,
                                 subjectdata_lo,
@@ -195,7 +195,7 @@ namespace shd{
         // shift < 0
         for(int shift = -1; shift >= -querylength + minoverlap; --shift){
             const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
-            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             shiftEncodedBasesLeftBy((unsigned int*)querydata_hi, querybytes / 2 / sizeof(unsigned int), 1);
             shiftEncodedBasesLeftBy((unsigned int*)querydata_lo, querybytes / 2 / sizeof(unsigned int), 1);
@@ -225,7 +225,7 @@ namespace shd{
 
         for(int shift = 1; shift < subjectlength - minoverlap + 1; ++shift){
             const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
-            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             shiftEncodedBasesLeftBy((unsigned int*)subjectdata_hi, subjectbytes / 2 / sizeof(unsigned int), 1);
             shiftEncodedBasesLeftBy((unsigned int*)subjectdata_lo, subjectbytes / 2 / sizeof(unsigned int), 1);
@@ -278,8 +278,8 @@ struct CPUShiftedHammingDistanceChooser<SequenceString>{
     										const char* query,
     										int querylength,
                                             int min_overlap,
-                                            double maxErrorRate,
-                                            double min_overlap_ratio){
+                                            float maxErrorRate,
+                                            float min_overlap_ratio){
 
         auto accessor = [] (const char* data, int length, int index){
             return SequenceString::get(data, length, index);
@@ -298,8 +298,8 @@ struct CPUShiftedHammingDistanceChooser<Sequence2Bit>{
     										const char* query,
     										int querylength,
                                             int min_overlap,
-                                            double maxErrorRate,
-                                            double min_overlap_ratio){
+                                            float maxErrorRate,
+                                            float min_overlap_ratio){
 
         auto accessor = [] (const char* data, int length, int index){
             return Sequence2Bit::get(data, length, index);
@@ -318,8 +318,8 @@ struct CPUShiftedHammingDistanceChooser<Sequence2BitHiLo>{
     										const char* query,
     										int querylength,
                                             int min_overlap,
-                                            double maxErrorRate,
-                                            double min_overlap_ratio){
+                                            float maxErrorRate,
+                                            float min_overlap_ratio){
 
         auto getNumBytes = [] (int nbases){
             return Sequence2BitHiLo::getNumBytes(nbases);

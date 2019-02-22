@@ -47,7 +47,7 @@ struct DataArrays {
 		candidate_ids_usable_size = required_size;
 	}
 
-	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int min_overlap_, double min_overlap_ratio_, bool useQualityScores){
+	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int min_overlap_, float min_overlap_ratio_, bool useQualityScores){
 
 		encoded_sequence_pitch = SDIV(Sequence_t::getNumBytes(max_seq_length), padding_bytes) * padding_bytes;
 		quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;

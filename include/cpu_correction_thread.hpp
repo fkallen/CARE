@@ -356,10 +356,10 @@ iterasdf++;
 
                 //bin alignments
                 std::array<int, 3> counts({0,0,0});
-                const double mismatchratioBaseFactor = correctionOptions.estimatedErrorrate * 1.0;
+                const float mismatchratioBaseFactor = correctionOptions.estimatedErrorrate * 1.0f;
 
                 for(const auto& alignment : bestAlignments){
-                    const double mismatchratio = double(alignment.nOps) / double(alignment.overlap);
+                    const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
 
                     if (mismatchratio < 2 * mismatchratioBaseFactor) {
                         counts[0] += 1;
@@ -378,8 +378,8 @@ iterasdf++;
                 //std::cerr << "Read " << task.readId << ", good alignments after bining: " << std::accumulate(counts.begin(), counts.end(), int(0)) << '\n';
                 //std::cerr << "Read " << task.readId << ", bins: " << counts[0] << " " << counts[1] << " " << counts[2] << '\n';
 
-                const double goodAlignmentsCountThreshold = correctionOptions.estimatedCoverage * correctionOptions.m_coverage;
-                double mismatchratioThreshold = 0;
+                const float goodAlignmentsCountThreshold = correctionOptions.estimatedCoverage * correctionOptions.m_coverage;
+                float mismatchratioThreshold = 0;
                 if (counts[0] >= goodAlignmentsCountThreshold) {
                     mismatchratioThreshold = 2 * mismatchratioBaseFactor;
                 } else if (counts[1] >= goodAlignmentsCountThreshold) {
@@ -397,7 +397,7 @@ iterasdf++;
                 std::size_t newsize = 0;
                 for(std::size_t i = 0; i < bestAlignments.size(); i++){
                     auto& alignment = bestAlignments[i];
-                    const double mismatchratio = double(alignment.nOps) / double(alignment.overlap);
+                    const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
                     const bool notremoved = mismatchratio < mismatchratioThreshold;
 
                     if(notremoved){
@@ -493,7 +493,7 @@ iterasdf++;
                                                     multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
                                                     multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
                                                     task.subject_string,
-                                                    multipleSequenceAlignment.kmerlength, 0.0,
+                                                    multipleSequenceAlignment.kmerlength, 0.0f,
                                                     correctionOptions.estimatedCoverage);
 
 
@@ -567,8 +567,8 @@ iterasdf++;
                     bool isCorrected = false;
 
                     for(const auto& msafeature : MSAFeatures){
-                        constexpr double maxgini = 0.05;
-                        constexpr double forest_correction_fraction = 0.5;
+                        constexpr float maxgini = 0.05f;
+                        constexpr float forest_correction_fraction = 0.5f;
 
                         const bool doCorrect = forestClassifier.shouldCorrect(
                                                         msafeature.position_support,

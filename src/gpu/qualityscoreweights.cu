@@ -10,7 +10,7 @@ namespace care{
 namespace gpu{
 
     #ifdef __NVCC__
-    __device__ double d_qscore_to_weight[256];
+    __device__ float d_qscore_to_weight[256];
     #endif
 
     void init_weights(const std::vector<int>& deviceIds){
@@ -26,7 +26,7 @@ namespace gpu{
 
             for(auto deviceId : deviceIds){
                 cudaSetDevice(deviceId);
-                cudaMemcpyToSymbol(d_qscore_to_weight, weights.data(), 256*sizeof(double)); CUERR;
+                cudaMemcpyToSymbol(d_qscore_to_weight, weights.data(), 256*sizeof(float)); CUERR;
             }
 
             cudaSetDevice(oldId); CUERR;

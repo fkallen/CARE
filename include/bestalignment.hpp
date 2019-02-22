@@ -11,9 +11,9 @@ namespace cpu{
                                         const Alignment& revcmplAlignment,
                                         int subjectlength,
                                         int querylength,
-                                        double min_overlap_ratio,
+                                        float min_overlap_ratio,
                                         int min_overlap,
-                                        double maxErrorRate){
+                                        float maxErrorRate){
         const int overlap = fwdAlignment.get_overlap();
         const int revcomploverlap = revcmplAlignment.get_overlap();
         const int fwdMismatches = fwdAlignment.get_nOps();
@@ -26,8 +26,8 @@ namespace cpu{
 
         if(fwdAlignment.get_isValid() && overlap >= minimumOverlap){
             if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
-                const double ratio = (double)fwdMismatches / overlap;
-                const double revcomplratio = (double)revcmplMismatches / revcomploverlap;
+                const float ratio = (float)fwdMismatches / overlap;
+                const float revcomplratio = (float)revcmplMismatches / revcomploverlap;
 
                 if(ratio < revcomplratio){
                     if(ratio < maxErrorRate){
@@ -48,13 +48,13 @@ namespace cpu{
                     }
                 }
             }else{
-                if((double)fwdMismatches / overlap < maxErrorRate){
+                if((float)fwdMismatches / overlap < maxErrorRate){
                     retval = BestAlignment_t::Forward;
                 }
             }
         }else{
             if(revcmplAlignment.get_isValid() && revcomploverlap >= minimumOverlap){
-                if((double)revcmplMismatches / revcomploverlap < maxErrorRate){
+                if((float)revcmplMismatches / revcomploverlap < maxErrorRate){
                     retval = BestAlignment_t::ReverseComplement;
                 }
             }

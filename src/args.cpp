@@ -36,7 +36,7 @@ namespace args{
 	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
         MinhashOptions result{pr["hashmaps"].as<int>(),
     					      pr["kmerlength"].as<int>(),
-                              0.0};
+                              0.0f};
 
         return result;
 	}
@@ -58,8 +58,8 @@ namespace args{
 	GoodAlignmentProperties to<GoodAlignmentProperties>(const cxxopts::ParseResult& pr){
         GoodAlignmentProperties result{
             pr["minalignmentoverlap"].as<int>(),
-            pr["maxmismatchratio"].as<double>(),
-            pr["minalignmentoverlapratio"].as<double>(),
+            pr["maxmismatchratio"].as<float>(),
+            pr["minalignmentoverlapratio"].as<float>(),
         };
 
         return result;
@@ -75,11 +75,11 @@ namespace args{
             correctionMode,
             pr["candidateCorrection"].as<bool>(),
 			pr["useQualityScores"].as<bool>(),
-            pr["coverage"].as<double>(),
-            pr["errorrate"].as<double>(),
-            pr["m_coverage"].as<double>(),
-            pr["alpha"].as<double>(),
-            pr["base"].as<double>(),
+            pr["coverage"].as<float>(),
+            pr["errorrate"].as<float>(),
+            pr["m_coverage"].as<float>(),
+            pr["alpha"].as<float>(),
+            pr["base"].as<float>(),
             pr["kmerlength"].as<int>(),
             pr["batchsize"].as<int>(),
             3, //new_columns_to_correct
@@ -174,7 +174,7 @@ namespace args{
     bool isValid<GoodAlignmentProperties>(const GoodAlignmentProperties& opt){
         bool valid = true;
 
-        if(opt.maxErrorRate < 0.0 || opt.maxErrorRate > 1.0){
+        if(opt.maxErrorRate < 0.0f || opt.maxErrorRate > 1.0f){
             valid = false;
             std::cout << "Error: maxmismatchratio must be in range [0.0, 1.0], is " + std::to_string(opt.maxErrorRate) << std::endl;
         }
@@ -184,7 +184,7 @@ namespace args{
             std::cout << "Error: min_overlap must be > 0, is " + std::to_string(opt.min_overlap) << std::endl;
         }
 
-        if(opt.min_overlap_ratio < 0.0 || opt.min_overlap_ratio > 1.0){
+        if(opt.min_overlap_ratio < 0.0f || opt.min_overlap_ratio > 1.0f){
             valid = false;
             std::cout << "Error: min_overlap_ratio must be in range [0.0, 1.0], is "
                         + std::to_string(opt.min_overlap_ratio) << std::endl;
@@ -197,12 +197,12 @@ namespace args{
     bool isValid<CorrectionOptions>(const CorrectionOptions& opt){
         bool valid = true;
 
-        if(opt.estimatedCoverage <= 0.0){
+        if(opt.estimatedCoverage <= 0.0f){
             valid = false;
             std::cout << "Error: estimatedCoverage must be > 0.0, is " + std::to_string(opt.estimatedCoverage) << std::endl;
         }
 
-        if(opt.estimatedErrorrate <= 0.0){
+        if(opt.estimatedErrorrate <= 0.0f){
             valid = false;
             std::cout << "Error: estimatedErrorrate must be > 0.0, is " + std::to_string(opt.estimatedErrorrate) << std::endl;
         }

@@ -66,8 +66,8 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 			int n_subjects,
 			int n_candidates,
 			const int* d_num_indices,
-			double mismatchratioBaseFactor,
-			double goodAlignmentsCountThreshold,
+			float mismatchratioBaseFactor,
+			float goodAlignmentsCountThreshold,
 			cudaStream_t stream,
 			KernelLaunchHandle& handle);
 
@@ -109,10 +109,10 @@ void call_msa_correct_subject_kernel_async(
 			size_t sequence_pitch,
 			size_t msa_pitch,
 			size_t msa_weights_pitch,
-			double estimatedErrorrate,
-			double avg_support_threshold,
-			double min_support_threshold,
-			double min_coverage_threshold,
+			float estimatedErrorrate,
+			float avg_support_threshold,
+			float min_support_threshold,
+			float min_coverage_threshold,
 			int k_region,
 			int maximum_sequence_length,
 			cudaStream_t stream,
@@ -142,8 +142,8 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(
 			int max_sequence_bytes,
 			size_t sequencepitch,
 			int min_overlap,
-			double maxErrorRate,
-			double min_overlap_ratio,
+			float maxErrorRate,
+			float min_overlap_ratio,
 			Accessor getChar,
 			RevCompl make_reverse_complement_inplace){
 
@@ -197,7 +197,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(
 
 		const char* query = sharedQuery;
 
-		const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+		const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 		const int totalbases = subjectbases + querybases;
 
 		int bestScore = totalbases;                 // score is number of mismatches
@@ -205,7 +205,7 @@ cuda_shifted_hamming_distance_with_revcompl_kernel(
 
 		for(int shift = -querybases + minoverlap + threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE) {
 			const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-			const int max_errors = int(double(overlapsize) * maxErrorRate);
+			const int max_errors = int(float(overlapsize) * maxErrorRate);
 			int score = 0;
 
 			for(int j = max(-shift, 0); j < min(querybases, subjectbases - shift) && score < max_errors; j++) {
@@ -267,8 +267,8 @@ void call_shd_with_revcompl_kernel_async(
 			int max_sequence_bytes,
 			size_t encodedsequencepitch,
 			int min_overlap,
-			double maxErrorRate,
-			double min_overlap_ratio,
+			float maxErrorRate,
+			float min_overlap_ratio,
 			Accessor accessor,
 			RevCompl make_reverse_complement_inplace,
 			int maxSubjectLength,
@@ -309,7 +309,7 @@ void call_shd_with_revcompl_kernel_async(
 #define getsms(blocksize) {max_blocks_per_SM = 12; \
 }
 
-	const int minoverlap = max(min_overlap, int(double(maxSubjectLength) * min_overlap_ratio));
+	const int minoverlap = max(min_overlap, int(float(maxSubjectLength) * min_overlap_ratio));
 	const int maxShiftsToCheck = maxSubjectLength + maxQueryLength - 2*minoverlap;
 	const std::size_t smem = sizeof(char) * 2 * max_sequence_bytes;
 
@@ -380,8 +380,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
 			int n_candidates,
 			int max_sequence_bytes,
 			int min_overlap,
-			double maxErrorRate,
-			double min_overlap_ratio,
+			float maxErrorRate,
+			float min_overlap_ratio,
 			B getNumBytes,
 			GetSubjectPtr getSubjectPtr,
 			GetCandidatePtr getCandidatePtr,
@@ -560,7 +560,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
 		const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
 		const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
 		const int totalbases = subjectbases + querybases;
-		const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+		const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
 		int bestScore = totalbases;                 // score is number of mismatches
 		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
@@ -577,7 +577,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
 
         for(int shift = threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE) {
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             unsigned int* const shiftptr_hi = mySequence_hi;
             unsigned int* const shiftptr_lo = mySequence_lo;
@@ -622,7 +622,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
 
         for(int shift = -1-int(threadIdx.x); shift >= -querybases + minoverlap; shift -= BLOCKSIZE) {
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-            const int max_errors = int(double(overlapsize) * maxErrorRate);
+            const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             unsigned int* const shiftptr_hi = mySequence_hi;
             unsigned int* const shiftptr_lo = mySequence_lo;
@@ -693,8 +693,8 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
 			int n_queries,
 			int max_sequence_bytes,
 			int min_overlap,
-			double maxErrorRate,
-			double min_overlap_ratio,
+			float maxErrorRate,
+			float min_overlap_ratio,
 			B getNumBytes,
 			GetSubjectPtr getSubjectPtr,
 			GetCandidatePtr getCandidatePtr,
@@ -812,8 +812,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
 			int n_candidates,
 			int max_sequence_bytes,
 			int min_overlap,
-			double maxErrorRate,
-			double min_overlap_ratio,
+			float maxErrorRate,
+			float min_overlap_ratio,
 			B getNumBytes,
 			GetSubjectPtr getSubjectPtr,
 			GetCandidatePtr getCandidatePtr,
@@ -986,7 +986,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
 		const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
 		const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
 		const int totalbases = subjectbases + querybases;
-		const int minoverlap = max(min_overlap, int(double(subjectbases) * min_overlap_ratio));
+		const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
 		int bestScore = totalbases;                 // score is number of mismatches
 		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
@@ -998,7 +998,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
 
         auto hammingdistanceofshift = [&](int shift, unsigned int* const shiftptr_hi, unsigned int* const shiftptr_lo, const int size){
             const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-			const int max_errors = int(double(overlapsize) * maxErrorRate);
+			const int max_errors = int(float(overlapsize) * maxErrorRate);
             const int shiftamount = abs(shift);
             shiftEncodedBasesLeftBy(shiftptr_hi, size, 1);
 			shiftEncodedBasesLeftBy(shiftptr_lo, size, 1);
@@ -1073,8 +1073,8 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed
 			int n_queries,
 			int max_sequence_bytes,
 			int min_overlap,
-			double maxErrorRate,
-			double min_overlap_ratio,
+			float maxErrorRate,
+			float min_overlap_ratio,
 			B getNumBytes,
 			GetSubjectPtr getSubjectPtr,
 			GetCandidatePtr getCandidatePtr,
@@ -1200,7 +1200,7 @@ void cuda_find_best_alignment_kernel_exp(
 			const int* d_candidates_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
-			double min_overlap_ratio,
+			float min_overlap_ratio,
 			int min_overlap,
 			AlignmentComp comp,
 			GetSubjectLength getSubjectLength,
@@ -1265,7 +1265,7 @@ void call_cuda_find_best_alignment_kernel_async_exp(
 			const int* d_candidates_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
-			double min_overlap_ratio,
+			float min_overlap_ratio,
 			int min_overlap,
 			AlignmentComp d_comp,
 			GetSubjectLength getSubjectLength,
@@ -1356,8 +1356,8 @@ void cuda_filter_alignments_by_mismatchratio_kernel(
 			int n_subjects,
 			int n_candidates,
 			const int* d_num_indices,
-			double mismatchratioBaseFactor,
-			double goodAlignmentsCountThreshold){
+			float mismatchratioBaseFactor,
+			float goodAlignmentsCountThreshold){
 
 	using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
 
@@ -1396,7 +1396,7 @@ void cuda_filter_alignments_by_mismatchratio_kernel(
 				const int alignment_overlap = d_alignment_overlaps[candidate_index];
 				const int alignment_nops = d_alignment_nOps[candidate_index];
 
-				const double mismatchratio = double(alignment_nops) / alignment_overlap;
+				const float mismatchratio = float(alignment_nops) / alignment_overlap;
 				if(mismatchratio >= 4 * mismatchratioBaseFactor) {
 					d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
 				}else{
@@ -1434,7 +1434,7 @@ void cuda_filter_alignments_by_mismatchratio_kernel(
 			counts[i] = temp_storage.broadcast[i];
 		}
 
-		double mismatchratioThreshold = 0;
+		float mismatchratioThreshold = 0;
 		if (counts[0] >= goodAlignmentsCountThreshold) {
 			mismatchratioThreshold = 2 * mismatchratioBaseFactor;
 		} else if (counts[1] >= goodAlignmentsCountThreshold) {
@@ -1442,9 +1442,9 @@ void cuda_filter_alignments_by_mismatchratio_kernel(
 		} else if (counts[2] >= goodAlignmentsCountThreshold) {
 			mismatchratioThreshold = 4 * mismatchratioBaseFactor;
 		} else {
-			mismatchratioThreshold = -1;                         //this will invalidate all alignments for subject
+			mismatchratioThreshold = -1.0f;                         //this will invalidate all alignments for subject
 			//mismatchratioThreshold = 4 * mismatchratioBaseFactor; //use alignments from every bin
-			//mismatchratioThreshold = 1.1;
+			//mismatchratioThreshold = 1.1f;
 		}
 
 		// Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
@@ -1456,7 +1456,7 @@ void cuda_filter_alignments_by_mismatchratio_kernel(
 				const int alignment_overlap = d_alignment_overlaps[candidate_index];
 				const int alignment_nops = d_alignment_nOps[candidate_index];
 
-				const double mismatchratio = double(alignment_nops) / alignment_overlap;
+				const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
 				const bool remove = mismatchratio >= mismatchratioThreshold;
 				if(remove)
@@ -1478,8 +1478,8 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 			int n_subjects,
 			int n_candidates,
 			const int* d_num_indices,
-			double mismatchratioBaseFactor,
-			double goodAlignmentsCountThreshold,
+			float mismatchratioBaseFactor,
+			float goodAlignmentsCountThreshold,
 			cudaStream_t stream,
 			KernelLaunchHandle& handle){
 
@@ -1840,7 +1840,7 @@ void msa_add_sequences_kernel_exp(
 		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
 		const int query_alignment_nops = d_alignment_nOps[queryIndex];
 
-		const double defaultweight = 1.0 - sqrtf(query_alignment_nops
+		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
 					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
 
 		assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
@@ -2083,8 +2083,8 @@ void msa_correct_candidates_kernel_exp(
 			size_t sequence_pitch,
 			size_t msa_pitch,
 			size_t msa_weights_pitch,
-			double min_support_threshold,
-			double min_coverage_threshold,
+			float min_support_threshold,
+			float min_coverage_threshold,
 			int new_columns_to_correct,
 			RevCompl make_unpacked_reverse_complement_inplace,
 			GetCandidateLength getCandidateLength){
@@ -2125,7 +2125,7 @@ void msa_correct_candidates_kernel_exp(
 			   && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
 			   && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct) {
 
-				double newColMinSupport = 1.0;
+				float newColMinSupport = 1.0f;
 				int newColMinCov = std::numeric_limits<int>::max();
 				//check new columns left of subject
 				for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
@@ -2204,8 +2204,8 @@ void call_msa_correct_candidates_kernel_async_exp(
 			size_t sequence_pitch,
 			size_t msa_pitch,
 			size_t msa_weights_pitch,
-			double min_support_threshold,
-			double min_coverage_threshold,
+			float min_support_threshold,
+			float min_coverage_threshold,
 			int new_columns_to_correct,
 			RevCompl make_unpacked_reverse_complement_inplace,
 			GetCandidateLength getCandidateLength,

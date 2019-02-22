@@ -14,7 +14,8 @@ namespace care{
     struct MinhashOptions {
         int maps = 2;
         int k = 16;
-        double min_hits_per_candidate = 0.0;
+        float min_hits_per_candidate = 0.0f;
+        float padding = 0;
         bool operator==(const MinhashOptions& other) const{
             return maps == other.maps && k == other.k && min_hits_per_candidate == other.min_hits_per_candidate;
         };
@@ -32,19 +33,19 @@ namespace care{
 
     struct GoodAlignmentProperties{
         int min_overlap = 35;
-        double maxErrorRate = 0.2;
-        double min_overlap_ratio = 0.35;
+        float maxErrorRate = 0.2f;
+        float min_overlap_ratio = 0.35f;
     };
 
     struct CorrectionOptions{
         CorrectionMode correctionMode = CorrectionMode::Hamming;
         bool correctCandidates = false;
         bool useQualityScores = true;
-        double estimatedCoverage = 1.0;
-        double estimatedErrorrate = 0.01;
-        double m_coverage = 0.6;
-        double graphalpha = 1.0;
-        double graphx = 1.5;
+        float estimatedCoverage = 1.0f;
+        float estimatedErrorrate = 0.01f;
+        float m_coverage = 0.6f;
+        float graphalpha = 1.0f;
+        float graphx = 1.5f;
         int kmerlength = 16;
 		int batchsize = 5;
         int new_columns_to_correct = 0;

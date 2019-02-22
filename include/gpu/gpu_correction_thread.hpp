@@ -221,12 +221,12 @@ struct ErrorCorrectionThreadOnlyGPU {
 	struct TransitionFunctionData {
 		ReadIdGenerator_t* readIdGenerator;
 		std::vector<ReadId_t>* readIdBuffer;
-		double min_overlap_ratio;
+		float min_overlap_ratio;
 		int min_overlap;
-		double estimatedErrorrate;
-		double maxErrorRate;
-		double estimatedCoverage;
-		double m_coverage;
+		float estimatedErrorrate;
+		float maxErrorRate;
+		float estimatedCoverage;
+		float m_coverage;
 		int new_columns_to_correct;
 		bool correctCandidates;
 		bool useQualityScores;
@@ -1024,7 +1024,7 @@ public:
 					Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
 					dataArrays.encoded_sequence_pitch,
 					transFuncData.min_overlap,
-					transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0,
+					transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0f,
 					transFuncData.min_overlap_ratio,
 					//batch.maxSubjectLength,
 					//batch.maxQueryLength,
@@ -1308,8 +1308,8 @@ public:
 			cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
 
 			// coverage is always >= 1
-			const double min_coverage_threshold = std::max(1.0,
-						transFuncData.m_coverage / 6.0 * transFuncData.estimatedCoverage);
+			const float min_coverage_threshold = std::max(1.0f,
+						transFuncData.m_coverage / 6.0f * transFuncData.estimatedCoverage);
 
 			const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
 
@@ -1465,11 +1465,11 @@ public:
 			return BatchState::StartClassicCorrection;
 		}else{
 
-			const double avg_support_threshold = 1.0-1.0*transFuncData.estimatedErrorrate;
-			const double min_support_threshold = 1.0-3.0*transFuncData.estimatedErrorrate;
+			const float avg_support_threshold = 1.0f-1.0f*transFuncData.estimatedErrorrate;
+			const float min_support_threshold = 1.0f-3.0f*transFuncData.estimatedErrorrate;
 			// coverage is always >= 1
-			const double min_coverage_threshold = std::max(1.0,
-						transFuncData.m_coverage / 6.0 * transFuncData.estimatedCoverage);
+			const float min_coverage_threshold = std::max(1.0f,
+						transFuncData.m_coverage / 6.0f * transFuncData.estimatedCoverage);
 			const int new_columns_to_correct = transFuncData.new_columns_to_correct;
 
 			// Step 14. Correction
@@ -1612,12 +1612,12 @@ public:
 							columnProperties.subjectColumnsBegin_incl,
 							columnProperties.subjectColumnsEnd_excl,
 							task.subject_string,
-							transFuncData.minhasher->minparams.k, 0.0,
+							transFuncData.minhasher->minparams.k, 0.0f,
 							transFuncData.estimatedCoverage);
 
 				for(const auto& msafeature : MSAFeatures) {
-					constexpr double maxgini = 0.05;
-					constexpr double forest_correction_fraction = 0.5;
+					constexpr float maxgini = 0.05f;
+					constexpr float forest_correction_fraction = 0.5f;
     //care::ForestClassifier fc("./forests/testforest.so");
 #if 0
 					const bool doCorrect = care::forestclassifier::shouldCorrect(
@@ -1901,6 +1901,7 @@ public:
             const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
             const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
             const char* const my_multiple_sequence_alignment = arrays.h_multiple_sequence_alignments + offset1;
+            const char* const my_consensus = arrays.h_consensus + subject_index * arrays.msa_pitch;
             const int subjectColumnsBegin_incl = arrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl;
 			const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
             const int ncolumns = arrays.h_msa_column_properties[subject_index].columnsToCheck;
@@ -1914,6 +1915,9 @@ public:
             std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns
                         << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << '\n';
             print_multiple_sequence_alignment_sorted_by_shift(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, arrays.msa_pitch, get_shift_of_row);
+            std::cout << '\n';
+            print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::cout, my_multiple_sequence_alignment, my_consensus,
+                                                                            msa_rows, ncolumns, arrays.msa_pitch, get_shift_of_row);
             //print_multiple_sequence_alignment(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, arrays.msa_pitch);
             std::cout << '\n';
         }
@@ -2169,7 +2173,7 @@ public:
 						columnProperties.subjectColumnsBegin_incl,
 						columnProperties.subjectColumnsEnd_excl,
 						task.subject_string,
-						transFuncData.minhasher->minparams.k, 0.0,
+						transFuncData.minhasher->minparams.k, 0.0f,
 						transFuncData.estimatedCoverage);
 #else
             //const size_t msa_weights_pitch_floats = dataarrays.msa_weights_pitch / sizeof(float);

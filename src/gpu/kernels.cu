@@ -266,10 +266,10 @@ namespace gpu{
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
-                            double estimatedErrorrate,
-                            double avg_support_threshold,
-                            double min_support_threshold,
-                            double min_coverage_threshold,
+                            float estimatedErrorrate,
+                            float avg_support_threshold,
+                            float min_support_threshold,
+                            float min_coverage_threshold,
                             int k_region){
 
         using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
@@ -284,13 +284,13 @@ namespace gpu{
 
         __shared__ bool broadcastbuffer;
 
-        auto isGoodAvgSupport = [&](double avgsupport){
+        auto isGoodAvgSupport = [&](float avgsupport){
             return avgsupport >= avg_support_threshold;
         };
-        auto isGoodMinSupport = [&](double minsupport){
+        auto isGoodMinSupport = [&](float minsupport){
             return minsupport >= min_support_threshold;
         };
-        auto isGoodMinCoverage = [&](double mincoverage){
+        auto isGoodMinCoverage = [&](float mincoverage){
             return mincoverage >= min_coverage_threshold;
         };
 
@@ -367,8 +367,8 @@ namespace gpu{
                 for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
                     const int globalIndex = subjectColumnsBegin_incl + i;
 
-                    if(my_support[globalIndex] > 0.5 && my_orig_coverage[globalIndex] <= min_coverage_threshold){
-                        double avgsupportkregion = 0;
+                    if(my_support[globalIndex] > 0.5f && my_orig_coverage[globalIndex] <= min_coverage_threshold){
+                        float avgsupportkregion = 0;
                         int c = 0;
                         bool kregioncoverageisgood = true;
 
@@ -386,7 +386,7 @@ namespace gpu{
 						//if(i == 33 || i == 34){
 						//	printf("%d %f\n", i, avgsupportkregion);
 						//}
-                        if(kregioncoverageisgood && avgsupportkregion >= 1.0-estimatedErrorrate){
+                        if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
                             my_corrected_subject[i] = my_consensus[globalIndex];
                             foundAColumn = true;
                         }
@@ -420,10 +420,10 @@ namespace gpu{
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
-                            double estimatedErrorrate,
-                            double avg_support_threshold,
-                            double min_support_threshold,
-                            double min_coverage_threshold,
+                            float estimatedErrorrate,
+                            float avg_support_threshold,
+                            float min_support_threshold,
+                            float min_coverage_threshold,
                             int k_region,
                             int maximum_sequence_length,
                             cudaStream_t stream,
