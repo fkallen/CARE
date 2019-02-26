@@ -367,7 +367,9 @@ namespace gpu{
                 for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
                     const int globalIndex = subjectColumnsBegin_incl + i;
 
-                    if(my_support[globalIndex] > 0.5f && my_orig_coverage[globalIndex] <= min_coverage_threshold){
+                    if(my_corrected_subject[i] != my_consensus[globalIndex]
+                                && my_support[globalIndex] > 0.5f
+                                && my_orig_coverage[globalIndex] <= min_coverage_threshold){
                         float avgsupportkregion = 0;
                         int c = 0;
                         bool kregioncoverageisgood = true;

@@ -1906,14 +1906,59 @@ public:
 			const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
             const int ncolumns = arrays.h_msa_column_properties[subject_index].columnsToCheck;
             const int msa_rows = 1 + arrays.h_indices_per_subject[subject_index];
+            bool isHQ = arrays.h_is_high_quality_subject[subject_index];
+            bool isCorrected = arrays.h_subject_is_corrected[subject_index];
+
+            const char* const my_corrected_subject_data = arrays.h_corrected_subjects + subject_index * arrays.sequence_pitch;
+            const char* const my_corrected_candidates_data = arrays.h_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index] * arrays.sequence_pitch;
+            const int* const my_indices_of_corrected_candidates = arrays.h_indices_of_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index];
+
+            auto mismatch = std::mismatch(task.subject_string.begin(), task.subject_string.end(), &my_consensus[subjectColumnsBegin_incl]);
+            bool subjectAndConsensusDiffer = !(mismatch.first == task.subject_string.end() || mismatch.second == &my_consensus[subjectColumnsEnd_excl]);
+
+
+
+            std::string corrected_subject;
+            bool more_candidates_after_correction = false;
+            if(isCorrected){
+                const int subject_length = task.subject_string.length();
+                corrected_subject = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
+                const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
+                auto newCandidateList = transFuncData.minhasher->getCandidates(corrected_subject, hits_per_candidate, transFuncData.max_candidates);
+                auto readIdPos = std::lower_bound(newCandidateList.begin(), newCandidateList.end(), task.readId);
+                if(readIdPos != newCandidateList.end() && *readIdPos == task.readId) {
+                    newCandidateList.erase(readIdPos);
+                }
+                if(newCandidateList.size() > task.candidate_read_ids.size())
+                    more_candidates_after_correction = true;
+            }
+
+
+
+            int comp = -1;
+            if(!subjectAndConsensusDiffer && !isCorrected)
+                comp = 0;
+            else if(!subjectAndConsensusDiffer && isCorrected)
+                comp = 1;
+            else if(subjectAndConsensusDiffer && !isCorrected)
+                comp = 2;
+            else if(subjectAndConsensusDiffer && isCorrected)
+                comp = 3;
 
             auto get_shift_of_row = [&](int row){
                 if(row == 0) return 0;
                 const int queryIndex = indices_for_this_subject[row-1];
                 return arrays.h_alignment_shifts[queryIndex];
             };
-            std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns
+
+            std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns << ", HQ-MSA: " << (isHQ ? "True" : "False")
+                        << ", comp " << comp << ", more cand: " << (more_candidates_after_correction ? "True" : "False")
                         << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << '\n';
+            if(isCorrected){
+                const int subject_length = task.subject_string.length();
+                std::string s{my_corrected_subject_data, my_corrected_subject_data + subject_length};
+                std::cout << s << '\n';
+            }
             print_multiple_sequence_alignment_sorted_by_shift(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, arrays.msa_pitch, get_shift_of_row);
             std::cout << '\n';
             print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::cout, my_multiple_sequence_alignment, my_consensus,

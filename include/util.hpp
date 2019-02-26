@@ -564,13 +564,21 @@ void print_multiple_sequence_alignment_sorted_by_shift(std::ostream& out, const 
     for(auto i : indices)
         out << get_shift_of_row(i) << ' ';
     out << '\n';
-    assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
+    //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
     for(int row = 0; row < nrows; row++) {
         int sortedrow = indices[row];
+        if(sortedrow == 0)
+            out << ">> ";
+        else
+            out << "   ";
         for(int col = 0; col < ncolumns; col++) {
             const char c = data[sortedrow * rowpitch + col];
             out << (c == '\0' ? '0' : c);
         }
+        if(sortedrow == 0)
+            out << " <<";
+        else
+            out << "   ";
         out << '\n';
     }
 }
@@ -586,14 +594,22 @@ void print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::ostrea
     for(auto i : indices)
         out << get_shift_of_row(i) << ' ';
     out << '\n';
-    assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
+    //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
     for(int row = 0; row < nrows; row++) {
         int sortedrow = indices[row];
+        if(sortedrow == 0)
+            out << ">> ";
+        else
+            out << "   ";
         for(int col = 0; col < ncolumns; col++) {
             const char c = data[sortedrow * rowpitch + col];
             const char c2 = c == consensus[col] ? '=' : c;
             out << (c2 == '\0' ? '0' : c2);
         }
+        if(sortedrow == 0)
+            out << " <<";
+        else
+            out << "   ";
         out << '\n';
     }
 }
