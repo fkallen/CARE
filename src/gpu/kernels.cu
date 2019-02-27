@@ -54,6 +54,11 @@ namespace gpu{
                             int msa_max_column_count,
                             int blocks_per_msa){
 
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
         const int localBlockId = blockIdx.x % blocks_per_msa;
@@ -112,7 +117,7 @@ namespace gpu{
 					//if(!(base == 'A' || base == 'C' || base == 'G' || base == 'T')){
 					//	assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
 					//}
-
+#if 0
                     Aw += (base == 'A' ? weight : 0);
                     Cw += (base == 'C' ? weight : 0);
                     Gw += (base == 'G' ? weight : 0);
@@ -122,8 +127,19 @@ namespace gpu{
                     Cs += (base == 'C');
                     Gs += (base == 'G');
                     Ts += (base == 'T');
+#else
+                    Aw += (base == A_enc ? weight : 0);
+                    Cw += (base == C_enc ? weight : 0);
+                    Gw += (base == G_enc ? weight : 0);
+                    Tw += (base == T_enc ? weight : 0);
 
-                    columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
+                    As += (base == A_enc);
+                    Cs += (base == C_enc);
+                    Gs += (base == G_enc);
+                    Ts += (base == T_enc);
+#endif
+                    //columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
+                    columnCoverage += !(base & 0xFC);
                 }
 
                 my_countsA[column] = As;
@@ -142,6 +158,7 @@ namespace gpu{
 
                 const float columnWeight = Aw + Cw + Gw + Tw;
                 float consWeight = Aw;
+#if 0
                 char cons = 'A';
 
                 cons = Cw > consWeight ? 'C' : cons;
@@ -152,7 +169,18 @@ namespace gpu{
 
                 cons = Tw > consWeight ? 'T' : cons;
                 consWeight = Tw > consWeight ? Tw : consWeight;
+#else
+                char cons = A_enc;
 
+                cons = Cw > consWeight ? C_enc : cons;
+                consWeight = Cw > consWeight ? Cw : consWeight;
+
+                cons = Gw > consWeight ? G_enc : cons;
+                consWeight = Gw > consWeight ? Gw : consWeight;
+
+                cons = Tw > consWeight ? T_enc : cons;
+                consWeight = Tw > consWeight ? Tw : consWeight;
+#endif
                 /*char consByCount = 'A';
                 int consByCountCount = As;
                 consByCount = Cs > consByCountCount ? 'C' : cons;
@@ -175,16 +203,16 @@ namespace gpu{
 
                 if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
                     const char subjectbase = my_multiple_sequence_alignment[column];
-                    if(subjectbase == 'A'){
+                    if(subjectbase == A_enc){
                         my_orig_weights[column] = Aw;
                         my_orig_coverage[column] = As;
-                    }else if(subjectbase == 'C'){
+                    }else if(subjectbase == C_enc){
                         my_orig_weights[column] = Cw;
                         my_orig_coverage[column] = Cs;
-                    }else if(subjectbase == 'G'){
+                    }else if(subjectbase == G_enc){
                         my_orig_weights[column] = Gw;
                         my_orig_coverage[column] = Gs;
-                    }else if(subjectbase == 'T'){
+                    }else if(subjectbase == T_enc){
                         my_orig_weights[column] = Tw;
                         my_orig_coverage[column] = Ts;
                     }
@@ -352,6 +380,21 @@ namespace gpu{
             return mincoverage >= min_coverage_threshold;
         };
 
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 		//const int n_indices = *d_num_indices;
 
@@ -405,7 +448,7 @@ namespace gpu{
 
             if(isHQ){
                 for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(my_consensus[i]);
                 }
                 if(threadIdx.x == 0){
                     d_subject_is_corrected[subjectIndex] = true;
@@ -416,7 +459,7 @@ namespace gpu{
 
                 //copy orignal sequence, which is in first row of msa, to corrected sequences
                 for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    my_corrected_subject[i - subjectColumnsBegin_incl] = my_multiple_sequence_alignment[i];
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(my_multiple_sequence_alignment[i]);
                 }
 
                 const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
@@ -447,7 +490,7 @@ namespace gpu{
 						//	printf("%d %f\n", i, avgsupportkregion);
 						//}
                         if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
-                            my_corrected_subject[i] = my_consensus[globalIndex];
+                            my_corrected_subject[i] = to_nuc(my_consensus[globalIndex]);
                             foundAColumn = true;
                         }
                     }

@@ -385,7 +385,8 @@ struct MSAAddSequencesChooserExp {
 		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
 		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
-			return Sequence_t::get_as_nucleotide(data, length, index);
+			//return Sequence_t::get_as_nucleotide(data, length, index);
+            return Sequence_t::get(data, length, index);
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){

@@ -1757,7 +1757,7 @@ void msa_add_sequences_kernel_exp(
 			size_t quality_pitch,
 			size_t msa_row_pitch,
 			size_t msa_weights_row_pitch,
-			Accessor get_as_nucleotide,
+			Accessor get,
 			RevCompl make_unpacked_reverse_complement_inplace,
 			GetSubjectPtr getSubjectPtr,
 			GetCandidatePtr getCandidatePtr,
@@ -1766,19 +1766,19 @@ void msa_add_sequences_kernel_exp(
 			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength){
 
-	auto reverse_float = [](float* sequence, int length){
+    auto reverse_float = [](float* sequence, int length){
 
-				     for(int i = 0; i < length/2; i++) {
-					     const float front = sequence[i];
-					     const float back = sequence[length - 1 - i];
-					     sequence[i] = back;
-					     sequence[length - 1 - i] = front;
-				     }
+        for(int i = 0; i < length/2; i++) {
+            const float front = sequence[i];
+            const float back = sequence[length - 1 - i];
+            sequence[i] = back;
+            sequence[length - 1 - i] = front;
+        }
 
-				     if(length % 2 == 1) {
-					     ;                         // when sequencelength is odd, the center remains unchanged
-				     }
-			     };
+        if(length % 2 == 1) {
+            ;                         // when sequencelength is odd, the center remains unchanged
+        }
+    };
 
 	extern __shared__ float sharedmem[];
 
@@ -1804,7 +1804,7 @@ void msa_add_sequences_kernel_exp(
 		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
 		for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x) {
-			multiple_sequence_alignment[subjectColumnsBegin_incl + i] = get_as_nucleotide(subject, subjectLength, i);
+			multiple_sequence_alignment[subjectColumnsBegin_incl + i] = get(subject, subjectLength, i);
 			multiple_sequence_alignment_weight[subjectColumnsBegin_incl + i] = canUseQualityScores ?
 			                                                                   (float)d_qscore_to_weight[(unsigned char)subjectQualityScore[i]]
 			                                                                   : 1.0f;
@@ -1883,7 +1883,7 @@ void msa_add_sequences_kernel_exp(
 			for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
 				const int globalIndex = defaultcolumnoffset + i;
 
-				multiple_sequence_alignment[row * msa_row_pitch + globalIndex] = get_as_nucleotide(query, queryLength, i);
+				multiple_sequence_alignment[row * msa_row_pitch + globalIndex] = get(query, queryLength, i);
 
 				multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]
 				        = canUseQualityScores ?
@@ -1892,7 +1892,7 @@ void msa_add_sequences_kernel_exp(
 			}
 		}else{
 			for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
-				sharedSequence[i] = get_as_nucleotide(query, queryLength, i);
+				sharedSequence[i] = get(query, queryLength, i);
 				sharedWeights[i] = canUseQualityScores ?
 				                   (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight
 				                   : 1.0f;
@@ -2097,6 +2097,16 @@ void msa_correct_candidates_kernel_exp(
 			RevCompl make_unpacked_reverse_complement_inplace,
 			GetCandidateLength getCandidateLength){
 
+    auto to_nuc = [](auto c){
+        switch(c){
+        case 0x00: return 'A';
+        case 0x01: return 'C';
+        case 0x02: return 'G';
+        case 0x03: return 'T';
+        default: return 'F';
+        }
+    };
+
 	const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 	const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
 	//const int n_indices = *d_num_indices;
@@ -2160,7 +2170,7 @@ void msa_correct_candidates_kernel_exp(
 				   && newColMinCov >= min_coverage_threshold) {
 
 					for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE) {
-						my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+						my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = to_nuc(my_consensus[i]);
 					}
 
 					__syncthreads();                                         // need to wait until all threads have written my_corrected_candidates before calculating reverse complement
