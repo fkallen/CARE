@@ -231,7 +231,7 @@ public:
     }
 
     void find_consensus(){
-        find_consensus();
+        find_consensus1();
     }
 
     void find_consensus1(){
