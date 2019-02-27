@@ -304,6 +304,9 @@ iterasdf++;
                 bestCandidateReadIds.reserve(task.candidate_read_ids.size());
                 bestReverseComplements.reserve(task.candidate_read_ids.size());
 
+                std::vector<ReadId_t> discardedAlignmentsCandidateReadIds;
+                discardedAlignmentsCandidateReadIds.reserve(task.candidate_read_ids.size());
+
                 //calculate alignments
                 for(const ReadId_t candidateId: task.candidate_read_ids){
                     const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
@@ -350,7 +353,8 @@ iterasdf++;
                         bestCandidateReadIds.emplace_back(candidateId);
                         bestReverseComplements.emplace_back(std::move(reverse_complement_candidate));
                     }else{
-                        ; // discard
+                        // discard
+                        discardedAlignmentsCandidateReadIds.emplace_back(candidateId);
                     }
                 }
 
@@ -393,6 +397,16 @@ iterasdf++;
                         continue;  //no correction possible
                 }
 
+                std::vector<AlignmentResult_t> removedFilteredAlignments;
+                std::vector<BestAlignment_t> removedFilteredAlignmentFlags;
+                std::vector<ReadId_t> removedFilteredCandidateReadIds;
+                std::vector<std::unique_ptr<std::uint8_t[]>> removedFilteredReverseComplements;
+
+                removedFilteredAlignments.reserve(bestAlignments.size());
+                removedFilteredAlignmentFlags.reserve(bestAlignments.size());
+                removedFilteredCandidateReadIds.reserve(bestAlignments.size());
+                removedFilteredReverseComplements.reserve(bestAlignments.size());
+
                 //filter alignments
                 std::size_t newsize = 0;
                 for(std::size_t i = 0; i < bestAlignments.size(); i++){
@@ -408,6 +422,11 @@ iterasdf++;
                             bestReverseComplements[newsize] = std::move(bestReverseComplements[i]);
 
                         ++newsize;
+                    }else{
+                        removedFilteredAlignments.emplace_back(bestAlignments[i]);
+                        removedFilteredAlignmentFlags.emplace_back(bestAlignmentFlags[i]);
+                        removedFilteredCandidateReadIds.emplace_back(bestCandidateReadIds[i]);
+                        removedFilteredReverseComplements.emplace_back(std::move(bestReverseComplements[i]));
                     }
                 }
 
@@ -481,6 +500,142 @@ iterasdf++;
                 }
 
                 multipleSequenceAlignment.find_consensus();
+
+#if 0
+                auto print_multiple_sequence_alignment = [&](const auto& msa, const auto& alignments){
+                    auto get_shift_of_row = [&](int row){
+                        if(row == 0) return 0;
+                        return alignments[row-1].shift;
+                    };
+
+                    const char* const my_multiple_sequence_alignment = msa.multiple_sequence_alignment.data();
+                    const char* const my_consensus = msa.consensus.data();
+                    const int ncolumns = msa.nColumns;
+                    const int msa_rows = msa.nRows;
+
+                    auto msaproperties = msa.getMSAProperties();
+                    const bool isHQ = msaproperties.isHQ;
+
+                    std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns << ", HQ-MSA: " << (isHQ ? "True" : "False")
+                                << '\n';
+
+                    print_multiple_sequence_alignment_sorted_by_shift(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, ncolumns, get_shift_of_row);
+                    std::cout << '\n';
+                    print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::cout, my_multiple_sequence_alignment, my_consensus,
+                                                                                    msa_rows, ncolumns, ncolumns, get_shift_of_row);
+                    std::cout << '\n';
+                };
+
+                auto msa2 = multipleSequenceAlignment;
+                auto minimizationResult = msa2.minimize(correctionOptions.estimatedCoverage);
+
+                if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
+
+                    msa2.find_consensus();
+                    std::vector<AlignmentResult_t> remaining_alignments(minimizationResult.remaining_candidates.size());
+                    for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
+                        remaining_alignments[i] = bestAlignments[minimizationResult.remaining_candidates[i]];
+                    }
+/*
+                    for(auto i : minimizationResult.remaining_candidates){
+                        std::cout << i << ", ";
+                    }
+                    std::cout << '\n';*/
+
+                    std::cout << ", num_discarded_candidates: " << minimizationResult.num_discarded_candidates;
+                    std::cout << ", column: " << minimizationResult.column;
+                    std::cout << ", significantBase: " << minimizationResult.significantBase;
+                    std::cout << ", consensusBase: " << minimizationResult.consensusBase;
+                    std::cout << ", originalBase: " << minimizationResult.originalBase;
+                    std::cout << ", significantCount: " << minimizationResult.significantCount;
+                    std::cout << ", consensuscount: " << minimizationResult.consensuscount;
+                    std::cout << '\n';
+
+                    std::cout << "Before minimization\n";
+                    print_multiple_sequence_alignment(multipleSequenceAlignment, bestAlignments);
+                    std::cout << "After minimization: discarded " << minimizationResult.num_discarded_candidates << " candidates\n";
+                    print_multiple_sequence_alignment(msa2, remaining_alignments);
+
+
+                    for(int i = 0; i < 5 && !msa2.getMSAProperties().isHQ; i++){
+                        auto msa3 = msa2;
+                        minimizationResult = msa3.minimize(correctionOptions.estimatedCoverage);
+
+                        if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
+
+                            msa3.find_consensus();
+                            std::vector<AlignmentResult_t> remaining_alignments3(minimizationResult.remaining_candidates.size());
+                            for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
+                                remaining_alignments3[i] = remaining_alignments[minimizationResult.remaining_candidates[i]];
+                            }
+
+                            /*for(auto i : minimizationResult.remaining_candidates){
+                                std::cout << i << ", ";
+                            }
+                            std::cout << '\n';*/
+
+                            std::cout << ", num_discarded_candidates: " << minimizationResult.num_discarded_candidates;
+                            std::cout << ", column: " << minimizationResult.column;
+                            std::cout << ", significantBase: " << minimizationResult.significantBase;
+                            std::cout << ", consensusBase: " << minimizationResult.consensusBase;
+                            std::cout << ", originalBase: " << minimizationResult.originalBase;
+                            std::cout << ", significantCount: " << minimizationResult.significantCount;
+                            std::cout << ", consensuscount: " << minimizationResult.consensuscount;
+                            std::cout << '\n';
+
+                            std::cout << "After minimization " << (i+2) << ": discarded " << minimizationResult.num_discarded_candidates << " candidates\n";
+                            print_multiple_sequence_alignment(msa3, remaining_alignments3);
+
+                            std::swap(msa2, msa3);
+                            std::swap(remaining_alignments, remaining_alignments3);
+                        }
+                    }
+                }
+
+#endif
+
+                constexpr int max_num_minimizations = 10;
+
+                if(max_num_minimizations > 0){
+                    int num_minimizations = 1;
+                    auto minimizationResult = multipleSequenceAlignment.minimize(correctionOptions.estimatedCoverage);
+
+                    auto update_after_successfull_minimization = [&](){
+                        if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
+                            std::vector<AlignmentResult_t> bestAlignments2(minimizationResult.remaining_candidates.size());
+                            std::vector<BestAlignment_t> bestAlignmentFlags2(minimizationResult.remaining_candidates.size());
+                            std::vector<ReadId_t> bestCandidateReadIds2(minimizationResult.remaining_candidates.size());
+                            std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements2(minimizationResult.remaining_candidates.size());
+
+                            for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
+                                bestAlignments2[i] = bestAlignments[minimizationResult.remaining_candidates[i]];
+                                bestAlignmentFlags2[i] = bestAlignmentFlags[minimizationResult.remaining_candidates[i]];
+                                bestCandidateReadIds2[i] = bestCandidateReadIds[minimizationResult.remaining_candidates[i]];
+                                bestReverseComplements2[i] = std::move(bestReverseComplements[minimizationResult.remaining_candidates[i]]);
+                            }
+
+                            std::swap(bestAlignments2, bestAlignments);
+                            std::swap(bestAlignmentFlags2, bestAlignmentFlags);
+                            std::swap(bestCandidateReadIds2, bestCandidateReadIds);
+                            std::swap(bestReverseComplements2, bestReverseComplements);
+
+                            //multipleSequenceAlignment.find_consensus();
+
+                            //std::cout << "Minimization " << num_minimizations << ", removed " << minimizationResult.num_discarded_candidates << std::endl;
+                        }
+                    };
+
+                    update_after_successfull_minimization();
+
+                    while(num_minimizations <= max_num_minimizations
+                            && minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
+
+                        minimizationResult = multipleSequenceAlignment.minimize(correctionOptions.estimatedCoverage);
+                        num_minimizations++;
+
+                        update_after_successfull_minimization();
+                    }
+                }
 
                 std::vector<MSAFeature> MSAFeatures;
 

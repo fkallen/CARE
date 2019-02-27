@@ -52,6 +52,19 @@ public:
         MSAProperties msaProperties;
     };
 
+    struct MinimizationResult{
+        bool performedMinimization = false;
+        std::vector<int> remaining_candidates;
+        int num_discarded_candidates = 0;
+
+        int column = 0;
+        char significantBase = 'F';
+        char consensusBase = 'F';
+        char originalBase = 'F';
+        int significantCount = 0;
+        int consensuscount = 0;
+    };
+
     std::vector<char> multiple_sequence_alignment;
     std::vector<float> multiple_sequence_alignment_weights;
     std::vector<char> consensus;
@@ -59,6 +72,22 @@ public:
     std::vector<int> coverage;
     std::vector<float> origWeights;
     std::vector<int> origCoverages;
+
+    std::vector<int> countsA;
+    std::vector<int> countsC;
+    std::vector<int> countsG;
+    std::vector<int> countsT;
+
+    std::vector<float> weightsA;
+    std::vector<float> weightsC;
+    std::vector<float> weightsG;
+    std::vector<float> weightsT;
+
+    std::vector<std::array<int, 4>> countsPerBase;
+    std::vector<std::array<float, 4>> weightsPerBase;
+
+    std::vector<int> sequenceLengths;
+    std::vector<int> shifts;
 
     ColumnProperties columnProperties;
 
@@ -92,6 +121,20 @@ public:
         coverage.resize(cols);
         origWeights.resize(cols);
         origCoverages.resize(cols);
+        countsA.resize(cols);
+        countsC.resize(cols);
+        countsG.resize(cols);
+        countsT.resize(cols);
+        weightsA.resize(cols);
+        weightsC.resize(cols);
+        weightsG.resize(cols);
+        weightsT.resize(cols);
+
+        countsPerBase.resize(cols);
+        weightsPerBase.resize(cols);
+
+        sequenceLengths.resize(rows);
+        shifts.resize(rows);
 
         nRows = rows;
         nColumns = cols;
@@ -110,6 +153,19 @@ public:
         zero(coverage);
         zero(origWeights);
         zero(origCoverages);
+        zero(countsA);
+        zero(countsC);
+        zero(countsG);
+        zero(countsT);
+        zero(weightsA);
+        zero(weightsC);
+        zero(weightsG);
+        zero(weightsT);
+        zero(sequenceLengths);
+        zero(shifts);
+
+        std::fill(countsPerBase.begin(), countsPerBase.end(), std::array<int, 4>{});
+        std::fill(weightsPerBase.begin(), weightsPerBase.end(), std::array<float, 4>{});
 
         insertedCandidates = 0;
     }
@@ -149,6 +205,8 @@ public:
         assert(column + int(sequence.length()) <= nColumns);
 
         std::copy(sequence.begin(), sequence.end(), multiple_sequence_alignment.begin() + row * nColumns + column);
+        sequenceLengths[row] = int(sequence.length());
+        shifts[row] = column - columnProperties.subjectColumnsBegin_incl;
 
         if(canUseWeights){
             for(std::size_t i = 0; i < sequence.length(); ++i){
@@ -165,6 +223,7 @@ public:
     template<class GetQualityWeight>
     void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
         assert(insertedCandidates < nRows-1);
+
 
         insert(1 + insertedCandidates, columnProperties.subjectColumnsBegin_incl + alignment_shift, candidate, getQualityWeight);
 
@@ -194,7 +253,20 @@ public:
                     default: weights[4] += weight; break;
                 }
             }
+#if 0
+            countsA[column] = counts[0];
+            countsC[column] = counts[1];
+            countsG[column] = counts[2];
+            countsT[column] = counts[3];
 
+            weightsA[column] = weights[0];
+            weightsC[column] = weights[1];
+            weightsG[column] = weights[2];
+            weightsT[column] = weights[3];
+#else
+            std::copy(counts.begin(), counts.begin() + 4, countsPerBase[column].begin());
+            std::copy(weights.begin(), weights.begin() + 4, weightsPerBase[column].begin());
+#endif
             coverage[column] = counts[0] + counts[1] + counts[2] + counts[3];
 
             char cons = 'A';
@@ -226,6 +298,165 @@ public:
                     default: assert(false && "This should not happen in find_consensus"); break;
                 }
             }
+        }
+    }
+
+
+    //remove all candidate reads from alignment which are assumed to originate from a different genomic region
+    //returns local candidate indices of remaining candidates
+    MinimizationResult minimize(int dataset_coverage){
+        auto is_significant_count = [&](int count, int consensuscount, int columncoverage, int dataset_coverage)->bool{
+            if(int(dataset_coverage * 0.3f) <= count)
+                return true;
+            return false;
+        };
+
+        constexpr std::array<char, 4> index_to_base{'A','C','G','T'};
+
+        //find column with a non-consensus base with significant coverage
+        int col = 0;
+        bool foundColumn = false;
+        char foundBase = 'F';
+        int foundBaseIndex = 0;
+        int consindex = 0;
+
+        //if anchor has no mismatch to consensus, don't minimize
+        auto pair = std::mismatch(&multiple_sequence_alignment[columnProperties.subjectColumnsBegin_incl],
+                                    &multiple_sequence_alignment[columnProperties.subjectColumnsEnd_excl],
+                                    &consensus[columnProperties.subjectColumnsBegin_incl]);
+
+        if(pair.first == &multiple_sequence_alignment[columnProperties.subjectColumnsEnd_excl]){
+            MinimizationResult result;
+            result.performedMinimization = false;
+            return result;
+        }
+
+        for(int columnindex = columnProperties.subjectColumnsBegin_incl; columnindex < columnProperties.subjectColumnsEnd_excl && !foundColumn; columnindex++){
+            std::array<int,4> counts;
+            //std::array<float,4> weights;
+#if 0
+            counts[0] = countsA[columnindex];
+            counts[1] = countsC[columnindex];
+            counts[2] = countsG[columnindex];
+            counts[3] = countsT[columnindex];
+
+            weights[0] = weightsA[columnindex];
+            weights[1] = weightsC[columnindex];
+            weights[2] = weightsG[columnindex];
+            weights[3] = weightsT[columnindex];
+#else
+
+            counts = countsPerBase[columnindex];
+            //weights = weightsPerBase[columnindex];
+#endif
+            char cons = consensus[columnindex];
+            int consensuscount = 0;
+            consindex = -1;
+
+            switch(cons){
+                case 'A': consensuscount = counts[0]; consindex = 0;break;
+                case 'C': consensuscount = counts[1]; consindex = 1;break;
+                case 'G': consensuscount = counts[2]; consindex = 2;break;
+                case 'T': consensuscount = counts[3]; consindex = 3;break;
+            }
+
+            const char originalbase = multiple_sequence_alignment[0 * nColumns + col];
+
+            //find out if there is a non-consensus base with significant coverage
+            int significantBaseIndex = -1;
+            int maxcount = 0;
+            for(int i = 0; i < 4; i++){
+                if(i != consindex){
+                    bool significant = is_significant_count(counts[i], consensuscount, coverage[columnindex], dataset_coverage);
+
+                    bool process = significant; //maxcount < counts[i] && significant && (cons == originalbase || index_to_base[i] == originalbase);
+
+                    significantBaseIndex = process ? i : significantBaseIndex;
+
+                    //maxcount = process ? std::max(maxcount, counts[i]) : maxcount;
+                }
+            }
+
+            if(significantBaseIndex != -1){
+                foundColumn = true;
+                col = columnindex;
+                foundBase = index_to_base[significantBaseIndex];
+                foundBaseIndex = significantBaseIndex;
+            }
+        }
+
+
+
+        MinimizationResult result;
+        result.performedMinimization = foundColumn;
+        result.column = col;
+
+        if(foundColumn){
+
+            result.remaining_candidates.reserve(nRows-1);
+
+            auto discard_rows = [&](bool keepMatching){
+                char* insertionposition1 = &multiple_sequence_alignment[1 * nColumns + 0];
+                float* insertionposition2 = &multiple_sequence_alignment_weights[1 * nColumns + 0];
+                int insertionrow = 1;
+
+                for(int row = 1; row < nRows; row++){
+                    //check if row is affected by column col
+                    const int row_begin_incl = columnProperties.subjectColumnsBegin_incl + shifts[row];
+                    const int row_end_excl = row_begin_incl + sequenceLengths[row];
+                    const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
+
+                    const char base = multiple_sequence_alignment[row * nColumns + col];
+
+                    if(notAffected || (!(keepMatching ^ (base == foundBase)))){
+                        insertionposition1 = std::copy(&multiple_sequence_alignment[row * nColumns],
+                                                        &multiple_sequence_alignment[(row+1) * nColumns],
+                                                        insertionposition1);
+                        insertionposition2 = std::copy(&multiple_sequence_alignment_weights[row * nColumns],
+                                                        &multiple_sequence_alignment_weights[(row+1) * nColumns],
+                                                        insertionposition2);
+                        shifts[insertionrow] = shifts[row];
+                        sequenceLengths[insertionrow] = sequenceLengths[row];
+
+                        insertionrow++;
+                        result.remaining_candidates.emplace_back(row-1);
+                    }else{
+                        result.num_discarded_candidates++;
+                    }
+                }
+                nRows = insertionrow;
+            };
+
+            //compare found base to original base
+            const char originalbase = multiple_sequence_alignment[0 * nColumns + col];
+
+            result.significantBase = foundBase;
+            result.originalBase = originalbase;
+            result.consensusBase = consensus[col];
+
+            const std::array<int,4> counts = countsPerBase[col];
+            //std::array<int,4> weights = weightsPerBase[columnindex];
+
+            result.significantCount = counts[foundBaseIndex];
+            result.consensuscount = counts[consindex];
+
+
+            if(originalbase == foundBase){
+                //discard all candidates whose base in column col differs from foundBase
+                discard_rows(true);
+            }else{
+                //discard all candidates whose base in column col matches foundBase
+                discard_rows(false);
+            }
+
+            if(result.num_discarded_candidates > 0){
+                find_consensus();
+            }
+
+            return result;
+        }else{
+
+            return result;
         }
     }
 

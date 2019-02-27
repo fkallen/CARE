@@ -561,9 +561,9 @@ void print_multiple_sequence_alignment_sorted_by_shift(std::ostream& out, const 
 
     std::sort(indices.begin(), indices.end(),
             [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-    for(auto i : indices)
-        out << get_shift_of_row(i) << ' ';
-    out << '\n';
+    //for(auto i : indices)
+    //    out << get_shift_of_row(i) << ' ';
+    //out << '\n';
     //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
     for(int row = 0; row < nrows; row++) {
         int sortedrow = indices[row];
@@ -591,9 +591,9 @@ void print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::ostrea
 
     std::sort(indices.begin(), indices.end(),
             [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-    for(auto i : indices)
-        out << get_shift_of_row(i) << ' ';
-    out << '\n';
+    //for(auto i : indices)
+    //    out << get_shift_of_row(i) << ' ';
+    //out << '\n';
     //assert(std::is_sorted(indices.begin(), indices.end(), [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);}));
     for(int row = 0; row < nrows; row++) {
         int sortedrow = indices[row];
