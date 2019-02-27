@@ -397,6 +397,95 @@ iterasdf++;
                         continue;  //no correction possible
                 }
 
+#if 0
+                std::vector<int> indicestmp(bestAlignments.size());
+                std::iota(indicestmp.begin(), indicestmp.end(), 0);
+                auto partitionpoint = std::patition(indicestmp.begin(), indicestmp.end(), [&](int i){
+                    const auto& alignment = bestAlignments[i];
+                    const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+                    const bool notremoved = mismatchratio < mismatchratioThreshold;
+                    return notremoved;
+                });
+
+                {
+                    std::vector<AlignmentResult_t> bestAlignments2;
+                    std::vector<BestAlignment_t> bestAlignmentFlags2;
+                    std::vector<ReadId_t> bestCandidateReadIds2;
+                    std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements2;
+                    bestAlignments2.reserve(bestAlignments.size());
+                    bestAlignmentFlags2.reserve(bestAlignments.size());
+                    bestCandidateReadIds2.reserve(bestAlignments.size());
+                    bestReverseComplements2.reserve(bestAlignments.size());
+
+                    for(int i = 0; i < int(indicestmp.size()); i++){
+                        const int index = indicestmp[0];
+                        bestAlignments[i] = bestAlignments[index];
+                        bestAlignmentFlags[i] = bestAlignmentFlags[index];
+                        bestCandidateReadIds[i] = bestCandidateReadIds[index];
+                        bestReverseComplements[i] = std::move(bestReverseComplements[index]);
+                    }
+
+                    std::swap(bestAlignments2, bestAlignments);
+                    std::swap(bestAlignmentFlags2, bestAlignmentFlags);
+                    std::swap(bestCandidateReadIds, bestCandidateReadIds);
+                    std::swap(bestReverseComplements2, bestReverseComplements);
+                }
+#endif
+
+                std::size_t newsize = 0;
+
+#if 0
+                /*std::vector<AlignmentResult_t> bestAlignments2 = bestAlignments;
+                std::vector<BestAlignment_t> bestAlignmentFlags2 = bestAlignmentFlags;
+                std::vector<ReadId_t> bestCandidateReadIds2 = bestCandidateReadIds;
+                std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements2(bestReverseComplements.size());
+
+                for(std::size_t i = 0; i < bestAlignments.size(); i++){
+
+                    if(bestAlignmentFlags[i]] == BestAlignment_t::ReverseComplement){
+                            const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(bestCandidateReadIds[i]);
+                            const int candidateLength = threadOpts.readStorage->fetchSequenceLength(bestCandidateReadIds[i]);
+                            std::unique_ptr<std::uint8_t[]> reverse_complement_candidate = std::make_unique<std::uint8_t[]>(Sequence_t::getNumBytes(candidateLength));
+
+                            Sequence_t::make_reverse_complement(reverse_complement_candidate.get(), (const std::uint8_t*)candidateptr, candidateLength);
+                            bestReverseComplements.emplace_back(std::move(reverse_complement_candidate));
+                    }else{
+                        bestReverseComplements2.emplace_back(nullptr);
+                    }
+                }*/
+                {
+                    std::size_t begin = 0;
+                    std::size_t end = bestAlignments.size();
+                    std::size_t partitionpoint = 0;
+                    auto predicateAlignment = [&](const auto& alignment){
+                        const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
+                        const bool notremoved = mismatchratio < mismatchratioThreshold;
+                        return notremoved;
+                    };
+                    auto predicateIndex = [&](const auto& index){
+                        return predicateAlignment(bestAlignments[index]);
+                    };
+                    partitionpoint = std::distance(bestAlignments.begin(),
+                                                    std::find_if_not(bestAlignments.begin(), bestAlignments.end(), predicateAlignment));
+                    if(partitionpoint != end){
+                        for(std::size_t i = partitionpoint + 1; i != end; ++i){
+                            if(predicateIndex(i)){
+                                std::swap(bestAlignments[i], bestAlignments[partitionpoint]);
+                                std::swap(bestAlignmentFlags[i], bestAlignmentFlags[partitionpoint]);
+                                std::swap(bestCandidateReadIds[i], bestCandidateReadIds[partitionpoint]);
+                                std::swap(bestReverseComplements[i], bestReverseComplements[partitionpoint]);
+                                partitionpoint++;
+                            }
+                        }
+                    }
+
+                    newsize = partitionpoint;
+                }
+
+                /*std::vector<int> indicestmp(bestAlignments2.size());
+                std::iota(indicestmp.begin(), indicestmp.end(), 0);
+                std::sort(indicestmp.begin(), indicestmp.end(), [&](int i, int j){return bestCandidateReadIds2[i] < bestCandidateReadIds2[j];});*/
+#else
                 std::vector<AlignmentResult_t> removedFilteredAlignments;
                 std::vector<BestAlignment_t> removedFilteredAlignmentFlags;
                 std::vector<ReadId_t> removedFilteredCandidateReadIds;
@@ -408,7 +497,7 @@ iterasdf++;
                 removedFilteredReverseComplements.reserve(bestAlignments.size());
 
                 //filter alignments
-                std::size_t newsize = 0;
+                //std::size_t newsize = 0;
                 for(std::size_t i = 0; i < bestAlignments.size(); i++){
                     auto& alignment = bestAlignments[i];
                     const float mismatchratio = float(alignment.nOps) / float(alignment.overlap);
@@ -431,7 +520,7 @@ iterasdf++;
                 }
 
                 //std::cerr << "Read " << task.readId << ", good alignments after bin filtering: " << newsize << '\n';
-
+#endif
 
                 bestAlignments.resize(newsize);
                 bestAlignmentFlags.resize(newsize);
@@ -594,7 +683,7 @@ iterasdf++;
 
 #endif
 
-                constexpr int max_num_minimizations = 10;
+                constexpr int max_num_minimizations = 0;
 
                 if(max_num_minimizations > 0){
                     int num_minimizations = 1;

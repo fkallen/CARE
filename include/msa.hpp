@@ -231,6 +231,10 @@ public:
     }
 
     void find_consensus(){
+        find_consensus_1();
+    }
+
+    void find_consensus1(){
         for(int column = 0; column < nColumns; ++column){
             std::array<int, 5> counts{{0,0,0,0,0}}; //A,C,G,T, other
             std::array<float, 5> weights{{0,0,0,0,0}}; //A,C,G,T, other
@@ -296,6 +300,85 @@ public:
                     case 'G':origWeights[column] = weights[2]; origCoverages[column] = counts[2]; break;
                     case 'T':origWeights[column] = weights[3]; origCoverages[column] = counts[3]; break;
                     default: assert(false && "This should not happen in find_consensus"); break;
+                }
+            }
+        }
+    }
+
+    void find_consensus_2(){
+        constexpr int lanesPerBatch = 4;
+        std::array<std::array<int, 5>, lanesPerBatch> batchcounts;
+        std::array<std::array<float, 5>, lanesPerBatch> batchweights;
+
+        int batches = SDIV(nColumns, lanesPerBatch);
+
+        for(int batch = 0; batch < batches; batch++){
+            for(auto& arr : batchcounts){
+                std::fill(arr.begin(), arr.end(), 0);
+            }
+            for(auto& arr : batchweights){
+                std::fill(arr.begin(), arr.end(), 0);
+            }
+
+            for(int row = 0; row < nRows; row++){
+                for(int lane = 0; lane < lanesPerBatch; lane++){
+                    const int column = batch * lanesPerBatch + lane;
+                    if(column < nColumns){
+                        const char base = multiple_sequence_alignment[row * nColumns + column];
+                        switch(base){
+                            case 'A': batchcounts[lane][0]++; break;
+                            case 'C': batchcounts[lane][1]++; break;
+                            case 'G': batchcounts[lane][2]++; break;
+                            case 'T': batchcounts[lane][3]++; break;
+                            default: batchcounts[lane][4]++; break;
+                        }
+                        const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * nColumns + column] : 1.0f;
+                        switch(base){
+                            case 'A': batchweights[lane][0] += weight; break;
+                            case 'C': batchweights[lane][1] += weight; break;
+                            case 'G': batchweights[lane][2] += weight; break;
+                            case 'T': batchweights[lane][3] += weight; break;
+                            default: batchweights[lane][4] += weight; break;
+                        }
+                    }
+                }
+            }
+
+            for(int lane = 0; lane < lanesPerBatch; lane++){
+                const int column = batch * lanesPerBatch + lane;
+                if(column < nColumns){
+                    std::copy(batchcounts[lane].begin(), batchcounts[lane].begin() + 4, countsPerBase[column].begin());
+                    std::copy(batchweights[lane].begin(), batchweights[lane].begin() + 4, weightsPerBase[column].begin());
+                    coverage[column] = batchcounts[lane][0] + batchcounts[lane][1] + batchcounts[lane][2] + batchcounts[lane][3];
+
+                    char cons = 'A';
+                    float consWeight = batchweights[lane][0];
+                    if(batchweights[lane][1] > consWeight){
+                        cons = 'C';
+                        consWeight = batchweights[lane][1];
+                    }
+                    if(batchweights[lane][2] > consWeight){
+                        cons = 'G';
+                        consWeight = batchweights[lane][2];
+                    }
+                    if(batchweights[lane][3] > consWeight){
+                        cons = 'T';
+                        consWeight = batchweights[lane][3];
+                    }
+                    consensus[column] = cons;
+                    const float columnWeight = batchweights[lane][0] + batchweights[lane][1] + batchweights[lane][2] + batchweights[lane][3];
+                    support[column] = consWeight / columnWeight;
+
+                    if(columnProperties.subjectColumnsBegin_incl <= column && column < columnProperties.subjectColumnsEnd_excl){
+                        const char subjectBase = multiple_sequence_alignment[0 * nColumns + column];
+                        switch(subjectBase){
+                            case 'A':origWeights[column] = batchweights[lane][0]; origCoverages[column] = batchcounts[lane][0]; break;
+                            case 'C':origWeights[column] = batchweights[lane][1]; origCoverages[column] = batchcounts[lane][1]; break;
+                            case 'G':origWeights[column] = batchweights[lane][2]; origCoverages[column] = batchcounts[lane][2]; break;
+                            case 'T':origWeights[column] = batchweights[lane][3]; origCoverages[column] = batchcounts[lane][3]; break;
+                            default: assert(false && "This should not happen in find_consensus"); break;
+                        }
+                    }
                 }
             }
         }
