@@ -1901,7 +1901,27 @@ void msa_add_sequences_kernel_exp(
 			__syncthreads();
 
 			if(threadIdx.x == 0) {
-				make_unpacked_reverse_complement_inplace((std::uint8_t*)sharedSequence, queryLength);
+				//make_unpacked_reverse_complement_inplace((std::uint8_t*)sharedSequence, queryLength);
+
+                auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                    constexpr std::uint8_t mask = 0x03;
+                    return (~in & mask);
+                };
+
+                const int bytes = queryLength;
+
+                for(int i = 0; i < bytes/2; i++){
+                    const std::uint8_t front = make_reverse_complement_byte(sharedSequence[i]);
+                    const std::uint8_t back = make_reverse_complement_byte(sharedSequence[bytes - 1 - i]);
+                    sharedSequence[i] = back;
+                    sharedSequence[bytes - 1 - i] = front;
+                }
+
+                if(bytes % 2 == 1){
+                    const int middleindex = bytes/2;
+                    sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
+                }
+
 				//reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
 				if(canUseQualityScores) {
 					reverse_float(sharedWeights, queryLength);

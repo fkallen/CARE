@@ -139,7 +139,7 @@ namespace gpu{
                     Ts += (base == T_enc);
 #endif
                     //columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
-                    columnCoverage += !(base & 0xFC);
+                    columnCoverage += (base == A_enc || base == C_enc || base == G_enc || base == T_enc);//!(base & 0xFC);
                 }
 
                 my_countsA[column] = As;
