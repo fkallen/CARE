@@ -33,8 +33,8 @@
 #include <thrust/iterator/counting_iterator.h>
 #endif
 
-//#define CARE_GPU_DEBUG
-//#define CARE_GPU_DEBUG_MEMCOPY
+#define CARE_GPU_DEBUG
+#define CARE_GPU_DEBUG_MEMCOPY
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
@@ -2334,7 +2334,7 @@ public:
 			throw std::runtime_error("Could not open output feature file");
 
 
-		constexpr int nParallelBatches = 4;
+		constexpr int nParallelBatches = 1;
 		constexpr int sideBatchStepsPerWaitIter = 1;
 
 		cudaSetDevice(threadOpts.deviceId); CUERR;
