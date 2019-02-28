@@ -387,6 +387,9 @@ struct DataArrays {
 
 	void zero_gpu(cudaStream_t stream){
 		cudaMemsetAsync(msa_data_device, 0, msa_data_usable_size, stream); CUERR;
+
+        cudaMemsetAsync(d_multiple_sequence_alignments, char(0xFC), (n_subjects + n_queries) * msa_pitch, stream);
+
 		cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
 		cudaMemsetAsync(qualities_transfer_data_device, 0, qualities_transfer_data_usable_size, stream); CUERR;
 		//cudaMemsetAsync(indices_transfer_data_device, 0, indices_transfer_data_usable_size, stream); CUERR;
