@@ -230,6 +230,135 @@ public:
         ++insertedCandidates;
     }
 
+    template<class GetQualityWeight>
+    void insert_implicit(const std::string& sequence, int alignment_shift, GetQualityWeight getQualityWeight){
+        for(int i = 0; i < int(sequence.length()); i++){
+            const int globalIndex = columnProperties.subjectColumnsBegin_incl + alignment_shift + i;
+            const char base = sequence[i];
+            const float weight = canUseWeights ? getQualityWeight(i) : 1.0f;
+            switch(base){
+                case 'A': countsA[globalIndex]++; weightsA[globalIndex] += weight;break;
+                case 'C': countsC[globalIndex]++; weightsC[globalIndex] += weight;break;
+                case 'G': countsG[globalIndex]++; weightsG[globalIndex] += weight;break;
+                case 'T': countsT[globalIndex]++; weightsT[globalIndex] += weight;break;
+                default: assert(false); break;
+            }
+            coverage[globalIndex]++;
+        }
+    }
+
+    template<class GetQualityWeight>
+    void insertSubject_implicit(const std::string& subject, GetQualityWeight getQualityWeight){
+        insert_implicit(subject, 0, getQualityWeight);
+    }
+
+    template<class GetQualityWeight>
+    void insertCandidate_implicit(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
+        assert(insertedCandidates < nRows-1);
+
+
+        insert_implicit(candidate, alignment_shift, getQualityWeight);
+
+        ++insertedCandidates;
+
+
+    }
+
+    void find_consensus_implicit(const std::string& subject){
+        for(int column = 0; column < nColumns; ++column){
+            char cons = 'A';
+            float consWeight = weightsA[column];
+            if(weightsC[column] > consWeight){
+                cons = 'C';
+                consWeight = weightsC[column];
+            }
+            if(weightsG[column] > consWeight){
+                cons = 'G';
+                consWeight = weightsG[column];
+            }
+            if(weightsT[column] > consWeight){
+                cons = 'T';
+                consWeight = weightsT[column];
+            }
+            consensus[column] = cons;
+
+            const float columnWeight = weightsA[column] + weightsC[column] + weightsG[column] + weightsT[column];
+            support[column] = consWeight / columnWeight;
+
+            if(columnProperties.subjectColumnsBegin_incl <= column && column < columnProperties.subjectColumnsEnd_excl){
+                const int localIndex = column - columnProperties.subjectColumnsBegin_incl;
+                const char subjectBase = subject[localIndex];
+                switch(subjectBase){
+                    case 'A':origWeights[column] = weightsA[column]; origCoverages[column] = countsA[column]; break;
+                    case 'C':origWeights[column] = weightsG[column]; origCoverages[column] = countsC[column]; break;
+                    case 'G':origWeights[column] = weightsC[column]; origCoverages[column] = countsG[column]; break;
+                    case 'T':origWeights[column] = weightsT[column]; origCoverages[column] = countsT[column]; break;
+                    default: assert(false && "This should not happen in find_consensus_implicit"); break;
+                }
+            }
+        }
+    }
+
+
+    CorrectionResult getCorrectedSubject_implicit(const std::string& subject){
+
+        //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+
+        const MSAProperties msaProperties = getMSAProperties();
+
+        const int subjectlength = columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl;
+
+        CorrectionResult result;
+        result.isCorrected = false;
+        result.correctedSequence.resize(subjectlength);
+        result.msaProperties = msaProperties;
+
+        if(msaProperties.isHQ){
+            //corrected sequence = consensus;
+
+            std::copy(consensus.begin() + columnProperties.subjectColumnsBegin_incl,
+                      consensus.begin() + columnProperties.subjectColumnsEnd_excl,
+                      result.correctedSequence.begin());
+            result.isCorrected = true;
+        }else{
+            //set corrected sequence to original subject. then search for positions with good properties. correct these positions
+            std::copy(subject.begin(),
+                      subject.end(),
+                      result.correctedSequence.begin());
+
+            bool foundAColumn = false;
+            for(int i = 0; i < subjectlength; i++){
+                const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
+
+                if(support[globalIndex] > 0.5f && origCoverages[globalIndex] < min_coverage_threshold){
+                    float avgsupportkregion = 0;
+                    int c = 0;
+                    bool kregioncoverageisgood = true;
+
+                    for(int j = i - kmerlength/2; j <= i + kmerlength/2 && kregioncoverageisgood; j++){
+                        if(j != i && j >= 0 && j < subjectlength){
+                            avgsupportkregion += support[columnProperties.subjectColumnsBegin_incl + j];
+                            kregioncoverageisgood &= (coverage[columnProperties.subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                            c++;
+                        }
+                    }
+
+                    avgsupportkregion /= c;
+                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                        result.correctedSequence[i] = consensus[globalIndex];
+                        foundAColumn = true;
+                    }
+                }
+            }
+
+            result.isCorrected = foundAColumn;
+        }
+
+        return result;
+    }
+
     void find_consensus(){
         find_consensus1();
     }

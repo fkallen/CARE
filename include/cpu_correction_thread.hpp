@@ -541,10 +541,20 @@ iterasdf++;
 
                 const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
 
+#define MSA_IMPLICIT
+
+#ifndef MSA_IMPLICIT
                 multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
                     //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
                     return qualityConversion.getWeight((subjectQualityPtr)[i]);
                 });
+#else
+                multipleSequenceAlignment.insertSubject_implicit(task.subject_string, [&](int i){
+                    //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
+                    return qualityConversion.getWeight((subjectQualityPtr)[i]);
+                });
+
+#endif
 
                 const float desiredAlignmentMaxErrorRate = goodAlignmentProperties.maxErrorRate;
 
@@ -572,7 +582,7 @@ iterasdf++;
                     const float defaultweight = 1.0f - std::sqrt(bestAlignments[i].nOps
                                                                 / (bestAlignments[i].overlap
                                                                     * desiredAlignmentMaxErrorRate));
-
+#ifndef MSA_IMPLICIT
                     if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
                         multipleSequenceAlignment.insertCandidate(candidateSequence, shift, [&](int i){
                             //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[length - 1 - i]] * defaultweight;
@@ -586,9 +596,29 @@ iterasdf++;
                     }else{
                         assert(false);
                     }
+#else
+                    if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
+                        multipleSequenceAlignment.insertCandidate_implicit(candidateSequence, shift, [&](int i){
+                            //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[length - 1 - i]] * defaultweight;
+                            return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
+                        });
+                    }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
+                        multipleSequenceAlignment.insertCandidate_implicit(candidateSequence, shift, [&](int i){
+                            //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[i]] * defaultweight;
+                            return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
+                        });
+                    }else{
+                        assert(false);
+                    }
+
+#endif
                 }
 
+#ifndef MSA_IMPLICIT
                 multipleSequenceAlignment.find_consensus();
+#else
+                multipleSequenceAlignment.find_consensus_implicit(task.subject_string);
+#endif
 
 #if 0
                 auto print_multiple_sequence_alignment = [&](const auto& msa, const auto& alignments){
@@ -753,7 +783,11 @@ iterasdf++;
                 if(correctionOptions.classicMode){
 
                     //get corrected subject and write it to file
+#ifndef MSA_IMPLICIT
                     auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
+#else
+                    auto correctionResult = multipleSequenceAlignment.getCorrectedSubject_implicit(task.subject_string);
+#endif
 
                     /*if(!correctionResult.isCorrected || correctionResult.correctedSequence == task.subject_string){
                         const std::size_t numCandidates = task.candidate_read_ids.size();
