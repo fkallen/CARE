@@ -33,8 +33,8 @@
 #include <thrust/iterator/counting_iterator.h>
 #endif
 
-#define CARE_GPU_DEBUG
-#define CARE_GPU_DEBUG_MEMCOPY
+//#define CARE_GPU_DEBUG
+//#define CARE_GPU_DEBUG_MEMCOPY
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
