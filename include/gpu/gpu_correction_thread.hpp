@@ -2334,7 +2334,7 @@ public:
 			throw std::runtime_error("Could not open output feature file");
 
 
-		constexpr int nParallelBatches = 1;
+		constexpr int nParallelBatches = 4;
 		constexpr int sideBatchStepsPerWaitIter = 1;
 
 		cudaSetDevice(threadOpts.deviceId); CUERR;
