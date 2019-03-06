@@ -652,12 +652,6 @@ struct MSAAddSequencesChooserImplicit {
 			return result;
 		};
 
-		auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
-			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
-			const int length = d_sequence_lengths[subjectReadId];
-			return length;
-		};
-
 		auto getCandidateLength_sparse = [=] __device__ (ReadId_t localCandidateIndex){
 			const int candidateIndex = d_indices[localCandidateIndex];
 			const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
@@ -685,18 +679,13 @@ struct MSAAddSequencesChooserImplicit {
 			return result;
 		};
 
-		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
-			const int length = d_subject_sequences_lengths[subjectIndex];
-			return length;
-		};
-
 		auto getCandidateLength_dense = [=] __device__ (ReadId_t localCandidateIndex){
 			const int candidateIndex = d_indices[localCandidateIndex];
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
 		};
 
-		auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality, auto subjectlength, auto querylength){
+		auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality, auto querylength){
 					  call_msa_add_sequences_kernel_implicit_async(
                                   d_countsA,
                                   d_countsC,
@@ -736,7 +725,6 @@ struct MSAAddSequencesChooserImplicit {
 								  candidateptr,
 								  subjectquality,
 								  candidatequality,
-								  subjectlength,
 								  querylength,
 								  stream,
 								  kernelLaunchHandle);
@@ -747,7 +735,6 @@ struct MSAAddSequencesChooserImplicit {
 						getCandidatePtr_dense,
 						getSubjectQualityPtr_dense,
 						getCandidateQualityPtr_dense,
-						getSubjectLength_dense,
 						getCandidateLength_dense);
 		}else{
 			if(gpuReadStorageGpuData.isValidSequenceData()) {
@@ -756,14 +743,12 @@ struct MSAAddSequencesChooserImplicit {
 								getCandidatePtr_sparse,
 								getSubjectQualityPtr_sparse,
 								getCandidateQualityPtr_sparse,
-								getSubjectLength_sparse,
 								getCandidateLength_sparse);
 				}else{
 					callKernel( getSubjectPtr_sparse,
 								getCandidatePtr_sparse,
 								getSubjectQualityPtr_dense,
 								getCandidateQualityPtr_dense,
-								getSubjectLength_sparse,
 								getCandidateLength_sparse);
 				}
 			}else{
@@ -772,14 +757,12 @@ struct MSAAddSequencesChooserImplicit {
 								getCandidatePtr_dense,
 								getSubjectQualityPtr_sparse,
 								getCandidateQualityPtr_sparse,
-								getSubjectLength_dense,
 								getCandidateLength_dense);
 				}else{
 					callKernel( getSubjectPtr_dense,
 								getCandidatePtr_dense,
 								getSubjectQualityPtr_dense,
 								getCandidateQualityPtr_dense,
-								getSubjectLength_dense,
 								getCandidateLength_dense);
 				}
 			}

@@ -1946,7 +1946,7 @@ void msa_add_sequences_kernel_exp(
                 sharedSequence[bytes - 1 - i] = front;
             }
 
-            if(bytes % 2 == 1){
+            if(threadIdx.x == 0 && bytes % 2 == 1){
                 const int middleindex = bytes/2;
                 sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
             }
@@ -2379,7 +2379,7 @@ void call_msa_correct_candidates_kernel_async_exp(
 
 
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
-         class GetSubjectLength, class GetCandidateLength>
+         class GetCandidateLength>
 __global__
 void msa_add_sequences_kernel_implicit(
             int* __restrict__ d_countsA,
@@ -2420,7 +2420,6 @@ void msa_add_sequences_kernel_implicit(
 			GetCandidatePtr getCandidatePtr,
 			GetSubjectQualityPtr getSubjectQualityPtr,
 			GetCandidateQualityPtr getCandidateQualityPtr,
-			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength){
 
 	extern __shared__ float sharedmem[];
@@ -2439,7 +2438,8 @@ void msa_add_sequences_kernel_implicit(
     //add subjects
 	for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
 		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-		const int subjectLength = getSubjectLength(subjectIndex);
+        const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
 		const char* const subject = getSubjectPtr(subjectIndex);
 		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
         const int shift = 0;
@@ -2465,7 +2465,8 @@ void msa_add_sequences_kernel_implicit(
                 case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
                 default: assert(false); break;
             }
-            my_coverage[globalIndex]++;
+            //my_coverage[globalIndex]++;
+            atomicAdd(my_coverage + globalIndex, 1);
         }
 	}
 
@@ -2522,7 +2523,8 @@ void msa_add_sequences_kernel_implicit(
                     case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
                     default: assert(false); break;
                 }
-                my_coverage[globalIndex]++;
+                //my_coverage[globalIndex]++;
+                atomicAdd(my_coverage + globalIndex, 1);
             }
 		}else{
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
@@ -2548,7 +2550,7 @@ void msa_add_sequences_kernel_implicit(
                 sharedSequence[bytes - 1 - i] = front;
             }
 
-            if(bytes % 2 == 1){
+            if(threadIdx.x == 0 && bytes % 2 == 1){
                 const int middleindex = bytes/2;
                 sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
             }
@@ -2578,7 +2580,8 @@ void msa_add_sequences_kernel_implicit(
                     case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
                     default: assert(false); break;
                 }
-                my_coverage[globalIndex]++;
+                //my_coverage[globalIndex]++;
+                atomicAdd(my_coverage + globalIndex, 1);
             }
 
 			__syncthreads();
@@ -2589,7 +2592,7 @@ void msa_add_sequences_kernel_implicit(
 }
 
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
-         class GetSubjectLength, class GetCandidateLength>
+         class GetCandidateLength>
 void call_msa_add_sequences_kernel_implicit_async(
             int* d_countsA,
             int* d_countsC,
@@ -2629,7 +2632,6 @@ void call_msa_add_sequences_kernel_implicit_async(
 			GetCandidatePtr getCandidatePtr,
 			GetSubjectQualityPtr getSubjectQualityPtr,
 			GetCandidateQualityPtr getCandidateQualityPtr,
-			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength,
 			cudaStream_t stream,
 			KernelLaunchHandle& handle){
@@ -2659,7 +2661,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
 					msa_add_sequences_kernel_implicit<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
 					                             GetSubjectQualityPtr, GetCandidateQualityPtr, \
-					                             GetSubjectLength, GetCandidateLength>, \
+					                             GetCandidateLength>, \
 					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
 		mymap[kernelLaunchConfig] = kernelProperties; \
 }
@@ -2729,7 +2731,6 @@ void call_msa_add_sequences_kernel_implicit_async(
 	                                                            getCandidatePtr,
 	                                                            getSubjectQualityPtr,
 	                                                            getCandidateQualityPtr,
-	                                                            getSubjectLength,
 	                                                            getCandidateLength); CUERR;
 }
 
