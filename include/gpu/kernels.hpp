@@ -3098,9 +3098,6 @@ void msa_correct_subject_implicit_kernel(
 
                     avgsupportkregion /= c;
 
-                    //if(i == 33 || i == 34){
-                    //	printf("%d %f\n", i, avgsupportkregion);
-                    //}
                     if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
                         my_corrected_subject[i] = my_consensus[globalIndex];
                         foundAColumn = true;
