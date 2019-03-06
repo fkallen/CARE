@@ -2485,7 +2485,6 @@ void msa_add_sequences_kernel_implicit(
         }
 
         const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-        const int localQueryIndex = index - d_indices_per_subject_prefixsum[subjectIndex];
         const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
         int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
@@ -2763,7 +2762,6 @@ void msa_find_consensus_implicit_kernel(
                         int n_subjects,
                         size_t msa_pitch,
                         size_t msa_weights_pitch,
-                        int msa_max_column_count,
                         int blocks_per_msa,
                         Accessor get,
                         GetSubjectPtr getSubjectPtr){
@@ -3064,7 +3062,7 @@ void msa_correct_subject_implicit_kernel(
 
         if(isHQ){
             for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(my_consensus[i]);
+                my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
             }
             if(threadIdx.x == 0){
                 d_subject_is_corrected[subjectIndex] = true;
@@ -3126,7 +3124,6 @@ void call_msa_correct_subject_implicit_kernel_async(
                         const int* d_coverage,
                         const int* d_origCoverages,
                         const MSAColumnProperties* d_msa_column_properties,
-                        const int* d_indices_per_subject_prefixsum,
                         bool* d_is_high_quality_subject,
                         char* d_corrected_subjects,
                         bool* d_subject_is_corrected,
@@ -3204,7 +3201,6 @@ void call_msa_correct_subject_implicit_kernel_async(
                                 d_coverage, \
                                 d_origCoverages, \
                                 d_msa_column_properties, \
-                                d_indices_per_subject_prefixsum, \
                                 d_is_high_quality_subject, \
                                 d_corrected_subjects, \
                                 d_subject_is_corrected, \
