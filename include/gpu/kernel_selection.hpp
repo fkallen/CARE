@@ -555,6 +555,433 @@ struct MSAAddSequencesChooserExp {
 
 
 
+
+
+template<class Sequence_t, class ReadId_t>
+struct MSAAddSequencesChooserImplicit {
+
+	template<class GPUReadStorage_t>
+	static void callKernelAsync(
+                int* d_countsA,
+                int* d_countsC,
+                int* d_countsG,
+                int* d_countsT,
+                float* d_weightsA,
+                float* d_weightsC,
+                float* d_weightsG,
+                float* d_weightsT,
+                int* d_coverage,
+                float* d_origWeights,
+                int* d_origCoverages,
+				const int* d_alignment_shifts,
+				const BestAlignment_t* d_alignment_best_alignment_flags,
+				const ReadId_t* d_subject_read_ids,
+				const ReadId_t* d_candidate_read_ids,
+				const char* d_subject_sequences_data,
+				const char* d_candidate_sequences_data,
+				const int* d_subject_sequences_lengths,
+				const int* d_candidate_sequences_lengths,
+				const char* d_subject_qualities,
+				const char* d_candidate_qualities,
+				const int* d_alignment_overlaps,
+				const int* d_alignment_nOps,
+				const MSAColumnProperties*  d_msa_column_properties,
+				const int* d_candidates_per_subject_prefixsum,
+				const int* d_indices,
+				const int* d_indices_per_subject,
+				const int* d_indices_per_subject_prefixsum,
+				int n_subjects,
+				int n_queries,
+				const int* d_num_indices,
+				bool canUseQualityScores,
+				float desiredAlignmentMaxErrorRate,
+				int maximum_sequence_length,
+				int max_sequence_bytes,
+				size_t encoded_sequence_pitch,
+				size_t quality_pitch,
+				size_t msa_row_pitch,
+				size_t msa_weights_row_pitch,
+				const GPUReadStorage_t* gpuReadStorage,
+				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
+				bool useGpuReadStorage,
+				cudaStream_t stream,
+				KernelLaunchHandle& kernelLaunchHandle){
+
+		assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+			//return Sequence_t::get_as_nucleotide(data, length, index);
+            return Sequence_t::get(data, length, index);
+		};
+
+		auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
+			return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+		};
+
+		const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
+		const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
+		const char* d_quality_data = gpuReadStorageGpuData.isValidQualityData() ?
+		                             gpuReadStorageGpuData.d_quality_data :
+		                             nullptr;
+		const std::size_t readstorage_sequence_pitch = std::size_t(gpuReadStorage->getSequencePitch());
+		const std::size_t readstorage_quality_pitch = std::size_t(gpuReadStorage->getQualityPitch());
+
+		auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const char* result = d_sequence_data + std::size_t(subjectReadId) * readstorage_sequence_pitch;
+			return result;
+		};
+
+		auto getCandidatePtr_sparse = [=] __device__ (ReadId_t candidateIndex){
+			const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+			const char* result = d_sequence_data + std::size_t(candidateReadId) * readstorage_sequence_pitch;
+			return result;
+		};
+
+		auto getSubjectQualityPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const char* result = d_quality_data + std::size_t(subjectReadId) * readstorage_quality_pitch;
+			return result;
+		};
+
+		auto getCandidateQualityPtr_sparse = [=] __device__ (ReadId_t localCandidateIndex){
+			const int candidateIndex = d_indices[localCandidateIndex];
+			const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+			const char* result = d_quality_data + std::size_t(candidateReadId) * readstorage_quality_pitch;
+			return result;
+		};
+
+		auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const int length = d_sequence_lengths[subjectReadId];
+			return length;
+		};
+
+		auto getCandidateLength_sparse = [=] __device__ (ReadId_t localCandidateIndex){
+			const int candidateIndex = d_indices[localCandidateIndex];
+			const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+			const int length = d_sequence_lengths[candidateReadId];
+			return length;
+		};
+
+		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
+			return result;
+		};
+
+		auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+			const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encoded_sequence_pitch;
+			return result;
+		};
+
+		auto getSubjectQualityPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+			const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
+			return result;
+		};
+
+		auto getCandidateQualityPtr_dense = [=] __device__ (ReadId_t localCandidateIndex){
+			const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
+			return result;
+		};
+
+		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+			const int length = d_subject_sequences_lengths[subjectIndex];
+			return length;
+		};
+
+		auto getCandidateLength_dense = [=] __device__ (ReadId_t localCandidateIndex){
+			const int candidateIndex = d_indices[localCandidateIndex];
+			const int length = d_candidate_sequences_lengths[candidateIndex];
+			return length;
+		};
+
+		auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality, auto subjectlength, auto querylength){
+					  call_msa_add_sequences_kernel_implicit_async(
+                                  d_countsA,
+                                  d_countsC,
+                                  d_countsG,
+                                  d_countsT,
+                                  d_weightsA,
+                                  d_weightsC,
+                                  d_weightsG,
+                                  d_weightsT,
+                                  d_coverage,
+                                  d_origWeights,
+                                  d_origCoverages,
+								  d_alignment_shifts,
+								  d_alignment_best_alignment_flags,
+								  d_subject_sequences_lengths,
+								  d_candidate_sequences_lengths,
+								  d_alignment_overlaps,
+								  d_alignment_nOps,
+								  d_msa_column_properties,
+								  d_candidates_per_subject_prefixsum,
+								  d_indices,
+								  d_indices_per_subject,
+								  d_indices_per_subject_prefixsum,
+								  n_subjects,
+								  n_queries,
+								  d_num_indices,
+								  canUseQualityScores,
+								  desiredAlignmentMaxErrorRate,
+								  maximum_sequence_length,
+								  max_sequence_bytes,
+								  quality_pitch,
+								  msa_row_pitch,
+								  msa_weights_row_pitch,
+								  nucleotide_accessor,
+								  make_unpacked_reverse_complement_inplace,
+								  subjectptr,
+								  candidateptr,
+								  subjectquality,
+								  candidatequality,
+								  subjectlength,
+								  querylength,
+								  stream,
+								  kernelLaunchHandle);
+				  };
+
+		if(!useGpuReadStorage) {
+			callKernel( getSubjectPtr_dense,
+						getCandidatePtr_dense,
+						getSubjectQualityPtr_dense,
+						getCandidateQualityPtr_dense,
+						getSubjectLength_dense,
+						getCandidateLength_dense);
+		}else{
+			if(gpuReadStorageGpuData.isValidSequenceData()) {
+				if(gpuReadStorageGpuData.isValidQualityData()) {
+					callKernel( getSubjectPtr_sparse,
+								getCandidatePtr_sparse,
+								getSubjectQualityPtr_sparse,
+								getCandidateQualityPtr_sparse,
+								getSubjectLength_sparse,
+								getCandidateLength_sparse);
+				}else{
+					callKernel( getSubjectPtr_sparse,
+								getCandidatePtr_sparse,
+								getSubjectQualityPtr_dense,
+								getCandidateQualityPtr_dense,
+								getSubjectLength_sparse,
+								getCandidateLength_sparse);
+				}
+			}else{
+				if(gpuReadStorageGpuData.isValidQualityData()) {
+					callKernel( getSubjectPtr_dense,
+								getCandidatePtr_dense,
+								getSubjectQualityPtr_sparse,
+								getCandidateQualityPtr_sparse,
+								getSubjectLength_dense,
+								getCandidateLength_dense);
+				}else{
+					callKernel( getSubjectPtr_dense,
+								getCandidatePtr_dense,
+								getSubjectQualityPtr_dense,
+								getCandidateQualityPtr_dense,
+								getSubjectLength_dense,
+								getCandidateLength_dense);
+				}
+			}
+		}
+	}
+};
+
+
+
+template<class Sequence_t, class ReadId_t>
+struct MSAFindConsensusChooserImplicit {
+
+	template<class GPUReadStorage_t>
+	static void callKernelAsync(
+                int* d_countsA,
+                int* d_countsC,
+                int* d_countsG,
+                int* d_countsT,
+                float* d_weightsA,
+                float* d_weightsC,
+                float* d_weightsG,
+                float* d_weightsT,
+                char* d_consensus,
+                float* d_support,
+                int* d_coverage,
+                float* d_origWeights,
+                int* d_origCoverages,
+				const ReadId_t* d_subject_read_ids,
+				const char* d_subject_sequences_data,
+				const MSAColumnProperties*  d_msa_column_properties,
+				int n_subjects,
+				int max_sequence_bytes,
+				size_t encoded_sequence_pitch,
+				size_t msa_row_pitch,
+				size_t msa_weights_row_pitch,
+				const GPUReadStorage_t* gpuReadStorage,
+				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
+				bool useGpuReadStorage,
+				cudaStream_t stream,
+				KernelLaunchHandle& kernelLaunchHandle){
+
+		assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+			//return Sequence_t::get_as_nucleotide(data, length, index);
+            return Sequence_t::get(data, length, index);
+		};
+
+		const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
+		const std::size_t readstorage_sequence_pitch = std::size_t(gpuReadStorage->getSequencePitch());
+
+        //sparse -> read from gpuReadStorage
+		auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const char* result = d_sequence_data + std::size_t(subjectReadId) * readstorage_sequence_pitch;
+			return result;
+		};
+
+		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
+			return result;
+		};
+
+		auto callKernel = [&](auto subjectptr){
+            call_msa_find_consensus_implicit_kernel_async(
+                                    d_countsA,
+                                    d_countsC,
+                                    d_countsG,
+                                    d_countsT,
+                                    d_weightsA,
+                                    d_weightsC,
+                                    d_weightsG,
+                                    d_weightsT,
+                                    d_consensus,
+                                    d_support,
+                                    d_coverage,
+                                    d_origWeights,
+                                    d_origCoverages,
+                                    d_msa_column_properties,
+                                    n_subjects,
+                                    msa_row_pitch,
+		                            msa_weights_row_pitch,
+                                    nucleotide_accessor,
+                                    subjectptr,
+                                    stream,
+                                    kernelLaunchHandle);
+        };
+
+		if(!useGpuReadStorage) {
+			callKernel( getSubjectPtr_dense);
+		}else{
+			if(gpuReadStorageGpuData.isValidSequenceData()) {
+				callKernel(getSubjectPtr_sparse);
+			}else{
+				callKernel(getSubjectPtr_dense);
+			}
+		}
+	}
+};
+
+
+
+
+template<class Sequence_t, class ReadId_t>
+struct MSACorrectSubjectChooserImplicit {
+
+	template<class GPUReadStorage_t>
+	static void callKernelAsync(
+                char* d_consensus,
+                float* d_support,
+                int* d_coverage,
+                float* d_origWeights,
+                int* d_origCoverages,
+				const MSAColumnProperties*  d_msa_column_properties,
+				const int* d_indices_per_subject_prefixsum,
+                bool* d_is_high_quality_subject,
+                char* d_corrected_subjects,
+                bool* d_subject_is_corrected,
+				int n_subjects,
+				size_t encoded_sequence_pitch,
+				size_t msa_row_pitch,
+				size_t msa_weights_row_pitch,
+                float estimatedErrorrate,
+                float avg_support_threshold,
+                float min_support_threshold,
+                float min_coverage_threshold,
+                int k_region,
+                int maximum_sequence_length,
+                const ReadId_t* d_subject_read_ids,
+				const char* d_subject_sequences_data,
+				const GPUReadStorage_t* gpuReadStorage,
+				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
+				bool useGpuReadStorage,
+				cudaStream_t stream,
+				KernelLaunchHandle& kernelLaunchHandle){
+
+		assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+
+		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
+			//return Sequence_t::get_as_nucleotide(data, length, index);
+            return Sequence_t::get(data, length, index);
+		};
+
+		const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
+		const std::size_t readstorage_sequence_pitch = std::size_t(gpuReadStorage->getSequencePitch());
+
+        //sparse -> read from gpuReadStorage
+		auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const char* result = d_sequence_data + std::size_t(subjectReadId) * readstorage_sequence_pitch;
+			return result;
+		};
+
+		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
+			return result;
+		};
+
+		auto callKernel = [&](auto subjectptr){
+            call_msa_correct_subject_implicit_kernel_async(
+                                    d_consensus,
+                                    d_support,
+                                    d_coverage,
+                                    d_origWeights,
+                                    d_origCoverages,
+                                    d_msa_column_properties,
+                                    d_indices_per_subject_prefixsum,
+                                    d_is_high_quality_subject,
+                                    d_corrected_subjects,
+                                    d_subject_is_corrected,
+                                    n_subjects,
+                                    encoded_sequence_pitch,
+                                    msa_row_pitch,
+		                            msa_weights_row_pitch,
+                                    estimatedErrorrate,
+                                    avg_support_threshold,
+                                    min_support_threshold,
+                                    min_coverage_threshold,
+                                    k_region,
+                                    maximum_sequence_length,
+                                    nucleotide_accessor,
+                                    subjectptr,
+                                    stream,
+                                    kernelLaunchHandle);
+        };
+
+		if(!useGpuReadStorage) {
+			callKernel(getSubjectPtr_dense);
+		}else{
+			if(gpuReadStorageGpuData.isValidSequenceData()) {
+				callKernel(getSubjectPtr_sparse);
+			}else{
+				callKernel(getSubjectPtr_dense);
+			}
+		}
+	}
+};
+
+
+
+
 template<class ReadId_t>
 struct MSACorrectCandidatesChooserExp {
 

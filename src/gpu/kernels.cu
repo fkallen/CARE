@@ -170,15 +170,15 @@ namespace gpu{
                 cons = Tw > consWeight ? 'T' : cons;
                 consWeight = Tw > consWeight ? Tw : consWeight;
 #else
-                char cons = A_enc;
+                char cons = 'A';
 
-                cons = Cw > consWeight ? C_enc : cons;
+                cons = Cw > consWeight ? 'C' : cons;
                 consWeight = Cw > consWeight ? Cw : consWeight;
 
-                cons = Gw > consWeight ? G_enc : cons;
+                cons = Gw > consWeight ? 'G' : cons;
                 consWeight = Gw > consWeight ? Gw : consWeight;
 
-                cons = Tw > consWeight ? T_enc : cons;
+                cons = Tw > consWeight ? 'T' : cons;
                 consWeight = Tw > consWeight ? Tw : consWeight;
 #endif
                 /*char consByCount = 'A';
@@ -448,7 +448,7 @@ namespace gpu{
 
             if(isHQ){
                 for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(my_consensus[i]);
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                 }
                 if(threadIdx.x == 0){
                     d_subject_is_corrected[subjectIndex] = true;
@@ -490,7 +490,7 @@ namespace gpu{
 						//	printf("%d %f\n", i, avgsupportkregion);
 						//}
                         if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
-                            my_corrected_subject[i] = to_nuc(my_consensus[globalIndex]);
+                            my_corrected_subject[i] = my_consensus[globalIndex];
                             foundAColumn = true;
                         }
                     }
@@ -623,6 +623,26 @@ namespace gpu{
         }
 		#undef mycall
     }
+
+
+
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
 
 #if 0
     __global__
