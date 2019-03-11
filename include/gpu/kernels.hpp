@@ -3011,6 +3011,7 @@ void msa_add_sequences_kernel_implicit(
 	extern __shared__ float sharedmem[];
 
     const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+    const int smemsizefloats = 4 * msa_weights_row_pitch_floats + 4 * msa_weights_row_pitch_floats;
 
     float* const shared_weights = sharedmem;
     int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
@@ -3018,6 +3019,11 @@ void msa_add_sequences_kernel_implicit(
 	const int requiredTiles = n_subjects;//blocks_per_subject_prefixsum[n_subjects];
 
 	for(int logicalBlockId = blockIdx.x; logicalBlockId < requiredTiles; logicalBlockId += gridDim.x){
+        //clear shared memory
+        for(int i = threadIdx.x; i < smemsizefloats; i += blockDim.x){
+            sharedmem[i] = 0;
+        }
+        __syncthreads();
 
 		int subjectIndex = 0;
 		for(; subjectIndex < n_subjects; subjectIndex++) {
@@ -3105,12 +3111,12 @@ void msa_add_sequences_kernel_implicit(
 
         __syncthreads();
 
-        for(int i = threadIdx.x; i < columnsToCheck; i += blockDim.x){
+        for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
             for(int k = 0; k < 4; k++){
-                const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats;
-                int* const destCounts = d_counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats;
-                const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats;
-                float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats;
+                const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
+                int* const destCounts = d_counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
+                const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats + index;
+                float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
                 atomicAdd(destCounts ,*srcCounts);
                 atomicAdd(destWeights, *srcWeights);
             }
@@ -3168,10 +3174,10 @@ void call_msa_add_sequences_kernel_implicit_async(
 	const int blocksize = 128;
     const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
-	const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
-    /*const std::size_t smem = sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
+	//const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+    const std::size_t smem = sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
                             + sizeof(int) * 4 * msa_weights_row_pitch_floats; // counts
-                            */
+                            
 
 	int max_blocks_per_device = 1;
 
@@ -3187,7 +3193,8 @@ void call_msa_add_sequences_kernel_implicit_async(
 	    #define getProp(blocksize) { \
 		KernelLaunchConfig kernelLaunchConfig; \
 		kernelLaunchConfig.threads_per_block = (blocksize); \
-        kernelLaunchConfig.smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length; \
+		kernelLaunchConfig.smem = sizeof(float) * 4 * msa_weights_row_pitch_floats \
+                                + sizeof(int) * 4 * msa_weights_row_pitch_floats; \
 		KernelProperties kernelProperties; \
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
 					msa_add_sequences_kernel_implicit<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \

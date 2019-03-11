@@ -39,7 +39,7 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-#define MSA_IMPLICIT
+//#define MSA_IMPLICIT
 
 #define shd_tilesize 32
 
