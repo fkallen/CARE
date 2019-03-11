@@ -2839,8 +2839,9 @@ void msa_add_sequences_kernel_implicit(
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
             const char base = get(subject, subjectLength, i);
             const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            atomicAdd(d_counts + int(base) * subjectIndex + globalIndex, 1);
-            atomicAdd(d_weights + int(base) * subjectIndex + globalIndex, weight);
+            const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+            atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+            atomicAdd(d_weights + ptrOffset + globalIndex, weight);
             atomicAdd(my_coverage + globalIndex, 1);
         }
 #else
@@ -2898,8 +2899,9 @@ void msa_add_sequences_kernel_implicit(
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = get(query, queryLength, i);
                 const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
-                atomicAdd(d_counts + int(base) * subjectIndex + globalIndex, 1);
-                atomicAdd(d_weights + int(base) * subjectIndex + globalIndex, weight);
+                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
 		}else{
@@ -2949,8 +2951,9 @@ void msa_add_sequences_kernel_implicit(
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = sharedSequence[i];
                 const float weight = sharedWeights[i];
-                atomicAdd(d_counts + int(base) * subjectIndex + globalIndex, 1);
-                atomicAdd(d_weights + int(base) * subjectIndex + globalIndex, weight);
+                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
 
@@ -3040,8 +3043,9 @@ void msa_add_sequences_kernel_implicit(
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
             const char base = get(subject, subjectLength, i);
             const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            atomicAdd(d_counts + int(base) * msa_weights_row_pitch_floats + globalIndex, 1);
-            atomicAdd(d_weights + int(base) * msa_weights_row_pitch_floats + globalIndex, weight);
+            const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
             atomicAdd(my_coverage + globalIndex, 1);
         }
 
@@ -3074,8 +3078,9 @@ void msa_add_sequences_kernel_implicit(
                     const int globalIndex = defaultcolumnoffset + i;
                     const char base = get(query, queryLength, i);
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
-                    atomicAdd(shared_counts + int(base) * msa_weights_row_pitch_floats + globalIndex, 1);
-                    atomicAdd(shared_weights + int(base) * msa_weights_row_pitch_floats + globalIndex, weight);
+                    const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+                    atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                    atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                     atomicAdd(my_coverage + globalIndex, 1);
                 }
     		}else{
@@ -3090,8 +3095,9 @@ void msa_add_sequences_kernel_implicit(
                     const char base = get(query, queryLength, reverseIndex);
                     const char revCompl = make_reverse_complement_byte(base);
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
-                    atomicAdd(shared_counts + int(revCompl) * msa_weights_row_pitch_floats + globalIndex, 1);
-                    atomicAdd(shared_weights + int(revCompl) * msa_weights_row_pitch_floats + globalIndex, weight);
+                    const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
+                    atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                    atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                     atomicAdd(my_coverage + globalIndex, 1);
                 }
             }
@@ -3296,6 +3302,8 @@ void msa_find_consensus_implicit_kernel(
         const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
         const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+        
+        assert(columnsToCheck <= msa_weights_pitch_floats);
 
         const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
         const char* const subject = getSubjectPtr(subjectIndex);
@@ -3306,10 +3314,10 @@ void msa_find_consensus_implicit_kernel(
         float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
         int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-        const float* const my_weightsA = d_weights + 0 * subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsC = d_weights + 1 * subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsG = d_weights + 2 * subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsT = d_weights + 3 * subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsA = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+        const float* const my_weightsC = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+        const float* const my_weightsG = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+        const float* const my_weightsT = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
         for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
             const float wA = my_weightsA[column];
@@ -3335,10 +3343,10 @@ void msa_find_consensus_implicit_kernel(
             my_support[column] = consWeight / columnWeight;
 
             if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                const int* const my_countsA = d_counts + 0 * subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsC = d_counts + 1 * subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsG = d_counts + 2 * subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsT = d_counts + 3 * subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsA = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                const int* const my_countsC = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                const int* const my_countsG = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                const int* const my_countsT = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
                 const int localIndex = column - subjectColumnsBegin_incl;
                 const char subjectbase = get(subject, subjectLength, localIndex);

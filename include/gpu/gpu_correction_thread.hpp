@@ -39,7 +39,7 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-//#define MSA_IMPLICIT
+#define MSA_IMPLICIT
 
 #define shd_tilesize 32
 
@@ -2134,10 +2134,10 @@ public:
 			float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
 			int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
 
-            const int* my_countsA = arrays.h_counts + 0 * subject_index * msa_weights_pitch_floats;
-            const int* my_countsC = arrays.h_counts + 1 * subject_index * msa_weights_pitch_floats;
-            const int* my_countsG = arrays.h_counts + 2 * subject_index * msa_weights_pitch_floats;
-            const int* my_countsT = arrays.h_counts + 3 * subject_index * msa_weights_pitch_floats;
+            const int* my_countsA = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
+            const int* my_countsC = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
+            const int* my_countsG = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
+            const int* my_countsT = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
 
 			float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
 			int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
