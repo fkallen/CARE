@@ -299,7 +299,8 @@ struct DataArrays {
 		//std::size_t memIsHighQualityMSA = SDIV(n_sub *  sizeof(bool), padding_bytes) * padding_bytes;
         std::size_t memCounts = n_sub * msa_weights_pitch;
         std::size_t memWeights = n_sub * msa_weights_pitch;
-
+        std::size_t memAllCounts = n_sub * msa_weights_pitch * 4;
+        std::size_t memAllWeights = n_sub * msa_weights_pitch * 4;
 		std::size_t required_msa_data_allocation_size = memMultipleSequenceAlignment
 		                                                + memMultipleSequenceAlignmentWeights
 		                                                + memConsensus
@@ -309,7 +310,9 @@ struct DataArrays {
 		                                                + memOrigCoverage
 		                                                + memMSAColumnProperties
                                                         + 4 * memCounts
-                                                        + 4 * memWeights;
+                                                        + 4 * memWeights
+                                                        + memAllCounts
+                                                        + memAllWeights;
 		                                                //+ memIsHighQualityMSA;
 
 		if(required_msa_data_allocation_size > msa_data_allocation_size) {
@@ -332,14 +335,8 @@ struct DataArrays {
 		h_origWeights = (float*)(((char*)h_coverage) + memCoverage);
 		h_origCoverages = (int*)(((char*)h_origWeights) + memOrigWeights);
 		h_msa_column_properties = (MSAColumnProperties*)(((char*)h_origCoverages) + memOrigCoverage);
-        h_countsA = (int*)(((char*)h_msa_column_properties) + memMSAColumnProperties);
-        h_countsC = (int*)(((char*)h_countsA) + memCounts);
-        h_countsG = (int*)(((char*)h_countsC) + memCounts);
-        h_countsT = (int*)(((char*)h_countsG) + memCounts);
-        h_weightsA = (float*)(((char*)h_countsT) + memCounts);
-        h_weightsC = (float*)(((char*)h_weightsA) + memWeights);
-        h_weightsG = (float*)(((char*)h_weightsC) + memWeights);
-        h_weightsT = (float*)(((char*)h_weightsG) + memWeights);
+        h_counts = (int*)(((char*)h_msa_column_properties) + memMSAColumnProperties);
+        h_weights = (float*)(((char*)h_counts) + memAllCounts);
 
 		d_multiple_sequence_alignments = (char*)msa_data_device;
 		d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignments) + memMultipleSequenceAlignment);
@@ -349,14 +346,8 @@ struct DataArrays {
 		d_origWeights = (float*)(((char*)d_coverage) + memCoverage);
 		d_origCoverages = (int*)(((char*)d_origWeights) + memOrigWeights);
 		d_msa_column_properties = (MSAColumnProperties*)(((char*)d_origCoverages) + memOrigCoverage);
-        d_countsA = (int*)(((char*)d_msa_column_properties) + memMSAColumnProperties);
-        d_countsC = (int*)(((char*)d_countsA) + memCounts);
-        d_countsG = (int*)(((char*)d_countsC) + memCounts);
-        d_countsT = (int*)(((char*)d_countsG) + memCounts);
-        d_weightsA = (float*)(((char*)d_countsT) + memCounts);
-        d_weightsC = (float*)(((char*)d_weightsA) + memWeights);
-        d_weightsG = (float*)(((char*)d_weightsC) + memWeights);
-        d_weightsT = (float*)(((char*)d_weightsG) + memWeights);
+        d_counts = (int*)(((char*)d_msa_column_properties) + memMSAColumnProperties);
+        d_weights = (float*)(((char*)d_counts) + memAllCounts);
 
 
 		n_subjects = n_sub;
@@ -530,22 +521,10 @@ struct DataArrays {
 		a.h_msa_column_properties = nullptr;
 		a.d_candidate_read_ids = nullptr;
 		a.h_candidate_read_ids = nullptr;
-        a.h_countsA = nullptr;
-        a.h_countsC = nullptr;
-        a.h_countsG = nullptr;
-        a.h_countsT = nullptr;
-        a.h_weightsA = nullptr;
-        a.h_weightsC = nullptr;
-        a.h_weightsG = nullptr;
-        a.h_weightsT = nullptr;
-        a.d_countsA = nullptr;
-        a.d_countsC = nullptr;
-        a.d_countsG = nullptr;
-        a.d_countsT = nullptr;
-        a.d_weightsA = nullptr;
-        a.d_weightsC = nullptr;
-        a.d_weightsG = nullptr;
-        a.d_weightsT = nullptr;
+        a.h_counts = nullptr;
+        a.h_weights = nullptr;
+        a.d_counts = nullptr;
+        a.d_weights = nullptr;
 
 		a.n_subjects = 0;
 		a.n_queries = 0;
@@ -732,14 +711,8 @@ struct DataArrays {
 	float* h_origWeights = nullptr;
 	int* h_origCoverages = nullptr;
 	MSAColumnProperties* h_msa_column_properties = nullptr;
-    int* h_countsA = nullptr;
-    int* h_countsC = nullptr;
-    int* h_countsG = nullptr;
-    int* h_countsT = nullptr;
-    float* h_weightsA = nullptr;
-    float* h_weightsC = nullptr;
-    float* h_weightsG = nullptr;
-    float* h_weightsT = nullptr;
+    int* h_counts = nullptr;
+    float* h_weights = nullptr;
 
 	char* d_multiple_sequence_alignments = nullptr;
 	float* d_multiple_sequence_alignment_weights = nullptr;
@@ -749,14 +722,8 @@ struct DataArrays {
 	float* d_origWeights = nullptr;
 	int* d_origCoverages = nullptr;
 	MSAColumnProperties* d_msa_column_properties = nullptr;
-    int* d_countsA = nullptr;
-    int* d_countsC = nullptr;
-    int* d_countsG = nullptr;
-    int* d_countsT = nullptr;
-    float* d_weightsA = nullptr;
-    float* d_weightsC = nullptr;
-    float* d_weightsG = nullptr;
-    float* d_weightsT = nullptr;
+    int* d_counts = nullptr;
+    float* d_weights = nullptr;
 
 };
 

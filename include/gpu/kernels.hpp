@@ -83,14 +83,8 @@ void call_msa_find_consensus_kernel_async(
                         int* d_coverage,
                         float* d_origWeights,
                         int* d_origCoverages,
-                        int* d_countsA,
-                        int* d_countsC,
-                        int* d_countsG,
-                        int* d_countsT,
-                        float* d_weightsA,
-                        float* d_weightsC,
-                        float* d_weightsG,
-                        float* d_weightsT,
+                        int* d_counts,
+                        float* d_weights,
                         const char* d_multiple_sequence_alignments,
                         const float* d_multiple_sequence_alignment_weights,
                         const MSAColumnProperties* d_msa_column_properties,
@@ -2743,14 +2737,8 @@ template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidate
          class GetCandidateLength>
 __global__
 void msa_add_sequences_kernel_implicit(
-            int* __restrict__ d_countsA,
-            int* __restrict__ d_countsC,
-            int* __restrict__ d_countsG,
-            int* __restrict__ d_countsT,
-            float* __restrict__ d_weightsA,
-            float* __restrict__ d_weightsC,
-            float* __restrict__ d_weightsG,
-            float* __restrict__ d_weightsT,
+            int* d_counts,
+            float* d_weights,
             int* __restrict__ d_coverage,
             float* __restrict__ d_origWeights,
             int* __restrict__ d_origCoverages,
@@ -2783,12 +2771,15 @@ void msa_add_sequences_kernel_implicit(
 			GetCandidateQualityPtr getCandidateQualityPtr,
 			GetCandidateLength getCandidateLength){
 
+    //sizeof(float) * maximum_sequence_length  //reverse complement buffer
+    //+ sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
+    //+ sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
 	extern __shared__ float sharedmem[];
 
-    constexpr char A_enc = 0x00;
+    /*constexpr char A_enc = 0x00;
     constexpr char C_enc = 0x01;
     constexpr char G_enc = 0x02;
-    constexpr char T_enc = 0x03;
+    constexpr char T_enc = 0x03;*/
 #if 1
 	float* const sharedWeights = (float*)sharedmem;
 	char* const sharedSequence = (char*)(sharedWeights + maximum_sequence_length);
@@ -2819,28 +2810,14 @@ void msa_add_sequences_kernel_implicit(
 		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
         const int shift = 0;
 
-        int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsC = d_countsC + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsG = d_countsG + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsT = d_countsT + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_row_pitch_floats;
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 #if 1
         for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
             const char base = get(subject, subjectLength, i);
             const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            switch(base){
-                case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
-                case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
-                case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
-                case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
-                default: assert(false); break;
-            }
-            //my_coverage[globalIndex]++;
+            atomicAdd(d_counts + int(base) * subjectIndex + globalIndex, 1);
+            atomicAdd(d_weights + int(base) * subjectIndex + globalIndex, weight);
             atomicAdd(my_coverage + globalIndex, 1);
         }
 #else
@@ -2878,14 +2855,6 @@ void msa_add_sequences_kernel_implicit(
         const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-        int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsC = d_countsC + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsG = d_countsG + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsT = d_countsT + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_row_pitch_floats;
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
         const char* const query = getCandidatePtr(queryIndex);
@@ -2906,14 +2875,8 @@ void msa_add_sequences_kernel_implicit(
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = get(query, queryLength, i);
                 const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
-                switch(base){
-                    case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
-                    case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
-                    case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
-                    case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
-                    default: assert(false); break;
-                }
-                //my_coverage[globalIndex]++;
+                atomicAdd(d_counts + int(base) * subjectIndex + globalIndex, 1);
+                atomicAdd(d_weights + int(base) * subjectIndex + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
 		}else{
@@ -2963,14 +2926,8 @@ void msa_add_sequences_kernel_implicit(
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = sharedSequence[i];
                 const float weight = sharedWeights[i];
-                switch(base){
-                    case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
-                    case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
-                    case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
-                    case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
-                    default: assert(false); break;
-                }
-                //my_coverage[globalIndex]++;
+                atomicAdd(d_counts + int(base) * subjectIndex + globalIndex, 1);
+                atomicAdd(d_weights + int(base) * subjectIndex + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
 
@@ -2984,14 +2941,8 @@ void msa_add_sequences_kernel_implicit(
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
 void call_msa_add_sequences_kernel_implicit_async(
-            int* d_countsA,
-            int* d_countsC,
-            int* d_countsG,
-            int* d_countsT,
-            float* d_weightsA,
-            float* d_weightsC,
-            float* d_weightsG,
-            float* d_weightsT,
+            int* d_counts,
+            float* d_weights,
             int* d_coverage,
             float* d_origWeights,
             int* d_origCoverages,
@@ -3083,14 +3034,8 @@ void call_msa_add_sequences_kernel_implicit_async(
 	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
 
 	msa_add_sequences_kernel_implicit<<<grid, block, smem, stream>>>(
-                                                                d_countsA,
-                                                                d_countsC,
-                                                                d_countsG,
-                                                                d_countsT,
-                                                                d_weightsA,
-                                                                d_weightsC,
-                                                                d_weightsG,
-                                                                d_weightsT,
+                                                                d_counts,
+                                                                d_weights,
                                                                 d_coverage,
                                                                 d_origWeights,
                                                                 d_origCoverages,
@@ -3136,14 +3081,8 @@ void call_msa_add_sequences_kernel_implicit_async(
 template<class Accessor, class GetSubjectPtr>
 __global__
 void msa_find_consensus_implicit_kernel(
-                        int* __restrict__ d_countsA,
-                        int* __restrict__ d_countsC,
-                        int* __restrict__ d_countsG,
-                        int* __restrict__ d_countsT,
-                        float* __restrict__ d_weightsA,
-                        float* __restrict__ d_weightsC,
-                        float* __restrict__ d_weightsG,
-                        float* __restrict__ d_weightsT,
+                        int* __restrict__ d_counts,
+                        float* __restrict__ d_weights,
                         char* __restrict__ d_consensus,
                         float* __restrict__ d_support,
                         int* __restrict__ d_coverage,
@@ -3183,10 +3122,10 @@ void msa_find_consensus_implicit_kernel(
         float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
         int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-        const float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsA = d_weights + 0 * subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsC = d_weights + 1 * subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsG = d_weights + 2 * subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsT = d_weights + 3 * subjectIndex * msa_weights_pitch_floats;
 
         for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
             const float wA = my_weightsA[column];
@@ -3212,10 +3151,10 @@ void msa_find_consensus_implicit_kernel(
             my_support[column] = consWeight / columnWeight;
 
             if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                const int* const my_countsA = d_countsA + subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsC = d_countsC + subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsG = d_countsG + subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsT = d_countsT + subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsA = d_counts + 0 * subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsC = d_counts + 1 * subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsG = d_counts + 2 * subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsT = d_counts + 3 * subjectIndex * msa_weights_pitch_floats;
 
                 const int localIndex = column - subjectColumnsBegin_incl;
                 const char subjectbase = get(subject, subjectLength, localIndex);
@@ -3240,14 +3179,8 @@ void msa_find_consensus_implicit_kernel(
 
 template<class Accessor, class GetSubjectPtr>
 void call_msa_find_consensus_implicit_kernel_async(
-                        int* d_countsA,
-                        int* d_countsC,
-                        int* d_countsG,
-                        int* d_countsT,
-                        float* d_weightsA,
-                        float* d_weightsC,
-                        float* d_weightsG,
-                        float* d_weightsT,
+                        int* d_counts,
+                        float* d_weights,
                         char* d_consensus,
                         float* d_support,
                         int* d_coverage,
@@ -3316,14 +3249,8 @@ void call_msa_find_consensus_implicit_kernel_async(
     dim3 grid(std::min(max_blocks_per_device, n_subjects * blocks_per_msa), 1, 1);
 
     msa_find_consensus_implicit_kernel<<<grid, block, 0, stream>>>(
-                                                        d_countsA,
-                                                        d_countsC,
-                                                        d_countsG,
-                                                        d_countsT,
-                                                        d_weightsA,
-                                                        d_weightsC,
-                                                        d_weightsG,
-                                                        d_weightsT,
+                                                        d_counts,
+                                                        d_weights,
                                                         d_consensus,
                                                         d_support,
                                                         d_coverage,

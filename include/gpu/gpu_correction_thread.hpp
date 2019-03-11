@@ -1425,14 +1425,8 @@ public:
 						batch.kernelLaunchHandle);
 #else
             MSAAddSequencesChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
-                        dataArrays.d_countsA,
-                        dataArrays.d_countsC,
-                        dataArrays.d_countsG,
-                        dataArrays.d_countsT,
-                        dataArrays.d_weightsA,
-                        dataArrays.d_weightsC,
-                        dataArrays.d_weightsG,
-                        dataArrays.d_weightsT,
+                        dataArrays.d_counts,
+                        dataArrays.d_weights,
                         dataArrays.d_coverage,
                         dataArrays.d_origWeights,
                         dataArrays.d_origCoverages,
@@ -1481,14 +1475,8 @@ public:
 						dataArrays.d_coverage,
 						dataArrays.d_origWeights,
 						dataArrays.d_origCoverages,
-                        dataArrays.d_countsA,
-                        dataArrays.d_countsC,
-                        dataArrays.d_countsG,
-                        dataArrays.d_countsT,
-                        dataArrays.d_weightsA,
-                        dataArrays.d_weightsC,
-                        dataArrays.d_weightsG,
-                        dataArrays.d_weightsT,
+                        dataArrays.d_counts,
+                        dataArrays.d_weights,
 						dataArrays.d_multiple_sequence_alignments,
 						dataArrays.d_multiple_sequence_alignment_weights,
 						dataArrays.d_msa_column_properties,
@@ -1505,14 +1493,8 @@ public:
 						batch.kernelLaunchHandle);
 #else
             MSAFindConsensusChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
-                        dataArrays.d_countsA,
-                        dataArrays.d_countsC,
-                        dataArrays.d_countsG,
-                        dataArrays.d_countsT,
-                        dataArrays.d_weightsA,
-                        dataArrays.d_weightsC,
-                        dataArrays.d_weightsG,
-                        dataArrays.d_weightsT,
+                        dataArrays.d_counts,
+                        dataArrays.d_weights,
                         dataArrays.d_consensus,
 						dataArrays.d_support,
 						dataArrays.d_coverage,
@@ -2152,10 +2134,10 @@ public:
 			float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
 			int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
 
-            const int* my_countsA = arrays.h_countsA + subject_index * msa_weights_pitch_floats;
-            const int* my_countsC = arrays.h_countsC + subject_index * msa_weights_pitch_floats;
-            const int* my_countsG = arrays.h_countsG + subject_index * msa_weights_pitch_floats;
-            const int* my_countsT = arrays.h_countsT + subject_index * msa_weights_pitch_floats;
+            const int* my_countsA = arrays.h_counts + 0 * subject_index * msa_weights_pitch_floats;
+            const int* my_countsC = arrays.h_counts + 1 * subject_index * msa_weights_pitch_floats;
+            const int* my_countsG = arrays.h_counts + 2 * subject_index * msa_weights_pitch_floats;
+            const int* my_countsT = arrays.h_counts + 3 * subject_index * msa_weights_pitch_floats;
 
 			float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
 			int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
