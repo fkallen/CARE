@@ -48,11 +48,15 @@ struct DataArrays {
 	}
 
 	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int min_overlap_, float min_overlap_ratio_, bool useQualityScores){
+        n_subjects = n_sub;
+		n_queries = n_quer;
+		maximum_sequence_length = max_seq_length;
+		min_overlap = std::max(1, std::max(min_overlap_, int(maximum_sequence_length * min_overlap_ratio_)));
 
 		encoded_sequence_pitch = SDIV(Sequence_t::getNumBytes(max_seq_length), padding_bytes) * padding_bytes;
 		quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
 		sequence_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
-		int msa_max_column_count = (3*max_seq_length - 2*min_overlap);
+		int msa_max_column_count = (3*max_seq_length - 2*min_overlap_);
 		msa_pitch = SDIV(sizeof(char)*msa_max_column_count, padding_bytes) * padding_bytes;
 		msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, padding_bytes) * padding_bytes;
 
@@ -350,10 +354,7 @@ struct DataArrays {
         d_weights = (float*)(((char*)d_counts) + memAllCounts);
 
 
-		n_subjects = n_sub;
-		n_queries = n_quer;
-		maximum_sequence_length = max_seq_length;
-		min_overlap = std::max(1, std::max(min_overlap_, int(maximum_sequence_length * min_overlap_ratio_)));
+
 	}
 
 
