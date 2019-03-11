@@ -38,6 +38,7 @@
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
+//MSA_IMPLICIT does not work yet
 //#define MSA_IMPLICIT
 
 #define shd_tilesize 32
@@ -3218,7 +3219,9 @@ for(std::size_t subject_index = 0; subject_index < mainBatch.tasks.size(); ++sub
 
 
 
-
+#ifdef MSA_IMPLICIT
+#undef MSA_IMPLICIT
+#endif
 
 
 #endif

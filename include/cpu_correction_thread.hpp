@@ -541,7 +541,7 @@ iterasdf++;
 
                 const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
 
-//#define MSA_IMPLICIT
+#define MSA_IMPLICIT
 
 #ifndef MSA_IMPLICIT
                 multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
@@ -959,6 +959,11 @@ iterasdf++;
 
 }
 }
+
+
+#ifdef MSA_IMPLICIT
+#undef MSA_IMPLICIT
+#endif
 
 
 #endif
