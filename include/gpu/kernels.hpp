@@ -1059,6 +1059,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
 
 
 		const int candidatesBeforeThisSubject = candidates_per_subject_prefixsum[subjectIndex];
+		const int maxCandidateIndex_excl = candidates_per_subject_prefixsum[subjectIndex+1];
 		//const int tilesForThisSubject = tiles_per_subject_prefixsum[subjectIndex + 1] - tiles_per_subject_prefixsum[subjectIndex];
 		const int tileForThisSubject = forwardTileId - tiles_per_subject_prefixsum[subjectIndex];
 		const int queryIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
@@ -1090,7 +1091,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
         cg::tiled_partition(cg::this_thread_block(), tilesize).sync();
 
 
-		if(queryIndex < n_candidates){
+		if(queryIndex < maxCandidateIndex_excl){
 			const int querybases = getCandidateLength(queryIndex);
 			const char* candidateptr = getCandidatePtr(queryIndex);
 
