@@ -60,6 +60,7 @@ struct DataArrays {
 		memSubjects = n_sub * encoded_sequence_pitch;
 		memSubjectLengths = SDIV(n_sub * sizeof(int), padding_bytes) * padding_bytes;
 		memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
+        memTilesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
 		memQueries = n_quer * encoded_sequence_pitch;
 		memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
 		memSubjectIds = SDIV(sizeof(ReadId_t) * n_sub, padding_bytes) * padding_bytes;
@@ -68,6 +69,7 @@ struct DataArrays {
 		std::size_t required_alignment_transfer_data_allocation_size = memSubjects
 		                                                               + memSubjectLengths
 		                                                               + memNqueriesPrefixSum
+                                                                       + memTilesPrefixSum
 		                                                               + memQueries
 		                                                               + memQueryLengths
 		                                                               + memSubjectIds;
@@ -90,7 +92,8 @@ struct DataArrays {
 		h_subject_sequences_lengths = (int*)(((char*)h_candidate_sequences_data) + memQueries);
 		h_candidate_sequences_lengths = (int*)(((char*)h_subject_sequences_lengths) + memSubjectLengths);
 		h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
-		h_subject_read_ids = (ReadId_t*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
+        h_tiles_per_subject_prefixsum = (int*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
+		h_subject_read_ids = (ReadId_t*)(((char*)h_tiles_per_subject_prefixsum) + memTilesPrefixSum);
 		//h_candidate_read_ids = (ReadId_t*)(((char*)h_subject_read_ids) + memSubjectIds);
 
 		d_subject_sequences_data = (char*)alignment_transfer_data_device;
@@ -98,7 +101,8 @@ struct DataArrays {
 		d_subject_sequences_lengths = (int*)(((char*)d_candidate_sequences_data) + memQueries);
 		d_candidate_sequences_lengths = (int*)(((char*)d_subject_sequences_lengths) + memSubjectLengths);
 		d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
-		d_subject_read_ids = (ReadId_t*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
+        d_tiles_per_subject_prefixsum = (int*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
+		d_subject_read_ids = (ReadId_t*)(((char*)d_tiles_per_subject_prefixsum) + memTilesPrefixSum);
 		//d_candidate_read_ids = (ReadId_t*)(((char*)d_subject_read_ids) + memSubjectIds);
 
 		//alignment output
@@ -387,6 +391,9 @@ struct DataArrays {
 
 	void zero_gpu(cudaStream_t stream){
 		cudaMemsetAsync(msa_data_device, 0, msa_data_usable_size, stream); CUERR;
+
+        cudaMemsetAsync(d_multiple_sequence_alignments, char(0xFC), (n_subjects + n_queries) * msa_pitch, stream);
+
 		cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
 		cudaMemsetAsync(qualities_transfer_data_device, 0, qualities_transfer_data_usable_size, stream); CUERR;
 		//cudaMemsetAsync(indices_transfer_data_device, 0, indices_transfer_data_usable_size, stream); CUERR;
@@ -449,6 +456,7 @@ struct DataArrays {
 		a.h_subject_sequences_lengths = nullptr;
 		a.h_candidate_sequences_lengths = nullptr;
 		a.h_candidates_per_subject_prefixsum = nullptr;
+        a.h_tiles_per_subject_prefixsum = nullptr;
 		a.h_subject_read_ids = nullptr;
 		a.h_candidate_read_ids = nullptr;
 		a.d_subject_sequences_data = nullptr;
@@ -456,6 +464,7 @@ struct DataArrays {
 		a.d_subject_sequences_lengths = nullptr;
 		a.d_candidate_sequences_lengths = nullptr;
 		a.d_candidates_per_subject_prefixsum = nullptr;
+        a.d_tiles_per_subject_prefixsum = nullptr;
 		a.d_subject_read_ids = nullptr;
 		a.d_candidate_read_ids = nullptr;
 		a.indices_transfer_data_host = nullptr;
@@ -595,6 +604,7 @@ struct DataArrays {
 	std::size_t memSubjects;
 	std::size_t memSubjectLengths;
 	std::size_t memNqueriesPrefixSum;
+    std::size_t memTilesPrefixSum;
 	std::size_t memQueries;
 	std::size_t memQueryLengths;
 	std::size_t memSubjectIds;
@@ -614,6 +624,7 @@ struct DataArrays {
 	int* h_subject_sequences_lengths = nullptr;
 	int* h_candidate_sequences_lengths = nullptr;
 	int* h_candidates_per_subject_prefixsum = nullptr;
+    int* h_tiles_per_subject_prefixsum = nullptr;
 	ReadId_t* h_subject_read_ids = nullptr;
 	ReadId_t* h_candidate_read_ids = nullptr;
 
@@ -622,6 +633,7 @@ struct DataArrays {
 	int* d_subject_sequences_lengths = nullptr;
 	int* d_candidate_sequences_lengths = nullptr;
 	int* d_candidates_per_subject_prefixsum = nullptr;
+    int* d_tiles_per_subject_prefixsum = nullptr;
 	ReadId_t* d_subject_read_ids = nullptr;
 	ReadId_t* d_candidate_read_ids = nullptr;
 

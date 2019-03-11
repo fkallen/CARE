@@ -12,6 +12,9 @@
 
 #ifdef __NVCC__
 #include <cub/cub.cuh>
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
 #endif
 
 
@@ -24,7 +27,7 @@ using MSAColumnProperties = care::cpu::MultipleSequenceAlignment::ColumnProperti
 
 enum class KernelId {
 	PopcountSHD,
-    PopcountSHDtransposed,
+    PopcountSHDTiled,
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
@@ -32,6 +35,9 @@ enum class KernelId {
 	MSAFindConsensus,
 	MSACorrectSubject,
 	MSACorrectCandidates,
+    MSAAddSequencesImplicit,
+    MSAFindConsensusImplicit,
+    MSACorrectSubjectImplicit,
 };
 
 struct KernelLaunchConfig {
@@ -448,6 +454,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
 
 
 	auto shiftEncodedBasesLeftBy = [&](unsigned int* array, int size, int shiftamount){
+            if(shiftamount == 0) return;
 					       const int completeInts = shiftamount / (8 * sizeof(unsigned int));
 
 					       for(int i = 0; i < size - completeInts; i += 1) {
@@ -593,10 +600,30 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
             const int shiftamount = previousShift == std::numeric_limits<int>::min()
                                         ? shift
                                         : BLOCKSIZE;
-
+#if 0
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+            for(int i = 0; i < 8; i++){
+            if(resultIndex == 0 || resultIndex >= n_candidates)     printf("%d ", queryBackup[(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
             shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
             shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
-
+#if 0
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", queryBackup[(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
             int score = hammingdistanceHiLo2(
                         mySequence_hi,
                         mySequence_lo,
@@ -605,7 +632,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
                         max(0, subjectbases - abs(shift)),
                         max(0, querybases - abs(shift)),
                         max_errors);
-
+#if 0
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d shiftamount %d\n", shift, score, score + totalbases - 2*overlapsize, shiftamount);
+#endif
             score = (score < max_errors ?
                      score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
                      : std::numeric_limits<int>::max());                         // too many errors, discard
@@ -637,10 +666,30 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
             const int size = queryints / 2;
             const int shiftamount = previousShift == std::numeric_limits<int>::min()
                                         ? abs(shift) : BLOCKSIZE;
-
+#if 0
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
             shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
             shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
-
+#if 0
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+            for(int i = 0; i < 8; i++){
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[(i)]);
+            }
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
             int score = hammingdistanceHiLo2(
                             mySequence_hi,
                             mySequence_lo,
@@ -649,7 +698,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
                             max(0, querybases - abs(shift)),
                             max(0, subjectbases - abs(shift)),
                             max_errors);
-
+#if 0
+            if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
+#endif
             score = (score < max_errors ?
                      score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
                      : std::numeric_limits<int>::max());                         // too many errors, discard
@@ -678,6 +729,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
 			const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
 			const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
 			const int opnr = bestScore - totalbases + 2*overlapsize;
+
+            //if(resultIndex == 0 || resultIndex >= n_candidates)
+                //printf("resultIndex %d bestScore %d bestShift %d overlapsize %d opnr %d isValid %d\n", resultIndex, bestScore, bestShift, overlapsize, opnr,(bestShift != -querybases));
 
 			alignment_scores[resultIndex] = bestScore;
 			alignment_overlaps[resultIndex] = overlapsize;
@@ -758,6 +812,7 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
             		mymap[kernelLaunchConfig] = kernelProperties; \
             }
 
+            getProp(1);
     		getProp(32);
     		getProp(64);
     		getProp(96);
@@ -781,9 +836,11 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
 
     	dim3 block(blocksize, 1, 1);
     	dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1);         // one block per candidate
-        //dim3 grid(32,1,1);
+        //dim3 block(1,1,1);
+        //dim3 grid(1,1,1);
 
     	switch(blocksize) {
+        case 1: mycall(1); break;
     	case 32: mycall(32); break;
     	case 64: mycall(64); break;
     	case 96: mycall(96); break;
@@ -804,18 +861,27 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
 
 
 
+
+
+#if 1
+
+
+
+
+
+
 template<int BLOCKSIZE, class B, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectLength, class GetCandidateLength>
 __global__
 void
-cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
-			int* alignment_scores,
-			int* alignment_overlaps,
-			int* alignment_shifts,
-			int* alignment_nOps,
-			bool* alignment_isValid,
-			//const int* subject_sequences_lengths,
-			//const int* candidate_sequences_lengths,
-			const int* candidates_per_subject_prefixsum,
+cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
+			int* __restrict__ alignment_scores,
+			int* __restrict__ alignment_overlaps,
+			int* __restrict__ alignment_shifts,
+			int* __restrict__ alignment_nOps,
+			bool* __restrict__ alignment_isValid,
+			const int* __restrict__ candidates_per_subject_prefixsum,
+			const int* __restrict__ tiles_per_subject_prefixsum,
+            const int tilesize,
 			int n_subjects,
 			int n_candidates,
 			int max_sequence_bytes,
@@ -828,240 +894,371 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
 			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength){
 
-	auto no_bank_conflict_index = [](int logical_index) -> int {
-					      return logical_index * BLOCKSIZE;
-	};
+    auto make_reverse_complement_inplace_single_thread = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
 
-	auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength){
+        auto reverse_complement_int = [](auto n) {
+            n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+            n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+            n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+            n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+            n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+            return ~n;
+        };
 
-						       auto reverse_complement_int = [](auto n) {
-											     n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
-											     n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
-											     n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
-											     n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
-											     n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
-											     return ~n;
-										     };
+        const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
+        const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
 
-						       const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
-						       const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
+        unsigned int* const hi = sequence;
+        unsigned int* const lo = sequence + indextrafo(ints/2);
 
-						       unsigned int* const hi = sequence;
-						       unsigned int* const lo = &sequence[no_bank_conflict_index(ints/2)];
+        const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
+        for(int i = 0; i < intsPerHalf/2; ++i) {
+            const unsigned int hifront = reverse_complement_int(hi[indextrafo(i)]);
+            const unsigned int hiback = reverse_complement_int(hi[indextrafo(intsPerHalf - 1 - i)]);
+            hi[indextrafo(i)] = hiback;
+            hi[indextrafo(intsPerHalf - 1 - i)] = hifront;
 
-						       const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
-						       for(int i = 0; i < intsPerHalf/2; ++i) {
-							       const unsigned int hifront = reverse_complement_int(hi[no_bank_conflict_index(i)]);
-							       const unsigned int hiback = reverse_complement_int(hi[no_bank_conflict_index(intsPerHalf - 1 - i)]);
-							       hi[no_bank_conflict_index(i)] = hiback;
-							       hi[no_bank_conflict_index(intsPerHalf - 1 - i)] = hifront;
+            const unsigned int lofront = reverse_complement_int(lo[indextrafo(i)]);
+            const unsigned int loback = reverse_complement_int(lo[indextrafo(intsPerHalf - 1 - i)]);
+            lo[indextrafo(i)] = loback;
+            lo[indextrafo(intsPerHalf - 1 - i)] = lofront;
+        }
+        if(intsPerHalf % 2 == 1) {
+            const int middleindex = intsPerHalf/2;
+            hi[indextrafo(middleindex)] = reverse_complement_int(hi[indextrafo(middleindex)]);
+            lo[indextrafo(middleindex)] = reverse_complement_int(lo[indextrafo(middleindex)]);
+        }
 
-							       const unsigned int lofront = reverse_complement_int(lo[no_bank_conflict_index(i)]);
-							       const unsigned int loback = reverse_complement_int(lo[no_bank_conflict_index(intsPerHalf - 1 - i)]);
-							       lo[no_bank_conflict_index(i)] = loback;
-							       lo[no_bank_conflict_index(intsPerHalf - 1 - i)] = lofront;
-						       }
-						       if(intsPerHalf % 2 == 1) {
-							       const int middleindex = intsPerHalf/2;
-							       hi[no_bank_conflict_index(middleindex)] = reverse_complement_int(hi[no_bank_conflict_index(middleindex)]);
-							       lo[no_bank_conflict_index(middleindex)] = reverse_complement_int(lo[no_bank_conflict_index(middleindex)]);
-						       }
+        if(unusedBitsInt != 0) {
+            for(int i = 0; i < intsPerHalf - 1; ++i) {
+                hi[indextrafo(i)] = (hi[indextrafo(i)] >> unusedBitsInt) | (hi[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                lo[indextrafo(i)] = (lo[indextrafo(i)] >> unusedBitsInt) | (lo[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
+            }
 
-						       if(unusedBitsInt != 0) {
-							       for(int i = 0; i < intsPerHalf - 1; ++i) {
-								       hi[no_bank_conflict_index(i)] = (hi[no_bank_conflict_index(i)] >> unusedBitsInt) | (hi[no_bank_conflict_index(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
-								       lo[no_bank_conflict_index(i)] = (lo[no_bank_conflict_index(i)] >> unusedBitsInt) | (lo[no_bank_conflict_index(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
-							       }
+            hi[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
+            lo[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
+        }
+    };
 
-							       hi[no_bank_conflict_index(intsPerHalf - 1)] >>= unusedBitsInt;
-							       lo[no_bank_conflict_index(intsPerHalf - 1)] >>= unusedBitsInt;
-						       }
-					       };
 
-	auto shiftEncodedBasesLeftBy = [&](unsigned int* array, int size, int shiftamount){
-					       const int completeInts = shiftamount / (8 * sizeof(unsigned int));
+	auto shiftEncodedBasesLeftBy_single_thread = [&](unsigned int* array, int size, int shiftamount, auto indextrafo){
+            if(shiftamount == 0) return;
 
-					       for(int i = 0; i < size - completeInts; i += 1) {
-						       array[no_bank_conflict_index(i)] = array[no_bank_conflict_index(completeInts + i)];
-					       }
+	       const int completeInts = shiftamount / (8 * sizeof(unsigned int));
 
-					       for(int i = size - completeInts; i < size; i += 1) {
-						       array[no_bank_conflict_index(i)] = 0;
-					       }
+	       for(int i = 0; i < size - completeInts; i += 1) {
+		       array[indextrafo(i)] = array[indextrafo(completeInts + i)];
+	       }
 
-					       shiftamount -= completeInts * 8 * sizeof(unsigned int);
+	       for(int i = size - completeInts; i < size; i += 1) {
+		       array[indextrafo(i)] = 0;
+	       }
 
-					       for(int i = 0; i < size - completeInts - 1; i += 1) {
-						       const unsigned int a = array[no_bank_conflict_index(i)];
-						       const unsigned int b = array[no_bank_conflict_index(i+1)];
+	       shiftamount -= completeInts * 8 * sizeof(unsigned int);
 
-						       array[no_bank_conflict_index(i)] = (a >> shiftamount) | (b << (8 * sizeof(unsigned int) - shiftamount));
-					       }
+	       for(int i = 0; i < size - completeInts - 1; i += 1) {
+		       const unsigned int a = array[indextrafo(i)];
+		       const unsigned int b = array[indextrafo(i+1)];
 
-					       array[no_bank_conflict_index(size - completeInts - 1)] >>= shiftamount;
-				       };
+		       array[indextrafo(i)] = (a >> shiftamount) | (b << (8 * sizeof(unsigned int) - shiftamount));
+	       }
 
-	auto hammingdistanceHiLo = [&](
-		const unsigned int* lhi,
-		const unsigned int* llo,
-		const unsigned int* rhi,
-		const unsigned int* rlo,
-		int lhi_bitcount,
-		int rhi_bitcount,
-		int max_errors){
+	       array[indextrafo(size - completeInts - 1)] >>= shiftamount;
+       };
 
-					   const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
+        auto hammingdistanceHiLo2_single_thread = [&](
+        	const unsigned int* lhi,
+        	const unsigned int* llo,
+        	const unsigned int* rhi,
+        	const unsigned int* rlo,
+        	int lhi_bitcount,
+        	int rhi_bitcount,
+        	int max_errors,
+            auto indextrafoL,
+            auto indextrafoR){
 
-					   if(overlap_bitcount == 0)
-						   return max_errors+1;
+		   const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
 
-					   const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-					   const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
+		   if(overlap_bitcount == 0)
+			   return max_errors+1;
 
-					   int result = 0;
+		   const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
+		   const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
 
-					   for(int i = 0; i < partitions - 1 && result < max_errors; i += 1) {
-						   const unsigned int hixor = lhi[no_bank_conflict_index(i)] ^ rhi[no_bank_conflict_index(i)];
-						   const unsigned int loxor = llo[no_bank_conflict_index(i)] ^ rlo[no_bank_conflict_index(i)];
-						   const unsigned int bits = hixor | loxor;
-						   result += __popc(bits);
-					   }
+		   int result = 0;
 
-					   if(result >= max_errors)
-						   return result;
+		   for(int i = 0; i < partitions - 1 && result < max_errors; i += 1) {
+			   const unsigned int hixor = lhi[indextrafoL(i)] ^ rhi[indextrafoR(i)];
+			   const unsigned int loxor = llo[indextrafoL(i)] ^ rlo[indextrafoR(i)];
+			   const unsigned int bits = hixor | loxor;
+			   result += __popc(bits);
+		   }
 
-					   // i == partitions - 1
+		   if(result >= max_errors)
+			   return result;
 
-					   const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
-					   const unsigned int hixor = lhi[no_bank_conflict_index(partitions - 1)] ^ rhi[no_bank_conflict_index(partitions - 1)];
-					   const unsigned int loxor = llo[no_bank_conflict_index(partitions - 1)] ^ rlo[no_bank_conflict_index(partitions - 1)];
-					   const unsigned int bits = hixor | loxor;
-					   result += __popc(bits & mask);
+		   // i == partitions - 1
 
-					   return result;
-				   };
+		   const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
+		   const unsigned int hixor = lhi[indextrafoL(partitions - 1)] ^ rhi[indextrafoR(partitions - 1)];
+		   const unsigned int loxor = llo[indextrafoL(partitions - 1)] ^ rlo[indextrafoR(partitions - 1)];
+		   const unsigned int bits = hixor | loxor;
+		   result += __popc(bits & mask);
 
-	// sizeof(char) * (2 * max_sequence_bytes * blocksize);
+		   return result;
+	   };
+
+    auto no_bank_conflict_index_tile = [&](int logical_index) -> int {
+        return logical_index * tilesize;
+    };
+
+    auto no_bank_conflict_index = [](int logical_index) -> int {
+        return logical_index * BLOCKSIZE;
+    };
+
+    auto identity = [](auto logical_index){
+        return logical_index;
+    };
+
+	// sizeof(char) * (max_sequence_bytes * num_tiles   // tiles share the subject
+    //                    + max_sequence_bytes * num_threads // each thread works with its own candidate
+    //                    + max_sequence_bytes * num_threads) // each thread needs memory to shift a sequence
 	extern __shared__ unsigned int sharedmemory[];
 
-
 	//set up shared memory pointers
-	char* const sharedSubject = (char*)(sharedmemory);
-	char* const sharedQuery = (char*)(((char*)sharedSubject) + max_sequence_bytes * BLOCKSIZE);
-
-	//set up shared memory per tile
-	unsigned int* const mySubject = (unsigned int*)(sharedSubject) + threadIdx.x;
-	unsigned int* const myQuery = (unsigned int*)(sharedQuery) + threadIdx.x;
 
 	const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
 
-	for(unsigned resultIndex = blockIdx.x * BLOCKSIZE + threadIdx.x; resultIndex < n_candidates * 2; resultIndex += BLOCKSIZE * gridDim.x) {
+	const int tiles = (blockDim.x * gridDim.x) / tilesize;
+	const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
+    const int localTileId = (threadIdx.x) / tilesize;
+	const int tilesPerBlock = blockDim.x / tilesize;
+    const int laneInTile = threadIdx.x % tilesize;
+	const int requiredTiles = tiles_per_subject_prefixsum[n_subjects];
 
-		const int queryIndex = resultIndex < n_candidates ? resultIndex : resultIndex - n_candidates;
+    unsigned int* const subjectBackupsBegin = sharedmemory; // per tile shared memory to store subject
+    unsigned int* const queryBackupsBegin = subjectBackupsBegin + max_sequence_ints * tilesPerBlock; // per thread shared memory to store query
+    unsigned int* const mySequencesBegin = queryBackupsBegin + max_sequence_ints * blockDim.x; // per thread shared memory to store shifted sequence
+
+	unsigned int* const subjectBackup = subjectBackupsBegin + max_sequence_ints * localTileId; // accesed via identity
+    unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
+    unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
+
+	for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2; logicalTileId += tiles){
+        const bool isReverseComplement = logicalTileId >= requiredTiles;
+		const int forwardTileId = isReverseComplement ? logicalTileId - requiredTiles : logicalTileId;
 
 		//find subjectindex
 		int subjectIndex = 0;
 		for(; subjectIndex < n_subjects; subjectIndex++) {
-			if(queryIndex < candidates_per_subject_prefixsum[subjectIndex+1])
+			if(forwardTileId < tiles_per_subject_prefixsum[subjectIndex+1])
 				break;
 		}
 
-		//save subject in shared memory
-		const int subjectbases = getSubjectLength(subjectIndex);
-		const char* subjectptr = getSubjectPtr(subjectIndex);
-		const char* candidateptr = getCandidatePtr(queryIndex);
+        //assert(subjectIndex < n_subjects);
 
-		for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-			mySubject[no_bank_conflict_index(lane)] = ((unsigned int*)(subjectptr))[lane];
-		}
 
-		//save query in shared memory
-		const int querybases = getCandidateLength(queryIndex);
+		const int candidatesBeforeThisSubject = candidates_per_subject_prefixsum[subjectIndex];
+		//const int tilesForThisSubject = tiles_per_subject_prefixsum[subjectIndex + 1] - tiles_per_subject_prefixsum[subjectIndex];
+		const int tileForThisSubject = forwardTileId - tiles_per_subject_prefixsum[subjectIndex];
+		const int queryIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
+		const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
+        /*if(tileForThisSubject < 0){
+            printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d\n",
+                    blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
+                    candidatesBeforeThisSubject, tileForThisSubject, subjectIndex);
 
-		for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-			myQuery[no_bank_conflict_index(lane)] = ((unsigned int*)(candidateptr))[lane];
-		}
+        }
+        assert(forwardTileId >= 0);
+        assert(candidatesBeforeThisSubject >= 0);
+        assert(tileForThisSubject >= 0);
+        assert(queryIndex >= 0);
+        assert(resultIndex >= 0);*/
 
-		//queryIndex != resultIndex -> reverse complement
-		if(queryIndex != resultIndex) {
-			make_reverse_complement_inplace(myQuery, querybases);
-		}
+        /*printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d queryIndex %d resultIndex %d\n",
+                blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
+                candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
-		__syncthreads();
+        const int subjectbases = getSubjectLength(subjectIndex);
+        const char* subjectptr = getSubjectPtr(subjectIndex);
 
-		//begin SHD algorithm
+        //save subject in shared memory (in parallel, per tile)
+        for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
+            subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
+        }
 
-		const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
-		const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
-		const int totalbases = subjectbases + querybases;
-		const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
+        cg::tiled_partition(cg::this_thread_block(), tilesize).sync();
 
-		int bestScore = totalbases;                 // score is number of mismatches
-		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
 
-		unsigned int* const subjectdata_hi = mySubject;
-		unsigned int* const subjectdata_lo = mySubject + subjectints / 2 * BLOCKSIZE;
-		unsigned int* const querydata_hi = myQuery;
-		unsigned int* const querydata_lo = myQuery + queryints / 2 * BLOCKSIZE;
+		if(queryIndex < n_candidates){
+			const int querybases = getCandidateLength(queryIndex);
+			const char* candidateptr = getCandidatePtr(queryIndex);
 
-        auto hammingdistanceofshift = [&](int shift, unsigned int* const shiftptr_hi, unsigned int* const shiftptr_lo, const int size){
-            const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-			const int max_errors = int(float(overlapsize) * maxErrorRate);
-            const int shiftamount = abs(shift);
-            shiftEncodedBasesLeftBy(shiftptr_hi, size, 1);
-			shiftEncodedBasesLeftBy(shiftptr_lo, size, 1);
-            int score = hammingdistanceHiLo(
-						subjectdata_hi,
-						subjectdata_lo,
-						querydata_hi,
-						querydata_lo,
-						max(0, subjectbases - abs(shift)),
-						max(0, querybases - abs(shift)),
-						max_errors);
-
-			score = (score < max_errors ?
-			         score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
-			         : std::numeric_limits<int>::max());                         // too many errors, discard
-
-			return score;
-        };
-
-        for(int shift = 1; shift < subjectbases - minoverlap + 1; shift += 1){
-            const int score = hammingdistanceofshift(shift, subjectdata_hi, subjectdata_lo, subjectints / 2);
-            /*
-                bestScore = (score < bestScore) * score + (score >= bestScore) * bestScore
-                bestShift = (score < bestScore) * shift + (score >= bestScore) * bestShift
-            */
-            if(score < bestScore) {
-				bestScore = score;
-				bestShift = shift;
+			//save query in shared memory
+			for(int i = 0; i < max_sequence_ints; i += 1) {
+				queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
 			}
-        }
 
-        //shift > 0 means that subject was shifted. now, restore subject to original sequence
-        //since query is shifted for negative shift amounts.
-        for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-            mySubject[lane] = ((unsigned int*)(subjectptr))[lane];
-        }
-
-        for(int shift = 0; shift >= -querybases + minoverlap; shift -= 1){
-            const int score = hammingdistanceofshift(shift, querydata_hi, querydata_lo, queryints / 2);
-            if(score < bestScore) {
-				bestScore = score;
-				bestShift = shift;
+			//queryIndex != resultIndex -> reverse complement
+			if(isReverseComplement) {
+				make_reverse_complement_inplace_single_thread(queryBackup, querybases, no_bank_conflict_index);
 			}
-        }
 
-		const int queryoverlapbegin_incl = max(-bestShift, 0);
-		const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-		const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-		const int opnr = bestScore - totalbases + 2*overlapsize;
+            //begin SHD algorithm
 
-		alignment_scores[resultIndex] = bestScore;
-		alignment_overlaps[resultIndex] = overlapsize;
-		alignment_shifts[resultIndex] = bestShift;
-		alignment_nOps[resultIndex] = opnr;
-		alignment_isValid[resultIndex] = (bestShift != -querybases);
+    		const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
+    		const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
+    		const int totalbases = subjectbases + querybases;
+    		const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
+
+
+            const unsigned int* const subjectBackup_hi = subjectBackup;
+            const unsigned int* const subjectBackup_lo = subjectBackup + identity(subjectints/2);
+            const unsigned int* const queryBackup_hi = queryBackup;
+            const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
+
+    		int bestScore = totalbases;                 // score is number of mismatches
+    		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
+
+            //initialize threadlocal smem array with subject
+            for(int i = 0; i < max_sequence_ints; i += 1) {
+                mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
+            }
+
+            unsigned int* mySequence_hi = mySequence;
+            unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(subjectints / 2);
+
+            for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
+                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+                const int max_errors = int(float(overlapsize) * maxErrorRate);
+
+                const int size = subjectints / 2;
+                const int shiftamount = shift == 0 ? 0 : 1;
+#if 0
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", queryBackup[no_bank_conflict_index(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
+                shiftEncodedBasesLeftBy_single_thread(mySequence_hi, size, shiftamount, no_bank_conflict_index);
+                shiftEncodedBasesLeftBy_single_thread(mySequence_lo, size, shiftamount, no_bank_conflict_index);
+#if 0
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", queryBackup[no_bank_conflict_index(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
+                int score = hammingdistanceHiLo2_single_thread(
+                            mySequence_hi,
+                            mySequence_lo,
+                            queryBackup_hi,
+                            queryBackup_lo,
+                            max(0, subjectbases - abs(shift)),
+                            max(0, querybases - abs(shift)),
+                            max_errors,
+                            no_bank_conflict_index,
+                            no_bank_conflict_index);
+#if 0
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
+#endif
+                score = (score < max_errors ?
+                         score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
+                         : std::numeric_limits<int>::max());                         // too many errors, discard
+
+                if(score < bestScore) {
+                    bestScore = score;
+                    bestShift = shift;
+                }
+            }
+
+            //initialize threadlocal smem array with query
+            for(int i = 0; i < max_sequence_ints; i += 1) {
+                mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
+            }
+
+            mySequence_hi = mySequence;
+            mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
+
+            for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
+                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+                const int max_errors = int(float(overlapsize) * maxErrorRate);
+
+                const int size = queryints / 2;
+#if 0
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[identity(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
+                shiftEncodedBasesLeftBy_single_thread(mySequence_hi, size, 1, no_bank_conflict_index);
+                shiftEncodedBasesLeftBy_single_thread(mySequence_lo, size, 1, no_bank_conflict_index);
+#if 0
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+                for(int i = 0; i < 8; i++){
+                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[identity(i)]);
+                }
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
+#endif
+                int score = hammingdistanceHiLo2_single_thread(
+                                mySequence_hi,
+                                mySequence_lo,
+                                subjectBackup_hi,
+                                subjectBackup_lo,
+                                max(0, querybases - abs(shift)),
+                                max(0, subjectbases - abs(shift)),
+                                max_errors,
+                                no_bank_conflict_index,
+                                identity);
+#if 0
+                if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
+#endif
+                score = (score < max_errors ?
+                         score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
+                         : std::numeric_limits<int>::max());                         // too many errors, discard
+
+                if(score < bestScore) {
+                    bestScore = score;
+                    bestShift = shift;
+                }
+            }
+
+            const int queryoverlapbegin_incl = max(-bestShift, 0);
+			const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+			const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+			const int opnr = bestScore - totalbases + 2*overlapsize;
+
+            /*printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d queryIndex %d resultIndex %d bestScore %d bestShift%d\n",
+                    blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
+                    candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex, bestScore, bestShift);*/
+
+            //if(resultIndex == 0 || resultIndex >= n_candidates)
+            //    printf("resultIndex %d bestScore %d bestShift %d overlapsize %d opnr %d isValid %d\n", resultIndex, bestScore, bestShift, overlapsize, opnr,(bestShift != -querybases));
+
+			alignment_scores[resultIndex] = bestScore;
+			alignment_overlaps[resultIndex] = overlapsize;
+			alignment_shifts[resultIndex] = bestShift;
+			alignment_nOps[resultIndex] = opnr;
+			alignment_isValid[resultIndex] = (bestShift != -querybases);
+		}
 	}
 }
 
@@ -1069,14 +1266,19 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed(
 
 
 
+
+
 template<class B, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectLength, class GetCandidateLength>
-void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed_async(
+void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
 			int* d_alignment_scores,
 			int* d_alignment_overlaps,
 			int* d_alignment_shifts,
 			int* d_alignment_nOps,
 			bool* d_alignment_isValid,
 			const int* d_candidates_per_subject_prefixsum,
+            const int* h_tiles_per_subject_prefixsum,
+            const int* d_tiles_per_subject_prefixsum,
+            int tilesize,
 			int n_subjects,
 			int n_queries,
 			int max_sequence_bytes,
@@ -1091,28 +1293,15 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed
 			cudaStream_t stream,
 			KernelLaunchHandle& handle){
 
-	    #define mycall(blocksize) cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed<(blocksize)> \
-	        <<<grid, block, smem, stream>>>( \
-    		d_alignment_scores, \
-    		d_alignment_overlaps, \
-    		d_alignment_shifts, \
-    		d_alignment_nOps, \
-    		d_alignment_isValid, \
-    		d_candidates_per_subject_prefixsum, \
-    		n_subjects, \
-    		n_queries, \
-    		max_sequence_bytes, \
-    		min_overlap, \
-    		maxErrorRate, \
-    		min_overlap_ratio, \
-    		getNumBytes, \
-    		getSubjectPtr, \
-    		getCandidatePtr, \
-    		getSubjectLength, \
-    		getCandidateLength); CUERR;
+    	const int blocksize = 128;
+        const int tilesPerBlock = blocksize / tilesize;
+        const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
+        const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
 
-    	const int blocksize = 64;
-    	const std::size_t smem = sizeof(char) * (2*max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
+        //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
+
+
+    	const std::size_t smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2);
 
     	int max_blocks_per_device = 1;
 
@@ -1120,37 +1309,37 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed
     	kernelLaunchConfig.threads_per_block = blocksize;
     	kernelLaunchConfig.smem = smem;
 
-    	auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDtransposed);
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiled);
     	if(iter == handle.kernelPropertiesMap.end()) {
 
     		std::map<KernelLaunchConfig, KernelProperties> mymap;
 
-    		#define getProp(blocksize) { \
+    		#define getProp(blocksize, tilesize) { \
             		KernelLaunchConfig kernelLaunchConfig; \
             		kernelLaunchConfig.threads_per_block = (blocksize); \
-            		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * (blocksize) + 2 * max_sequence_bytes); \
+            		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2); \
             		KernelProperties kernelProperties; \
             		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-            					cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed<(blocksize), B, \
+            					cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel<(blocksize), B, \
             					                                                                GetSubjectPtr, GetCandidatePtr, \
             					                                                                GetSubjectLength, GetCandidateLength>, \
             					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
             		mymap[kernelLaunchConfig] = kernelProperties; \
             }
-
-    		getProp(32);
-    		getProp(64);
-    		getProp(96);
-    		getProp(128);
-    		getProp(160);
-    		getProp(192);
-    		getProp(224);
-    		getProp(256);
+            getProp(1, tilesize);
+    		getProp(32, tilesize);
+    		getProp(64, tilesize);
+    		getProp(96, tilesize);
+    		getProp(128, tilesize);
+    		getProp(160, tilesize);
+    		getProp(192, tilesize);
+    		getProp(224, tilesize);
+    		getProp(256, tilesize);
 
     		const auto& kernelProperties = mymap[kernelLaunchConfig];
     		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
-    		handle.kernelPropertiesMap[KernelId::PopcountSHDtransposed] = std::move(mymap);
+    		handle.kernelPropertiesMap[KernelId::PopcountSHDTiled] = std::move(mymap);
 
     		#undef getProp
     	}else{
@@ -1159,31 +1348,49 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed
     		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
     	}
 
+        #define mycall(blocksize, tilesize) cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel<(blocksize)> \
+                                	        <<<grid, block, smem, stream>>>( \
+                                    		d_alignment_scores, \
+                                    		d_alignment_overlaps, \
+                                    		d_alignment_shifts, \
+                                    		d_alignment_nOps, \
+                                    		d_alignment_isValid, \
+                                    		d_candidates_per_subject_prefixsum, \
+                                            d_tiles_per_subject_prefixsum, \
+                                            tilesize, \
+                                    		n_subjects, \
+                                    		n_queries, \
+                                    		max_sequence_bytes, \
+                                    		min_overlap, \
+                                    		maxErrorRate, \
+                                    		min_overlap_ratio, \
+                                    		getNumBytes, \
+                                    		getSubjectPtr, \
+                                    		getCandidatePtr, \
+                                    		getSubjectLength, \
+                                    		getCandidateLength); CUERR;
+
     	dim3 block(blocksize, 1, 1);
-    	dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1);         // one block per candidate
+    	dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
+        //dim3 grid(1,1,1);
 
     	switch(blocksize) {
-    	case 32: mycall(32); break;
-    	case 64: mycall(64); break;
-    	case 96: mycall(96); break;
-    	case 128: mycall(128); break;
-    	case 160: mycall(160); break;
-    	case 192: mycall(192); break;
-    	case 224: mycall(224); break;
-    	case 256: mycall(256); break;
-    	default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed with wrong blocksize due to a bug.");
+        case 1: mycall(1, tilesize); break;
+    	case 32: mycall(32, tilesize); break;
+    	case 64: mycall(64, tilesize); break;
+    	case 96: mycall(96, tilesize); break;
+    	case 128: mycall(128, tilesize); break;
+    	case 160: mycall(160, tilesize); break;
+    	case 192: mycall(192, tilesize); break;
+    	case 224: mycall(224, tilesize); break;
+    	case 256: mycall(256, tilesize); break;
+    	default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel with wrong blocksize due to a bug.");
     	}
 
 	    #undef mycall
-
 }
 
-
-
-
-
-
-
+#endif
 
 
 
@@ -1757,7 +1964,7 @@ void msa_add_sequences_kernel_exp(
 			size_t quality_pitch,
 			size_t msa_row_pitch,
 			size_t msa_weights_row_pitch,
-			Accessor get_as_nucleotide,
+			Accessor get,
 			RevCompl make_unpacked_reverse_complement_inplace,
 			GetSubjectPtr getSubjectPtr,
 			GetCandidatePtr getCandidatePtr,
@@ -1766,19 +1973,19 @@ void msa_add_sequences_kernel_exp(
 			GetSubjectLength getSubjectLength,
 			GetCandidateLength getCandidateLength){
 
-	auto reverse_float = [](float* sequence, int length){
+    /*auto reverse_float = [](float* sequence, int length){
 
-				     for(int i = 0; i < length/2; i++) {
-					     const float front = sequence[i];
-					     const float back = sequence[length - 1 - i];
-					     sequence[i] = back;
-					     sequence[length - 1 - i] = front;
-				     }
+        for(int i = 0; i < length/2; i++) {
+            const float front = sequence[i];
+            const float back = sequence[length - 1 - i];
+            sequence[i] = back;
+            sequence[length - 1 - i] = front;
+        }
 
-				     if(length % 2 == 1) {
-					     ;                         // when sequencelength is odd, the center remains unchanged
-				     }
-			     };
+        if(length % 2 == 1) {
+            ;                         // when sequencelength is odd, the center remains unchanged
+        }
+    };*/
 
 	extern __shared__ float sharedmem[];
 
@@ -1804,7 +2011,7 @@ void msa_add_sequences_kernel_exp(
 		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
 		for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x) {
-			multiple_sequence_alignment[subjectColumnsBegin_incl + i] = get_as_nucleotide(subject, subjectLength, i);
+			multiple_sequence_alignment[subjectColumnsBegin_incl + i] = get(subject, subjectLength, i);
 			multiple_sequence_alignment_weight[subjectColumnsBegin_incl + i] = canUseQualityScores ?
 			                                                                   (float)d_qscore_to_weight[(unsigned char)subjectQualityScore[i]]
 			                                                                   : 1.0f;
@@ -1883,7 +2090,7 @@ void msa_add_sequences_kernel_exp(
 			for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
 				const int globalIndex = defaultcolumnoffset + i;
 
-				multiple_sequence_alignment[row * msa_row_pitch + globalIndex] = get_as_nucleotide(query, queryLength, i);
+				multiple_sequence_alignment[row * msa_row_pitch + globalIndex] = get(query, queryLength, i);
 
 				multiple_sequence_alignment_weight[row * msa_weights_row_pitch_floats + globalIndex]
 				        = canUseQualityScores ?
@@ -1892,7 +2099,7 @@ void msa_add_sequences_kernel_exp(
 			}
 		}else{
 			for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
-				sharedSequence[i] = get_as_nucleotide(query, queryLength, i);
+				sharedSequence[i] = get(query, queryLength, i);
 				sharedWeights[i] = canUseQualityScores ?
 				                   (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight
 				                   : 1.0f;
@@ -1900,15 +2107,67 @@ void msa_add_sequences_kernel_exp(
 
 			__syncthreads();
 
-			if(threadIdx.x == 0) {
-				make_unpacked_reverse_complement_inplace((std::uint8_t*)sharedSequence, queryLength);
+			/*if(threadIdx.x == 0) {
+				//make_unpacked_reverse_complement_inplace((std::uint8_t*)sharedSequence, queryLength);
+
+                auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                    constexpr std::uint8_t mask = 0x03;
+                    return (~in & mask);
+                };
+
+                const int bytes = queryLength;
+
+                for(int i = 0; i < bytes/2; i++){
+                    const std::uint8_t front = make_reverse_complement_byte(sharedSequence[i]);
+                    const std::uint8_t back = make_reverse_complement_byte(sharedSequence[bytes - 1 - i]);
+                    sharedSequence[i] = back;
+                    sharedSequence[bytes - 1 - i] = front;
+                }
+
+                if(bytes % 2 == 1){
+                    const int middleindex = bytes/2;
+                    sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
+                }
+
 				//reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
 				if(canUseQualityScores) {
 					reverse_float(sharedWeights, queryLength);
 				}
 			}
 
-			__syncthreads();
+			__syncthreads();*/
+            auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                constexpr std::uint8_t mask = 0x03;
+                return (~in & mask);
+            };
+
+            const int bytes = queryLength;
+            //make reverse complement of shared sequence
+            for(int i = threadIdx.x; i < bytes/2; i += blockDim.x){
+                const std::uint8_t front = make_reverse_complement_byte(sharedSequence[i]);
+                const std::uint8_t back = make_reverse_complement_byte(sharedSequence[bytes - 1 - i]);
+                sharedSequence[i] = back;
+                sharedSequence[bytes - 1 - i] = front;
+            }
+
+            if(threadIdx.x == 0 && bytes % 2 == 1){
+                const int middleindex = bytes/2;
+                sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
+            }
+            //reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
+            if(canUseQualityScores){
+                const int floats = queryLength;
+                for(int i = threadIdx.x; i < floats/2; i += blockDim.x){
+                    const float front = sharedWeights[i];
+                    const float back = sharedWeights[bytes - 1 - i];
+                    sharedWeights[i] = back;
+                    sharedWeights[bytes - 1 - i] = front;
+                }
+                //for odd length, the middle position remains unchanged
+            }
+
+            __syncthreads();
+
 
 			const int row = 1 + localQueryIndex;
 			for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
@@ -2060,7 +2319,164 @@ void call_msa_add_sequences_kernel_exp_async(
 
 
 
+template<int BLOCKSIZE, class RevCompl, class GetCandidateLength>
+__global__
+void make_candidates_per_hq_subject_prefixsum_kernel(
+			const MSAColumnProperties* __restrict__ d_msa_column_properties,
+			const int* __restrict__ d_indices,
+			const int* __restrict__ d_indices_per_subject,
+			const int* __restrict__ d_indices_per_subject_prefixsum,
+			const int* __restrict__ d_high_quality_subject_indices,
+			const int* __restrict__ d_num_high_quality_subject_indices,
+			const int* __restrict__ d_alignment_shifts,
+			int* __restrict__ d_candidates_per_hq_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* __restrict__ d_num_indices,
+			float min_support_threshold,
+			float min_coverage_threshold,
+			int new_columns_to_correct,
+			GetCandidateLength getCandidateLength){
 
+	constexpr int chunksize = 4;
+
+	using BlockScan = cub::BlockScan<int, BLOCKSIZE>;
+
+	__shared__ typename BlockScan::TempStorage temp_storage;
+
+	const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
+	const int chunks = SDIV(num_high_quality_subject_indices, chunksize);
+
+	const int loop_end = SDIV(chunks, BLOCKSIZE) * BLOCKSIZE;
+
+	int previous_aggregate = 0;
+	for(int index = chunksize * threadIdx.x; index < loop_end; index += chunksize * BLOCKSIZE){
+		int my_num_candidates[chunksize];
+
+		#pragma unroll
+		for(int i = 0; i < chunksize; i++){
+			if(index + i < num_high_quality_subject_indices){
+				const int subjectIndex = d_high_quality_subject_indices[index + i];
+				my_num_candidates[i] = d_indices_per_subject[subjectIndex];
+			}else{
+				my_num_candidates[i] = 0;
+			}
+		}
+
+
+		int aggregate = 0;
+		BlockScan(temp_storage).ExclusiveSum(my_num_candidates, my_num_candidates, aggregate);
+
+		#pragma unroll
+		for(int i = 0; i < chunksize; i++){
+			if(index + i < num_high_quality_subject_indices){
+				d_candidates_per_hq_subject_prefixsum[index] = my_num_candidates[i] + previous_aggregate;
+			}
+		}
+
+		previous_aggregate = aggregate;
+	}
+
+	if(threadIdx.x == 0)
+		d_candidates_per_hq_subject_prefixsum[num_high_quality_subject_indices] = previous_aggregate;
+
+
+
+
+
+	/*for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x) {
+		const int subjectIndex = d_high_quality_subject_indices[index];
+		const int my_num_candidates = d_indices_per_subject[subjectIndex];
+
+		const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+
+		const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
+		const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
+		const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+
+		for(int local_candidate_index = 0; local_candidate_index < my_num_candidates; ++local_candidate_index) {
+			const int global_candidate_index = my_indices[local_candidate_index];
+			const int shift = d_alignment_shifts[global_candidate_index];
+			const int candidate_length = getCandidateLength(subjectIndex, local_candidate_index);
+			const int queryColumnsBegin_incl = shift - properties.startindex;
+			const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidate_length;
+
+			//check range condition and length condition
+			if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+			   && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
+			   && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct) {
+
+				d_candidate_available_for_correction[] = 1;
+			}else{
+				d_candidate_available_for_correction[] = 0;
+			}
+		}
+	}*/
+
+#if 0
+	const int num_candidates_of_hq_subjects = candidates_per_hq_subject_prefixsum[n_subjects];
+	for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < num_candidates_of_hq_subjects; index += blockDim.x * gridDim.x){
+
+		int subjectIndex = 0;
+		for(; subjectIndex < n_subjects; subjectIndex++) {
+			if(index < candidates_per_hq_subject_prefixsum[subjectIndex+1])
+				break;
+		}
+
+		const int my_num_candidates = candidates_per_hq_subject_prefixsum[subjectIndex+1] - candidates_per_hq_subject_prefixsum[subjectIndex];
+		const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+		const int local_candidate_index = index - candidates_per_hq_subject_prefixsum[subjectIndex];
+
+		const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
+		const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
+		const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+
+		const int global_candidate_index = my_indices[local_candidate_index];
+		const int shift = d_alignment_shifts[global_candidate_index];
+		const int candidate_length = getCandidateLength(subjectIndex, local_candidate_index);
+		const int queryColumnsBegin_incl = shift - properties.startindex;
+		const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidate_length;
+
+		//check range condition and length condition
+		if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+			&& queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
+			&& queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct) {
+
+			d_candidate_available_for_correction[index] = 1;
+		}else{
+			d_candidate_available_for_correction[index] = 0;
+		}
+	}
+#endif
+}
+
+struct candidates_per_hq_subject_transformop{
+    const int* d_high_quality_subject_indices = nullptr;
+    const int* d_indices_per_subject = nullptr;
+    __host__ __device__
+    candidates_per_hq_subject_transformop(const int* hqindices, const int* indices_per_subject)
+        : d_high_quality_subject_indices(hqindices), d_indices_per_subject(indices_per_subject){}
+
+    __host__ __device__
+    int operator()(int index) const{
+        const int subjectIndex = d_high_quality_subject_indices[index];
+		return d_indices_per_subject[subjectIndex];
+    }
+};
+/*
+void make_candidates_per_hq_subject_prefixsum(void* d_temp_storage,
+											  size_t& temp_storage_bytes,
+											  const int* d_indices_per_subject,
+											  const int* d_high_quality_subject_indices,
+											  int num_indices,
+											  int* prefixsum,
+											  cudaStream_t stream){
+	candidates_per_hq_subject_transformop transformOp(d_high_quality_subject_indices, d_indices_per_subject);
+    using CountIt = cub::CountingInputIterator<int>;
+    CountIt countingIter(0);
+	cub::TransformInputIterator<int, candidates_per_hq_subject_transformop, CountIt> transformIter(countingIter, transformOp);
+	cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, transformIter, prefixsum+1, num_indices, stream);
+}*/
 
 
 
@@ -2321,7 +2737,893 @@ void call_msa_correct_candidates_kernel_async_exp(
 
 
 
+
+
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+__global__
+void msa_add_sequences_kernel_implicit(
+            int* __restrict__ d_countsA,
+            int* __restrict__ d_countsC,
+            int* __restrict__ d_countsG,
+            int* __restrict__ d_countsT,
+            float* __restrict__ d_weightsA,
+            float* __restrict__ d_weightsC,
+            float* __restrict__ d_weightsG,
+            float* __restrict__ d_weightsT,
+            int* __restrict__ d_coverage,
+            float* __restrict__ d_origWeights,
+            int* __restrict__ d_origCoverages,
+			const int* __restrict__ d_alignment_shifts,
+			const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+			const int* __restrict__ d_subject_sequences_lengths,
+			const int* __restrict__ d_candidate_sequences_lengths,
+			const int* __restrict__ d_alignment_overlaps,
+			const int* __restrict__ d_alignment_nOps,
+			const MSAColumnProperties*  __restrict__ d_msa_column_properties,
+			const int* __restrict__ d_candidates_per_subject_prefixsum,
+			const int* __restrict__ d_indices,
+			const int* __restrict__ d_indices_per_subject,
+			const int* __restrict__ d_indices_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* __restrict__ d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength){
+
+	extern __shared__ float sharedmem[];
+
+    constexpr char A_enc = 0x00;
+    constexpr char C_enc = 0x01;
+    constexpr char G_enc = 0x02;
+    constexpr char T_enc = 0x03;
+#if 1
+	float* const sharedWeights = (float*)sharedmem;
+	char* const sharedSequence = (char*)(sharedWeights + maximum_sequence_length);
+#else
+    float* const sharedWeights = (float*)sharedmemory;
+    float* const shared_weightsA = sharedWeights + maximum_sequence_length;
+    float* const shared_weightsC = shared_weightsA + msa_weights_row_pitch_floats;
+    float* const shared_weightsG = shared_weightsC + msa_weights_row_pitch_floats;
+    float* const shared_weightsT = shared_weightsG + msa_weights_row_pitch_floats;
+    int* const shared_countsA = (int*)(shared_weightsT + msa_weights_row_pitch_floats);
+    int* const shared_countsC = shared_countsA + msa_weights_row_pitch_floats;
+    int* const shared_countsG = shared_countsC + msa_weights_row_pitch_floats;
+    int* const shared_countsT = shared_countsG + msa_weights_row_pitch_floats;
+    int* const shared_coverage = shared_countsT + msa_weights_row_pitch_floats;
+    char* const sharedSequence = (char*)(shared_coverage + msa_weights_row_pitch_floats);
 #endif
+
+
+	const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+	const int n_indices = *d_num_indices;
+
+    //add subjects
+	for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
+		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+		const char* const subject = getSubjectPtr(subjectIndex);
+		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
+        const int shift = 0;
+
+        int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_countsC = d_countsC + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_countsG = d_countsG + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_countsT = d_countsT + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+#if 1
+        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+            const int globalIndex = subjectColumnsBegin_incl + shift + i;
+            const char base = get(subject, subjectLength, i);
+            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+            switch(base){
+                case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
+                case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
+                case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
+                case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
+                default: assert(false); break;
+            }
+            //my_coverage[globalIndex]++;
+            atomicAdd(my_coverage + globalIndex, 1);
+        }
+#else
+        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+            const int globalIndex = subjectColumnsBegin_incl + shift + i;
+            const char base = get(subject, subjectLength, i);
+            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+            switch(base){
+                case A_enc: atomicAdd(shared_countsA + globalIndex, 1); atomicAdd(shared_weightsA + globalIndex, weight);break;
+                case C_enc: atomicAdd(shared_countsC + globalIndex, 1); atomicAdd(shared_weightsC + globalIndex, weight);break;
+                case G_enc: atomicAdd(shared_countsG + globalIndex, 1); atomicAdd(shared_weightsG + globalIndex, weight);break;
+                case T_enc: atomicAdd(shared_countsT + globalIndex, 1); atomicAdd(shared_weightsT + globalIndex, weight);break;
+                default: assert(false); break;
+            }
+            atomicAdd(shared_coverage + globalIndex, 1);
+        }
+#endif
+	}
+
+
+    //add candidates
+    for(unsigned index = blockIdx.x; index < n_indices; index += gridDim.x) {
+        const int queryIndex = d_indices[index];
+
+        const int shift = d_alignment_shifts[queryIndex];
+        const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
+
+        //find subjectindex
+        int subjectIndex = 0;
+        for(; subjectIndex < n_subjects; subjectIndex++) {
+            if(queryIndex < d_candidates_per_subject_prefixsum[subjectIndex+1])
+                break;
+        }
+
+        const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+        const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+
+        int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_countsC = d_countsC + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_countsG = d_countsG + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_countsT = d_countsT + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_row_pitch_floats;
+        float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_row_pitch_floats;
+        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+
+        const char* const query = getCandidatePtr(queryIndex);
+		const int queryLength = getCandidateLength(index);
+		const char* const queryQualityScore = getCandidateQualityPtr(index);
+
+		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
+		const int query_alignment_nops = d_alignment_nOps[queryIndex];
+
+		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
+					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+
+        assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+
+		//copy query into msa
+		if(flag == BestAlignment_t::Forward) {
+            for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                const int globalIndex = defaultcolumnoffset + i;
+                const char base = get(query, queryLength, i);
+                const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
+                switch(base){
+                    case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
+                    case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
+                    case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
+                    case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
+                    default: assert(false); break;
+                }
+                //my_coverage[globalIndex]++;
+                atomicAdd(my_coverage + globalIndex, 1);
+            }
+		}else{
+            for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
+				sharedSequence[i] = get(query, queryLength, i);
+				sharedWeights[i] = canUseQualityScores ?
+				                   (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight
+				                   : 1.0f;
+			}
+
+			__syncthreads();
+
+            auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                constexpr std::uint8_t mask = 0x03;
+                return (~in & mask);
+            };
+
+            const int bytes = queryLength;
+            //make reverse complement of shared sequence
+            for(int i = threadIdx.x; i < bytes/2; i += blockDim.x){
+                const std::uint8_t front = make_reverse_complement_byte(sharedSequence[i]);
+                const std::uint8_t back = make_reverse_complement_byte(sharedSequence[bytes - 1 - i]);
+                sharedSequence[i] = back;
+                sharedSequence[bytes - 1 - i] = front;
+            }
+
+            if(threadIdx.x == 0 && bytes % 2 == 1){
+                const int middleindex = bytes/2;
+                sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
+            }
+            //reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
+            if(canUseQualityScores){
+                const int floats = queryLength;
+                for(int i = threadIdx.x; i < floats/2; i += blockDim.x){
+                    const float front = sharedWeights[i];
+                    const float back = sharedWeights[bytes - 1 - i];
+                    sharedWeights[i] = back;
+                    sharedWeights[bytes - 1 - i] = front;
+                }
+                //for odd length, the middle position remains unchanged
+            }
+
+            __syncthreads();
+
+
+            for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                const int globalIndex = defaultcolumnoffset + i;
+                const char base = sharedSequence[i];
+                const float weight = sharedWeights[i];
+                switch(base){
+                    case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
+                    case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
+                    case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
+                    case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
+                    default: assert(false); break;
+                }
+                //my_coverage[globalIndex]++;
+                atomicAdd(my_coverage + globalIndex, 1);
+            }
+
+			__syncthreads();
+        }
+
+
+	}
+}
+
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+void call_msa_add_sequences_kernel_implicit_async(
+            int* d_countsA,
+            int* d_countsC,
+            int* d_countsG,
+            int* d_countsT,
+            float* d_weightsA,
+            float* d_weightsC,
+            float* d_weightsG,
+            float* d_weightsT,
+            int* d_coverage,
+            float* d_origWeights,
+            int* d_origCoverages,
+			const int* d_alignment_shifts,
+			const BestAlignment_t* d_alignment_best_alignment_flags,
+			const int* d_subject_sequences_lengths,
+			const int* d_candidate_sequences_lengths,
+			const int* d_alignment_overlaps,
+			const int* d_alignment_nOps,
+			const MSAColumnProperties*  d_msa_column_properties,
+			const int* d_candidates_per_subject_prefixsum,
+			const int* d_indices,
+			const int* d_indices_per_subject,
+			const int* d_indices_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get_as_nucleotide,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength,
+			cudaStream_t stream,
+			KernelLaunchHandle& handle){
+
+
+
+
+	const int blocksize = 128;
+	const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+
+	int max_blocks_per_device = 1;
+
+	KernelLaunchConfig kernelLaunchConfig;
+	kernelLaunchConfig.threads_per_block = blocksize;
+	kernelLaunchConfig.smem = smem;
+
+	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicit);
+	if(iter == handle.kernelPropertiesMap.end()) {
+
+		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+	    #define getProp(blocksize) { \
+		KernelLaunchConfig kernelLaunchConfig; \
+		kernelLaunchConfig.threads_per_block = (blocksize); \
+		kernelLaunchConfig.smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length; \
+		KernelProperties kernelProperties; \
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+					msa_add_sequences_kernel_implicit<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
+					                             GetSubjectQualityPtr, GetCandidateQualityPtr, \
+					                             GetCandidateLength>, \
+					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+		mymap[kernelLaunchConfig] = kernelProperties; \
+}
+
+		getProp(32);
+		getProp(64);
+		getProp(96);
+		getProp(128);
+		getProp(160);
+		getProp(192);
+		getProp(224);
+		getProp(256);
+
+		const auto& kernelProperties = mymap[kernelLaunchConfig];
+		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+
+		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicit] = std::move(mymap);
+
+	    #undef getProp
+	}else{
+		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
+	}
+
+	dim3 block(blocksize, 1, 1);
+	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
+	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+
+	msa_add_sequences_kernel_implicit<<<grid, block, smem, stream>>>(
+                                                                d_countsA,
+                                                                d_countsC,
+                                                                d_countsG,
+                                                                d_countsT,
+                                                                d_weightsA,
+                                                                d_weightsC,
+                                                                d_weightsG,
+                                                                d_weightsT,
+                                                                d_coverage,
+                                                                d_origWeights,
+                                                                d_origCoverages,
+	                                                            d_alignment_shifts,
+	                                                            d_alignment_best_alignment_flags,
+	                                                            d_subject_sequences_lengths,
+	                                                            d_candidate_sequences_lengths,
+	                                                            d_alignment_overlaps,
+	                                                            d_alignment_nOps,
+	                                                            d_msa_column_properties,
+	                                                            d_candidates_per_subject_prefixsum,
+	                                                            d_indices,
+	                                                            d_indices_per_subject,
+	                                                            d_indices_per_subject_prefixsum,
+	                                                            n_subjects,
+	                                                            n_queries,
+	                                                            d_num_indices,
+	                                                            canUseQualityScores,
+	                                                            desiredAlignmentMaxErrorRate,
+	                                                            maximum_sequence_length,
+	                                                            max_sequence_bytes,
+	                                                            quality_pitch,
+	                                                            msa_row_pitch,
+	                                                            msa_weights_row_pitch,
+	                                                            get_as_nucleotide,
+	                                                            make_unpacked_reverse_complement_inplace,
+	                                                            getSubjectPtr,
+	                                                            getCandidatePtr,
+	                                                            getSubjectQualityPtr,
+	                                                            getCandidateQualityPtr,
+	                                                            getCandidateLength); CUERR;
+}
+
+
+
+
+
+
+
+
+
+
+template<class Accessor, class GetSubjectPtr>
+__global__
+void msa_find_consensus_implicit_kernel(
+                        int* __restrict__ d_countsA,
+                        int* __restrict__ d_countsC,
+                        int* __restrict__ d_countsG,
+                        int* __restrict__ d_countsT,
+                        float* __restrict__ d_weightsA,
+                        float* __restrict__ d_weightsC,
+                        float* __restrict__ d_weightsG,
+                        float* __restrict__ d_weightsT,
+                        char* __restrict__ d_consensus,
+                        float* __restrict__ d_support,
+                        int* __restrict__ d_coverage,
+                        float* __restrict__ d_origWeights,
+                        int* __restrict__ d_origCoverages,
+                        const MSAColumnProperties* __restrict__ d_msa_column_properties,
+                        int n_subjects,
+                        size_t msa_pitch,
+                        size_t msa_weights_pitch,
+                        int blocks_per_msa,
+                        Accessor get,
+                        GetSubjectPtr getSubjectPtr){
+
+    constexpr char A_enc = 0x00;
+    constexpr char C_enc = 0x01;
+    constexpr char G_enc = 0x02;
+    constexpr char T_enc = 0x03;
+
+    const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+    const int localBlockId = blockIdx.x % blocks_per_msa;
+    //const int n_indices = *d_num_indices;
+
+    //process multiple sequence alignment of each subject
+    //for each column in msa, find consensus and support
+    for(unsigned subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
+        const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+        const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+
+        const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+        const char* const subject = getSubjectPtr(subjectIndex);
+
+        char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
+        float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
+
+        float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
+        int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
+
+        const float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_pitch_floats;
+
+        for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
+            const float wA = my_weightsA[column];
+            const float wC = my_weightsC[column];
+            const float wG = my_weightsG[column];
+            const float wT = my_weightsT[column];
+            char cons = 'A';
+            float consWeight = wA;
+            if(wC > consWeight){
+                cons = 'C';
+                consWeight = wC;
+            }
+            if(wG > consWeight){
+                cons = 'G';
+                consWeight = wG;
+            }
+            if(wT > consWeight){
+                cons = 'T';
+                consWeight = wT;
+            }
+            my_consensus[column] = cons;
+            const float columnWeight = wA + wC + wG + wT;
+            my_support[column] = consWeight / columnWeight;
+
+            if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
+                const int* const my_countsA = d_countsA + subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsC = d_countsC + subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsG = d_countsG + subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsT = d_countsT + subjectIndex * msa_weights_pitch_floats;
+
+                const int localIndex = column - subjectColumnsBegin_incl;
+                const char subjectbase = get(subject, subjectLength, localIndex);
+
+                if(subjectbase == A_enc){
+                    my_orig_weights[column] = wA;
+                    my_orig_coverage[column] = my_countsA[column];
+                }else if(subjectbase == C_enc){
+                    my_orig_weights[column] = wC;
+                    my_orig_coverage[column] = my_countsC[column];;
+                }else if(subjectbase == G_enc){
+                    my_orig_weights[column] = wG;
+                    my_orig_coverage[column] = my_countsG[column];
+                }else if(subjectbase == T_enc){
+                    my_orig_weights[column] = wT;
+                    my_orig_coverage[column] = my_countsT[column];
+                }
+            }
+        }
+    }
+}
+
+template<class Accessor, class GetSubjectPtr>
+void call_msa_find_consensus_implicit_kernel_async(
+                        int* d_countsA,
+                        int* d_countsC,
+                        int* d_countsG,
+                        int* d_countsT,
+                        float* d_weightsA,
+                        float* d_weightsC,
+                        float* d_weightsG,
+                        float* d_weightsT,
+                        char* d_consensus,
+                        float* d_support,
+                        int* d_coverage,
+                        float* d_origWeights,
+                        int* d_origCoverages,
+                        const MSAColumnProperties* d_msa_column_properties,
+                        int n_subjects,
+                        size_t msa_pitch,
+                        size_t msa_weights_pitch,
+                        Accessor get,
+                        GetSubjectPtr getSubjectPtr,
+                        cudaStream_t stream,
+                        KernelLaunchHandle& handle){
+
+
+    const int blocksize = 128;
+    const std::size_t smem = 0;
+
+    int max_blocks_per_device = 1;
+
+    KernelLaunchConfig kernelLaunchConfig;
+    kernelLaunchConfig.threads_per_block = blocksize;
+    kernelLaunchConfig.smem = smem;
+
+    auto iter = handle.kernelPropertiesMap.find(KernelId::MSAFindConsensusImplicit);
+    if(iter == handle.kernelPropertiesMap.end()){
+
+        std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+        #define getProp(blocksize) { \
+            KernelLaunchConfig kernelLaunchConfig; \
+            kernelLaunchConfig.threads_per_block = (blocksize); \
+            kernelLaunchConfig.smem = 0; \
+            KernelProperties kernelProperties; \
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                                                            msa_find_consensus_implicit_kernel<Accessor, GetSubjectPtr>, \
+                                                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+            mymap[kernelLaunchConfig] = kernelProperties; \
+        }
+
+        getProp(32);
+        getProp(64);
+        getProp(96);
+        getProp(128);
+        getProp(160);
+        getProp(192);
+        getProp(224);
+        getProp(256);
+
+        const auto& kernelProperties = mymap[kernelLaunchConfig];
+        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+        handle.kernelPropertiesMap[KernelId::MSAFindConsensusImplicit] = std::move(mymap);
+
+        #undef getProp
+    }else{
+        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    }
+
+
+    const int blocks_per_msa = 2; //SDIV(msa_max_column_count, blocksize);
+
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(std::min(max_blocks_per_device, n_subjects * blocks_per_msa), 1, 1);
+
+    msa_find_consensus_implicit_kernel<<<grid, block, 0, stream>>>(
+                                                        d_countsA,
+                                                        d_countsC,
+                                                        d_countsG,
+                                                        d_countsT,
+                                                        d_weightsA,
+                                                        d_weightsC,
+                                                        d_weightsG,
+                                                        d_weightsT,
+                                                        d_consensus,
+                                                        d_support,
+                                                        d_coverage,
+                                                        d_origWeights,
+                                                        d_origCoverages,
+                                                        d_msa_column_properties,
+                                                        n_subjects,
+                                                        msa_pitch,
+                                                        msa_weights_pitch,
+                                                        blocks_per_msa,
+                                                        get,
+                                                        getSubjectPtr); CUERR;
+
+}
+
+
+
+template<int BLOCKSIZE, class Accessor, class GetSubjectPtr>
+__global__
+void msa_correct_subject_implicit_kernel(
+                        const char* __restrict__ d_consensus,
+                        const float* __restrict__ d_support,
+                        const int* __restrict__ d_coverage,
+                        const int* __restrict__ d_origCoverages,
+                        const MSAColumnProperties* __restrict__ d_msa_column_properties,
+                        bool* __restrict__ d_is_high_quality_subject,
+                        char* __restrict__ d_corrected_subjects,
+                        bool* __restrict__ d_subject_is_corrected,
+                        int n_subjects,
+                        size_t sequence_pitch,
+                        size_t msa_pitch,
+                        size_t msa_weights_pitch,
+                        float estimatedErrorrate,
+                        float avg_support_threshold,
+                        float min_support_threshold,
+                        float min_coverage_threshold,
+                        int k_region,
+                        Accessor get,
+                        GetSubjectPtr getSubjectPtr){
+
+    using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+    using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+    using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+    __shared__ union {
+        typename BlockReduceBool::TempStorage boolreduce;
+        typename BlockReduceInt::TempStorage intreduce;
+        typename BlockReduceFloat::TempStorage floatreduce;
+    } temp_storage;
+
+    __shared__ bool broadcastbuffer;
+
+    auto isGoodAvgSupport = [&](float avgsupport){
+        return avgsupport >= avg_support_threshold;
+    };
+    auto isGoodMinSupport = [&](float minsupport){
+        return minsupport >= min_support_threshold;
+    };
+    auto isGoodMinCoverage = [&](float mincoverage){
+        return mincoverage >= min_coverage_threshold;
+    };
+
+    constexpr char A_enc = 0x00;
+    constexpr char C_enc = 0x01;
+    constexpr char G_enc = 0x02;
+    constexpr char T_enc = 0x03;
+
+    auto to_nuc = [](char c){
+        switch(c){
+        case A_enc: return 'A';
+        case C_enc: return 'C';
+        case G_enc: return 'G';
+        case T_enc: return 'T';
+        default: return 'F';
+        }
+    };
+
+    const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+    for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+        const float* const my_support = d_support + msa_weights_pitch_floats * subjectIndex;
+        const int* const my_coverage = d_coverage + msa_weights_pitch_floats * subjectIndex;
+        const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
+        const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
+        char* const my_corrected_subject = d_corrected_subjects + subjectIndex * sequence_pitch;
+
+        const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
+        const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+
+        float avg_support = 0;
+        float min_support = 1.0f;
+        //int max_coverage = 0;
+        int min_coverage = std::numeric_limits<int>::max();
+
+        for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+            assert(i < properties.columnsToCheck);
+
+            avg_support += my_support[i];
+            min_support = min(my_support[i], min_support);
+            //max_coverage = max(my_coverage[i], max_coverage);
+            min_coverage = min(my_coverage[i], min_coverage);
+        }
+
+        avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
+        __syncthreads();
+
+        min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
+        __syncthreads();
+
+        //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
+
+        min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
+        __syncthreads();
+
+        avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+
+        bool isHQ = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+
+        if(threadIdx.x == 0){
+            broadcastbuffer = isHQ;
+            d_is_high_quality_subject[subjectIndex] = isHQ;
+        }
+        __syncthreads();
+
+        isHQ = broadcastbuffer;
+
+        if(isHQ){
+            for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+            }
+            if(threadIdx.x == 0){
+                d_subject_is_corrected[subjectIndex] = true;
+            }
+        }else{
+            //decode orignal sequence and copy to corrected sequence
+            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+            const char* const subject = getSubjectPtr(subjectIndex);
+            for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(get(subject, subjectLength, i));
+            }
+
+            bool foundAColumn = false;
+            for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+                const int globalIndex = subjectColumnsBegin_incl + i;
+
+                if(my_corrected_subject[i] != my_consensus[globalIndex]
+                            && my_support[globalIndex] > 0.5f
+                            && my_orig_coverage[globalIndex] <= min_coverage_threshold){
+                    float avgsupportkregion = 0;
+                    int c = 0;
+                    bool kregioncoverageisgood = true;
+
+                    for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                        if(j != i && j >= 0 && j < subjectLength){
+                            avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                            kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                            //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
+                            c++;
+                        }
+                    }
+
+                    avgsupportkregion /= c;
+
+                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                        my_corrected_subject[i] = my_consensus[globalIndex];
+                        foundAColumn = true;
+                    }
+                }
+            }
+            //perform block wide or-reduction on foundAColumn
+            foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
+            __syncthreads();
+
+            if(threadIdx.x == 0){
+                d_subject_is_corrected[subjectIndex] = foundAColumn;
+            }
+        }
+    }
+}
+
+template<class Accessor, class GetSubjectPtr>
+void call_msa_correct_subject_implicit_kernel_async(
+                        const char* d_consensus,
+                        const float* d_support,
+                        const int* d_coverage,
+                        const int* d_origCoverages,
+                        const MSAColumnProperties* d_msa_column_properties,
+                        bool* d_is_high_quality_subject,
+                        char* d_corrected_subjects,
+                        bool* d_subject_is_corrected,
+                        int n_subjects,
+                        size_t sequence_pitch,
+                        size_t msa_pitch,
+                        size_t msa_weights_pitch,
+                        float estimatedErrorrate,
+                        float avg_support_threshold,
+                        float min_support_threshold,
+                        float min_coverage_threshold,
+                        int k_region,
+                        int maximum_sequence_length,
+                        Accessor get,
+                        GetSubjectPtr getSubjectPtr,
+                        cudaStream_t stream,
+                        KernelLaunchHandle& handle){
+
+    const int max_block_size = 256;
+    const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+    const std::size_t smem = 0;
+
+    int max_blocks_per_device = 1;
+
+    KernelLaunchConfig kernelLaunchConfig;
+    kernelLaunchConfig.threads_per_block = blocksize;
+    kernelLaunchConfig.smem = smem;
+
+    auto iter = handle.kernelPropertiesMap.find(KernelId::MSACorrectSubjectImplicit);
+    if(iter == handle.kernelPropertiesMap.end()){
+
+        std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+        #define getProp(blocksize) { \
+            KernelLaunchConfig kernelLaunchConfig; \
+            kernelLaunchConfig.threads_per_block = (blocksize); \
+            kernelLaunchConfig.smem = 0; \
+            KernelProperties kernelProperties; \
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                                                            msa_correct_subject_implicit_kernel<(blocksize), Accessor, GetSubjectPtr>, \
+                                                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+            mymap[kernelLaunchConfig] = kernelProperties; \
+        }
+
+        getProp(32);
+        getProp(64);
+        getProp(96);
+        getProp(128);
+        getProp(160);
+        getProp(192);
+        getProp(224);
+        getProp(256);
+
+        const auto& kernelProperties = mymap[kernelLaunchConfig];
+        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+        handle.kernelPropertiesMap[KernelId::MSACorrectSubjectImplicit] = std::move(mymap);
+
+        #undef getProp
+    }else{
+        std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+        const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+        max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    }
+
+
+
+    dim3 block(blocksize, 1, 1);
+    dim3 grid(std::min(n_subjects, max_blocks_per_device));
+
+    #define mycall(blocksize) msa_correct_subject_implicit_kernel<(blocksize)> \
+                            <<<grid, block, 0, stream>>>( \
+                                d_consensus, \
+                                d_support, \
+                                d_coverage, \
+                                d_origCoverages, \
+                                d_msa_column_properties, \
+                                d_is_high_quality_subject, \
+                                d_corrected_subjects, \
+                                d_subject_is_corrected, \
+                                n_subjects, \
+                                sequence_pitch, \
+                                msa_pitch, \
+                                msa_weights_pitch, \
+                                estimatedErrorrate, \
+                                avg_support_threshold, \
+                                min_support_threshold, \
+                                min_coverage_threshold, \
+                                k_region, \
+                                get, \
+                                getSubjectPtr); CUERR;
+
+    assert(blocksize > 0 && blocksize <= max_block_size);
+
+    switch(blocksize){
+        case 32: mycall(32); break;
+        case 64: mycall(64); break;
+        case 96: mycall(96); break;
+        case 128: mycall(128); break;
+        case 160: mycall(160); break;
+        case 192: mycall(192); break;
+        case 224: mycall(224); break;
+        case 256: mycall(256); break;
+        default: mycall(256); break;
+    }
+    #undef mycall
+}
+
+
+
+
+#endif //ifdef __NVCC__
 
 }
 }

@@ -38,7 +38,10 @@
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
+//MSA_IMPLICIT does not work yet
+//#define MSA_IMPLICIT
 
+#define shd_tilesize 32
 
 namespace care {
 namespace gpu {
@@ -310,7 +313,6 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 	int num_ids_per_add_tasks = 2;
 	int minimum_candidates_per_batch = 1000;
-
 
 	using FuncTableEntry = BatchState (*)(Batch& batch,
 				bool canBlock,
@@ -610,6 +612,7 @@ public:
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 		dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
+        dataArrays.h_tiles_per_subject_prefixsum[0] = 0;
 #if 0
 		if(batch.copiedTasks == 0) {
 			push_range("newsortids", 0);
@@ -738,9 +741,13 @@ public:
 				batch.copiedCandidates += std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
 
 				//update prefix sum
+                const int numcandidates = int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
 				arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 				        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-				          + int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+				          + numcandidates;
+                arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks]
+                            + SDIV(numcandidates, shd_tilesize);
 #endif
 			}else{
 				//copy subject data
@@ -841,9 +848,14 @@ public:
 				        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 				          + int(task.candidate_read_ids.size());
 #else
+                const int numcandidates = int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
 				arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 				        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-				          + int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+                            + numcandidates;
+
+                arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks]
+                            + SDIV(numcandidates, shd_tilesize);
 #endif
 			}
 
@@ -892,6 +904,11 @@ public:
 				cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
 							dataArrays.h_candidates_per_subject_prefixsum,
 							dataArrays.memNqueriesPrefixSum,
+							H2D,
+							streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
+							dataArrays.h_tiles_per_subject_prefixsum,
+							dataArrays.memTilesPrefixSum,
 							H2D,
 							streams[primary_stream_index]); CUERR;
 			}else{
@@ -1005,7 +1022,7 @@ public:
 										 dataArray.n_queries,
 										 stream); CUERR;
 						 };
-
+#if 0
 		ShiftedHammingDistanceChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
 					dataArrays.d_alignment_scores,
 					dataArrays.d_alignment_overlaps,
@@ -1033,6 +1050,40 @@ public:
 					true,
 					streams[primary_stream_index],
 					batch.kernelLaunchHandle);
+
+#else
+        ShiftedHammingDistanceTiledChooser<Sequence_t, ReadId_t>::callKernelAsync(
+                    dataArrays.d_alignment_scores,
+                    dataArrays.d_alignment_overlaps,
+                    dataArrays.d_alignment_shifts,
+                    dataArrays.d_alignment_nOps,
+                    dataArrays.d_alignment_isValid,
+                    dataArrays.d_subject_read_ids,
+                    dataArrays.d_candidate_read_ids,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_candidate_sequences_data,
+                    dataArrays.d_subject_sequences_lengths,
+                    dataArrays.d_candidate_sequences_lengths,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    dataArrays.h_tiles_per_subject_prefixsum,
+                    dataArrays.d_tiles_per_subject_prefixsum,
+                    shd_tilesize,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                    dataArrays.encoded_sequence_pitch,
+                    transFuncData.min_overlap,
+                    transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0f,
+                    transFuncData.min_overlap_ratio,
+                    //batch.maxSubjectLength,
+                    //batch.maxQueryLength,
+                    transFuncData.gpuReadStorage,
+                    transFuncData.readStorageGpuData,
+                    true,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);
+
+#endif
 
 		//Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
 		//    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
@@ -1334,6 +1385,7 @@ public:
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
 
+#ifndef MSA_IMPLICIT
 			MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
 						dataArrays.d_multiple_sequence_alignments,
 						dataArrays.d_multiple_sequence_alignment_weights,
@@ -1371,6 +1423,57 @@ public:
 						true,
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
+#else
+            MSAAddSequencesChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
+                        dataArrays.d_countsA,
+                        dataArrays.d_countsC,
+                        dataArrays.d_countsG,
+                        dataArrays.d_countsT,
+                        dataArrays.d_weightsA,
+                        dataArrays.d_weightsC,
+                        dataArrays.d_weightsG,
+                        dataArrays.d_weightsT,
+                        dataArrays.d_coverage,
+                        dataArrays.d_origWeights,
+                        dataArrays.d_origCoverages,
+                        dataArrays.d_alignment_shifts,
+                        dataArrays.d_alignment_best_alignment_flags,
+                        dataArrays.d_subject_read_ids,
+                        dataArrays.d_candidate_read_ids,
+                        dataArrays.d_subject_sequences_data,
+                        dataArrays.d_candidate_sequences_data,
+                        dataArrays.d_subject_sequences_lengths,
+                        dataArrays.d_candidate_sequences_lengths,
+                        dataArrays.d_subject_qualities,
+                        dataArrays.d_candidate_qualities,
+                        dataArrays.d_alignment_overlaps,
+                        dataArrays.d_alignment_nOps,
+                        dataArrays.d_msa_column_properties,
+                        dataArrays.d_candidates_per_subject_prefixsum,
+                        dataArrays.d_indices,
+                        dataArrays.d_indices_per_subject,
+                        dataArrays.d_indices_per_subject_prefixsum,
+                        dataArrays.n_subjects,
+                        dataArrays.n_queries,
+                        dataArrays.d_num_indices,
+                        transFuncData.correctionOptions.useQualityScores,
+                        desiredAlignmentMaxErrorRate,
+                        dataArrays.maximum_sequence_length,
+                        Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                        dataArrays.encoded_sequence_pitch,
+                        dataArrays.quality_pitch,
+                        dataArrays.msa_pitch,
+                        dataArrays.msa_weights_pitch,
+                        //true,
+                        transFuncData.gpuReadStorage,
+                        transFuncData.readStorageGpuData,
+                        true,
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
+
+#endif
+
+#ifndef MSA_IMPLICIT
 
 			call_msa_find_consensus_kernel_async(
 						dataArrays.d_consensus,
@@ -1400,7 +1503,36 @@ public:
 						3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
+#else
+            MSAFindConsensusChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
+                        dataArrays.d_countsA,
+                        dataArrays.d_countsC,
+                        dataArrays.d_countsG,
+                        dataArrays.d_countsT,
+                        dataArrays.d_weightsA,
+                        dataArrays.d_weightsC,
+                        dataArrays.d_weightsG,
+                        dataArrays.d_weightsT,
+                        dataArrays.d_consensus,
+						dataArrays.d_support,
+						dataArrays.d_coverage,
+						dataArrays.d_origWeights,
+						dataArrays.d_origCoverages,
+                        dataArrays.d_subject_read_ids,
+                        dataArrays.d_subject_sequences_data,
+                        dataArrays.d_msa_column_properties,
+                        dataArrays.n_subjects,
+                        Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                        dataArrays.encoded_sequence_pitch,
+                        dataArrays.msa_pitch,
+                        dataArrays.msa_weights_pitch,
+                        transFuncData.gpuReadStorage,
+                        transFuncData.readStorageGpuData,
+                        true,
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
 
+#endif
 			assert(cudaSuccess == cudaEventQuery(events[msa_build_finished_event_index])); CUERR;
 
 			cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
@@ -1482,8 +1614,8 @@ public:
 
 			// Step 14. Correction
 			if(transFuncData.correctionOptions.classicMode) {
-
 				// correct subjects
+#ifndef MSA_IMPLICIT
 				call_msa_correct_subject_kernel_async(
 							dataArrays.d_consensus,
 							dataArrays.d_support,
@@ -1509,7 +1641,35 @@ public:
 							dataArrays.maximum_sequence_length,
 							streams[primary_stream_index],
 							batch.kernelLaunchHandle);
+#else
+                MSACorrectSubjectChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
+                            dataArrays.d_consensus,
+                            dataArrays.d_support,
+                            dataArrays.d_coverage,
+                            dataArrays.d_origCoverages,
+                            dataArrays.d_msa_column_properties,
+                            dataArrays.d_is_high_quality_subject,
+                            dataArrays.d_corrected_subjects,
+                            dataArrays.d_subject_is_corrected,
+                            dataArrays.n_subjects,
+                            dataArrays.sequence_pitch,
+                            dataArrays.msa_pitch,
+                            dataArrays.msa_weights_pitch,
+                            transFuncData.estimatedErrorrate,
+                            avg_support_threshold,
+                            min_support_threshold,
+                            min_coverage_threshold,
+                            transFuncData.kmerlength,
+							dataArrays.maximum_sequence_length,
+                            dataArrays.d_subject_read_ids,
+                            dataArrays.d_subject_sequences_data,
+                            transFuncData.gpuReadStorage,
+                            transFuncData.readStorageGpuData,
+                            true,
+                            streams[primary_stream_index],
+                            batch.kernelLaunchHandle);
 
+#endif
 				if(transFuncData.correctionOptions.correctCandidates) {
 
 
@@ -1901,7 +2061,7 @@ public:
 	    #endif
 
 	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_MSA
-#if 1
+#if 0
         for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
             auto& task = batch.tasks[subject_index];
             auto& arrays = dataArrays;
@@ -1992,6 +2152,11 @@ public:
 			float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
 			int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
 
+            const int* my_countsA = arrays.h_countsA + subject_index * msa_weights_pitch_floats;
+            const int* my_countsC = arrays.h_countsC + subject_index * msa_weights_pitch_floats;
+            const int* my_countsG = arrays.h_countsG + subject_index * msa_weights_pitch_floats;
+            const int* my_countsT = arrays.h_countsT + subject_index * msa_weights_pitch_floats;
+
 			float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
 			int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
 
@@ -2007,7 +2172,7 @@ public:
 			const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
 
 			std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columnsToCheck = " << columnsToCheck << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << std::endl;
-			std::cout << "MSA:" << std::endl;
+			/*std::cout << "MSA:" << std::endl;
 			for(int row = 0; row < msa_rows; row++) {
 				for(int col = 0; col < columnsToCheck; col++) {
 					//multiple_sequence_alignment[row * msa_row_pitch + globalIndex]
@@ -2025,6 +2190,38 @@ public:
 				}
 				std::cout << std::endl;
 			}
+			std::cout << std::endl;*/
+
+            std::cout << "countsA: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_countsA[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
+            std::cout << "countsC: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_countsC[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
+            std::cout << "countsG: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_countsG[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
+            std::cout << "countsT: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_countsT[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
 			std::cout << std::endl;
 
 			std::cout << "Consensus: "<< std::endl;
@@ -2036,7 +2233,7 @@ public:
 			}
 			std::cout << std::endl;
 
-			std::cout << "MSA weights:" << std::endl;
+			/*std::cout << "MSA weights:" << std::endl;
 			for(int row = 0; row < msa_rows; row++) {
 				for(int col = 0; col < columnsToCheck; col++) {
 					float f = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + col];
@@ -2046,7 +2243,7 @@ public:
 				}
 				std::cout << std::endl;
 			}
-			std::cout << std::endl;
+			std::cout << std::endl;*/
 
 			std::cout << "Support: "<< std::endl;
 			for(int col = 0; col < columnsToCheck; col++) {
@@ -2071,6 +2268,8 @@ public:
 				std::cout << my_orig_coverage[col] << " ";
 			}
 			std::cout << std::endl;
+
+            //std::exit(0);
 		}
 #endif
 	    #endif
@@ -2093,8 +2292,6 @@ public:
 			if(task.corrected) {
 
 				const int subject_length = task.subject_string.length();
-				//const int subject_length = if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->hasSequences()) task.subject_sequence->length();
-
 				task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
 			}
 
@@ -2120,7 +2317,7 @@ public:
 				}
 			}
 		}
-
+        //std::exit(0);
 		return BatchState::WriteResults;
 	}
 
@@ -2146,7 +2343,7 @@ public:
 
 			if(task.corrected) {
 				push_range("write_subject", 4);
-				//std::cout << task.readId << " " << task.corrected_subject << std::endl;
+				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
 				transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
 				//transFuncData.lock(task.readId);
 				//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
@@ -3022,7 +3219,9 @@ for(std::size_t subject_index = 0; subject_index < mainBatch.tasks.size(); ++sub
 
 
 
-
+#ifdef MSA_IMPLICIT
+#undef MSA_IMPLICIT
+#endif
 
 
 #endif
