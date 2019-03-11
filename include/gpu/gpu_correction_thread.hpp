@@ -38,7 +38,7 @@
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
-#define MSA_IMPLICIT
+//#define MSA_IMPLICIT
 
 #define shd_tilesize 32
 
