@@ -102,7 +102,6 @@ struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 
 		auto callKernel = [&](auto subjectpointer, auto candidatepointer, auto subjectlength, auto candidatelength){
                       call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
-                      //call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_transposed_async(
 								  d_alignment_scores,
 								  d_alignment_overlaps,
 								  d_alignment_shifts,
@@ -139,6 +138,156 @@ struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 		}
 	}
 };
+
+
+
+
+
+
+
+
+
+
+template<class Sequence_t, class ReadId_t>
+struct ShiftedHammingDistanceTiledChooser;
+
+template<class ReadId_t>
+struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
+
+	template<class GPUReadStorage_t>
+	static void callKernelAsync(int* d_alignment_scores,
+				int* d_alignment_overlaps,
+				int* d_alignment_shifts,
+				int* d_alignment_nOps,
+				bool* d_alignment_isValid,
+				const ReadId_t* d_subject_read_ids,
+				const ReadId_t* d_candidate_read_ids,
+				const char* d_subject_sequences_data,
+				const char* d_candidate_sequences_data,
+				const int* d_subject_sequences_lengths,
+				const int* d_candidate_sequences_lengths,
+				const int* d_candidates_per_subject_prefixsum,
+                const int* h_tiles_per_subject_prefixsum,
+                const int* d_tiles_per_subject_prefixsum,
+                int tilesize,
+				int n_subjects,
+				int n_queries,
+				int max_sequence_bytes,
+				size_t encodedsequencepitch,
+				int min_overlap,
+				float maxErrorRate,
+				float min_overlap_ratio,
+				const GPUReadStorage_t* gpuReadStorage,
+				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
+				bool useGpuReadStorage,
+				cudaStream_t stream,
+				KernelLaunchHandle& kernelLaunchHandle){
+
+		//the kernel expects length to be an int
+		static_assert(std::numeric_limits<typename GPUReadStorage_t::Length_t>::max() <= std::numeric_limits<int>::max());
+
+		assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
+		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
+
+		const char* d_sequence_data = gpuReadStorageGpuData.d_sequence_data;
+		const typename GPUReadStorage_t::Length_t* d_sequence_lengths = gpuReadStorageGpuData.d_sequence_lengths;
+		const std::size_t readstorage_sequence_pitch = std::size_t(gpuReadStorage->getSequencePitch());
+
+		auto getNumBytes = [] __device__ (int sequencelength){
+			return Sequence2BitHiLo::getNumBytes(sequencelength);
+		};
+
+		auto getSubjectPtr_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const char* result = d_sequence_data + std::size_t(subjectReadId) * readstorage_sequence_pitch;
+			return result;
+		};
+
+		auto getCandidatePtr_sparse = [=] __device__ (ReadId_t candidateIndex){
+			const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+			const char* result = d_sequence_data + std::size_t(candidateReadId) * readstorage_sequence_pitch;
+			return result;
+		};
+
+		auto getSubjectLength_sparse = [=] __device__ (ReadId_t subjectIndex){
+			const ReadId_t subjectReadId = d_subject_read_ids[subjectIndex];
+			const int length = d_sequence_lengths[subjectReadId];
+			return length;
+		};
+
+		auto getCandidateLength_sparse = [=] __device__ (ReadId_t candidateIndex){
+			const ReadId_t candidateReadId = d_candidate_read_ids[candidateIndex];
+			const int length = d_sequence_lengths[candidateReadId];
+			return length;
+		};
+
+		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
+			return result;
+		};
+
+		auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+			const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
+			return result;
+		};
+
+		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+			const int length = d_subject_sequences_lengths[subjectIndex];
+			return length;
+		};
+
+		auto getCandidateLength_dense = [=] __device__ (ReadId_t candidateIndex){
+			const int length = d_candidate_sequences_lengths[candidateIndex];
+			return length;
+		};
+
+		auto callKernel = [&](auto subjectpointer, auto candidatepointer, auto subjectlength, auto candidatelength){
+                      call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
+								  d_alignment_scores,
+								  d_alignment_overlaps,
+								  d_alignment_shifts,
+								  d_alignment_nOps,
+								  d_alignment_isValid,
+								  d_candidates_per_subject_prefixsum,
+                                  h_tiles_per_subject_prefixsum,
+                                  d_tiles_per_subject_prefixsum,
+                                  tilesize,
+								  n_subjects,
+								  n_queries,
+								  max_sequence_bytes,
+								  min_overlap,
+								  maxErrorRate,
+								  min_overlap_ratio,
+								  getNumBytes,
+								  subjectpointer,
+								  candidatepointer,
+								  subjectlength,
+								  candidatelength,
+								  stream,
+								  kernelLaunchHandle);
+				  };
+
+		if(!useGpuReadStorage || !gpuReadStorageGpuData.isValidSequenceData()) {
+			callKernel( getSubjectPtr_dense,
+						getCandidatePtr_dense,
+						getSubjectLength_dense,
+						getCandidateLength_dense);
+		}else{
+
+			callKernel( getSubjectPtr_sparse,
+						getCandidatePtr_sparse,
+						getSubjectLength_sparse,
+						getCandidateLength_sparse);
+
+		}
+	}
+};
+
+
+
+
+
+
 
 
 

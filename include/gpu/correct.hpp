@@ -43,8 +43,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 	static_assert(indels == false, "indels != false");
 
-	std::cout << "correct_gpu_new" << std::endl;
-
 	using Minhasher_t = minhasher_t;
 	using ReadStorage_t = readStorage_t;
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
@@ -255,7 +253,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     #else
 
 	constexpr int sleepiterbegin = 1;
-	constexpr int sleepiterend = 10;
+	constexpr int sleepiterend = 2;
 
 	int sleepiter = 0;
 

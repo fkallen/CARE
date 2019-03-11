@@ -40,6 +40,8 @@
 
 #define MSA_IMPLICIT
 
+#define shd_tilesize 32
+
 namespace care {
 namespace gpu {
 
@@ -310,7 +312,6 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 	int num_ids_per_add_tasks = 2;
 	int minimum_candidates_per_batch = 1000;
-
 
 	using FuncTableEntry = BatchState (*)(Batch& batch,
 				bool canBlock,
@@ -610,6 +611,7 @@ public:
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
 		dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
+        dataArrays.h_tiles_per_subject_prefixsum[0] = 0;
 #if 0
 		if(batch.copiedTasks == 0) {
 			push_range("newsortids", 0);
@@ -738,9 +740,13 @@ public:
 				batch.copiedCandidates += std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
 
 				//update prefix sum
+                const int numcandidates = int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
 				arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 				        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-				          + int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+				          + numcandidates;
+                arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks]
+                            + SDIV(numcandidates, shd_tilesize);
 #endif
 			}else{
 				//copy subject data
@@ -841,9 +847,14 @@ public:
 				        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
 				          + int(task.candidate_read_ids.size());
 #else
+                const int numcandidates = int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
 				arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
 				        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
-				          + int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+                            + numcandidates;
+
+                arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks]
+                            + SDIV(numcandidates, shd_tilesize);
 #endif
 			}
 
@@ -892,6 +903,11 @@ public:
 				cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
 							dataArrays.h_candidates_per_subject_prefixsum,
 							dataArrays.memNqueriesPrefixSum,
+							H2D,
+							streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
+							dataArrays.h_tiles_per_subject_prefixsum,
+							dataArrays.memTilesPrefixSum,
 							H2D,
 							streams[primary_stream_index]); CUERR;
 			}else{
@@ -1005,7 +1021,7 @@ public:
 										 dataArray.n_queries,
 										 stream); CUERR;
 						 };
-
+#if 0
 		ShiftedHammingDistanceChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
 					dataArrays.d_alignment_scores,
 					dataArrays.d_alignment_overlaps,
@@ -1033,6 +1049,40 @@ public:
 					true,
 					streams[primary_stream_index],
 					batch.kernelLaunchHandle);
+
+#else
+        ShiftedHammingDistanceTiledChooser<Sequence_t, ReadId_t>::callKernelAsync(
+                    dataArrays.d_alignment_scores,
+                    dataArrays.d_alignment_overlaps,
+                    dataArrays.d_alignment_shifts,
+                    dataArrays.d_alignment_nOps,
+                    dataArrays.d_alignment_isValid,
+                    dataArrays.d_subject_read_ids,
+                    dataArrays.d_candidate_read_ids,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_candidate_sequences_data,
+                    dataArrays.d_subject_sequences_lengths,
+                    dataArrays.d_candidate_sequences_lengths,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    dataArrays.h_tiles_per_subject_prefixsum,
+                    dataArrays.d_tiles_per_subject_prefixsum,
+                    shd_tilesize,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                    dataArrays.encoded_sequence_pitch,
+                    transFuncData.min_overlap,
+                    transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0f,
+                    transFuncData.min_overlap_ratio,
+                    //batch.maxSubjectLength,
+                    //batch.maxQueryLength,
+                    transFuncData.gpuReadStorage,
+                    transFuncData.readStorageGpuData,
+                    true,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);
+
+#endif
 
 		//Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
 		//    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
@@ -2266,7 +2316,7 @@ public:
 				}
 			}
 		}
-
+        //std::exit(0);
 		return BatchState::WriteResults;
 	}
 
