@@ -32,14 +32,8 @@ namespace gpu{
                             int* __restrict__ d_coverage,
                             float* __restrict__ d_origWeights,
                             int* __restrict__ d_origCoverages,
-                            int* __restrict__ d_countsA,
-                            int* __restrict__ d_countsC,
-                            int* __restrict__ d_countsG,
-                            int* __restrict__ d_countsT,
-                            float* __restrict__ d_weightsA,
-                            float* __restrict__ d_weightsC,
-                            float* __restrict__ d_weightsG,
-                            float* __restrict__ d_weightsT,
+                            int* __restrict__ d_counts,
+                            float* __restrict__ d_weights,
                             const char* __restrict__ d_multiple_sequence_alignments,
                             const float* __restrict__ d_multiple_sequence_alignment_weights,
                             const MSAColumnProperties* __restrict__ d_msa_column_properties,
@@ -87,14 +81,14 @@ namespace gpu{
             float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
             int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-            int* const my_countsA = d_countsA + subjectIndex * msa_weights_pitch_floats;
-            int* const my_countsC = d_countsC + subjectIndex * msa_weights_pitch_floats;
-            int* const my_countsG = d_countsG + subjectIndex * msa_weights_pitch_floats;
-            int* const my_countsT = d_countsT + subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_pitch_floats;
+            int* const my_countsA = d_counts + 0 * subjectIndex * msa_weights_pitch_floats;
+            int* const my_countsC = d_counts + 1 * subjectIndex * msa_weights_pitch_floats;
+            int* const my_countsG = d_counts + 2 * subjectIndex * msa_weights_pitch_floats;
+            int* const my_countsT = d_counts + 3 * subjectIndex * msa_weights_pitch_floats;
+            float* const my_weightsA = d_weights + 0 * subjectIndex * msa_weights_pitch_floats;
+            float* const my_weightsC = d_weights + 1 * subjectIndex * msa_weights_pitch_floats;
+            float* const my_weightsG = d_weights + 2 * subjectIndex * msa_weights_pitch_floats;
+            float* const my_weightsT = d_weights + 3 * subjectIndex * msa_weights_pitch_floats;
 
             for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
 
@@ -227,14 +221,8 @@ namespace gpu{
                             int* d_coverage,
                             float* d_origWeights,
                             int* d_origCoverages,
-                            int* d_countsA,
-                            int* d_countsC,
-                            int* d_countsG,
-                            int* d_countsT,
-                            float* d_weightsA,
-                            float* d_weightsC,
-                            float* d_weightsG,
-                            float* d_weightsT,
+                            int* d_counts,
+                            float* d_weights,
                             const char* d_multiple_sequence_alignments,
                             const float* d_multiple_sequence_alignment_weights,
                             const MSAColumnProperties* d_msa_column_properties,
@@ -308,14 +296,8 @@ namespace gpu{
                                                             d_coverage,
                                                             d_origWeights,
                                                             d_origCoverages,
-                                                            d_countsA,
-                                                            d_countsC,
-                                                            d_countsG,
-                                                            d_countsT,
-                                                            d_weightsA,
-                                                            d_weightsC,
-                                                            d_weightsG,
-                                                            d_weightsT,
+                                                            d_counts,
+                                                            d_weights,
                                                             d_multiple_sequence_alignments,
                                                             d_multiple_sequence_alignment_weights,
                                                             d_msa_column_properties,
@@ -630,7 +612,7 @@ namespace gpu{
 
 
 
-    
+
 
 
 

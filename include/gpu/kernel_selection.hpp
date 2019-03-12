@@ -711,14 +711,8 @@ struct MSAAddSequencesChooserImplicit {
 
 	template<class GPUReadStorage_t>
 	static void callKernelAsync(
-                int* d_countsA,
-                int* d_countsC,
-                int* d_countsG,
-                int* d_countsT,
-                float* d_weightsA,
-                float* d_weightsC,
-                float* d_weightsG,
-                float* d_weightsT,
+                int* d_counts,
+                float* d_weights,
                 int* d_coverage,
                 float* d_origWeights,
                 int* d_origCoverages,
@@ -836,14 +830,8 @@ struct MSAAddSequencesChooserImplicit {
 
 		auto callKernel = [&](auto subjectptr, auto candidateptr, auto subjectquality, auto candidatequality, auto querylength){
 					  call_msa_add_sequences_kernel_implicit_async(
-                                  d_countsA,
-                                  d_countsC,
-                                  d_countsG,
-                                  d_countsT,
-                                  d_weightsA,
-                                  d_weightsC,
-                                  d_weightsG,
-                                  d_weightsT,
+                                  d_counts,
+                                  d_weights,
                                   d_coverage,
                                   d_origWeights,
                                   d_origCoverages,
@@ -926,14 +914,8 @@ struct MSAFindConsensusChooserImplicit {
 
 	template<class GPUReadStorage_t>
 	static void callKernelAsync(
-                int* d_countsA,
-                int* d_countsC,
-                int* d_countsG,
-                int* d_countsT,
-                float* d_weightsA,
-                float* d_weightsC,
-                float* d_weightsG,
-                float* d_weightsT,
+                int* d_counts,
+                float* d_weights,
                 char* d_consensus,
                 float* d_support,
                 int* d_coverage,
@@ -978,14 +960,8 @@ struct MSAFindConsensusChooserImplicit {
 
 		auto callKernel = [&](auto subjectptr){
             call_msa_find_consensus_implicit_kernel_async(
-                                    d_countsA,
-                                    d_countsC,
-                                    d_countsG,
-                                    d_countsT,
-                                    d_weightsA,
-                                    d_weightsC,
-                                    d_weightsG,
-                                    d_weightsT,
+                                    d_counts,
+                                    d_weights,
                                     d_consensus,
                                     d_support,
                                     d_coverage,

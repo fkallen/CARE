@@ -35,7 +35,8 @@ enum class KernelId {
 	MSAFindConsensus,
 	MSACorrectSubject,
 	MSACorrectCandidates,
-    MSAAddSequencesImplicit,
+    MSAAddSequencesImplicitGlobal,
+    MSAAddSequencesImplicitShared,
     MSAFindConsensusImplicit,
     MSACorrectSubjectImplicit,
 };
@@ -83,14 +84,8 @@ void call_msa_find_consensus_kernel_async(
                         int* d_coverage,
                         float* d_origWeights,
                         int* d_origCoverages,
-                        int* d_countsA,
-                        int* d_countsC,
-                        int* d_countsG,
-                        int* d_countsT,
-                        float* d_weightsA,
-                        float* d_weightsC,
-                        float* d_weightsG,
-                        float* d_weightsT,
+                        int* d_counts,
+                        float* d_weights,
                         const char* d_multiple_sequence_alignments,
                         const float* d_multiple_sequence_alignment_weights,
                         const MSAColumnProperties* d_msa_column_properties,
@@ -1044,6 +1039,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
     unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
     unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
 
+    /*if(globalTileId == 0 && laneInTile == 0)
+        printf("%d %d %d\n", candidates_per_subject_prefixsum[0], candidates_per_subject_prefixsum[1], candidates_per_subject_prefixsum[2]);*/
+
 	for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2; logicalTileId += tiles){
         const bool isReverseComplement = logicalTileId >= requiredTiles;
 		const int forwardTileId = isReverseComplement ? logicalTileId - requiredTiles : logicalTileId;
@@ -1059,11 +1057,14 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
 
 
 		const int candidatesBeforeThisSubject = candidates_per_subject_prefixsum[subjectIndex];
-		const int maxCandidateIndex_excl = candidates_per_subject_prefixsum[subjectIndex+1];
+        const int maxCandidateIndex_excl = candidates_per_subject_prefixsum[subjectIndex+1];
 		//const int tilesForThisSubject = tiles_per_subject_prefixsum[subjectIndex + 1] - tiles_per_subject_prefixsum[subjectIndex];
 		const int tileForThisSubject = forwardTileId - tiles_per_subject_prefixsum[subjectIndex];
 		const int queryIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
 		const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
+
+
+
         /*if(tileForThisSubject < 0){
             printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d\n",
                     blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
@@ -1076,8 +1077,9 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
         assert(queryIndex >= 0);
         assert(resultIndex >= 0);*/
 
-        /*printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d queryIndex %d resultIndex %d\n",
-                blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
+        /*if(laneInTile == 0)
+            printf("block %d tile %d thread %d globalTileId %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d queryIndex %d resultIndex %d\n",
+                blockIdx.x, globalTileId, threadIdx.x, globalTileId, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
                 candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
         const int subjectbases = getSubjectLength(subjectIndex);
@@ -1092,6 +1094,10 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
 
 
 		if(queryIndex < maxCandidateIndex_excl){
+            /*printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d queryIndex %d resultIndex %d\n",
+                    blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
+                    candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
+
 			const int querybases = getCandidateLength(queryIndex);
 			const char* candidateptr = getCandidatePtr(queryIndex);
 
@@ -1259,6 +1265,15 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
 			alignment_shifts[resultIndex] = bestShift;
 			alignment_nOps[resultIndex] = opnr;
 			alignment_isValid[resultIndex] = (bestShift != -querybases);
+            /*printf("thread %d resultindex %d\n", threadIdx.x + blockIdx.x * blockDim.x, resultIndex);
+
+            if(alignment_isValid[resultIndex] && abs(bestShift) == 101){
+                assert(false);
+            }
+
+            if(!alignment_isValid[resultIndex] && abs(bestShift) != 101){
+                assert(false);
+            }*/
 		}
 	}
 }
@@ -1437,6 +1452,9 @@ void cuda_find_best_alignment_kernel_exp(
 		const int revc_alignment_shift = d_alignment_shifts[revcIndex];
 		const int revc_alignment_nops = d_alignment_nOps[revcIndex];
 		const bool revc_alignment_isvalid = d_alignment_isValid[revcIndex];
+
+        assert(fwd_alignment_isvalid || fwd_alignment_shift == -101);
+        assert(revc_alignment_isvalid || revc_alignment_shift == -101);
 
 		//const int querylength = d_candidate_sequences_lengths[resultIndex];
 		const int querylength = getCandidateLength(resultIndex);
@@ -1815,7 +1833,6 @@ void msa_init_kernel_exp(
 			const int shift = alignment_shifts[queryIndex];
 			const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
 			const int queryLength = getCandidateLength(subjectIndex, index);
-
 			if(flag != BestAlignment_t::None) {
 				const int queryEndsAt = queryLength + shift;
 				startindex = min(startindex, shift);
@@ -2739,19 +2756,12 @@ void call_msa_correct_candidates_kernel_async_exp(
 
 
 
-
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
 __global__
-void msa_add_sequences_kernel_implicit(
-            int* __restrict__ d_countsA,
-            int* __restrict__ d_countsC,
-            int* __restrict__ d_countsG,
-            int* __restrict__ d_countsT,
-            float* __restrict__ d_weightsA,
-            float* __restrict__ d_weightsC,
-            float* __restrict__ d_weightsG,
-            float* __restrict__ d_weightsT,
+void msa_add_sequences_kernel_implicit_global(
+            int* d_counts,
+            float* d_weights,
             int* __restrict__ d_coverage,
             float* __restrict__ d_origWeights,
             int* __restrict__ d_origCoverages,
@@ -2784,30 +2794,6 @@ void msa_add_sequences_kernel_implicit(
 			GetCandidateQualityPtr getCandidateQualityPtr,
 			GetCandidateLength getCandidateLength){
 
-	extern __shared__ float sharedmem[];
-
-    constexpr char A_enc = 0x00;
-    constexpr char C_enc = 0x01;
-    constexpr char G_enc = 0x02;
-    constexpr char T_enc = 0x03;
-#if 1
-	float* const sharedWeights = (float*)sharedmem;
-	char* const sharedSequence = (char*)(sharedWeights + maximum_sequence_length);
-#else
-    float* const sharedWeights = (float*)sharedmemory;
-    float* const shared_weightsA = sharedWeights + maximum_sequence_length;
-    float* const shared_weightsC = shared_weightsA + msa_weights_row_pitch_floats;
-    float* const shared_weightsG = shared_weightsC + msa_weights_row_pitch_floats;
-    float* const shared_weightsT = shared_weightsG + msa_weights_row_pitch_floats;
-    int* const shared_countsA = (int*)(shared_weightsT + msa_weights_row_pitch_floats);
-    int* const shared_countsC = shared_countsA + msa_weights_row_pitch_floats;
-    int* const shared_countsG = shared_countsC + msa_weights_row_pitch_floats;
-    int* const shared_countsT = shared_countsG + msa_weights_row_pitch_floats;
-    int* const shared_coverage = shared_countsT + msa_weights_row_pitch_floats;
-    char* const sharedSequence = (char*)(shared_coverage + msa_weights_row_pitch_floats);
-#endif
-
-
 	const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 	const int n_indices = *d_num_indices;
 
@@ -2820,47 +2806,21 @@ void msa_add_sequences_kernel_implicit(
 		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
         const int shift = 0;
 
-        int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsC = d_countsC + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsG = d_countsG + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsT = d_countsT + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_row_pitch_floats;
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-#if 1
+
+        //printf("subject: ");
         for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
             const char base = get(subject, subjectLength, i);
+            //printf("%d ", int(base));
             const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            switch(base){
-                case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
-                case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
-                case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
-                case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
-                default: assert(false); break;
-            }
-            //my_coverage[globalIndex]++;
+            const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+            atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+            atomicAdd(d_weights + ptrOffset + globalIndex, weight);
             atomicAdd(my_coverage + globalIndex, 1);
         }
-#else
-        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-            const int globalIndex = subjectColumnsBegin_incl + shift + i;
-            const char base = get(subject, subjectLength, i);
-            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            switch(base){
-                case A_enc: atomicAdd(shared_countsA + globalIndex, 1); atomicAdd(shared_weightsA + globalIndex, weight);break;
-                case C_enc: atomicAdd(shared_countsC + globalIndex, 1); atomicAdd(shared_weightsC + globalIndex, weight);break;
-                case G_enc: atomicAdd(shared_countsG + globalIndex, 1); atomicAdd(shared_weightsG + globalIndex, weight);break;
-                case T_enc: atomicAdd(shared_countsT + globalIndex, 1); atomicAdd(shared_weightsT + globalIndex, weight);break;
-                default: assert(false); break;
-            }
-            atomicAdd(shared_coverage + globalIndex, 1);
-        }
-#endif
 	}
-
+    //printf("\n");
 
     //add candidates
     for(unsigned index = blockIdx.x; index < n_indices; index += gridDim.x) {
@@ -2879,14 +2839,6 @@ void msa_add_sequences_kernel_implicit(
         const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-        int* const my_countsA = d_countsA + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsC = d_countsC + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsG = d_countsG + subjectIndex * msa_weights_row_pitch_floats;
-        int* const my_countsT = d_countsT + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_row_pitch_floats;
-        float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_row_pitch_floats;
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
         const char* const query = getCandidatePtr(queryIndex);
@@ -2900,99 +2852,222 @@ void msa_add_sequences_kernel_implicit(
 					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
 
         assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
-
+        //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
 		//copy query into msa
 		if(flag == BestAlignment_t::Forward) {
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = get(query, queryLength, i);
+                //printf("%d ", int(base));
                 const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
-                switch(base){
-                    case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
-                    case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
-                    case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
-                    case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
-                    default: assert(false); break;
-                }
-                //my_coverage[globalIndex]++;
+                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
 		}else{
-            for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
-				sharedSequence[i] = get(query, queryLength, i);
-				sharedWeights[i] = canUseQualityScores ?
-				                   (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight
-				                   : 1.0f;
-			}
-
-			__syncthreads();
-
             auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
                 constexpr std::uint8_t mask = 0x03;
                 return (~in & mask);
             };
 
-            const int bytes = queryLength;
-            //make reverse complement of shared sequence
-            for(int i = threadIdx.x; i < bytes/2; i += blockDim.x){
-                const std::uint8_t front = make_reverse_complement_byte(sharedSequence[i]);
-                const std::uint8_t back = make_reverse_complement_byte(sharedSequence[bytes - 1 - i]);
-                sharedSequence[i] = back;
-                sharedSequence[bytes - 1 - i] = front;
-            }
-
-            if(threadIdx.x == 0 && bytes % 2 == 1){
-                const int middleindex = bytes/2;
-                sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
-            }
-            //reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
-            if(canUseQualityScores){
-                const int floats = queryLength;
-                for(int i = threadIdx.x; i < floats/2; i += blockDim.x){
-                    const float front = sharedWeights[i];
-                    const float back = sharedWeights[bytes - 1 - i];
-                    sharedWeights[i] = back;
-                    sharedWeights[bytes - 1 - i] = front;
-                }
-                //for odd length, the middle position remains unchanged
-            }
-
-            __syncthreads();
-
-
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                const int reverseIndex = queryLength - 1 - i;
                 const int globalIndex = defaultcolumnoffset + i;
-                const char base = sharedSequence[i];
-                const float weight = sharedWeights[i];
-                switch(base){
-                    case A_enc: atomicAdd(my_countsA + globalIndex, 1); atomicAdd(my_weightsA + globalIndex, weight);break;
-                    case C_enc: atomicAdd(my_countsC + globalIndex, 1); atomicAdd(my_weightsC + globalIndex, weight);break;
-                    case G_enc: atomicAdd(my_countsG + globalIndex, 1); atomicAdd(my_weightsG + globalIndex, weight);break;
-                    case T_enc: atomicAdd(my_countsT + globalIndex, 1); atomicAdd(my_weightsT + globalIndex, weight);break;
-                    default: assert(false); break;
-                }
-                //my_coverage[globalIndex]++;
+                const char base = get(query, queryLength, reverseIndex);
+                const char revCompl = make_reverse_complement_byte(base);
+                //printf("%d ", int(revCompl));
+                const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
+                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(revCompl) * msa_weights_row_pitch_floats;
+				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
-
-			__syncthreads();
         }
-
+        //printf("\n");
 
 	}
 }
 
+
+
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
-void call_msa_add_sequences_kernel_implicit_async(
-            int* d_countsA,
-            int* d_countsC,
-            int* d_countsG,
-            int* d_countsT,
-            float* d_weightsA,
-            float* d_weightsC,
-            float* d_weightsG,
-            float* d_weightsT,
+__global__
+void msa_add_sequences_kernel_implicit_shared(
+            int* d_counts,
+            float* d_weights,
+            int* __restrict__ d_coverage,
+            float* __restrict__ d_origWeights,
+            int* __restrict__ d_origCoverages,
+			const int* __restrict__ d_alignment_shifts,
+			const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+			const int* __restrict__ d_subject_sequences_lengths,
+			const int* __restrict__ d_candidate_sequences_lengths,
+			const int* __restrict__ d_alignment_overlaps,
+			const int* __restrict__ d_alignment_nOps,
+			const MSAColumnProperties*  __restrict__ d_msa_column_properties,
+			const int* __restrict__ d_candidates_per_subject_prefixsum,
+			const int* __restrict__ d_indices,
+			const int* __restrict__ d_indices_per_subject,
+			const int* __restrict__ d_indices_per_subject_prefixsum,
+            //const int* __restrict__ blocks_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* __restrict__ d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength){
+
+    // sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
+    //+ sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
+	extern __shared__ float sharedmem[];
+
+    const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+    const int smemsizefloats = 4 * msa_weights_row_pitch_floats + 4 * msa_weights_row_pitch_floats;
+
+    float* const shared_weights = sharedmem;
+    int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
+
+	const int requiredTiles = n_subjects;//blocks_per_subject_prefixsum[n_subjects];
+
+	for(int logicalBlockId = blockIdx.x; logicalBlockId < requiredTiles; logicalBlockId += gridDim.x){
+        //clear shared memory
+        for(int i = threadIdx.x; i < smemsizefloats; i += blockDim.x){
+            sharedmem[i] = 0;
+        }
+        __syncthreads();
+
+		int subjectIndex = 0;
+		for(; subjectIndex < n_subjects; subjectIndex++) {
+			//if(logicalBlockId < blocks_per_subject_prefixsum[subjectIndex+1])
+            if(logicalBlockId < subjectIndex+1)
+				break;
+		}
+
+		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+        const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+		const char* const subject = getSubjectPtr(subjectIndex);
+		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
+
+        assert(columnsToCheck <= msa_weights_row_pitch_floats);
+
+
+        //add subject
+        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+
+        //printf("subject: ");
+        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+            const int shift = 0;
+            const int globalIndex = subjectColumnsBegin_incl + shift + i;
+            const char base = get(subject, subjectLength, i);
+            //printf("%d ", int(base));
+            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+            const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+            atomicAdd(my_coverage + globalIndex, 1);
+        }
+
+        //printf("\n");
+
+        const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+        const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
+
+        for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
+            const int queryIndex = indices_for_this_subject[index];
+            const int shift = d_alignment_shifts[queryIndex];
+            const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
+            const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+
+            int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+
+            const char* const query = getCandidatePtr(queryIndex);
+    		const int queryLength = getCandidateLength(index);
+    		const char* const queryQualityScore = getCandidateQualityPtr(index);
+
+    		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
+    		const int query_alignment_nops = d_alignment_nOps[queryIndex];
+
+    		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
+    					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+
+            assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+
+            //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
+
+            if(flag == BestAlignment_t::Forward) {
+                for(int i = 0; i < queryLength; i += 1){
+                    const int globalIndex = defaultcolumnoffset + i;
+                    const char base = get(query, queryLength, i);
+                    //printf("%d ", int(base));
+                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
+                    const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+                    atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                    atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                    atomicAdd(my_coverage + globalIndex, 1);
+                }
+    		}else{
+                auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                    constexpr std::uint8_t mask = 0x03;
+                    return (~in & mask);
+                };
+
+                for(int i = 0; i < queryLength; i += 1){
+                    const int reverseIndex = queryLength - 1 - i;
+                    const int globalIndex = defaultcolumnoffset + i;
+                    const char base = get(query, queryLength, reverseIndex);
+                    const char revCompl = make_reverse_complement_byte(base);
+                    //printf("%d ", int(revCompl));
+                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
+                    const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
+                    atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                    atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                    atomicAdd(my_coverage + globalIndex, 1);
+                }
+            }
+            //printf("\n");
+        }
+
+        __syncthreads();
+
+        for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
+            for(int k = 0; k < 4; k++){
+                const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
+                int* const destCounts = d_counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
+                const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats + index;
+                float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
+                atomicAdd(destCounts ,*srcCounts);
+                atomicAdd(destWeights, *srcWeights);
+            }
+        }
+
+        __syncthreads();
+    }
+
+
+
+}
+
+
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+void call_msa_add_sequences_kernel_implicit_global_async(
+            int* d_counts,
+            float* d_weights,
             int* d_coverage,
             float* d_origWeights,
             int* d_origCoverages,
@@ -3027,11 +3102,8 @@ void call_msa_add_sequences_kernel_implicit_async(
 			cudaStream_t stream,
 			KernelLaunchHandle& handle){
 
-
-
-
 	const int blocksize = 128;
-	const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+	const std::size_t smem = 0;
 
 	int max_blocks_per_device = 1;
 
@@ -3039,7 +3111,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 	kernelLaunchConfig.threads_per_block = blocksize;
 	kernelLaunchConfig.smem = smem;
 
-	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicit);
+	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicitGlobal);
 	if(iter == handle.kernelPropertiesMap.end()) {
 
 		std::map<KernelLaunchConfig, KernelProperties> mymap;
@@ -3047,16 +3119,17 @@ void call_msa_add_sequences_kernel_implicit_async(
 	    #define getProp(blocksize) { \
 		KernelLaunchConfig kernelLaunchConfig; \
 		kernelLaunchConfig.threads_per_block = (blocksize); \
-		kernelLaunchConfig.smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length; \
+		kernelLaunchConfig.smem = 0; \
 		KernelProperties kernelProperties; \
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-					msa_add_sequences_kernel_implicit<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
+					msa_add_sequences_kernel_implicit_global<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
 					                             GetSubjectQualityPtr, GetCandidateQualityPtr, \
 					                             GetCandidateLength>, \
 					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
 		mymap[kernelLaunchConfig] = kernelProperties; \
 }
 
+        getProp(1);
 		getProp(32);
 		getProp(64);
 		getProp(96);
@@ -3069,7 +3142,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 		const auto& kernelProperties = mymap[kernelLaunchConfig];
 		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
 
-		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicit] = std::move(mymap);
+		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitGlobal] = std::move(mymap);
 
 	    #undef getProp
 	}else{
@@ -3083,15 +3156,9 @@ void call_msa_add_sequences_kernel_implicit_async(
 	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
 	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
 
-	msa_add_sequences_kernel_implicit<<<grid, block, smem, stream>>>(
-                                                                d_countsA,
-                                                                d_countsC,
-                                                                d_countsG,
-                                                                d_countsT,
-                                                                d_weightsA,
-                                                                d_weightsC,
-                                                                d_weightsG,
-                                                                d_weightsT,
+	msa_add_sequences_kernel_implicit_global<<<grid, block, smem, stream>>>(
+                                                                d_counts,
+                                                                d_weights,
                                                                 d_coverage,
                                                                 d_origWeights,
                                                                 d_origCoverages,
@@ -3126,6 +3193,258 @@ void call_msa_add_sequences_kernel_implicit_async(
 }
 
 
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+void call_msa_add_sequences_kernel_implicit_shared_async(
+            int* d_counts,
+            float* d_weights,
+            int* d_coverage,
+            float* d_origWeights,
+            int* d_origCoverages,
+			const int* d_alignment_shifts,
+			const BestAlignment_t* d_alignment_best_alignment_flags,
+			const int* d_subject_sequences_lengths,
+			const int* d_candidate_sequences_lengths,
+			const int* d_alignment_overlaps,
+			const int* d_alignment_nOps,
+			const MSAColumnProperties*  d_msa_column_properties,
+			const int* d_candidates_per_subject_prefixsum,
+			const int* d_indices,
+			const int* d_indices_per_subject,
+			const int* d_indices_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get_as_nucleotide,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength,
+			cudaStream_t stream,
+			KernelLaunchHandle& handle){
+
+	const int blocksize = 128;
+    const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+
+	//const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+    const std::size_t smem = sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
+                            + sizeof(int) * 4 * msa_weights_row_pitch_floats; // counts
+
+
+	int max_blocks_per_device = 1;
+
+	KernelLaunchConfig kernelLaunchConfig;
+	kernelLaunchConfig.threads_per_block = blocksize;
+	kernelLaunchConfig.smem = smem;
+
+	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicitShared);
+	if(iter == handle.kernelPropertiesMap.end()) {
+
+		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+	    #define getProp(blocksize) { \
+		KernelLaunchConfig kernelLaunchConfig; \
+		kernelLaunchConfig.threads_per_block = (blocksize); \
+		kernelLaunchConfig.smem = sizeof(float) * 4 * msa_weights_row_pitch_floats \
+                                + sizeof(int) * 4 * msa_weights_row_pitch_floats; \
+		KernelProperties kernelProperties; \
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+					msa_add_sequences_kernel_implicit_shared<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
+					                             GetSubjectQualityPtr, GetCandidateQualityPtr, \
+					                             GetCandidateLength>, \
+					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+		mymap[kernelLaunchConfig] = kernelProperties; \
+}
+
+        getProp(1);
+		getProp(32);
+		getProp(64);
+		getProp(96);
+		getProp(128);
+		getProp(160);
+		getProp(192);
+		getProp(224);
+		getProp(256);
+
+		const auto& kernelProperties = mymap[kernelLaunchConfig];
+		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+
+		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitShared] = std::move(mymap);
+
+	    #undef getProp
+	}else{
+		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
+	}
+
+	dim3 block(blocksize, 1, 1);
+
+    const int blocks = SDIV(n_queries, blocksize);
+	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
+
+	msa_add_sequences_kernel_implicit_shared<<<grid, block, smem, stream>>>(
+                                                                d_counts,
+                                                                d_weights,
+                                                                d_coverage,
+                                                                d_origWeights,
+                                                                d_origCoverages,
+	                                                            d_alignment_shifts,
+	                                                            d_alignment_best_alignment_flags,
+	                                                            d_subject_sequences_lengths,
+	                                                            d_candidate_sequences_lengths,
+	                                                            d_alignment_overlaps,
+	                                                            d_alignment_nOps,
+	                                                            d_msa_column_properties,
+	                                                            d_candidates_per_subject_prefixsum,
+	                                                            d_indices,
+	                                                            d_indices_per_subject,
+	                                                            d_indices_per_subject_prefixsum,
+	                                                            n_subjects,
+	                                                            n_queries,
+	                                                            d_num_indices,
+	                                                            canUseQualityScores,
+	                                                            desiredAlignmentMaxErrorRate,
+	                                                            maximum_sequence_length,
+	                                                            max_sequence_bytes,
+	                                                            quality_pitch,
+	                                                            msa_row_pitch,
+	                                                            msa_weights_row_pitch,
+	                                                            get_as_nucleotide,
+	                                                            make_unpacked_reverse_complement_inplace,
+	                                                            getSubjectPtr,
+	                                                            getCandidatePtr,
+	                                                            getSubjectQualityPtr,
+	                                                            getCandidateQualityPtr,
+	                                                            getCandidateLength); CUERR;
+}
+
+
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+void call_msa_add_sequences_kernel_implicit_async(
+            int* d_counts,
+            float* d_weights,
+            int* d_coverage,
+            float* d_origWeights,
+            int* d_origCoverages,
+			const int* d_alignment_shifts,
+			const BestAlignment_t* d_alignment_best_alignment_flags,
+			const int* d_subject_sequences_lengths,
+			const int* d_candidate_sequences_lengths,
+			const int* d_alignment_overlaps,
+			const int* d_alignment_nOps,
+			const MSAColumnProperties*  d_msa_column_properties,
+			const int* d_candidates_per_subject_prefixsum,
+			const int* d_indices,
+			const int* d_indices_per_subject,
+			const int* d_indices_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get_as_nucleotide,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength,
+			cudaStream_t stream,
+			KernelLaunchHandle& handle){
+#if 0
+    call_msa_add_sequences_kernel_implicit_global_async(d_counts,
+                                                        d_weights,
+                                                        d_coverage,
+                                                        d_origWeights,
+                                                        d_origCoverages,
+                                                        d_alignment_shifts,
+                                                        d_alignment_best_alignment_flags,
+                                                        d_subject_sequences_lengths,
+                                                        d_candidate_sequences_lengths,
+                                                        d_alignment_overlaps,
+                                                        d_alignment_nOps,
+                                                        d_msa_column_properties,
+                                                        d_candidates_per_subject_prefixsum,
+                                                        d_indices,
+                                                        d_indices_per_subject,
+                                                        d_indices_per_subject_prefixsum,
+                                                        n_subjects,
+                                                        n_queries,
+                                                        d_num_indices,
+                                                        canUseQualityScores,
+                                                        desiredAlignmentMaxErrorRate,
+                                                        maximum_sequence_length,
+                                                        max_sequence_bytes,
+                                                        quality_pitch,
+                                                        msa_row_pitch,
+                                                        msa_weights_row_pitch,
+                                                        get_as_nucleotide,
+                                                        make_unpacked_reverse_complement_inplace,
+                                                        getSubjectPtr,
+                                                        getCandidatePtr,
+                                                        getSubjectQualityPtr,
+                                                        getCandidateQualityPtr,
+                                                        getCandidateLength,
+                                                        stream,
+                                                        handle); CUERR;
+#else
+
+    call_msa_add_sequences_kernel_implicit_shared_async(d_counts,
+                                                        d_weights,
+                                                        d_coverage,
+                                                        d_origWeights,
+                                                        d_origCoverages,
+                                                        d_alignment_shifts,
+                                                        d_alignment_best_alignment_flags,
+                                                        d_subject_sequences_lengths,
+                                                        d_candidate_sequences_lengths,
+                                                        d_alignment_overlaps,
+                                                        d_alignment_nOps,
+                                                        d_msa_column_properties,
+                                                        d_candidates_per_subject_prefixsum,
+                                                        d_indices,
+                                                        d_indices_per_subject,
+                                                        d_indices_per_subject_prefixsum,
+                                                        n_subjects,
+                                                        n_queries,
+                                                        d_num_indices,
+                                                        canUseQualityScores,
+                                                        desiredAlignmentMaxErrorRate,
+                                                        maximum_sequence_length,
+                                                        max_sequence_bytes,
+                                                        quality_pitch,
+                                                        msa_row_pitch,
+                                                        msa_weights_row_pitch,
+                                                        get_as_nucleotide,
+                                                        make_unpacked_reverse_complement_inplace,
+                                                        getSubjectPtr,
+                                                        getCandidatePtr,
+                                                        getSubjectQualityPtr,
+                                                        getCandidateQualityPtr,
+                                                        getCandidateLength,
+                                                        stream,
+                                                        handle); CUERR;
+#endif
+}
+
+
 
 
 
@@ -3137,14 +3456,8 @@ void call_msa_add_sequences_kernel_implicit_async(
 template<class Accessor, class GetSubjectPtr>
 __global__
 void msa_find_consensus_implicit_kernel(
-                        int* __restrict__ d_countsA,
-                        int* __restrict__ d_countsC,
-                        int* __restrict__ d_countsG,
-                        int* __restrict__ d_countsT,
-                        float* __restrict__ d_weightsA,
-                        float* __restrict__ d_weightsC,
-                        float* __restrict__ d_weightsG,
-                        float* __restrict__ d_weightsT,
+                        int* __restrict__ d_counts,
+                        float* __restrict__ d_weights,
                         char* __restrict__ d_consensus,
                         float* __restrict__ d_support,
                         int* __restrict__ d_coverage,
@@ -3175,6 +3488,8 @@ void msa_find_consensus_implicit_kernel(
         const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
         const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
 
+        assert(columnsToCheck <= msa_weights_pitch_floats);
+
         const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
         const char* const subject = getSubjectPtr(subjectIndex);
 
@@ -3184,10 +3499,10 @@ void msa_find_consensus_implicit_kernel(
         float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
         int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-        const float* const my_weightsA = d_weightsA + subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsC = d_weightsC + subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsG = d_weightsG + subjectIndex * msa_weights_pitch_floats;
-        const float* const my_weightsT = d_weightsT + subjectIndex * msa_weights_pitch_floats;
+        const float* const my_weightsA = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+        const float* const my_weightsC = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+        const float* const my_weightsG = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+        const float* const my_weightsT = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
         for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
             const float wA = my_weightsA[column];
@@ -3213,10 +3528,10 @@ void msa_find_consensus_implicit_kernel(
             my_support[column] = consWeight / columnWeight;
 
             if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                const int* const my_countsA = d_countsA + subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsC = d_countsC + subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsG = d_countsG + subjectIndex * msa_weights_pitch_floats;
-                const int* const my_countsT = d_countsT + subjectIndex * msa_weights_pitch_floats;
+                const int* const my_countsA = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                const int* const my_countsC = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                const int* const my_countsG = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                const int* const my_countsT = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
                 const int localIndex = column - subjectColumnsBegin_incl;
                 const char subjectbase = get(subject, subjectLength, localIndex);
@@ -3241,14 +3556,8 @@ void msa_find_consensus_implicit_kernel(
 
 template<class Accessor, class GetSubjectPtr>
 void call_msa_find_consensus_implicit_kernel_async(
-                        int* d_countsA,
-                        int* d_countsC,
-                        int* d_countsG,
-                        int* d_countsT,
-                        float* d_weightsA,
-                        float* d_weightsC,
-                        float* d_weightsG,
-                        float* d_weightsT,
+                        int* d_counts,
+                        float* d_weights,
                         char* d_consensus,
                         float* d_support,
                         int* d_coverage,
@@ -3317,14 +3626,8 @@ void call_msa_find_consensus_implicit_kernel_async(
     dim3 grid(std::min(max_blocks_per_device, n_subjects * blocks_per_msa), 1, 1);
 
     msa_find_consensus_implicit_kernel<<<grid, block, 0, stream>>>(
-                                                        d_countsA,
-                                                        d_countsC,
-                                                        d_countsG,
-                                                        d_countsT,
-                                                        d_weightsA,
-                                                        d_weightsC,
-                                                        d_weightsG,
-                                                        d_weightsT,
+                                                        d_counts,
+                                                        d_weights,
                                                         d_consensus,
                                                         d_support,
                                                         d_coverage,
