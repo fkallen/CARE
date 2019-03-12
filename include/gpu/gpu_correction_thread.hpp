@@ -339,7 +339,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 public:
 
-	std::string nameOf(BatchState state) const {
+	std::string nameOf(const BatchState& state) const {
 		switch(state) {
 		case BatchState::Unprepared: return "Unprepared";
 		case BatchState::CopyReads: return "CopyReads";
@@ -360,7 +360,7 @@ public:
 		}
 	}
 
-	IsWaitingResult isWaiting(BatchState state) const {
+	IsWaitingResult isWaiting(const BatchState& state) const {
 		switch(state) {
 		case BatchState::Unprepared: return {false, -1};
 		case BatchState::CopyReads: return {false, -1};
