@@ -39,7 +39,7 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-#define MSA_IMPLICIT
+//#define MSA_IMPLICIT
 
 #define shd_tilesize 32
 
@@ -206,6 +206,10 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 		KernelLaunchHandle kernelLaunchHandle;
 
+        bool isWaiting() const{
+            return 0 != waitCounts[activeWaitIndex].load();
+    	}
+
         void addWaitSignal(int wait_index, cudaStream_t stream){
             waitCounts[wait_index]++;
             /*auto dataptr = std::make_unique<WaitCallbackData>(this, wait_index);
@@ -243,7 +247,6 @@ struct ErrorCorrectionThreadOnlyGPU {
             }else{
                 assert(false); //every case should be handled above
             }
-
         }
 
 		void reset(){
@@ -268,14 +271,6 @@ struct ErrorCorrectionThreadOnlyGPU {
 		BatchState newState = BatchState::Unprepared;
 		bool noProgressBlocking = false;
 		bool noProgressLaunching = false;
-	};
-
-	struct IsWaitingResult {
-        std::atomic_int* waitCount;
-
-        bool isWaiting() const{
-            return 0 != waitCount->load();
-        }
 	};
 
 	struct TransitionFunctionData {
@@ -412,10 +407,6 @@ public:
 		case BatchState::Aborted: return "Aborted";
 		default: assert(false); return "None";
 		}
-	}
-
-	IsWaitingResult isWaiting(Batch& batch) const {
-        return IsWaitingResult{&batch.waitCounts[batch.activeWaitIndex]};
 	}
 
 	void makeTransitionFunctionTable(){
@@ -2644,8 +2635,8 @@ public:
 
 
 #if 1
-				IsWaitingResult isWaitingResult = isWaiting(mainBatch);
-				while(isWaitingResult.isWaiting()) {
+
+				while(mainBatch.isWaiting()) {
 					/*
 					    Prepare next batch while waiting for the mainBatch gpu work to finish
 					 */
@@ -2661,7 +2652,7 @@ public:
 
 						AdvanceResult sideBatchAdvanceResult;
 
-						while(isWaitingResult.isWaiting()) {
+						while(mainBatch.isWaiting()) {
 							const int globalBatchIndex = localSideBatchIndex + 1;
 
 							Batch& sideBatch = *batchPointers[globalBatchIndex];
@@ -2714,8 +2705,7 @@ public:
 								firstSideIter = false;
 							}
 
-							IsWaitingResult isWaitingResultSideBatch = isWaiting(sideBatch);
-							if(isWaitingResultSideBatch.isWaiting()) {
+							if(sideBatch.isWaiting()) {
 								//current side batch is waiting, move to next side batch
 								localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
 
