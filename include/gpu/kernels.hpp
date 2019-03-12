@@ -2794,33 +2794,6 @@ void msa_add_sequences_kernel_implicit_global(
 			GetCandidateQualityPtr getCandidateQualityPtr,
 			GetCandidateLength getCandidateLength){
 
-    //sizeof(float) * maximum_sequence_length  //reverse complement buffer
-    //+ sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
-    //+ sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
-	extern __shared__ float sharedmem[];
-
-    /*constexpr char A_enc = 0x00;
-    constexpr char C_enc = 0x01;
-    constexpr char G_enc = 0x02;
-    constexpr char T_enc = 0x03;*/
-#if 1
-	float* const sharedWeights = (float*)sharedmem;
-	char* const sharedSequence = (char*)(sharedWeights + maximum_sequence_length);
-#else
-    float* const sharedWeights = (float*)sharedmemory;
-    float* const shared_weightsA = sharedWeights + maximum_sequence_length;
-    float* const shared_weightsC = shared_weightsA + msa_weights_row_pitch_floats;
-    float* const shared_weightsG = shared_weightsC + msa_weights_row_pitch_floats;
-    float* const shared_weightsT = shared_weightsG + msa_weights_row_pitch_floats;
-    int* const shared_countsA = (int*)(shared_weightsT + msa_weights_row_pitch_floats);
-    int* const shared_countsC = shared_countsA + msa_weights_row_pitch_floats;
-    int* const shared_countsG = shared_countsC + msa_weights_row_pitch_floats;
-    int* const shared_countsT = shared_countsG + msa_weights_row_pitch_floats;
-    int* const shared_coverage = shared_countsT + msa_weights_row_pitch_floats;
-    char* const sharedSequence = (char*)(shared_coverage + msa_weights_row_pitch_floats);
-#endif
-
-
 	const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 	const int n_indices = *d_num_indices;
 
@@ -2834,7 +2807,7 @@ void msa_add_sequences_kernel_implicit_global(
         const int shift = 0;
 
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-#if 1
+
         //printf("subject: ");
         for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
@@ -2846,21 +2819,6 @@ void msa_add_sequences_kernel_implicit_global(
             atomicAdd(d_weights + ptrOffset + globalIndex, weight);
             atomicAdd(my_coverage + globalIndex, 1);
         }
-#else
-        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-            const int globalIndex = subjectColumnsBegin_incl + shift + i;
-            const char base = get(subject, subjectLength, i);
-            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            switch(base){
-                case A_enc: atomicAdd(shared_countsA + globalIndex, 1); atomicAdd(shared_weightsA + globalIndex, weight);break;
-                case C_enc: atomicAdd(shared_countsC + globalIndex, 1); atomicAdd(shared_weightsC + globalIndex, weight);break;
-                case G_enc: atomicAdd(shared_countsG + globalIndex, 1); atomicAdd(shared_weightsG + globalIndex, weight);break;
-                case T_enc: atomicAdd(shared_countsT + globalIndex, 1); atomicAdd(shared_weightsT + globalIndex, weight);break;
-                default: assert(false); break;
-            }
-            atomicAdd(shared_coverage + globalIndex, 1);
-        }
-#endif
 	}
     //printf("\n");
 
@@ -2908,60 +2866,23 @@ void msa_add_sequences_kernel_implicit_global(
                 atomicAdd(my_coverage + globalIndex, 1);
             }
 		}else{
-            for(int i = threadIdx.x; i < queryLength; i+= blockDim.x) {
-				sharedSequence[i] = get(query, queryLength, i);
-				sharedWeights[i] = canUseQualityScores ?
-				                   (float)d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight
-				                   : 1.0f;
-			}
-
-			__syncthreads();
-
             auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
                 constexpr std::uint8_t mask = 0x03;
                 return (~in & mask);
             };
 
-            const int bytes = queryLength;
-            //make reverse complement of shared sequence
-            for(int i = threadIdx.x; i < bytes/2; i += blockDim.x){
-                const std::uint8_t front = make_reverse_complement_byte(sharedSequence[i]);
-                const std::uint8_t back = make_reverse_complement_byte(sharedSequence[bytes - 1 - i]);
-                sharedSequence[i] = back;
-                sharedSequence[bytes - 1 - i] = front;
-            }
-
-            if(threadIdx.x == 0 && bytes % 2 == 1){
-                const int middleindex = bytes/2;
-                sharedSequence[middleindex] = make_reverse_complement_byte(sharedSequence[middleindex]);
-            }
-            //reverse quality weights. if canUseQualityScores == false, then all weights are 1.0f and do not need to be reversed
-            if(canUseQualityScores){
-                const int floats = queryLength;
-                for(int i = threadIdx.x; i < floats/2; i += blockDim.x){
-                    const float front = sharedWeights[i];
-                    const float back = sharedWeights[bytes - 1 - i];
-                    sharedWeights[i] = back;
-                    sharedWeights[bytes - 1 - i] = front;
-                }
-                //for odd length, the middle position remains unchanged
-            }
-
-            __syncthreads();
-
-
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                const int reverseIndex = queryLength - 1 - i;
                 const int globalIndex = defaultcolumnoffset + i;
-                const char base = sharedSequence[i];
-                //printf("%d ", int(base));
-                const float weight = sharedWeights[i];
-                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+                const char base = get(query, queryLength, reverseIndex);
+                const char revCompl = make_reverse_complement_byte(base);
+                //printf("%d ", int(revCompl));
+                const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
+                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(revCompl) * msa_weights_row_pitch_floats;
 				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
 				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
                 atomicAdd(my_coverage + globalIndex, 1);
             }
-
-			__syncthreads();
         }
         //printf("\n");
 
@@ -3182,9 +3103,7 @@ void call_msa_add_sequences_kernel_implicit_global_async(
 			KernelLaunchHandle& handle){
 
 	const int blocksize = 128;
-    const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
-
-	const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+	const std::size_t smem = 0;
 
 	int max_blocks_per_device = 1;
 
@@ -3200,7 +3119,7 @@ void call_msa_add_sequences_kernel_implicit_global_async(
 	    #define getProp(blocksize) { \
 		KernelLaunchConfig kernelLaunchConfig; \
 		kernelLaunchConfig.threads_per_block = (blocksize); \
-		kernelLaunchConfig.smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length; \
+		kernelLaunchConfig.smem = 0; \
 		KernelProperties kernelProperties; \
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
 					msa_add_sequences_kernel_implicit_global<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
@@ -3370,8 +3289,9 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 	}
 
 	dim3 block(blocksize, 1, 1);
-	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
-	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+
+    const int blocks = SDIV(n_queries, blocksize);
+	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
 	msa_add_sequences_kernel_implicit_shared<<<grid, block, smem, stream>>>(
                                                                 d_counts,
@@ -3448,7 +3368,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 			GetCandidateLength getCandidateLength,
 			cudaStream_t stream,
 			KernelLaunchHandle& handle){
-#if 1
+#if 0
     call_msa_add_sequences_kernel_implicit_global_async(d_counts,
                                                         d_weights,
                                                         d_coverage,
