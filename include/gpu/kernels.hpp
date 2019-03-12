@@ -35,7 +35,6 @@ enum class KernelId {
 	MSAFindConsensus,
 	MSACorrectSubject,
 	MSACorrectCandidates,
-    MSAAddSequencesImplicit,
     MSAAddSequencesImplicitGlobal,
     MSAAddSequencesImplicitShared,
     MSAFindConsensusImplicit,
@@ -2757,11 +2756,10 @@ void call_msa_correct_candidates_kernel_async_exp(
 
 
 
-#if 0
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
 __global__
-void msa_add_sequences_kernel_implicit(
+void msa_add_sequences_kernel_implicit_global(
             int* d_counts,
             float* d_weights,
             int* __restrict__ d_coverage,
@@ -2971,12 +2969,11 @@ void msa_add_sequences_kernel_implicit(
 }
 
 
-#else
 
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
 __global__
-void msa_add_sequences_kernel_implicit(
+void msa_add_sequences_kernel_implicit_shared(
             int* d_counts,
             float* d_weights,
             int* __restrict__ d_coverage,
@@ -3144,12 +3141,142 @@ void msa_add_sequences_kernel_implicit(
 
 }
 
-#endif
+
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+void call_msa_add_sequences_kernel_implicit_global_async(
+            int* d_counts,
+            float* d_weights,
+            int* d_coverage,
+            float* d_origWeights,
+            int* d_origCoverages,
+			const int* d_alignment_shifts,
+			const BestAlignment_t* d_alignment_best_alignment_flags,
+			const int* d_subject_sequences_lengths,
+			const int* d_candidate_sequences_lengths,
+			const int* d_alignment_overlaps,
+			const int* d_alignment_nOps,
+			const MSAColumnProperties*  d_msa_column_properties,
+			const int* d_candidates_per_subject_prefixsum,
+			const int* d_indices,
+			const int* d_indices_per_subject,
+			const int* d_indices_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get_as_nucleotide,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength,
+			cudaStream_t stream,
+			KernelLaunchHandle& handle){
+
+	const int blocksize = 128;
+    const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+
+	const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
+
+	int max_blocks_per_device = 1;
+
+	KernelLaunchConfig kernelLaunchConfig;
+	kernelLaunchConfig.threads_per_block = blocksize;
+	kernelLaunchConfig.smem = smem;
+
+	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicitGlobal);
+	if(iter == handle.kernelPropertiesMap.end()) {
+
+		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+	    #define getProp(blocksize) { \
+		KernelLaunchConfig kernelLaunchConfig; \
+		kernelLaunchConfig.threads_per_block = (blocksize); \
+		kernelLaunchConfig.smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length; \
+		KernelProperties kernelProperties; \
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+					msa_add_sequences_kernel_implicit_global<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
+					                             GetSubjectQualityPtr, GetCandidateQualityPtr, \
+					                             GetCandidateLength>, \
+					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+		mymap[kernelLaunchConfig] = kernelProperties; \
+}
+
+        getProp(1);
+		getProp(32);
+		getProp(64);
+		getProp(96);
+		getProp(128);
+		getProp(160);
+		getProp(192);
+		getProp(224);
+		getProp(256);
+
+		const auto& kernelProperties = mymap[kernelLaunchConfig];
+		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+
+		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitGlobal] = std::move(mymap);
+
+	    #undef getProp
+	}else{
+		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
+	}
+
+	dim3 block(blocksize, 1, 1);
+	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
+	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+
+	msa_add_sequences_kernel_implicit_global<<<grid, block, smem, stream>>>(
+                                                                d_counts,
+                                                                d_weights,
+                                                                d_coverage,
+                                                                d_origWeights,
+                                                                d_origCoverages,
+	                                                            d_alignment_shifts,
+	                                                            d_alignment_best_alignment_flags,
+	                                                            d_subject_sequences_lengths,
+	                                                            d_candidate_sequences_lengths,
+	                                                            d_alignment_overlaps,
+	                                                            d_alignment_nOps,
+	                                                            d_msa_column_properties,
+	                                                            d_candidates_per_subject_prefixsum,
+	                                                            d_indices,
+	                                                            d_indices_per_subject,
+	                                                            d_indices_per_subject_prefixsum,
+	                                                            n_subjects,
+	                                                            n_queries,
+	                                                            d_num_indices,
+	                                                            canUseQualityScores,
+	                                                            desiredAlignmentMaxErrorRate,
+	                                                            maximum_sequence_length,
+	                                                            max_sequence_bytes,
+	                                                            quality_pitch,
+	                                                            msa_row_pitch,
+	                                                            msa_weights_row_pitch,
+	                                                            get_as_nucleotide,
+	                                                            make_unpacked_reverse_complement_inplace,
+	                                                            getSubjectPtr,
+	                                                            getCandidatePtr,
+	                                                            getSubjectQualityPtr,
+	                                                            getCandidateQualityPtr,
+	                                                            getCandidateLength); CUERR;
+}
 
 
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
-void call_msa_add_sequences_kernel_implicit_async(
+void call_msa_add_sequences_kernel_implicit_shared_async(
             int* d_counts,
             float* d_weights,
             int* d_coverage,
@@ -3200,7 +3327,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 	kernelLaunchConfig.threads_per_block = blocksize;
 	kernelLaunchConfig.smem = smem;
 
-	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicit);
+	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicitShared);
 	if(iter == handle.kernelPropertiesMap.end()) {
 
 		std::map<KernelLaunchConfig, KernelProperties> mymap;
@@ -3212,7 +3339,7 @@ void call_msa_add_sequences_kernel_implicit_async(
                                 + sizeof(int) * 4 * msa_weights_row_pitch_floats; \
 		KernelProperties kernelProperties; \
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-					msa_add_sequences_kernel_implicit<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
+					msa_add_sequences_kernel_implicit_shared<Accessor, RevCompl, GetSubjectPtr, GetCandidatePtr, \
 					                             GetSubjectQualityPtr, GetCandidateQualityPtr, \
 					                             GetCandidateLength>, \
 					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
@@ -3232,7 +3359,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 		const auto& kernelProperties = mymap[kernelLaunchConfig];
 		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
 
-		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicit] = std::move(mymap);
+		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitShared] = std::move(mymap);
 
 	    #undef getProp
 	}else{
@@ -3245,9 +3372,8 @@ void call_msa_add_sequences_kernel_implicit_async(
 	dim3 block(blocksize, 1, 1);
 	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
 	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
-    //dim3 grid(1,1,1);
 
-	msa_add_sequences_kernel_implicit<<<grid, block, smem, stream>>>(
+	msa_add_sequences_kernel_implicit_shared<<<grid, block, smem, stream>>>(
                                                                 d_counts,
                                                                 d_weights,
                                                                 d_coverage,
@@ -3281,6 +3407,121 @@ void call_msa_add_sequences_kernel_implicit_async(
 	                                                            getSubjectQualityPtr,
 	                                                            getCandidateQualityPtr,
 	                                                            getCandidateLength); CUERR;
+}
+
+
+template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
+         class GetCandidateLength>
+void call_msa_add_sequences_kernel_implicit_async(
+            int* d_counts,
+            float* d_weights,
+            int* d_coverage,
+            float* d_origWeights,
+            int* d_origCoverages,
+			const int* d_alignment_shifts,
+			const BestAlignment_t* d_alignment_best_alignment_flags,
+			const int* d_subject_sequences_lengths,
+			const int* d_candidate_sequences_lengths,
+			const int* d_alignment_overlaps,
+			const int* d_alignment_nOps,
+			const MSAColumnProperties*  d_msa_column_properties,
+			const int* d_candidates_per_subject_prefixsum,
+			const int* d_indices,
+			const int* d_indices_per_subject,
+			const int* d_indices_per_subject_prefixsum,
+			int n_subjects,
+			int n_queries,
+			const int* d_num_indices,
+			bool canUseQualityScores,
+			float desiredAlignmentMaxErrorRate,
+			int maximum_sequence_length,
+			int max_sequence_bytes,
+			size_t quality_pitch,
+			size_t msa_row_pitch,
+			size_t msa_weights_row_pitch,
+			Accessor get_as_nucleotide,
+			RevCompl make_unpacked_reverse_complement_inplace,
+			GetSubjectPtr getSubjectPtr,
+			GetCandidatePtr getCandidatePtr,
+			GetSubjectQualityPtr getSubjectQualityPtr,
+			GetCandidateQualityPtr getCandidateQualityPtr,
+			GetCandidateLength getCandidateLength,
+			cudaStream_t stream,
+			KernelLaunchHandle& handle){
+#if 1
+    call_msa_add_sequences_kernel_implicit_global_async(d_counts,
+                                                        d_weights,
+                                                        d_coverage,
+                                                        d_origWeights,
+                                                        d_origCoverages,
+                                                        d_alignment_shifts,
+                                                        d_alignment_best_alignment_flags,
+                                                        d_subject_sequences_lengths,
+                                                        d_candidate_sequences_lengths,
+                                                        d_alignment_overlaps,
+                                                        d_alignment_nOps,
+                                                        d_msa_column_properties,
+                                                        d_candidates_per_subject_prefixsum,
+                                                        d_indices,
+                                                        d_indices_per_subject,
+                                                        d_indices_per_subject_prefixsum,
+                                                        n_subjects,
+                                                        n_queries,
+                                                        d_num_indices,
+                                                        canUseQualityScores,
+                                                        desiredAlignmentMaxErrorRate,
+                                                        maximum_sequence_length,
+                                                        max_sequence_bytes,
+                                                        quality_pitch,
+                                                        msa_row_pitch,
+                                                        msa_weights_row_pitch,
+                                                        get_as_nucleotide,
+                                                        make_unpacked_reverse_complement_inplace,
+                                                        getSubjectPtr,
+                                                        getCandidatePtr,
+                                                        getSubjectQualityPtr,
+                                                        getCandidateQualityPtr,
+                                                        getCandidateLength,
+                                                        stream,
+                                                        handle); CUERR;
+#else
+
+    call_msa_add_sequences_kernel_implicit_shared_async(d_counts,
+                                                        d_weights,
+                                                        d_coverage,
+                                                        d_origWeights,
+                                                        d_origCoverages,
+                                                        d_alignment_shifts,
+                                                        d_alignment_best_alignment_flags,
+                                                        d_subject_sequences_lengths,
+                                                        d_candidate_sequences_lengths,
+                                                        d_alignment_overlaps,
+                                                        d_alignment_nOps,
+                                                        d_msa_column_properties,
+                                                        d_candidates_per_subject_prefixsum,
+                                                        d_indices,
+                                                        d_indices_per_subject,
+                                                        d_indices_per_subject_prefixsum,
+                                                        n_subjects,
+                                                        n_queries,
+                                                        d_num_indices,
+                                                        canUseQualityScores,
+                                                        desiredAlignmentMaxErrorRate,
+                                                        maximum_sequence_length,
+                                                        max_sequence_bytes,
+                                                        quality_pitch,
+                                                        msa_row_pitch,
+                                                        msa_weights_row_pitch,
+                                                        get_as_nucleotide,
+                                                        make_unpacked_reverse_complement_inplace,
+                                                        getSubjectPtr,
+                                                        getCandidatePtr,
+                                                        getSubjectQualityPtr,
+                                                        getCandidateQualityPtr,
+                                                        getCandidateLength,
+                                                        stream,
+                                                        handle); CUERR;
+#endif
 }
 
 
