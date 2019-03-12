@@ -149,25 +149,22 @@ struct ErrorCorrectionThreadOnlyGPU {
 	static constexpr int msa_build_finished_event_index = 7;
 	static constexpr int nEventsPerBatch = 8;
 
-    static constexpr int wait_for_indices_wait_index = 0;
-    static constexpr int wait_for_classic_results_wait_index = 1;
-    static constexpr int wait_for_msadata_wait_index = 2;
+    static constexpr int wait_before_copyqualites_index = 0;
+    static constexpr int wait_before_unpackclassicresults_index = 1;
+    static constexpr int wait_before_startforestcorrection_index = 2;
     static constexpr int nwaitCountPerBatch = 3;
 
 	enum class BatchState {
 		Unprepared,
 		CopyReads,
 		StartAlignment,
-		WaitForIndices,
 		CopyQualities,
 		BuildMSA,
 		StartClassicCorrection,
 		StartForestCorrection,
-		WaitForClassicResults,
 		UnpackClassicResults,
 		WriteResults,
 		WriteFeatures,
-		WaitForMSAData,
 		Finished,
 		Aborted,
 	};
@@ -355,16 +352,13 @@ public:
 		case BatchState::Unprepared: return "Unprepared";
 		case BatchState::CopyReads: return "CopyReads";
 		case BatchState::StartAlignment: return "StartAlignment";
-		case BatchState::WaitForIndices: return "WaitForIndices";
 		case BatchState::CopyQualities: return "CopyQualities";
 		case BatchState::BuildMSA: return "BuildMSA";
 		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
 		case BatchState::StartForestCorrection: return "StartForestCorrection";
-		case BatchState::WaitForClassicResults: return "WaitForClassicResults";
 		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
 		case BatchState::WriteResults: return "WriteResults";
 		case BatchState::WriteFeatures: return "WriteFeatures";
-		case BatchState::WaitForMSAData: return "WaitForMSAData";
 		case BatchState::Finished: return "Finished";
 		case BatchState::Aborted: return "Aborted";
 		default: assert(false); return "None";
@@ -373,40 +367,19 @@ public:
 
 	IsWaitingResult isWaiting(Batch& batch) const {
         return IsWaitingResult{&batch.waitCount[batch.activeWaitIndex]};
-		/*switch(state) {
-		case BatchState::Unprepared: return {false, -1};
-		case BatchState::CopyReads: return {false, -1};
-		case BatchState::StartAlignment: return {false, -1};
-		case BatchState::WaitForIndices: return {true, indices_transfer_finished_event_index};
-		case BatchState::CopyQualities: return {false, -1};
-		case BatchState::BuildMSA: return {false, -1};
-		case BatchState::StartClassicCorrection: return {false, -1};
-		case BatchState::StartForestCorrection: return {false, -1};
-		case BatchState::WaitForClassicResults: return {true, result_transfer_finished_event_index};
-		case BatchState::UnpackClassicResults: return {false, -1};
-		case BatchState::WriteResults: return {false, -1};
-		case BatchState::WriteFeatures: return {false, -1};
-		case BatchState::WaitForMSAData: return {true, msadata_transfer_finished_event_index};
-		case BatchState::Finished: return {false, -1};
-		case BatchState::Aborted: return {false, -1};
-		default: assert(false); return {false, -1};
-    }*/
 	}
 
 	void makeTransitionFunctionTable(){
 		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
 		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
-		transitionFunctionTable[BatchState::WaitForIndices] = state_waitforindices_func;
 		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
 		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
-		transitionFunctionTable[BatchState::WaitForClassicResults] = state_waitforclassicresults_func;
 		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func;
 		transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
 		transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
-		transitionFunctionTable[BatchState::WaitForMSAData] = state_waitformsadata_func;
 		transitionFunctionTable[BatchState::Finished] = state_finished_func;
 		transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
 	}
@@ -1207,16 +1180,16 @@ public:
 
 		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-        assert(batch.waitCount[wait_for_indices_wait_index] == 0);
-        batch.waitCount[wait_for_indices_wait_index]++;
-        batch.waitCount[wait_for_classic_results_wait_index]++;
+        assert(batch.waitCount[wait_before_copyqualites_index] == 0);
+        batch.waitCount[wait_before_copyqualites_index]++;
+        batch.waitCount[wait_before_unpackclassicresults_index]++;
 
 
         auto waitsuccessfunc = [](void* batch){
             Batch* b = static_cast<Batch*>(batch);
-            b->waitCount[wait_for_indices_wait_index]--;
-            b->waitCount[wait_for_classic_results_wait_index]--;
-            assert(b->waitCount[wait_for_indices_wait_index] == 0);
+            b->waitCount[wait_before_copyqualites_index]--;
+            b->waitCount[wait_before_unpackclassicresults_index]--;
+            assert(b->waitCount[wait_before_copyqualites_index] == 0);
         };
 
         cudaLaunchHostFunc(streams[secondary_stream_index], waitsuccessfunc, (void*)&batch );
@@ -1225,35 +1198,10 @@ public:
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
 				return BatchState::BuildMSA;
 			}else{
-				// need indices to copy individual quality scores
-				//return BatchState::WaitForIndices;
                 return BatchState::CopyQualities;
 			}
 		}else{
 			return BatchState::BuildMSA;
-		}
-	}
-
-	static BatchState state_waitforindices_func(Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const TransitionFunctionData& transFuncData){
-
-		assert(batch.state == BatchState::WaitForIndices);
-
-		//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-		cudaError_t querystatus = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-
-		assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-
-		if(querystatus == cudaSuccess) {
-			return BatchState::CopyQualities;
-		}else{
-			return BatchState::WaitForIndices;
 		}
 	}
 
@@ -1265,8 +1213,8 @@ public:
 
 		assert(batch.state == BatchState::CopyQualities);
 
-        if(batch.waitCount[wait_for_indices_wait_index] != 0){
-            batch.activeWaitIndex = wait_for_indices_wait_index;
+        if(batch.waitCount[wait_before_copyqualites_index] != 0){
+            batch.activeWaitIndex = wait_before_copyqualites_index;
             return BatchState::CopyQualities;
         }
 
@@ -1594,13 +1542,13 @@ public:
 
 				cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-                assert(batch.waitCount[wait_for_msadata_wait_index] == 0);
-                batch.waitCount[wait_for_msadata_wait_index]++;
+                assert(batch.waitCount[wait_before_startforestcorrection_index] == 0);
+                batch.waitCount[wait_before_startforestcorrection_index]++;
 
                 auto waitsuccessfunc = [](void* batch){
                     Batch* b = static_cast<Batch*>(batch);
-                    b->waitCount[wait_for_msadata_wait_index]--;
-                    assert(b->waitCount[wait_for_msadata_wait_index] == 0);
+                    b->waitCount[wait_before_startforestcorrection_index]--;
+                    assert(b->waitCount[wait_before_startforestcorrection_index] == 0);
                 };
 
                 cudaLaunchHostFunc(streams[secondary_stream_index], waitsuccessfunc, (void*)&batch );
@@ -1762,16 +1710,15 @@ public:
 
 			cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
-            batch.waitCount[wait_for_classic_results_wait_index]++;
+            batch.waitCount[wait_before_unpackclassicresults_index]++;
 
             auto waitsuccessfunc = [](void* batch){
                 Batch* b = static_cast<Batch*>(batch);
-                b->waitCount[wait_for_classic_results_wait_index]--;
+                b->waitCount[wait_before_unpackclassicresults_index]--;
             };
 
             cudaLaunchHostFunc(streams[primary_stream_index], waitsuccessfunc, (void*)&batch );
 
-			//return BatchState::WaitForClassicResults;
             return BatchState::UnpackClassicResults;
 		}
 	}
@@ -1785,21 +1732,12 @@ public:
 		assert(batch.state == BatchState::StartForestCorrection);
 		assert(!transFuncData.correctionOptions.classicMode);
 
-        if(batch.waitCount[wait_for_msadata_wait_index] != 0){
-            batch.activeWaitIndex = wait_for_msadata_wait_index;
+        if(batch.waitCount[wait_before_startforestcorrection_index] != 0){
+            batch.activeWaitIndex = wait_before_startforestcorrection_index;
             return BatchState::StartForestCorrection;
         }
 
 		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-		//cudaError_t querystatus = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
-		//assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-
-		//if(querystatus != cudaSuccess)
-		//	return BatchState::WaitForMSAData;
-
 
 		if(!canLaunchKernel) {
 			return BatchState::StartForestCorrection;
@@ -1877,65 +1815,6 @@ public:
 		}
 	}
 
-	static BatchState state_waitforclassicresults_func(Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const TransitionFunctionData& transFuncData){
-
-		assert(batch.state == BatchState::WaitForClassicResults);
-
-		//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-		cudaError_t querystatus1 = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
-		assert(querystatus1 == cudaSuccess || querystatus1 == cudaErrorNotReady);
-
-		cudaError_t querystatus2 = cudaSuccess;
-
-		if(transFuncData.correctionOptions.useQualityScores) {
-			if(transFuncData.readStorageGpuData.isValidQualityData()) {
-				querystatus2 = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-			}else{
-				// if we needed to copy individual quality scores, we already waited for indices to copy the quality scores. no need to wait again
-				querystatus2 = cudaSuccess;
-			}
-		}else{
-			querystatus2 = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-		}
-
-		assert(querystatus2 == cudaSuccess || querystatus2 == cudaErrorNotReady);
-
-		if(querystatus1 == cudaSuccess && querystatus2 == cudaSuccess) {
-			return BatchState::UnpackClassicResults;
-		}else{
-			return BatchState::WaitForClassicResults;
-		}
-	}
-
-	static BatchState state_waitformsadata_func(Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const TransitionFunctionData& transFuncData){
-
-		assert(batch.state == BatchState::WaitForMSAData);
-
-		//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
-		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-		cudaError_t querystatus = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
-		assert(querystatus == cudaSuccess || querystatus == cudaErrorNotReady);
-
-		if(querystatus == cudaSuccess) {
-			return BatchState::StartForestCorrection;
-		}else{
-			return BatchState::WaitForMSAData;
-		}
-	}
-
 	static BatchState state_unpackclassicresults_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
@@ -1944,8 +1823,8 @@ public:
 
 		assert(batch.state == BatchState::UnpackClassicResults);
 
-        if(batch.waitCount[wait_for_classic_results_wait_index] != 0){
-            batch.activeWaitIndex = wait_for_classic_results_wait_index;
+        if(batch.waitCount[wait_before_unpackclassicresults_index] != 0){
+            batch.activeWaitIndex = wait_before_unpackclassicresults_index;
             return BatchState::UnpackClassicResults;
         }
 
