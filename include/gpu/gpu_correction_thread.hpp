@@ -154,7 +154,7 @@ struct ErrorCorrectionThreadOnlyGPU {
     static constexpr int wait_before_startforestcorrection_index = 2;
     static constexpr int nWaitCountPerBatch = 3;
 
-	enum class BatchState {
+	enum class BatchState : int{
 		Unprepared,
 		CopyReads,
 		StartAlignment,
@@ -168,6 +168,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 		Finished,
 		Aborted,
 	};
+
+    static constexpr int nBatchStates = static_cast<int>(BatchState::Aborted)+1;
 
 	enum class BatchStatePriority {
 		Low,
@@ -200,7 +202,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
-        std::array<std::atomic_int, nWaitCountPerBatch> waitCounts;
+        std::array<std::atomic_int, nBatchStates> waitCounts;
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
@@ -210,8 +212,39 @@ struct ErrorCorrectionThreadOnlyGPU {
             return 0 != waitCounts[activeWaitIndex].load();
     	}
 
-        void addWaitSignal(int wait_index, cudaStream_t stream){
+        void addWaitSignal(BatchState state, cudaStream_t stream){
+            const int wait_index = static_cast<int>(state);
             waitCounts[wait_index]++;
+
+            #define handlethis(s) {\
+                auto waitsuccessfunc = [](void* batch){ \
+                    Batch* b = static_cast<Batch*>(batch); \
+                    b->waitCounts[static_cast<int>((s))]--; \
+                }; \
+                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR; \
+            }
+
+            #define mycase(s) case (s): handlethis((s)); break;
+
+            switch(state) {
+            mycase(BatchState::Unprepared)
+            mycase(BatchState::CopyReads)
+            mycase(BatchState::StartAlignment)
+            mycase(BatchState::CopyQualities)
+            mycase(BatchState::BuildMSA)
+            mycase(BatchState::StartClassicCorrection)
+            mycase(BatchState::StartForestCorrection)
+            mycase(BatchState::UnpackClassicResults)
+            mycase(BatchState::WriteResults)
+            mycase(BatchState::WriteFeatures)
+            mycase(BatchState::Finished)
+            mycase(BatchState::Aborted)
+            default: assert(false);
+            }
+
+            #undef mycase
+            #undef handlethis
+
             /*auto dataptr = std::make_unique<WaitCallbackData>(this, wait_index);
 
             auto waitsuccessfunc = [](void* d){
@@ -223,7 +256,7 @@ struct ErrorCorrectionThreadOnlyGPU {
             cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)dataptr.get()); CUERR;
             callbackDataList.emplace_back(dataptr);*/
 
-            if(wait_index == wait_before_copyqualites_index){
+            /*if(wait_index == wait_before_copyqualites_index){
                 auto waitsuccessfunc = [](void* batch){
                     Batch* b = static_cast<Batch*>(batch);
                     b->waitCounts[wait_before_copyqualites_index]--;
@@ -246,7 +279,9 @@ struct ErrorCorrectionThreadOnlyGPU {
                 cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
             }else{
                 assert(false); //every case should be handled above
-            }
+            }*/
+
+
         }
 
 		void reset(){
@@ -1220,8 +1255,8 @@ public:
 
 		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-        batch.addWaitSignal(wait_before_copyqualites_index, streams[secondary_stream_index]);
-        batch.addWaitSignal(wait_before_unpackclassicresults_index, streams[secondary_stream_index]);
+        batch.addWaitSignal(BatchState::CopyQualities, streams[secondary_stream_index]);
+        batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
 
 		if(transFuncData.correctionOptions.useQualityScores) {
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
@@ -1240,11 +1275,14 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData){
 
-		assert(batch.state == BatchState::CopyQualities);
+        constexpr BatchState expectedState = BatchState::CopyQualities;
+        constexpr int wait_index = static_cast<int>(expectedState);
 
-        if(batch.waitCounts[wait_before_copyqualites_index] != 0){
-            batch.activeWaitIndex = wait_before_copyqualites_index;
-            return BatchState::CopyQualities;
+		assert(batch.state == expectedState);
+
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
         }
 
 
@@ -1571,7 +1609,7 @@ public:
 
 				cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-                batch.addWaitSignal(wait_before_startforestcorrection_index, streams[secondary_stream_index]);
+                batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
 			}
 
 			if(transFuncData.correctionOptions.classicMode) {
@@ -1730,7 +1768,7 @@ public:
 
 			cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
-            batch.addWaitSignal(wait_before_unpackclassicresults_index, streams[primary_stream_index]);
+            batch.addWaitSignal(BatchState::UnpackClassicResults, streams[primary_stream_index]);
 
             return BatchState::UnpackClassicResults;
 		}
@@ -1742,12 +1780,16 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData){
 
-		assert(batch.state == BatchState::StartForestCorrection);
 		assert(!transFuncData.correctionOptions.classicMode);
 
-        if(batch.waitCounts[wait_before_startforestcorrection_index] != 0){
-            batch.activeWaitIndex = wait_before_startforestcorrection_index;
-            return BatchState::StartForestCorrection;
+        constexpr BatchState expectedState = BatchState::StartForestCorrection;
+        constexpr int wait_index = static_cast<int>(expectedState);
+
+        assert(batch.state == expectedState);
+
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
         }
 
 		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
@@ -1834,11 +1876,14 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData){
 
-		assert(batch.state == BatchState::UnpackClassicResults);
+        constexpr BatchState expectedState = BatchState::UnpackClassicResults;
+        constexpr int wait_index = static_cast<int>(expectedState);
 
-        if(batch.waitCounts[wait_before_unpackclassicresults_index] != 0){
-            batch.activeWaitIndex = wait_before_unpackclassicresults_index;
-            return BatchState::UnpackClassicResults;
+		assert(batch.state == expectedState);
+
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
         }
 
 		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
