@@ -39,7 +39,7 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-//#define MSA_IMPLICIT
+#define MSA_IMPLICIT
 
 #define shd_tilesize 32
 
@@ -152,7 +152,7 @@ struct ErrorCorrectionThreadOnlyGPU {
     static constexpr int wait_before_copyqualites_index = 0;
     static constexpr int wait_before_unpackclassicresults_index = 1;
     static constexpr int wait_before_startforestcorrection_index = 2;
-    static constexpr int nwaitCountPerBatch = 3;
+    static constexpr int nWaitCountPerBatch = 3;
 
 	enum class BatchState {
 		Unprepared,
@@ -176,6 +176,12 @@ struct ErrorCorrectionThreadOnlyGPU {
 	};
 
 	struct Batch {
+        struct WaitCallbackData{
+            Batch* b{};
+            int index = -1;
+            WaitCallbackData(){}
+            WaitCallbackData(Batch* ptr, int i) : b(ptr), index(i){}
+        };
 		std::vector<CorrectionTask_t> tasks;
 		int initialNumberOfCandidates = 0;
 		BatchState state = BatchState::Unprepared;
@@ -194,10 +200,51 @@ struct ErrorCorrectionThreadOnlyGPU {
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
-        std::array<std::atomic_int, nwaitCountPerBatch> waitCount;
+        std::array<std::atomic_int, nWaitCountPerBatch> waitCounts;
         int activeWaitIndex = 0;
+        //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
 		KernelLaunchHandle kernelLaunchHandle;
+
+        void addWaitSignal(int wait_index, cudaStream_t stream){
+            waitCounts[wait_index]++;
+            /*auto dataptr = std::make_unique<WaitCallbackData>(this, wait_index);
+
+            auto waitsuccessfunc = [](void* d){
+                const WaitCallbackData* const data = static_cast<const WaitCallbackData*>(d);
+                Batch* const b = data->b;
+                b->waitCounts[data->index]--;
+            };
+
+            cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)dataptr.get()); CUERR;
+            callbackDataList.emplace_back(dataptr);*/
+
+            if(wait_index == wait_before_copyqualites_index){
+                auto waitsuccessfunc = [](void* batch){
+                    Batch* b = static_cast<Batch*>(batch);
+                    b->waitCounts[wait_before_copyqualites_index]--;
+                };
+
+                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
+            }else if(wait_index == wait_before_unpackclassicresults_index){
+                auto waitsuccessfunc = [](void* batch){
+                    Batch* b = static_cast<Batch*>(batch);
+                    b->waitCounts[wait_before_unpackclassicresults_index]--;
+                };
+
+                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
+            }else if(wait_index == wait_before_startforestcorrection_index){
+                auto waitsuccessfunc = [](void* batch){
+                    Batch* b = static_cast<Batch*>(batch);
+                    b->waitCounts[wait_before_startforestcorrection_index]--;
+                };
+
+                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
+            }else{
+                assert(false); //every case should be handled above
+            }
+
+        }
 
 		void reset(){
 			tasks.clear();
@@ -211,6 +258,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 			copiedCandidates = 0;
 			numsortedCandidateIds = 0;
 			numsortedCandidateIdTasks = 0;
+
+            std::fill(waitCounts.begin(), waitCounts.end(), 0);
 		}
 	};
 
@@ -366,7 +415,7 @@ public:
 	}
 
 	IsWaitingResult isWaiting(Batch& batch) const {
-        return IsWaitingResult{&batch.waitCount[batch.activeWaitIndex]};
+        return IsWaitingResult{&batch.waitCounts[batch.activeWaitIndex]};
 	}
 
 	void makeTransitionFunctionTable(){
@@ -1180,19 +1229,8 @@ public:
 
 		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-        assert(batch.waitCount[wait_before_copyqualites_index] == 0);
-        batch.waitCount[wait_before_copyqualites_index]++;
-        batch.waitCount[wait_before_unpackclassicresults_index]++;
-
-
-        auto waitsuccessfunc = [](void* batch){
-            Batch* b = static_cast<Batch*>(batch);
-            b->waitCount[wait_before_copyqualites_index]--;
-            b->waitCount[wait_before_unpackclassicresults_index]--;
-            assert(b->waitCount[wait_before_copyqualites_index] == 0);
-        };
-
-        cudaLaunchHostFunc(streams[secondary_stream_index], waitsuccessfunc, (void*)&batch );
+        batch.addWaitSignal(wait_before_copyqualites_index, streams[secondary_stream_index]);
+        batch.addWaitSignal(wait_before_unpackclassicresults_index, streams[secondary_stream_index]);
 
 		if(transFuncData.correctionOptions.useQualityScores) {
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
@@ -1213,7 +1251,7 @@ public:
 
 		assert(batch.state == BatchState::CopyQualities);
 
-        if(batch.waitCount[wait_before_copyqualites_index] != 0){
+        if(batch.waitCounts[wait_before_copyqualites_index] != 0){
             batch.activeWaitIndex = wait_before_copyqualites_index;
             return BatchState::CopyQualities;
         }
@@ -1542,16 +1580,7 @@ public:
 
 				cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-                assert(batch.waitCount[wait_before_startforestcorrection_index] == 0);
-                batch.waitCount[wait_before_startforestcorrection_index]++;
-
-                auto waitsuccessfunc = [](void* batch){
-                    Batch* b = static_cast<Batch*>(batch);
-                    b->waitCount[wait_before_startforestcorrection_index]--;
-                    assert(b->waitCount[wait_before_startforestcorrection_index] == 0);
-                };
-
-                cudaLaunchHostFunc(streams[secondary_stream_index], waitsuccessfunc, (void*)&batch );
+                batch.addWaitSignal(wait_before_startforestcorrection_index, streams[secondary_stream_index]);
 			}
 
 			if(transFuncData.correctionOptions.classicMode) {
@@ -1710,14 +1739,7 @@ public:
 
 			cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
-            batch.waitCount[wait_before_unpackclassicresults_index]++;
-
-            auto waitsuccessfunc = [](void* batch){
-                Batch* b = static_cast<Batch*>(batch);
-                b->waitCount[wait_before_unpackclassicresults_index]--;
-            };
-
-            cudaLaunchHostFunc(streams[primary_stream_index], waitsuccessfunc, (void*)&batch );
+            batch.addWaitSignal(wait_before_unpackclassicresults_index, streams[primary_stream_index]);
 
             return BatchState::UnpackClassicResults;
 		}
@@ -1732,7 +1754,7 @@ public:
 		assert(batch.state == BatchState::StartForestCorrection);
 		assert(!transFuncData.correctionOptions.classicMode);
 
-        if(batch.waitCount[wait_before_startforestcorrection_index] != 0){
+        if(batch.waitCounts[wait_before_startforestcorrection_index] != 0){
             batch.activeWaitIndex = wait_before_startforestcorrection_index;
             return BatchState::StartForestCorrection;
         }
@@ -1823,7 +1845,7 @@ public:
 
 		assert(batch.state == BatchState::UnpackClassicResults);
 
-        if(batch.waitCount[wait_before_unpackclassicresults_index] != 0){
+        if(batch.waitCounts[wait_before_unpackclassicresults_index] != 0){
             batch.activeWaitIndex = wait_before_unpackclassicresults_index;
             return BatchState::UnpackClassicResults;
         }
@@ -2638,8 +2660,6 @@ public:
 						bool firstSideIter = true;
 
 						AdvanceResult sideBatchAdvanceResult;
-						//cudaError_t eventquerystatus = cudaSuccess;
-						//cudaEvent_t eventToWaitFor = (*mainBatch.events)[isWaitingResult.eventIndexToWaitFor];
 
 						while(isWaitingResult.isWaiting()) {
 							const int globalBatchIndex = localSideBatchIndex + 1;
