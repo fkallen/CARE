@@ -36,6 +36,8 @@ enum class KernelId {
 	MSACorrectSubject,
 	MSACorrectCandidates,
     MSAAddSequencesImplicit,
+    MSAAddSequencesImplicitGlobal,
+    MSAAddSequencesImplicitShared,
     MSAFindConsensusImplicit,
     MSACorrectSubjectImplicit,
 };
@@ -2755,7 +2757,7 @@ void call_msa_correct_candidates_kernel_async_exp(
 
 
 
-#if 1
+#if 0
 template<class Accessor, class RevCompl, class GetSubjectPtr, class GetCandidatePtr, class GetSubjectQualityPtr, class GetCandidateQualityPtr,
          class GetCandidateLength>
 __global__
@@ -2835,9 +2837,11 @@ void msa_add_sequences_kernel_implicit(
 
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 #if 1
+        //printf("subject: ");
         for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
             const char base = get(subject, subjectLength, i);
+            //printf("%d ", int(base));
             const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
             const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
             atomicAdd(d_counts + ptrOffset + globalIndex, 1);
@@ -2860,7 +2864,7 @@ void msa_add_sequences_kernel_implicit(
         }
 #endif
 	}
-
+    //printf("\n");
 
     //add candidates
     for(unsigned index = blockIdx.x; index < n_indices; index += gridDim.x) {
@@ -2892,12 +2896,13 @@ void msa_add_sequences_kernel_implicit(
 					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
 
         assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
-
+        //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
 		//copy query into msa
 		if(flag == BestAlignment_t::Forward) {
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = get(query, queryLength, i);
+                //printf("%d ", int(base));
                 const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
                 const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
 				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
@@ -2950,6 +2955,7 @@ void msa_add_sequences_kernel_implicit(
             for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
                 const int globalIndex = defaultcolumnoffset + i;
                 const char base = sharedSequence[i];
+                //printf("%d ", int(base));
                 const float weight = sharedWeights[i];
                 const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
 				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
@@ -2959,7 +2965,7 @@ void msa_add_sequences_kernel_implicit(
 
 			__syncthreads();
         }
-
+        //printf("\n");
 
 	}
 }
@@ -3044,10 +3050,13 @@ void msa_add_sequences_kernel_implicit(
 
         //add subject
         int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+
+        //printf("subject: ");
         for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
             const int shift = 0;
             const int globalIndex = subjectColumnsBegin_incl + shift + i;
             const char base = get(subject, subjectLength, i);
+            //printf("%d ", int(base));
             const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
             const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
             atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
@@ -3055,6 +3064,7 @@ void msa_add_sequences_kernel_implicit(
             atomicAdd(my_coverage + globalIndex, 1);
         }
 
+        //printf("\n");
 
         const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
         const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
@@ -3079,10 +3089,13 @@ void msa_add_sequences_kernel_implicit(
 
             assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
 
+            //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
+
             if(flag == BestAlignment_t::Forward) {
                 for(int i = 0; i < queryLength; i += 1){
                     const int globalIndex = defaultcolumnoffset + i;
                     const char base = get(query, queryLength, i);
+                    //printf("%d ", int(base));
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
                     const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                     atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
@@ -3097,9 +3110,10 @@ void msa_add_sequences_kernel_implicit(
 
                 for(int i = 0; i < queryLength; i += 1){
                     const int reverseIndex = queryLength - 1 - i;
-                    const int globalIndex = defaultcolumnoffset + reverseIndex;
+                    const int globalIndex = defaultcolumnoffset + i;
                     const char base = get(query, queryLength, reverseIndex);
                     const char revCompl = make_reverse_complement_byte(base);
+                    //printf("%d ", int(revCompl));
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
                     const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
                     atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
@@ -3107,6 +3121,7 @@ void msa_add_sequences_kernel_implicit(
                     atomicAdd(my_coverage + globalIndex, 1);
                 }
             }
+            //printf("\n");
         }
 
         __syncthreads();
@@ -3177,7 +3192,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 	//const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
     const std::size_t smem = sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
                             + sizeof(int) * 4 * msa_weights_row_pitch_floats; // counts
-                            
+
 
 	int max_blocks_per_device = 1;
 
@@ -3204,6 +3219,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 		mymap[kernelLaunchConfig] = kernelProperties; \
 }
 
+        getProp(1);
 		getProp(32);
 		getProp(64);
 		getProp(96);
@@ -3229,6 +3245,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 	dim3 block(blocksize, 1, 1);
 	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
 	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+    //dim3 grid(1,1,1);
 
 	msa_add_sequences_kernel_implicit<<<grid, block, smem, stream>>>(
                                                                 d_counts,
@@ -3309,7 +3326,7 @@ void msa_find_consensus_implicit_kernel(
         const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
         const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
-        
+
         assert(columnsToCheck <= msa_weights_pitch_floats);
 
         const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
