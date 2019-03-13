@@ -147,7 +147,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 	static constexpr int msadata_transfer_finished_event_index = 5;
 	static constexpr int alignment_data_transfer_h2d_finished_event_index = 6;
 	static constexpr int msa_build_finished_event_index = 7;
-	static constexpr int nEventsPerBatch = 8;
+    static constexpr int num_indices_calculated_event_index = 8;
+	static constexpr int nEventsPerBatch = 9;
 
     static constexpr int wait_before_copyqualites_index = 0;
     static constexpr int wait_before_unpackclassicresults_index = 1;
@@ -1217,6 +1218,17 @@ public:
 		//determine indices of remaining alignments
 		select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
 
+        cudaEventRecord(events[num_indices_calculated_event_index], streams[primary_stream_index]); CUERR;
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[num_indices_calculated_event_index], 0); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_num_indices,
+                        dataArrays.d_num_indices,
+                        sizeof(int),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
+
 		//update indices_per_subject
 		cub::DeviceHistogram::HistogramRange(dataArrays.d_temp_storage,
 					dataArrays.tmp_storage_allocation_size,
@@ -1394,7 +1406,15 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData){
 
-		assert(batch.state == BatchState::BuildMSA);
+        constexpr BatchState expectedState = BatchState::BuildMSA;
+        constexpr int wait_index = static_cast<int>(expectedState);
+
+        assert(batch.state == expectedState);
+
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
 
 		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1456,6 +1476,7 @@ public:
 						dataArrays.d_indices_per_subject_prefixsum,
 						dataArrays.n_subjects,
 						dataArrays.n_queries,
+                        dataArrays.h_num_indices,
 						dataArrays.d_num_indices,
 						transFuncData.correctionOptions.useQualityScores,
 						desiredAlignmentMaxErrorRate,
@@ -1497,6 +1518,7 @@ public:
                         dataArrays.d_indices_per_subject_prefixsum,
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
+                        dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
                         transFuncData.correctionOptions.useQualityScores,
                         desiredAlignmentMaxErrorRate,
