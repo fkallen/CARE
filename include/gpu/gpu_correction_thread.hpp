@@ -1872,27 +1872,7 @@ public:
 				for(const auto& msafeature : MSAFeatures) {
 					constexpr float maxgini = 0.05f;
 					constexpr float forest_correction_fraction = 0.5f;
-    //care::ForestClassifier fc("./forests/testforest.so");
-#if 0
-					const bool doCorrect = care::forestclassifier::shouldCorrect(
-								//care::forestclassifier::Mode::CombinedAlignCov,
-								//care::forestclassifier::Mode::CombinedDataCov,
-								care::forestclassifier::Mode::Species,
-								msafeature.position_support,
-								msafeature.position_coverage,
-								msafeature.alignment_coverage,
-								msafeature.dataset_coverage,
-								msafeature.min_support,
-								msafeature.min_coverage,
-								msafeature.max_support,
-								msafeature.max_coverage,
-								msafeature.mean_support,
-								msafeature.mean_coverage,
-								msafeature.median_support,
-								msafeature.median_coverage,
-								maxgini,
-								forest_correction_fraction);
-#else
+
                     const bool doCorrect = transFuncData.fc.shouldCorrect(msafeature.position_support,
                                                 msafeature.position_coverage,
                                                 msafeature.alignment_coverage,
@@ -1907,7 +1887,7 @@ public:
                                                 msafeature.median_coverage,
                                                 maxgini,
                                                 forest_correction_fraction);
-#endif
+
 					if(doCorrect) {
 						task.corrected = true;
 
@@ -2469,7 +2449,7 @@ public:
             const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
             const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
 
-            std::vector<MSAFeature2> MSAFeatures = extractFeatures2(
+            std::vector<MSAFeature3> MSAFeatures = extractFeatures3(
                                         my_multiple_sequence_alignment,
                                         my_multiple_sequence_alignment_weight,
                                         msa_rows,
