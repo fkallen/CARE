@@ -211,4 +211,110 @@ namespace care{
 
         return result;
     }
+
+
+
+
+
+    std::ostream& operator<<(std::ostream& os, const MSAFeature3& f){
+        for(const auto& col : f.counts){
+            for(const auto& c : col){
+                os << std::setprecision(3) << c << '\t';
+            }
+        }
+
+        for(const auto& col : f.weights){
+            for(const auto& c : col){
+                os << std::setprecision(3) << c << '\t';
+            }
+        }
+
+        return os;
+    }
+
+    std::vector<MSAFeature3> extractFeatures3(
+                                            const char* multiple_sequence_alignment,
+                                            const float* multiple_sequence_alignment_weights,
+                                            int nRows,
+                                            int nColumns,
+                                            bool canUseWeights,
+                                            const char* consensusptr,
+                                            const float* supportptr,
+                                            const int* coverageptr,
+                                            const int* origcoverageptr,
+                                            int subjectColumnsBegin_incl,
+                                            int subjectColumnsEnd_excl,
+                                            const std::string& sequence,
+                                            int dataset_coverage){
+
+        constexpr int k = 16;
+
+        auto isValidColumnIndexInMSA = [&](int i){
+            return 0 <= i && i < nColumns;
+        };
+
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            case 'A': return 'A';
+            case 'C': return 'C';
+            case 'G': return 'G';
+            case 'T': return 'T';
+            default: return 'F';
+            }
+        };
+
+        std::vector<MSAFeature3> result;
+
+        const int alignment_coverage = nRows;
+
+        for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
+
+            const int localindex = i - subjectColumnsBegin_incl;
+
+            if(supportptr[i] >= 0.5 && consensusptr[i] != sequence[localindex]){
+
+                MSAFeature3 f;
+                f.position = localindex;
+
+                for(int column = i-k/2, columncount = 0; column <= i+k/2; ++column, ++columncount){
+                    auto& counts = f.counts[columncount];
+                    auto& weights = f.weights[columncount];
+                    //std::cout << "i = " << i << " column = " << column << " columncount = " << columncount << std::endl;
+
+                    std::fill(weights.begin(), weights.end(), 0.0f);
+                    std::fill(counts.begin(), counts.end(), 0);
+
+                    if(isValidColumnIndexInMSA(column)){
+                        for(int row = 0; row < nRows; ++row){
+                            const char base = to_nuc(multiple_sequence_alignment[row * nColumns + column]);
+                            const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * nColumns + column] : 1.0;
+                            switch(base){
+                                case 'A': counts[0] += 1; weights[0] += weight; break;
+                                case 'C': counts[1] += 1; weights[1] += weight; break;
+                                case 'G': counts[2] += 1; weights[2] += weight; break;
+                                case 'T': counts[3] += 1; weights[3] += weight; break;
+                            }
+                        }
+                    }
+                    for(auto& c : counts)
+                        c /= float(alignment_coverage);
+                    for(auto& w : weights)
+                        w /= float(alignment_coverage);
+                }
+
+                result.emplace_back(f);
+            }
+        }
+
+        return result;
+    }
 }
