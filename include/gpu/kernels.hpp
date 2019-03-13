@@ -1453,8 +1453,8 @@ void cuda_find_best_alignment_kernel_exp(
 		const int revc_alignment_nops = d_alignment_nOps[revcIndex];
 		const bool revc_alignment_isvalid = d_alignment_isValid[revcIndex];
 
-        assert(fwd_alignment_isvalid || fwd_alignment_shift == -101);
-        assert(revc_alignment_isvalid || revc_alignment_shift == -101);
+        //assert(fwd_alignment_isvalid || fwd_alignment_shift == -101);
+        //assert(revc_alignment_isvalid || revc_alignment_shift == -101);
 
 		//const int querylength = d_candidate_sequences_lengths[resultIndex];
 		const int querylength = getCandidateLength(resultIndex);
