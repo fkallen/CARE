@@ -2828,7 +2828,10 @@ void msa_add_sequences_kernel_implicit_shared(
     float* const shared_weights = sharedmem;
     int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
 
-	const int requiredTiles = n_subjects;//blocks_per_subject_prefixsum[n_subjects];
+	//const int requiredTiles = n_subjects;//blocks_per_subject_prefixsum[n_subjects];
+    const int requiredTiles = blocks_per_subject_prefixsum[n_subjects];
+
+    //const int num_indices = *d_num_indices;
 
 	for(int logicalBlockId = blockIdx.x; logicalBlockId < requiredTiles; logicalBlockId += gridDim.x){
         //clear shared memory
@@ -2839,53 +2842,59 @@ void msa_add_sequences_kernel_implicit_shared(
 
 		int subjectIndex = 0;
 		for(; subjectIndex < n_subjects; subjectIndex++) {
-			//if(logicalBlockId < blocks_per_subject_prefixsum[subjectIndex+1])
-            if(logicalBlockId < subjectIndex+1)
+			if(logicalBlockId < blocks_per_subject_prefixsum[subjectIndex+1])
+            //if(logicalBlockId < subjectIndex+1)
 				break;
 		}
+
+        const int blockForThisSubject = logicalBlockId - blocks_per_subject_prefixsum[subjectIndex];
+
+        const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+        const int indicesBeforeThisSubject = d_indices_per_subject_prefixsum[subjectIndex];
+        const int id = blockForThisSubject * blockDim.x + threadIdx.x;
+        const int maxid_excl = d_indices_per_subject[subjectIndex];
+
 
 		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
         const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
-		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-		const char* const subject = getSubjectPtr(subjectIndex);
-		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
+
+        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
         assert(columnsToCheck <= msa_weights_row_pitch_floats);
 
+        //ensure that the subject is only inserted once, by the first block
+        if(blockForThisSubject == 0){
+    		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+    		const char* const subject = getSubjectPtr(subjectIndex);
+    		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
-        //add subject
-        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-
-        //printf("subject: ");
-        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-            const int shift = 0;
-            const int globalIndex = subjectColumnsBegin_incl + shift + i;
-            const char base = get(subject, subjectLength, i);
-            //printf("%d ", int(base));
-            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
-            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-            atomicAdd(my_coverage + globalIndex, 1);
+            //printf("subject: ");
+            for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+                const int shift = 0;
+                const int globalIndex = subjectColumnsBegin_incl + shift + i;
+                const char base = get(subject, subjectLength, i);
+                //printf("%d ", int(base));
+                const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+                const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+                atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                atomicAdd(my_coverage + globalIndex, 1);
+            }
         }
-
         //printf("\n");
 
-        const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-        const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
 
-        for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
-            const int queryIndex = indices_for_this_subject[index];
+
+        if(id < maxid_excl){
+            const int queryIndex = indices_for_this_subject[id];
             const int shift = d_alignment_shifts[queryIndex];
             const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
             const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-            int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-
             const char* const query = getCandidatePtr(queryIndex);
-    		const int queryLength = getCandidateLength(index);
-    		const char* const queryQualityScore = getCandidateQualityPtr(index);
+    		const int queryLength = getCandidateLength(id);
+    		const char* const queryQualityScore = getCandidateQualityPtr(id);
 
     		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
     		const int query_alignment_nops = d_alignment_nOps[queryIndex];

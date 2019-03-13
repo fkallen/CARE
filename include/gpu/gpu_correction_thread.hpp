@@ -648,6 +648,11 @@ public:
 							dataArrays.n_subjects,
 							streams[primary_stream_index]); CUERR;
 
+                cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+							(int*)nullptr,
+							dataArrays.n_subjects,
+							streams[primary_stream_index]); CUERR;
+
 				max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
 
 				temp_storage_bytes = max_temp_storage_bytes;
@@ -1464,12 +1469,17 @@ public:
             cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
                 d_blocksPerSubject(dataArrays.d_indices_per_subject,
                               getBlocksPerSubject);
-            cub::DeviceScan::ExclusiveSum(dataArrays.d_temp_storage,
+            cub::DeviceScan::InclusiveSum(dataArrays.d_temp_storage,
     					dataArrays.tmp_storage_allocation_size,
     					d_blocksPerSubject,
-    					dataArrays.d_tiles_per_subject_prefixsum,
+    					dataArrays.d_tiles_per_subject_prefixsum+1,
     					dataArrays.n_subjects,
     					streams[primary_stream_index]); CUERR;
+
+            call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
+                                    0,
+                                    0,
+                                    streams[primary_stream_index]);
 
 #ifndef MSA_IMPLICIT
 			MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
