@@ -41,7 +41,9 @@
 //MSA_IMPLICIT does not work yet
 //#define MSA_IMPLICIT
 
+
 #define shd_tilesize 32
+#define addsequences_implict_shared_blocksize 128
 
 namespace care {
 namespace gpu {
@@ -647,6 +649,7 @@ public:
 							streams[primary_stream_index]); CUERR;
 
 				max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
 				temp_storage_bytes = max_temp_storage_bytes;
 
 				dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
@@ -1453,6 +1456,21 @@ public:
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
 
+            //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
+
+            auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
+                return SDIV(indices_for_subject, addsequences_implict_shared_blocksize);
+            };
+            cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
+                d_blocksPerSubject(dataArrays.d_indices_per_subject,
+                              getBlocksPerSubject);
+            cub::DeviceScan::ExclusiveSum(dataArrays.d_temp_storage,
+    					dataArrays.tmp_storage_allocation_size,
+    					d_blocksPerSubject,
+    					dataArrays.d_tiles_per_subject_prefixsum,
+    					dataArrays.n_subjects,
+    					streams[primary_stream_index]); CUERR;
+
 #ifndef MSA_IMPLICIT
 			MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
 						dataArrays.d_multiple_sequence_alignments,
@@ -1516,6 +1534,7 @@ public:
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
                         dataArrays.d_indices_per_subject_prefixsum,
+                        dataArrays.d_tiles_per_subject_prefixsum,
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
                         dataArrays.h_num_indices,

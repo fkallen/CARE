@@ -2799,7 +2799,7 @@ void msa_add_sequences_kernel_implicit_shared(
 			const int* __restrict__ d_indices,
 			const int* __restrict__ d_indices_per_subject,
 			const int* __restrict__ d_indices_per_subject_prefixsum,
-            //const int* __restrict__ blocks_per_subject_prefixsum,
+            const int* __restrict__ blocks_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
 			const int* __restrict__ d_num_indices,
@@ -3042,8 +3042,7 @@ void call_msa_add_sequences_kernel_implicit_global_async(
 	}
 
 	dim3 block(blocksize, 1, 1);
-	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
-	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+	dim3 grid(std::min(*h_num_indices, max_blocks_per_device), 1, 1);
 
 	msa_add_sequences_kernel_implicit_global<<<grid, block, smem, stream>>>(
                                                                 d_counts,
@@ -3101,6 +3100,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 			const int* d_indices,
 			const int* d_indices_per_subject,
 			const int* d_indices_per_subject_prefixsum,
+            const int* d_blocks_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
             const int* h_num_indices,
@@ -3180,7 +3180,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 
 	dim3 block(blocksize, 1, 1);
 
-    const int blocks = SDIV(n_queries, blocksize);
+    const int blocks = SDIV(*h_num_indices, blocksize);
 	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
 	msa_add_sequences_kernel_implicit_shared<<<grid, block, smem, stream>>>(
@@ -3200,6 +3200,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 	                                                            d_indices,
 	                                                            d_indices_per_subject,
 	                                                            d_indices_per_subject_prefixsum,
+                                                                d_blocks_per_subject_prefixsum,
 	                                                            n_subjects,
 	                                                            n_queries,
 	                                                            d_num_indices,
@@ -3239,6 +3240,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 			const int* d_indices,
 			const int* d_indices_per_subject,
 			const int* d_indices_per_subject_prefixsum,
+            const int* d_blocks_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
             const int* h_num_indices,
@@ -3317,6 +3319,7 @@ void call_msa_add_sequences_kernel_implicit_async(
                                                         d_indices,
                                                         d_indices_per_subject,
                                                         d_indices_per_subject_prefixsum,
+                                                        d_blocks_per_subject_prefixsum,
                                                         n_subjects,
                                                         n_queries,
                                                         h_num_indices,
