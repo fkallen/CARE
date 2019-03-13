@@ -4,11 +4,13 @@
 #include "../hpc_helpers.cuh"
 #include "bestalignment.hpp"
 #include "msa.hpp"
+#include "utility_kernels.cuh"
 
 #ifdef __NVCC__
 
 #include <thrust/fill.h>
 #include <thrust/device_ptr.h>
+#include <thrust/async/for_each.h>
 
 #endif
 
@@ -401,10 +403,19 @@ struct DataArrays {
 	}
 
 	void fill_d_indices(int val, cudaStream_t stream){
-		thrust::fill(thrust::cuda::par.on(stream),
+		/*thrust::fill(thrust::cuda::par.on(stream),
 					thrust::device_ptr<int>((int*)indices_transfer_data_device),
 					thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
-					val);
+					val);*/
+
+        /*thrust::async::for_each(thrust::cuda::par.on(stream),
+					thrust::device_ptr<int>((int*)indices_transfer_data_device),
+					thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
+					[val] __device__ (int& i){i = val;});*/
+        assert(indices_transfer_data_usable_size % sizeof(int) == 0);
+
+        const int elements = indices_transfer_data_usable_size / sizeof(int);
+        call_fill_kernel_async((int*)indices_transfer_data_device, elements, val, stream);
 	}
 
 	void reset(){
