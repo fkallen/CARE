@@ -81,14 +81,17 @@ namespace gpu{
             float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
             int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-            int* const my_countsA = d_counts + 0 * subjectIndex * msa_weights_pitch_floats;
-            int* const my_countsC = d_counts + 1 * subjectIndex * msa_weights_pitch_floats;
-            int* const my_countsG = d_counts + 2 * subjectIndex * msa_weights_pitch_floats;
-            int* const my_countsT = d_counts + 3 * subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsA = d_weights + 0 * subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsC = d_weights + 1 * subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsG = d_weights + 2 * subjectIndex * msa_weights_pitch_floats;
-            float* const my_weightsT = d_weights + 3 * subjectIndex * msa_weights_pitch_floats;
+            const int countsOffset = subjectIndex * 4 * msa_weights_pitch_floats;
+            const int weightsOffset = subjectIndex * 4 * msa_weights_pitch_floats;
+
+            int* const my_countsA = d_counts + countsOffset + 0 * msa_weights_pitch_floats;
+            int* const my_countsC = d_counts + countsOffset + 1 * msa_weights_pitch_floats;
+            int* const my_countsG = d_counts + countsOffset + 2 * msa_weights_pitch_floats;
+            int* const my_countsT = d_counts + countsOffset + 3 * msa_weights_pitch_floats;
+            float* const my_weightsA = d_weights + weightsOffset + 0 * msa_weights_pitch_floats;
+            float* const my_weightsC = d_weights + weightsOffset + 1 * msa_weights_pitch_floats;
+            float* const my_weightsG = d_weights + weightsOffset + 2 * msa_weights_pitch_floats;
+            float* const my_weightsT = d_weights + weightsOffset + 3 * msa_weights_pitch_floats;
 
             for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
 
