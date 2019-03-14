@@ -804,6 +804,7 @@ iterasdf++;
                 std::vector<MSAFeature> MSAFeatures;
 
                 if(correctionOptions.extractFeatures || !correctionOptions.classicMode){
+#if 0
                     MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
                                                     multipleSequenceAlignment.support.data(),
                                                     multipleSequenceAlignment.coverage.data(),
@@ -814,8 +815,28 @@ iterasdf++;
                                                     task.subject_string,
                                                     multipleSequenceAlignment.kmerlength, 0.0f,
                                                     correctionOptions.estimatedCoverage);
-
-
+#else
+                std::vector<MSAFeature3> MSAFeatures3 = extractFeatures3(
+                                            multipleSequenceAlignment.multiple_sequence_alignment.data(),
+                                            multipleSequenceAlignment.multiple_sequence_alignment_weights.data(),
+                                            multipleSequenceAlignment.nRows,
+                                            multipleSequenceAlignment.columnProperties.columnsToCheck,
+                                            correctionOptions.useQualityScores,
+                                            multipleSequenceAlignment.consensus.data(),
+                                            multipleSequenceAlignment.support.data(),
+                                            multipleSequenceAlignment.coverage.data(),
+                                            multipleSequenceAlignment.origCoverages.data(),
+                                            multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
+                                            multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
+                                            task.subject_string,
+                                            correctionOptions.estimatedCoverage);
+                    if(correctionOptions.extractFeatures){
+                        for(const auto& msafeature : MSAFeatures3){
+                            featurestream << task.readId << '\t' << msafeature.position << '\n';
+                            featurestream << msafeature << '\n';
+                        }
+                    }
+#endif
                 }
 
                 if(correctionOptions.extractFeatures){
