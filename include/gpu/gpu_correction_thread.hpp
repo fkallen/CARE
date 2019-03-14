@@ -205,7 +205,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
-        std::array<std::atomic_int, nBatchStates> waitCounts;
+        std::array<std::atomic_int, nBatchStates> waitCounts{};
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
