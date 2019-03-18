@@ -93,7 +93,29 @@ namespace care{
                                     int subjectColumnsBegin_incl,
                                     int subjectColumnsEnd_excl,
                                     const std::string& sequence,
-                                    int dataset_coverage);
+                                    int dataset_coverage,
+                                    bool isEncoded,
+                                    int columnpitch_chars = 0,
+                                    int weightscolumnpitch_floats = 0);
+
+    std::vector<MSAFeature3> extractFeatures3_2(const int* countsA,
+                                                const int* countsC,
+                                                const int* countsG,
+                                                const int* countsT,
+                                                const float* weightsA,
+                                                const float* weightsC,
+                                                const float* weightsG,
+                                                const float* weightsT,
+                                                int nRows,
+                                                int nColumns,
+                                                const char* consensusptr,
+                                                const float* supportptr,
+                                                const int* coverageptr,
+                                                const int* origcoverageptr,
+                                                int subjectColumnsBegin_incl,
+                                                int subjectColumnsEnd_excl,
+                                                const std::string& sequence,
+                                                int dataset_coverage);
 
 }
 

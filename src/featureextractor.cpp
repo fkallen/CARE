@@ -245,7 +245,10 @@ namespace care{
                                             int subjectColumnsBegin_incl,
                                             int subjectColumnsEnd_excl,
                                             const std::string& sequence,
-                                            int dataset_coverage){
+                                            int dataset_coverage,
+                                            bool isEncoded,
+                                            int columnpitch_chars,
+                                            int weightscolumnpitch_floats){
 
         constexpr int k = 16;
 
@@ -258,19 +261,24 @@ namespace care{
         constexpr char G_enc = 0x02;
         constexpr char T_enc = 0x03;
 
-        auto to_nuc = [](char c){
-            switch(c){
-            case A_enc: return 'A';
-            case C_enc: return 'C';
-            case G_enc: return 'G';
-            case T_enc: return 'T';
-            case 'A': return 'A';
-            case 'C': return 'C';
-            case 'G': return 'G';
-            case 'T': return 'T';
-            default: return 'F';
+        auto to_nuc = [isEncoded](char c){
+            if(isEncoded){
+                switch(c){
+                case A_enc: return 'A';
+                case C_enc: return 'C';
+                case G_enc: return 'G';
+                case T_enc: return 'T';
+                default: return 'F';
+                }
+            }else{
+                return c;
             }
         };
+
+        if(columnpitch_chars == 0)
+            columnpitch_chars = nColumns;
+        if(weightscolumnpitch_floats == 0)
+            weightscolumnpitch_floats = nColumns;
 
         std::vector<MSAFeature3> result;
 
@@ -295,8 +303,8 @@ namespace care{
 
                     if(isValidColumnIndexInMSA(column)){
                         for(int row = 0; row < nRows; ++row){
-                            const char base = to_nuc(multiple_sequence_alignment[row * nColumns + column]);
-                            const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * nColumns + column] : 1.0;
+                            const char base = to_nuc(multiple_sequence_alignment[row * columnpitch_chars + column]);
+                            const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * weightscolumnpitch_floats + column] : 1.0;
                             switch(base){
                                 case 'A': counts[0] += 1; weights[0] += weight; break;
                                 case 'C': counts[1] += 1; weights[1] += weight; break;
@@ -304,6 +312,76 @@ namespace care{
                                 case 'T': counts[3] += 1; weights[3] += weight; break;
                             }
                         }
+                    }
+                    for(auto& c : counts)
+                        c /= float(alignment_coverage);
+                    for(auto& w : weights)
+                        w /= float(alignment_coverage);
+                }
+
+                result.emplace_back(f);
+            }
+        }
+
+        return result;
+    }
+
+
+    std::vector<MSAFeature3> extractFeatures3_2(const int* countsA,
+                                            const int* countsC,
+                                            const int* countsG,
+                                            const int* countsT,
+                                            const float* weightsA,
+                                            const float* weightsC,
+                                            const float* weightsG,
+                                            const float* weightsT,
+                                            int nRows,
+                                            int nColumns,
+                                            const char* consensusptr,
+                                            const float* supportptr,
+                                            const int* coverageptr,
+                                            const int* origcoverageptr,
+                                            int subjectColumnsBegin_incl,
+                                            int subjectColumnsEnd_excl,
+                                            const std::string& sequence,
+                                            int dataset_coverage){
+
+        constexpr int k = 16;
+
+        auto isValidColumnIndexInMSA = [&](int i){
+            return 0 <= i && i < nColumns;
+        };
+
+        std::vector<MSAFeature3> result;
+
+        const int alignment_coverage = nRows;
+
+        for(int i = subjectColumnsBegin_incl; i < subjectColumnsEnd_excl; i++){
+
+            const int localindex = i - subjectColumnsBegin_incl;
+
+            if(supportptr[i] >= 0.5 && consensusptr[i] != sequence[localindex]){
+
+                MSAFeature3 f;
+                f.position = localindex;
+
+                for(int column = i-k/2, columncount = 0; column <= i+k/2; ++column, ++columncount){
+                    auto& counts = f.counts[columncount];
+                    auto& weights = f.weights[columncount];
+                    //std::cout << "i = " << i << " column = " << column << " columncount = " << columncount << std::endl;
+
+                    std::fill(weights.begin(), weights.end(), 0.0f);
+                    std::fill(counts.begin(), counts.end(), 0);
+
+                    if(isValidColumnIndexInMSA(column)){
+                        counts[0] = countsA[column];
+                        counts[1] = countsC[column];
+                        counts[2] = countsG[column];
+                        counts[3] = countsT[column];
+                        weights[0] = weightsA[column];
+                        weights[1] = weightsC[column];
+                        weights[2] = weightsG[column];
+                        weights[3] = weightsT[column];
                     }
                     for(auto& c : counts)
                         c /= float(alignment_coverage);

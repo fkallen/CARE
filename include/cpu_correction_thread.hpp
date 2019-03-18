@@ -21,6 +21,8 @@
 
 #include <vector>
 
+//#define MSA_IMPLICIT
+
 namespace care{
 namespace cpu{
 
@@ -541,8 +543,6 @@ iterasdf++;
 
                 const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
 
-#define MSA_IMPLICIT
-
 #ifndef MSA_IMPLICIT
                 multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
                     //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
@@ -728,7 +728,7 @@ iterasdf++;
                 }
 
 #endif
-
+#if 0
                 constexpr int max_num_minimizations = 5;
 
                 if(max_num_minimizations > 0){
@@ -800,7 +800,7 @@ iterasdf++;
                         update_after_successfull_minimization();
                     }
                 }
-
+#endif
                 std::vector<MSAFeature> MSAFeatures;
 
                 if(correctionOptions.extractFeatures || !correctionOptions.classicMode){
@@ -816,6 +816,8 @@ iterasdf++;
                                                     multipleSequenceAlignment.kmerlength, 0.0f,
                                                     correctionOptions.estimatedCoverage);
 #else
+
+#if 1
                 std::vector<MSAFeature3> MSAFeatures3 = extractFeatures3(
                                             multipleSequenceAlignment.multiple_sequence_alignment.data(),
                                             multipleSequenceAlignment.multiple_sequence_alignment_weights.data(),
@@ -829,7 +831,30 @@ iterasdf++;
                                             multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
                                             multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
                                             task.subject_string,
+                                            correctionOptions.estimatedCoverage,
+                                            false);
+#else
+                std::vector<MSAFeature3> MSAFeatures3 = extractFeatures3_2(
+                                            multipleSequenceAlignment.countsA.data(),
+                                            multipleSequenceAlignment.countsC.data(),
+                                            multipleSequenceAlignment.countsG.data(),
+                                            multipleSequenceAlignment.countsT.data(),
+                                            multipleSequenceAlignment.weightsA.data(),
+                                            multipleSequenceAlignment.weightsC.data(),
+                                            multipleSequenceAlignment.weightsG.data(),
+                                            multipleSequenceAlignment.weightsT.data(),
+                                            multipleSequenceAlignment.nRows,
+                                            multipleSequenceAlignment.columnProperties.columnsToCheck,
+                                            multipleSequenceAlignment.consensus.data(),
+                                            multipleSequenceAlignment.support.data(),
+                                            multipleSequenceAlignment.coverage.data(),
+                                            multipleSequenceAlignment.origCoverages.data(),
+                                            multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
+                                            multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
+                                            task.subject_string,
                                             correctionOptions.estimatedCoverage);
+#endif
+
                     if(correctionOptions.extractFeatures){
                         for(const auto& msafeature : MSAFeatures3){
                             featurestream << task.readId << '\t' << msafeature.position << '\n';
