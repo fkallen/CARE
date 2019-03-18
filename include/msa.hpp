@@ -83,9 +83,6 @@ public:
     std::vector<float> weightsG;
     std::vector<float> weightsT;
 
-    std::vector<std::array<int, 4>> countsPerBase;
-    std::vector<std::array<float, 4>> weightsPerBase;
-
     std::vector<int> sequenceLengths;
     std::vector<int> shifts;
 
@@ -130,9 +127,6 @@ public:
         weightsG.resize(cols);
         weightsT.resize(cols);
 
-        countsPerBase.resize(cols);
-        weightsPerBase.resize(cols);
-
         sequenceLengths.resize(rows);
         shifts.resize(rows);
 
@@ -163,9 +157,6 @@ public:
         zero(weightsT);
         zero(sequenceLengths);
         zero(shifts);
-
-        std::fill(countsPerBase.begin(), countsPerBase.end(), std::array<int, 4>{});
-        std::fill(weightsPerBase.begin(), weightsPerBase.end(), std::array<float, 4>{});
 
         insertedCandidates = 0;
     }
@@ -565,7 +556,7 @@ public:
                     default: weights[4] += weight; break;
                 }
             }
-#if 0
+
             countsA[column] = counts[0];
             countsC[column] = counts[1];
             countsG[column] = counts[2];
@@ -575,10 +566,7 @@ public:
             weightsC[column] = weights[1];
             weightsG[column] = weights[2];
             weightsT[column] = weights[3];
-#else
-            std::copy(counts.begin(), counts.begin() + 4, countsPerBase[column].begin());
-            std::copy(weights.begin(), weights.begin() + 4, weightsPerBase[column].begin());
-#endif
+
             coverage[column] = counts[0] + counts[1] + counts[2] + counts[3];
 
             char cons = 'A';
@@ -613,86 +601,6 @@ public:
         }
     }
 
-    void find_consensus_2(){
-        constexpr int lanesPerBatch = 4;
-        std::array<std::array<int, 5>, lanesPerBatch> batchcounts;
-        std::array<std::array<float, 5>, lanesPerBatch> batchweights;
-
-        int batches = SDIV(nColumns, lanesPerBatch);
-
-        for(int batch = 0; batch < batches; batch++){
-            for(auto& arr : batchcounts){
-                std::fill(arr.begin(), arr.end(), 0);
-            }
-            for(auto& arr : batchweights){
-                std::fill(arr.begin(), arr.end(), 0);
-            }
-
-            for(int row = 0; row < nRows; row++){
-                for(int lane = 0; lane < lanesPerBatch; lane++){
-                    const int column = batch * lanesPerBatch + lane;
-                    if(column < nColumns){
-                        const char base = multiple_sequence_alignment[row * nColumns + column];
-                        switch(base){
-                            case 'A': batchcounts[lane][0]++; break;
-                            case 'C': batchcounts[lane][1]++; break;
-                            case 'G': batchcounts[lane][2]++; break;
-                            case 'T': batchcounts[lane][3]++; break;
-                            default: batchcounts[lane][4]++; break;
-                        }
-                        const float weight = canUseWeights ? multiple_sequence_alignment_weights[row * nColumns + column] : 1.0f;
-                        switch(base){
-                            case 'A': batchweights[lane][0] += weight; break;
-                            case 'C': batchweights[lane][1] += weight; break;
-                            case 'G': batchweights[lane][2] += weight; break;
-                            case 'T': batchweights[lane][3] += weight; break;
-                            default: batchweights[lane][4] += weight; break;
-                        }
-                    }
-                }
-            }
-
-            for(int lane = 0; lane < lanesPerBatch; lane++){
-                const int column = batch * lanesPerBatch + lane;
-                if(column < nColumns){
-                    std::copy(batchcounts[lane].begin(), batchcounts[lane].begin() + 4, countsPerBase[column].begin());
-                    std::copy(batchweights[lane].begin(), batchweights[lane].begin() + 4, weightsPerBase[column].begin());
-                    coverage[column] = batchcounts[lane][0] + batchcounts[lane][1] + batchcounts[lane][2] + batchcounts[lane][3];
-
-                    char cons = 'A';
-                    float consWeight = batchweights[lane][0];
-                    if(batchweights[lane][1] > consWeight){
-                        cons = 'C';
-                        consWeight = batchweights[lane][1];
-                    }
-                    if(batchweights[lane][2] > consWeight){
-                        cons = 'G';
-                        consWeight = batchweights[lane][2];
-                    }
-                    if(batchweights[lane][3] > consWeight){
-                        cons = 'T';
-                        consWeight = batchweights[lane][3];
-                    }
-                    consensus[column] = cons;
-                    const float columnWeight = batchweights[lane][0] + batchweights[lane][1] + batchweights[lane][2] + batchweights[lane][3];
-                    support[column] = consWeight / columnWeight;
-
-                    if(columnProperties.subjectColumnsBegin_incl <= column && column < columnProperties.subjectColumnsEnd_excl){
-                        const char subjectBase = multiple_sequence_alignment[0 * nColumns + column];
-                        switch(subjectBase){
-                            case 'A':origWeights[column] = batchweights[lane][0]; origCoverages[column] = batchcounts[lane][0]; break;
-                            case 'C':origWeights[column] = batchweights[lane][1]; origCoverages[column] = batchcounts[lane][1]; break;
-                            case 'G':origWeights[column] = batchweights[lane][2]; origCoverages[column] = batchcounts[lane][2]; break;
-                            case 'T':origWeights[column] = batchweights[lane][3]; origCoverages[column] = batchcounts[lane][3]; break;
-                            default: assert(false && "This should not happen in find_consensus"); break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-
     //remove all candidate reads from alignment which are assumed to originate from a different genomic region
     //returns local candidate indices of remaining candidates
     MinimizationResult minimize(int dataset_coverage){
@@ -725,21 +633,17 @@ public:
         for(int columnindex = columnProperties.subjectColumnsBegin_incl; columnindex < columnProperties.subjectColumnsEnd_excl && !foundColumn; columnindex++){
             std::array<int,4> counts;
             //std::array<float,4> weights;
-#if 0
+
             counts[0] = countsA[columnindex];
             counts[1] = countsC[columnindex];
             counts[2] = countsG[columnindex];
             counts[3] = countsT[columnindex];
 
-            weights[0] = weightsA[columnindex];
+            /*weights[0] = weightsA[columnindex];
             weights[1] = weightsC[columnindex];
             weights[2] = weightsG[columnindex];
-            weights[3] = weightsT[columnindex];
-#else
+            weights[3] = weightsT[columnindex];*/
 
-            counts = countsPerBase[columnindex];
-            //weights = weightsPerBase[columnindex];
-#endif
             char cons = consensus[columnindex];
             int consensuscount = 0;
             consindex = -1;
@@ -825,12 +729,19 @@ public:
             result.originalBase = originalbase;
             result.consensusBase = consensus[col];
 
-            const std::array<int,4> counts = countsPerBase[col];
-            //std::array<int,4> weights = weightsPerBase[columnindex];
+            switch(foundBaseIndex){
+                case 0: result.significantCount = countsA[col];
+                case 1: result.significantCount = countsC[col];
+                case 2: result.significantCount = countsG[col];
+                case 3: result.significantCount = countsT[col];
+            }
 
-            result.significantCount = counts[foundBaseIndex];
-            result.consensuscount = counts[consindex];
-
+            switch(consindex){
+                case 0: result.consensuscount = countsA[col];
+                case 1: result.consensuscount = countsC[col];
+                case 2: result.consensuscount = countsG[col];
+                case 3: result.consensuscount = countsT[col];
+            }
 
             if(originalbase == foundBase){
                 //discard all candidates whose base in column col differs from foundBase

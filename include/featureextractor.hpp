@@ -40,14 +40,16 @@ namespace care{
                                             int dataset_coverage);
 
     struct MSAFeature2{
-        using Column = std::array<float, 4>;
+        using WeightColumn = std::array<float, 4>;
+        using CountColumn = std::array<int, 4>;
 
         int position = -1;
         char base = 'N';
         int alignment_coverage = 0;
         int dataset_coverage = 0;
         std::array<char, 17> partialsequence;
-        std::array<Column, 17> weights;
+        //std::array<CountColumn, 17> counts;
+        std::array<WeightColumn, 17> weights;
     };
 
     std::ostream& operator<<(std::ostream& os, const MSAFeature2& f);
@@ -66,6 +68,54 @@ namespace care{
                                     int subjectColumnsEnd_excl,
                                     const std::string& sequence,
                                     int dataset_coverage);
+
+    struct MSAFeature3{
+        using WeightColumn = std::array<float, 4>;
+        using CountColumn = std::array<float, 4>;
+
+        int position = -1; //required for labeling, not included in data
+        std::array<CountColumn, 17> counts; //normalized by alignment_coverage
+        std::array<WeightColumn, 17> weights; //normalized by alignment_coverage
+    };
+
+    std::ostream& operator<<(std::ostream& os, const MSAFeature3& f);
+
+    std::vector<MSAFeature3> extractFeatures3(
+                                    const char* multiple_sequence_alignment,
+                                    const float* multiple_sequence_alignment_weights,
+                                    int nRows,
+                                    int nColumns,
+                                    bool canUseWeights,
+                                    const char* consensusptr,
+                                    const float* supportptr,
+                                    const int* coverageptr,
+                                    const int* origcoverageptr,
+                                    int subjectColumnsBegin_incl,
+                                    int subjectColumnsEnd_excl,
+                                    const std::string& sequence,
+                                    int dataset_coverage,
+                                    bool isEncoded,
+                                    int columnpitch_chars = 0,
+                                    int weightscolumnpitch_floats = 0);
+
+    std::vector<MSAFeature3> extractFeatures3_2(const int* countsA,
+                                                const int* countsC,
+                                                const int* countsG,
+                                                const int* countsT,
+                                                const float* weightsA,
+                                                const float* weightsC,
+                                                const float* weightsG,
+                                                const float* weightsT,
+                                                int nRows,
+                                                int nColumns,
+                                                const char* consensusptr,
+                                                const float* supportptr,
+                                                const int* coverageptr,
+                                                const int* origcoverageptr,
+                                                int subjectColumnsBegin_incl,
+                                                int subjectColumnsEnd_excl,
+                                                const std::string& sequence,
+                                                int dataset_coverage);
 
 }
 

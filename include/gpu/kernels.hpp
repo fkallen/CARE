@@ -1453,8 +1453,8 @@ void cuda_find_best_alignment_kernel_exp(
 		const int revc_alignment_nops = d_alignment_nOps[revcIndex];
 		const bool revc_alignment_isvalid = d_alignment_isValid[revcIndex];
 
-        assert(fwd_alignment_isvalid || fwd_alignment_shift == -101);
-        assert(revc_alignment_isvalid || revc_alignment_shift == -101);
+        //assert(fwd_alignment_isvalid || fwd_alignment_shift == -101);
+        //assert(revc_alignment_isvalid || revc_alignment_shift == -101);
 
 		//const int querylength = d_candidate_sequences_lengths[resultIndex];
 		const int querylength = getCandidateLength(resultIndex);
@@ -2799,7 +2799,7 @@ void msa_add_sequences_kernel_implicit_shared(
 			const int* __restrict__ d_indices,
 			const int* __restrict__ d_indices_per_subject,
 			const int* __restrict__ d_indices_per_subject_prefixsum,
-            //const int* __restrict__ blocks_per_subject_prefixsum,
+            const int* __restrict__ blocks_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
 			const int* __restrict__ d_num_indices,
@@ -2828,7 +2828,10 @@ void msa_add_sequences_kernel_implicit_shared(
     float* const shared_weights = sharedmem;
     int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
 
-	const int requiredTiles = n_subjects;//blocks_per_subject_prefixsum[n_subjects];
+	//const int requiredTiles = n_subjects;//blocks_per_subject_prefixsum[n_subjects];
+    const int requiredTiles = blocks_per_subject_prefixsum[n_subjects];
+
+    //const int num_indices = *d_num_indices;
 
 	for(int logicalBlockId = blockIdx.x; logicalBlockId < requiredTiles; logicalBlockId += gridDim.x){
         //clear shared memory
@@ -2839,53 +2842,59 @@ void msa_add_sequences_kernel_implicit_shared(
 
 		int subjectIndex = 0;
 		for(; subjectIndex < n_subjects; subjectIndex++) {
-			//if(logicalBlockId < blocks_per_subject_prefixsum[subjectIndex+1])
-            if(logicalBlockId < subjectIndex+1)
+			if(logicalBlockId < blocks_per_subject_prefixsum[subjectIndex+1])
+            //if(logicalBlockId < subjectIndex+1)
 				break;
 		}
+
+        const int blockForThisSubject = logicalBlockId - blocks_per_subject_prefixsum[subjectIndex];
+
+        const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+        const int indicesBeforeThisSubject = d_indices_per_subject_prefixsum[subjectIndex];
+        const int id = blockForThisSubject * blockDim.x + threadIdx.x;
+        const int maxid_excl = d_indices_per_subject[subjectIndex];
+
 
 		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
         const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
-		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-		const char* const subject = getSubjectPtr(subjectIndex);
-		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
+
+        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
         assert(columnsToCheck <= msa_weights_row_pitch_floats);
 
+        //ensure that the subject is only inserted once, by the first block
+        if(blockForThisSubject == 0){
+    		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+    		const char* const subject = getSubjectPtr(subjectIndex);
+    		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
-        //add subject
-        int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-
-        //printf("subject: ");
-        for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-            const int shift = 0;
-            const int globalIndex = subjectColumnsBegin_incl + shift + i;
-            const char base = get(subject, subjectLength, i);
-            //printf("%d ", int(base));
-            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-            const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
-            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-            atomicAdd(my_coverage + globalIndex, 1);
+            //printf("subject: ");
+            for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+                const int shift = 0;
+                const int globalIndex = subjectColumnsBegin_incl + shift + i;
+                const char base = get(subject, subjectLength, i);
+                //printf("%d ", int(base));
+                const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+                const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+                atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                atomicAdd(my_coverage + globalIndex, 1);
+            }
         }
-
         //printf("\n");
 
-        const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-        const int num_indices_for_this_subject = d_indices_per_subject[subjectIndex];
 
-        for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x){
-            const int queryIndex = indices_for_this_subject[index];
+
+        if(id < maxid_excl){
+            const int queryIndex = indices_for_this_subject[id];
             const int shift = d_alignment_shifts[queryIndex];
             const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
             const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-            int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-
             const char* const query = getCandidatePtr(queryIndex);
-    		const int queryLength = getCandidateLength(index);
-    		const char* const queryQualityScore = getCandidateQualityPtr(index);
+    		const int queryLength = getCandidateLength(id);
+    		const char* const queryQualityScore = getCandidateQualityPtr(id);
 
     		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
     		const int query_alignment_nops = d_alignment_nOps[queryIndex];
@@ -3042,8 +3051,7 @@ void call_msa_add_sequences_kernel_implicit_global_async(
 	}
 
 	dim3 block(blocksize, 1, 1);
-	//d_num_indices blocks will perform work. n_queries is an upper bound of d_num_indices
-	dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+	dim3 grid(std::min(*h_num_indices, max_blocks_per_device), 1, 1);
 
 	msa_add_sequences_kernel_implicit_global<<<grid, block, smem, stream>>>(
                                                                 d_counts,
@@ -3101,6 +3109,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 			const int* d_indices,
 			const int* d_indices_per_subject,
 			const int* d_indices_per_subject_prefixsum,
+            const int* d_blocks_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
             const int* h_num_indices,
@@ -3180,7 +3189,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 
 	dim3 block(blocksize, 1, 1);
 
-    const int blocks = SDIV(n_queries, blocksize);
+    const int blocks = SDIV(*h_num_indices, blocksize);
 	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
 	msa_add_sequences_kernel_implicit_shared<<<grid, block, smem, stream>>>(
@@ -3200,6 +3209,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
 	                                                            d_indices,
 	                                                            d_indices_per_subject,
 	                                                            d_indices_per_subject_prefixsum,
+                                                                d_blocks_per_subject_prefixsum,
 	                                                            n_subjects,
 	                                                            n_queries,
 	                                                            d_num_indices,
@@ -3239,6 +3249,7 @@ void call_msa_add_sequences_kernel_implicit_async(
 			const int* d_indices,
 			const int* d_indices_per_subject,
 			const int* d_indices_per_subject_prefixsum,
+            const int* d_blocks_per_subject_prefixsum,
 			int n_subjects,
 			int n_queries,
             const int* h_num_indices,
@@ -3317,6 +3328,7 @@ void call_msa_add_sequences_kernel_implicit_async(
                                                         d_indices,
                                                         d_indices_per_subject,
                                                         d_indices_per_subject_prefixsum,
+                                                        d_blocks_per_subject_prefixsum,
                                                         n_subjects,
                                                         n_queries,
                                                         h_num_indices,

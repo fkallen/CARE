@@ -41,7 +41,9 @@
 //MSA_IMPLICIT does not work yet
 //#define MSA_IMPLICIT
 
+
 #define shd_tilesize 32
+#define addsequences_implict_shared_blocksize 128
 
 namespace care {
 namespace gpu {
@@ -203,7 +205,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
-        std::array<std::atomic_int, nBatchStates> waitCounts;
+        std::array<std::atomic_int, nBatchStates> waitCounts{};
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
@@ -646,7 +648,13 @@ public:
 							dataArrays.n_subjects,
 							streams[primary_stream_index]); CUERR;
 
+                cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+							(int*)nullptr,
+							dataArrays.n_subjects,
+							streams[primary_stream_index]); CUERR;
+
 				max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
 				temp_storage_bytes = max_temp_storage_bytes;
 
 				dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
@@ -1297,8 +1305,14 @@ public:
             return expectedState;
         }
 
+        DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+        //if there are no good candidates, clean up batch and discard reads
+        if(*dataArrays.h_num_indices == 0){
+            return BatchState::WriteResults;
+        }
+
+
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
@@ -1416,7 +1430,14 @@ public:
             return expectedState;
         }
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+        DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+
+        //if there are no good candidates, clean up batch and discard reads
+        if(*dataArrays.h_num_indices == 0){
+            return BatchState::WriteResults;
+        }
+
+
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -1452,6 +1473,26 @@ public:
 						true,
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
+
+            //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
+
+            auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
+                return SDIV(indices_for_subject, addsequences_implict_shared_blocksize);
+            };
+            cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
+                d_blocksPerSubject(dataArrays.d_indices_per_subject,
+                              getBlocksPerSubject);
+            cub::DeviceScan::InclusiveSum(dataArrays.d_temp_storage,
+    					dataArrays.tmp_storage_allocation_size,
+    					d_blocksPerSubject,
+    					dataArrays.d_tiles_per_subject_prefixsum+1,
+    					dataArrays.n_subjects,
+    					streams[primary_stream_index]); CUERR;
+
+            call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
+                                    0,
+                                    0,
+                                    streams[primary_stream_index]);
 
 #ifndef MSA_IMPLICIT
 			MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
@@ -1516,6 +1557,7 @@ public:
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
                         dataArrays.d_indices_per_subject_prefixsum,
+                        dataArrays.d_tiles_per_subject_prefixsum,
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
                         dataArrays.h_num_indices,
@@ -1626,6 +1668,18 @@ public:
 				cudaMemcpyAsync(dataArrays.h_msa_column_properties,
 							dataArrays.d_msa_column_properties,
 							dataArrays.n_subjects * sizeof(MSAColumnProperties),
+							D2H,
+							streams[secondary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.h_counts,
+							dataArrays.d_counts,
+							dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
+							D2H,
+							streams[secondary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.h_weights,
+							dataArrays.d_weights,
+							dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
 							D2H,
 							streams[secondary_stream_index]); CUERR;
 
@@ -1843,27 +1897,7 @@ public:
 				for(const auto& msafeature : MSAFeatures) {
 					constexpr float maxgini = 0.05f;
 					constexpr float forest_correction_fraction = 0.5f;
-    //care::ForestClassifier fc("./forests/testforest.so");
-#if 0
-					const bool doCorrect = care::forestclassifier::shouldCorrect(
-								//care::forestclassifier::Mode::CombinedAlignCov,
-								//care::forestclassifier::Mode::CombinedDataCov,
-								care::forestclassifier::Mode::Species,
-								msafeature.position_support,
-								msafeature.position_coverage,
-								msafeature.alignment_coverage,
-								msafeature.dataset_coverage,
-								msafeature.min_support,
-								msafeature.min_coverage,
-								msafeature.max_support,
-								msafeature.max_coverage,
-								msafeature.mean_support,
-								msafeature.mean_coverage,
-								msafeature.median_support,
-								msafeature.median_coverage,
-								maxgini,
-								forest_correction_fraction);
-#else
+
                     const bool doCorrect = transFuncData.fc.shouldCorrect(msafeature.position_support,
                                                 msafeature.position_coverage,
                                                 msafeature.alignment_coverage,
@@ -1878,7 +1912,7 @@ public:
                                                 msafeature.median_coverage,
                                                 maxgini,
                                                 forest_correction_fraction);
-#endif
+
 					if(doCorrect) {
 						task.corrected = true;
 
@@ -2440,7 +2474,9 @@ public:
             const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
             const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
 
-            std::vector<MSAFeature2> MSAFeatures = extractFeatures2(
+#if 1
+
+            std::vector<MSAFeature3> MSAFeatures = extractFeatures3(
                                         my_multiple_sequence_alignment,
                                         my_multiple_sequence_alignment_weight,
                                         msa_rows,
@@ -2453,7 +2489,44 @@ public:
                                         columnProperties.subjectColumnsBegin_incl,
                 						columnProperties.subjectColumnsEnd_excl,
                                         task.subject_string,
+                                        transFuncData.estimatedCoverage,
+                                        true,
+                                        dataArrays.msa_pitch,
+                                        msa_weights_pitch_floats);
+
+#else
+
+            const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
+            const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
+            const int* countsA = &dataArrays.h_counts[countsOffset + 0 * msa_weights_pitch_floats];
+            const int* countsC = &dataArrays.h_counts[countsOffset + 1 * msa_weights_pitch_floats];
+            const int* countsG = &dataArrays.h_counts[countsOffset + 2 * msa_weights_pitch_floats];
+            const int* countsT = &dataArrays.h_counts[countsOffset + 3 * msa_weights_pitch_floats];
+            const float* weightsA = &dataArrays.h_weights[weightsOffset + 0 * msa_weights_pitch_floats];
+            const float* weightsC = &dataArrays.h_weights[weightsOffset + 1 * msa_weights_pitch_floats];
+            const float* weightsG = &dataArrays.h_weights[weightsOffset + 2 * msa_weights_pitch_floats];
+            const float* weightsT = &dataArrays.h_weights[weightsOffset + 3 * msa_weights_pitch_floats];
+
+            std::vector<MSAFeature3> MSAFeatures = extractFeatures3_2(
+                                        countsA,
+                                        countsC,
+                                        countsG,
+                                        countsT,
+                                        weightsA,
+                                        weightsC,
+                                        weightsG,
+                                        weightsT,
+                                        msa_rows,
+                                        columnProperties.columnsToCheck,
+                                        dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                        dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                        columnProperties.subjectColumnsBegin_incl,
+                						columnProperties.subjectColumnsEnd_excl,
+                                        task.subject_string,
                                         transFuncData.estimatedCoverage);
+#endif
 
 #endif
 			for(const auto& msafeature : MSAFeatures) {
