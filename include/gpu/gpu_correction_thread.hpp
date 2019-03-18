@@ -1305,8 +1305,14 @@ public:
             return expectedState;
         }
 
+        DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+        //if there are no good candidates, clean up batch and discard reads
+        if(*dataArrays.h_num_indices == 0){
+            return BatchState::WriteResults;
+        }
+
+
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
@@ -1424,7 +1430,14 @@ public:
             return expectedState;
         }
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+        DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+
+        //if there are no good candidates, clean up batch and discard reads
+        if(*dataArrays.h_num_indices == 0){
+            return BatchState::WriteResults;
+        }
+
+
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -1655,6 +1668,18 @@ public:
 				cudaMemcpyAsync(dataArrays.h_msa_column_properties,
 							dataArrays.d_msa_column_properties,
 							dataArrays.n_subjects * sizeof(MSAColumnProperties),
+							D2H,
+							streams[secondary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.h_counts,
+							dataArrays.d_counts,
+							dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
+							D2H,
+							streams[secondary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.h_weights,
+							dataArrays.d_weights,
+							dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
 							D2H,
 							streams[secondary_stream_index]); CUERR;
 
@@ -2449,6 +2474,8 @@ public:
             const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
             const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
 
+#if 1
+
             std::vector<MSAFeature3> MSAFeatures = extractFeatures3(
                                         my_multiple_sequence_alignment,
                                         my_multiple_sequence_alignment_weight,
@@ -2462,7 +2489,44 @@ public:
                                         columnProperties.subjectColumnsBegin_incl,
                 						columnProperties.subjectColumnsEnd_excl,
                                         task.subject_string,
+                                        transFuncData.estimatedCoverage,
+                                        true,
+                                        dataArrays.msa_pitch,
+                                        msa_weights_pitch_floats);
+
+#else
+
+            const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
+            const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
+            const int* countsA = &dataArrays.h_counts[countsOffset + 0 * msa_weights_pitch_floats];
+            const int* countsC = &dataArrays.h_counts[countsOffset + 1 * msa_weights_pitch_floats];
+            const int* countsG = &dataArrays.h_counts[countsOffset + 2 * msa_weights_pitch_floats];
+            const int* countsT = &dataArrays.h_counts[countsOffset + 3 * msa_weights_pitch_floats];
+            const float* weightsA = &dataArrays.h_weights[weightsOffset + 0 * msa_weights_pitch_floats];
+            const float* weightsC = &dataArrays.h_weights[weightsOffset + 1 * msa_weights_pitch_floats];
+            const float* weightsG = &dataArrays.h_weights[weightsOffset + 2 * msa_weights_pitch_floats];
+            const float* weightsT = &dataArrays.h_weights[weightsOffset + 3 * msa_weights_pitch_floats];
+
+            std::vector<MSAFeature3> MSAFeatures = extractFeatures3_2(
+                                        countsA,
+                                        countsC,
+                                        countsG,
+                                        countsT,
+                                        weightsA,
+                                        weightsC,
+                                        weightsG,
+                                        weightsT,
+                                        msa_rows,
+                                        columnProperties.columnsToCheck,
+                                        dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                        dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                        columnProperties.subjectColumnsBegin_incl,
+                						columnProperties.subjectColumnsEnd_excl,
+                                        task.subject_string,
                                         transFuncData.estimatedCoverage);
+#endif
 
 #endif
 			for(const auto& msafeature : MSAFeatures) {
