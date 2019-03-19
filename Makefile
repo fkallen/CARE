@@ -125,6 +125,10 @@ minhashertest:
 	@echo Building minhashertest
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" tests/minhashertest/main.cpp src/sequencefileio.cpp $(LDFLAGSGPU) -o tests/minhashertest/main
 
+alignmenttest: 
+	@echo Building alignmenttest
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" tests/alignmenttest/main.cpp src/gpu/kernels.cu  $(LDFLAGSGPU) -o tests/alignmenttest/main
+
 clean:
 	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(GPU_VERSION_DEBUG) $(CPU_VERSION_DEBUG) $(OBJECTS_GPU) $(OBJECTS_CPU) $(OBJECTS_GPU_DEBUG) $(OBJECTS_CPU_DEBUG)
 cleancpu:
