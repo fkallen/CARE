@@ -294,6 +294,8 @@ iterasdf++;
                     continue; //no candidates to use for correction
                 }
 
+                bool needsSecondPassAfterClipping = false;
+
                 //std::cerr << "Read " << task.readId << ", candidates: " << myNumCandidates << '\n';
 
                 std::vector<AlignmentResult_t> bestAlignments;
@@ -635,6 +637,53 @@ iterasdf++;
 #else
                 multipleSequenceAlignment.find_consensus_implicit(task.subject_string);
 #endif
+
+/*
+                auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject();
+
+                if(goodregion.first > 0 || goodregion.second < int(task.subject_string.size())){
+                    const int negativeShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),
+                                                            multipleSequenceAlignment.shifts.end(),
+                                                            [](int s){return s < 0;});
+                    const int positiveShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),
+                                                            multipleSequenceAlignment.shifts.end(),
+                                                            [](int s){return s > 0;});
+
+                    std::cout << "ReadId " << task.readId << " : [" << goodregion.first << ", "
+                                << goodregion.second << "] negativeShifts " << negativeShifts
+                                << ", positiveShifts " << positiveShifts
+                                << ". Subject starts at column "
+                                << multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl
+                                << ". Subject ends at column "
+                                << multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl
+                                << " / " << multipleSequenceAlignment.nColumns << "\n";
+                    for(int k = 0; k < goodregion.first; k++){
+                        std::cout << task.subject_string[k];
+                    }
+                    std::cout << "  ";
+                    for(int k = goodregion.first; k < goodregion.second; k++){
+                        std::cout << task.subject_string[k];
+                    }
+                    std::cout << "  ";
+                    for(int k = goodregion.second; k < int(task.subject_string.size()); k++){
+                        std::cout << task.subject_string[k];
+                    }
+                    std::cout << '\n';
+
+                    for(int k = 0; k < goodregion.first; k++){
+                        std::cout << multipleSequenceAlignment.consensus[k + multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl];
+                    }
+                    std::cout << "  ";
+                    for(int k = goodregion.first; k < goodregion.second; k++){
+                        std::cout << multipleSequenceAlignment.consensus[k + multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl];
+                    }
+                    std::cout << "  ";
+                    for(int k = goodregion.second; k < int(task.subject_string.size()); k++){
+                        std::cout << multipleSequenceAlignment.consensus[k + multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl];
+                    }
+                    std::cout << '\n';
+                }
+*/
 
 #if 0
                 auto print_multiple_sequence_alignment = [&](const auto& msa, const auto& alignments){
