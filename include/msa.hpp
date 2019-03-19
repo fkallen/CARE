@@ -16,6 +16,92 @@
 namespace care{
 namespace cpu{
 
+    template<int dummy=0>
+    std::pair<int,int> find_good_consensus_region_of_subject(const View<char>& subject,
+                                                        const View<char>& consensus,
+                                                        const View<int>& shifts){
+        constexpr int max_clip = 20;
+        constexpr int mismatches_required_for_clipping = 5;
+        constexpr float badShiftRatio = 0.10;
+
+        const int subjectLength = subject.size();
+
+        //const auto minmaxshift = std::minmax_element(shifts.begin(), shifts.end());
+        const int negativeShifts = std::count_if(shifts.begin(), shifts.end(), [](int s){return s < 0;});
+        const int positiveShifts = std::count_if(shifts.end(), shifts.end(), [](int s){return s > 0;});
+
+        //const int nonZeroShifts = negativeShifts + positiveShifts;
+        //const float negativeShiftRatio = negativeShifts / float(nonZeroShifts);
+        //const float positiveShiftRatio = positiveShifts / float(nonZeroShifts);
+
+        const int smallerShifts = std::min(negativeShifts, positiveShifts);
+        const int greaterShifts = std::max(negativeShifts, positiveShifts);
+
+        int remainingRegionBegin = 0;
+        int remainingRegionEnd = subjectLength; //exclusive
+
+        //every shift is zero
+        if(greaterShifts == 0){
+            //TODO
+
+        }else{
+
+            if(smallerShifts / greaterShifts < badShiftRatio){
+                // look for consensus mismatches of subject
+
+                if(smallerShifts == negativeShifts){
+                    //look for mismatches on the left end
+                    int nMismatches = 0;
+                    int lastMismatchPos = -1;
+                    for(int localIndex = 0; localIndex < max_clip && localIndex < subjectLength; localIndex++){
+                        if(consensus[localIndex] != subject[localIndex]){
+                            nMismatches++;
+                            lastMismatchPos = localIndex;
+                        }
+                    }
+
+                    if(nMismatches >= mismatches_required_for_clipping){
+                        //clip after position of last mismatch in max_clip region
+                        remainingRegionBegin = std::min(subjectLength, lastMismatchPos+1);
+                    }else{
+                        ; //everything is fine
+                    }
+                }else{
+                    //look for mismatches on the right end
+                    int nMismatches = 0;
+                    int firstMismatchPos = subjectLength;
+
+                    const int begin = std::max(subjectLength - max_clip, 0);
+
+                    for(int localIndex = begin; localIndex < max_clip && localIndex < subjectLength; localIndex++){
+                        if(consensus[localIndex] != subject[localIndex]){
+                            nMismatches++;
+                            firstMismatchPos = localIndex;
+                        }
+                    }
+
+                    if(nMismatches >= mismatches_required_for_clipping){
+                        //clip after position of last mismatch in max_clip region
+                        remainingRegionEnd = firstMismatchPos;
+                    }else{
+                        ; //everything is fine
+                    }
+                }
+            }else{
+                ; //everything is fine
+            }
+        }
+
+        return {remainingRegionBegin, remainingRegionEnd};
+    }
+
+
+
+
+
+
+
+
 struct MultipleSequenceAlignment{
 
 public:
@@ -292,6 +378,31 @@ public:
             }
         }
     }
+
+    std::pair<int,int> findGoodConsensusRegionOfSubject() const{
+        View<char> subjectview{&multiple_sequence_alignment[columnProperties.subjectColumnsBegin_incl],
+                                columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
+        View<char> consensusview{&consensus[columnProperties.subjectColumnsBegin_incl],
+                                    columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
+        View<int> shiftview{&shifts[0], nRows-1};
+
+        auto result = find_good_consensus_region_of_subject(subjectview, consensusview, shiftview);
+
+        return result;
+    }
+
+    std::pair<int,int> findGoodConsensusRegionOfSubject_implicit(const std::string& subject) const{
+        View<char> subjectview{&subject[0], int(subject.size())};
+        View<char> consensusview{&consensus[columnProperties.subjectColumnsBegin_incl],
+                                    columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
+        View<int> shiftview{&shifts[0], nRows-1};
+
+        auto result = find_good_consensus_region_of_subject(subjectview, consensusview, shiftview);
+
+        return result;
+    }
+
+
 
 
     CorrectionResult getCorrectedSubject_implicit(const std::string& subject){
