@@ -11,6 +11,38 @@
 #include <vector>
 #include <cassert>
 
+template<class T>
+class View{
+private:
+    const T* ptr;
+    int nElements;
+public:
+    View() : View(nullptr, 0){}
+    View(const T* p, int n) : ptr(p), nElements(n){}
+
+    const T& operator[](int i) const{
+        if(i >= nElements){
+            throw std::runtime_error("Out-of-bounds view access!!!");
+        }
+        return ptr[i];
+    }
+
+    const T* begin() const{
+        return ptr;
+    }
+
+    const T* end() const{
+        return ptr + nElements;
+    }
+
+    int size() const{
+        return int(std::distance(begin(), end()));
+    }
+};
+
+
+
+
 /*
     Merge ranges [first1, last1) and [first2, last2) into range beginning at d_first.
     If more than max_num_elements unique elements in the result range

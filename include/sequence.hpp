@@ -802,8 +802,8 @@ inline std::string getSequenceType<Sequence2BitHiLo>(){
 }
 
 template<>
-inline std::string getSequenceType<SequenceStringImpl>(){
-    return "SequenceStringImpl";
+inline std::string getSequenceType<SequenceString>(){
+    return "SequenceString";
 }
 
 }
