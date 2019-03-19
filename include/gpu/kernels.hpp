@@ -1136,7 +1136,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
             unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(subjectints / 2);
 
             for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
-                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+                const int overlapsize = min(subjectbases - shift, querybases);
                 const int max_errors = int(float(overlapsize) * maxErrorRate);
 
                 const int size = subjectints / 2;
@@ -1170,8 +1170,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
                             mySequence_lo,
                             queryBackup_hi,
                             queryBackup_lo,
-                            max(0, subjectbases - abs(shift)),
-                            max(0, querybases - abs(shift)),
+                            overlapsize,
+                            overlapsize,
                             max_errors,
                             no_bank_conflict_index,
                             no_bank_conflict_index);
@@ -1197,7 +1197,7 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
             mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
 
             for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
+                const int overlapsize = min(subjectbases, querybases + shift);
                 const int max_errors = int(float(overlapsize) * maxErrorRate);
 
                 const int size = queryints / 2;
@@ -1230,8 +1230,8 @@ cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
                                 mySequence_lo,
                                 subjectBackup_hi,
                                 subjectBackup_lo,
-                                max(0, querybases - abs(shift)),
-                                max(0, subjectbases - abs(shift)),
+                                overlapsize,
+                                overlapsize,
                                 max_errors,
                                 no_bank_conflict_index,
                                 identity);

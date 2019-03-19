@@ -23,6 +23,13 @@ namespace shd{
         int get_shift() const { return shift;}
         int get_nOps() const { return nOps;}
         bool get_isValid() const { return isValid;}
+
+        bool operator==(const AlignmentResult& rhs) const {
+            return score == rhs.score && overlap == rhs.overlap && shift == rhs.shift && nOps == rhs.nOps && isValid == rhs.isValid;
+        }
+        bool operator!=(const AlignmentResult& rhs) const{
+            return !(operator==(rhs));
+        }
     };
 
     template<class Accessor>
@@ -171,15 +178,15 @@ namespace shd{
         //shift == 0
         {
             const int shift = 0;
-            const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+            const int overlapsize = std::min(subjectlength, querylength);
             const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             int score = hammingdistanceHiLo(subjectdata_hi,
                                 subjectdata_lo,
                                 querydata_hi,
                                 querydata_lo,
-                                subjectlength - abs(shift),
-                                querylength - abs(shift),
+                                overlapsize,
+                                overlapsize,
                                 max_errors);
 
                 score = (score < max_errors ?
@@ -194,7 +201,7 @@ namespace shd{
 
         // shift < 0
         for(int shift = -1; shift >= -querylength + minoverlap; --shift){
-            const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+            const int overlapsize = std::min(subjectlength, querylength + shift);
             const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             shiftEncodedBasesLeftBy((unsigned int*)querydata_hi, querybytes / 2 / sizeof(unsigned int), 1);
@@ -204,8 +211,8 @@ namespace shd{
                                 subjectdata_lo,
                                 querydata_hi,
                                 querydata_lo,
-                                subjectlength - abs(shift),
-                                querylength - abs(shift),
+                                overlapsize,
+                                overlapsize,
                                 max_errors);
 
                 score = (score < max_errors ?
@@ -224,7 +231,7 @@ namespace shd{
         std::copy(query, query + querybytes, querydata.begin());
 
         for(int shift = 1; shift < subjectlength - minoverlap + 1; ++shift){
-            const int overlapsize = std::min(querylength, subjectlength - shift) - std::max(-shift, 0);
+            const int overlapsize = std::min(subjectlength - shift, querylength);
             const int max_errors = int(float(overlapsize) * maxErrorRate);
 
             shiftEncodedBasesLeftBy((unsigned int*)subjectdata_hi, subjectbytes / 2 / sizeof(unsigned int), 1);
@@ -234,8 +241,8 @@ namespace shd{
                                 subjectdata_lo,
                                 querydata_hi,
                                 querydata_lo,
-                                subjectlength - abs(shift),
-                                querylength - abs(shift),
+                                overlapsize,
+                                overlapsize,
                                 max_errors);
 
                 score = (score < max_errors ?
