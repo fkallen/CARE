@@ -3,6 +3,7 @@
 
 #include "bestalignment.hpp"
 #include "cpu_alignment.hpp"
+#include "util.hpp"
 
 #include <string>
 #include <cassert>
