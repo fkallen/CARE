@@ -29,7 +29,7 @@ namespace cpu{
 
         //const auto minmaxshift = std::minmax_element(shifts.begin(), shifts.end());
         const int negativeShifts = std::count_if(shifts.begin(), shifts.end(), [](int s){return s < 0;});
-        const int positiveShifts = std::count_if(shifts.end(), shifts.end(), [](int s){return s > 0;});
+        const int positiveShifts = std::count_if(shifts.begin(), shifts.end(), [](int s){return s > 0;});
 
         //const int nonZeroShifts = negativeShifts + positiveShifts;
         //const float negativeShiftRatio = negativeShifts / float(nonZeroShifts);
@@ -41,52 +41,60 @@ namespace cpu{
         int remainingRegionBegin = 0;
         int remainingRegionEnd = subjectLength; //exclusive
 
+        auto getRemainingRegionBegin = [&](){
+            //look for mismatches on the left end
+            int nMismatches = 0;
+            int lastMismatchPos = -1;
+            for(int localIndex = 0; localIndex < max_clip && localIndex < subjectLength; localIndex++){
+                if(consensus[localIndex] != subject[localIndex]){
+                    nMismatches++;
+                    lastMismatchPos = localIndex;
+                }
+            }
+            if(nMismatches >= mismatches_required_for_clipping){
+                //clip after position of last mismatch in max_clip region
+                return std::min(subjectLength, lastMismatchPos+1);
+            }else{
+                //everything is fine
+                return 0;
+            }
+        };
+
+        auto getRemainingRegionEnd = [&](){
+            //look for mismatches on the right end
+            int nMismatches = 0;
+            int firstMismatchPos = subjectLength;
+            const int begin = std::max(subjectLength - max_clip, 0);
+
+            for(int localIndex = begin; localIndex < max_clip && localIndex < subjectLength; localIndex++){
+                if(consensus[localIndex] != subject[localIndex]){
+                    nMismatches++;
+                    firstMismatchPos = localIndex;
+                }
+            }
+            if(nMismatches >= mismatches_required_for_clipping){
+                //clip after position of last mismatch in max_clip region
+                return firstMismatchPos;
+            }else{
+                //everything is fine
+                return subjectLength;
+            }
+        };
+
         //every shift is zero
         if(greaterShifts == 0){
-            //TODO
-
+            //check both ends
+            remainingRegionBegin = getRemainingRegionBegin();
+            remainingRegionEnd = getRemainingRegionEnd();
         }else{
 
             if(smallerShifts / greaterShifts < badShiftRatio){
                 // look for consensus mismatches of subject
 
                 if(smallerShifts == negativeShifts){
-                    //look for mismatches on the left end
-                    int nMismatches = 0;
-                    int lastMismatchPos = -1;
-                    for(int localIndex = 0; localIndex < max_clip && localIndex < subjectLength; localIndex++){
-                        if(consensus[localIndex] != subject[localIndex]){
-                            nMismatches++;
-                            lastMismatchPos = localIndex;
-                        }
-                    }
-
-                    if(nMismatches >= mismatches_required_for_clipping){
-                        //clip after position of last mismatch in max_clip region
-                        remainingRegionBegin = std::min(subjectLength, lastMismatchPos+1);
-                    }else{
-                        ; //everything is fine
-                    }
+                    remainingRegionBegin = getRemainingRegionBegin();
                 }else{
-                    //look for mismatches on the right end
-                    int nMismatches = 0;
-                    int firstMismatchPos = subjectLength;
-
-                    const int begin = std::max(subjectLength - max_clip, 0);
-
-                    for(int localIndex = begin; localIndex < max_clip && localIndex < subjectLength; localIndex++){
-                        if(consensus[localIndex] != subject[localIndex]){
-                            nMismatches++;
-                            firstMismatchPos = localIndex;
-                        }
-                    }
-
-                    if(nMismatches >= mismatches_required_for_clipping){
-                        //clip after position of last mismatch in max_clip region
-                        remainingRegionEnd = firstMismatchPos;
-                    }else{
-                        ; //everything is fine
-                    }
+                    remainingRegionEnd = getRemainingRegionEnd();
                 }
             }else{
                 ; //everything is fine
