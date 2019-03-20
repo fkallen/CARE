@@ -872,11 +872,11 @@ public:
                 case 'T': consensuscount = counts[3]; consindex = 3;break;
             }
 
-            const char originalbase = multiple_sequence_alignment[0 * nColumns + col];
+            //const char originalbase = multiple_sequence_alignment[0 * nColumns + col];
 
             //find out if there is a non-consensus base with significant coverage
             int significantBaseIndex = -1;
-            int maxcount = 0;
+            //int maxcount = 0;
             for(int i = 0; i < 4; i++){
                 if(i != consindex){
                     bool significant = is_significant_count(counts[i], consensuscount, coverage[columnindex], dataset_coverage);
