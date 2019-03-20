@@ -91,7 +91,8 @@ m=0.6
 outdir=$datapath/correcteddatasets/
 
 #output file
-outputfile="readscorrectednew.fq"
+#outputfile="readscorrectednew.fq"
+outputfile=$nowstring"_"${array[1]}
 
 
 echo $inputfile
