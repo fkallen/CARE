@@ -23,7 +23,7 @@ template<class Sequence_t>
 std::vector<SHDResult>
 calculate_shd_alignments(const char* subjectptr,
                     const int subjectLength,
-                    const std::vector<const char*>& candidateptrs,
+                    const std::vector<char*>& candidateptrs,
                     const std::vector<int>& candidateLengths,
                     const int min_overlap,
                     const float maxErrorRate,
@@ -65,7 +65,7 @@ calculate_shd_alignments(const char* subjectptr,
     returnvalue.size() == n/2
 */
 template<int dummy=0>
-std::vector<BestAlignment_t> findBestAlignments(const std::vector<SHDResult>& alignmentresults,
+std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDResult>& alignmentresults,
                                     const int subjectLength,
                                     const std::vector<int>& candidateLengths,
                                     const int min_overlap,
@@ -100,7 +100,7 @@ std::vector<BestAlignment_t> findBestAlignments(const std::vector<SHDResult>& al
 }
 
 template<int dummy=0>
-std::vector<BestAlignment_t> findBestAlignments(const std::vector<SHDResult>& forwardAlignments,
+std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDResult>& forwardAlignments,
                                     const std::vector<SHDResult>& revcAlignments,
                                     const int subjectLength,
                                     const std::vector<int>& candidateLengths,
@@ -115,8 +115,8 @@ std::vector<BestAlignment_t> findBestAlignments(const std::vector<SHDResult>& fo
     result.reserve(forwardAlignments.size());
 
     for(size_t i = 0; i < forwardAlignments.size(); i++){
-        const SHDResult& forwardAlignment = forwardAlignments;
-        const SHDResult& revcAlignment = revcAlignment;
+        const SHDResult& forwardAlignment = forwardAlignments[i];
+        const SHDResult& revcAlignment = revcAlignments[i];
         const int candidateLength = candidateLengths[i];
 
         BestAlignment_t bestAlignmentFlag = care::cpu::choose_best_alignment(forwardAlignment,
@@ -136,7 +136,7 @@ std::vector<BestAlignment_t> findBestAlignments(const std::vector<SHDResult>& fo
 /*
     Filters alignments by good mismatch ratio.
 
-    Returns an index list to alignments which pass the filter.
+    Returns an sorted index list to alignments which pass the filter.
 */
 
 template<class Func>
@@ -203,6 +203,8 @@ filterAlignmentsByMismatchRatio(const std::vector<SHDResult>& alignments,
             result.emplace_back(i);
         }
     }
+
+    return result;
 }
 
 
