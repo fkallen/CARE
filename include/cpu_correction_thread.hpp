@@ -296,9 +296,23 @@ iterasdf++;
                 std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements;
                 std::vector<int> bestCandidateLengths;
 
+                // -----
+
                 bool needsSecondPassAfterClipping = false;
                 bool discardThisTask = false;
                 Sequence_t subjectsequence;
+
+
+                std::vector<char> candidateData;
+                std::vector<char> candidateRevcData;
+                std::vector<int> candidateLenghts;
+                int max_candidate_length = 0;
+                int max_candidate_bytes = 0;
+                std::vector<char*> candidateDataPtrs;
+                std::vector<char*> candidateRevcDataPtrs;
+
+                std::vector<AlignmentResult_t> forwardAlignments;
+                std::vector<AlignmentResult_t> revcAlignments;
 
                 //this loop allows a second pass after subject has been clipped
                 do{
@@ -331,13 +345,69 @@ iterasdf++;
                     if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
                         task.candidate_read_ids.erase(readIdPos);
 
-                    std::size_t myNumCandidates = task.candidate_read_ids.size();
+                    int myNumCandidates = int(task.candidate_read_ids.size());
 
                     if(myNumCandidates == 0){
                         discardThisTask = true; //no candidates to use for correction
                         break;
                     }
 
+                    //copy candidates lenghts into buffer
+                    candidateLenghts.reserve(myNumCandidates);
+                    max_candidate_length = 0;
+                    for(const ReadId_t candidateId: task.candidate_read_ids){
+                        const int candidateLength = threadOpts.readStorage->fetchSequenceLength(candidateId);
+                        candidateLenghts.emplace_back(candidateLength);
+                        max_candidate_length = std::max(max_candidate_length, candidateLength);
+                    }
+
+                    assert(max_candidate_length > 0);
+
+                    max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
+
+                    candidateData.clear();
+                    candidateData.resize(max_candidate_bytes * myNumCandidates, 0);
+                    candidateRevcData.clear();
+                    candidateRevcData.resize(max_candidate_bytes * myNumCandidates, 0);
+                    candidateDataPtrs.clear();
+                    candidateDataPtrs.resize(myNumCandidates, nullptr);
+                    candidateRevcDataPtrs.clear();
+                    candidateRevcDataPtrs.resize(myNumCandidates, nullptr);
+
+                    //copy candiate data and reverse complements into buffer
+
+                    for(int i = 0; i < myNumCandidates; i++){
+                        const ReadId_t candidateId = task.candidate_read_ids[i];
+                        const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
+                        const int candidateLength = candidateLenghts[i];
+                        const int bytes = Sequence_t::getNumBytes(candidateLength);
+
+                        char* const candidateDataBegin = candidateData.data() + i * max_candidate_bytes;
+                        char* const candidateRevcDataBegin = candidateRevcData.data() + i * max_candidate_bytes;
+
+                        std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
+                        Sequence_t::make_reverse_complement(candidateRevcDataBegin,
+                                                            (const std::uint8_t*)candidateptr,
+                                                            candidateLength);
+
+                        candidateDataPtrs[i] = candidateDataBegin;
+                        candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+                    }
+
+                    forwardAlignments = calculate_shd_alignments(subjectptr,
+                                                                subjectLength,
+                                                                candidateDataPtrs,
+                                                                candidateLenghts,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.maxErrorRate,
+                                                                goodAlignmentProperties.min_overlap_ratio);
+                    revcAlignments = calculate_shd_alignments(subjectptr,
+                                                                subjectLength,
+                                                                candidateRevcDataPtrs,
+                                                                candidateLenghts,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.maxErrorRate,
+                                                                goodAlignmentProperties.min_overlap_ratio);
 
 
                     //std::cerr << "Read " << task.readId << ", candidates: " << myNumCandidates << '\n';
