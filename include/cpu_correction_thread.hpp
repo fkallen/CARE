@@ -11,8 +11,6 @@
 #include "featureextractor.hpp"
 #include "forestclassifier.hpp"
 
-#include "cpu_correction_core.hpp"
-
 #include <array>
 #include <chrono>
 #include <cstdint>
