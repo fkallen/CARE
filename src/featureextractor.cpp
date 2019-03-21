@@ -57,10 +57,10 @@ namespace care{
     		}
         };
 
-        auto almost_equal = [](auto a, auto b){
+        /*auto almost_equal = [](auto a, auto b){
             constexpr double prec = 1e-6;
             return std::abs(a-b) < prec;
-        };
+        };*/
 
         std::vector<MSAFeature> result;
 

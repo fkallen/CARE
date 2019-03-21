@@ -26,6 +26,7 @@
 #include <vector>
 #include <thread>
 #include <future>
+#include <chrono>
 
 
 #include "cpu_correction_thread.hpp"
@@ -209,6 +210,90 @@ namespace cpu{
             printf("Progress: %3.2f %%\n", 100.00);
 
     TIMERSTOPCPU(correction);
+
+    std::chrono::duration<double> getCandidatesTimeTotal{0};
+    std::chrono::duration<double> copyCandidateDataToBufferTimeTotal{0};
+    std::chrono::duration<double> getAlignmentsTimeTotal{0};
+    std::chrono::duration<double> findBestAlignmentDirectionTimeTotal{0};
+    std::chrono::duration<double> gatherBestAlignmentDataTimeTotal{0};
+    std::chrono::duration<double> mismatchRatioFilteringTimeTotal{0};
+    std::chrono::duration<double> compactBestAlignmentDataTimeTotal{0};
+    std::chrono::duration<double> fetchCandidateStringsAndQualitiesTimeTotal{0};
+    std::chrono::duration<double> msaAddSequencesTimeTotal{0};
+    std::chrono::duration<double> msaFindConsensusTimeTotal{0};
+    std::chrono::duration<double> msaMinimizationTimeTimeTotal{0};
+    std::chrono::duration<double> msaCorrectSubjectTimeTimeTotal{0};
+    std::chrono::duration<double> msaCorrectCandidatesTimeTimeTotal{0};
+
+    for(const auto& cput : cpucorrectorThreads){
+        getCandidatesTimeTotal += cput.getCandidatesTimeTotal;
+        copyCandidateDataToBufferTimeTotal += cput.copyCandidateDataToBufferTimeTotal;
+        getAlignmentsTimeTotal += cput.getAlignmentsTimeTotal;
+        findBestAlignmentDirectionTimeTotal += cput.findBestAlignmentDirectionTimeTotal;
+        gatherBestAlignmentDataTimeTotal += cput.gatherBestAlignmentDataTimeTotal;
+        mismatchRatioFilteringTimeTotal += cput.mismatchRatioFilteringTimeTotal;
+        compactBestAlignmentDataTimeTotal += cput.compactBestAlignmentDataTimeTotal;
+        fetchCandidateStringsAndQualitiesTimeTotal += cput.fetchCandidateStringsAndQualitiesTimeTotal;
+        msaAddSequencesTimeTotal += cput.msaAddSequencesTimeTotal;
+        msaFindConsensusTimeTotal += cput.msaFindConsensusTimeTotal;
+        msaMinimizationTimeTimeTotal += cput.msaMinimizationTimeTimeTotal;
+        msaCorrectSubjectTimeTimeTotal += cput.msaCorrectSubjectTimeTimeTotal;
+        msaCorrectCandidatesTimeTimeTotal += cput.msaCorrectCandidatesTimeTimeTotal;
+    }
+
+    getCandidatesTimeTotal /= cpucorrectorThreads.size();
+    copyCandidateDataToBufferTimeTotal /= cpucorrectorThreads.size();
+    getAlignmentsTimeTotal /= cpucorrectorThreads.size();
+    findBestAlignmentDirectionTimeTotal /= cpucorrectorThreads.size();
+    gatherBestAlignmentDataTimeTotal /= cpucorrectorThreads.size();
+    mismatchRatioFilteringTimeTotal /= cpucorrectorThreads.size();
+    compactBestAlignmentDataTimeTotal /= cpucorrectorThreads.size();
+    fetchCandidateStringsAndQualitiesTimeTotal /= cpucorrectorThreads.size();
+    msaAddSequencesTimeTotal /= cpucorrectorThreads.size();
+    msaFindConsensusTimeTotal /= cpucorrectorThreads.size();
+    msaMinimizationTimeTimeTotal /= cpucorrectorThreads.size();
+    msaCorrectSubjectTimeTimeTotal /= cpucorrectorThreads.size();
+    msaCorrectCandidatesTimeTimeTotal /= cpucorrectorThreads.size();
+
+    std::chrono::duration<double> totalDuration = getCandidatesTimeTotal
+                                                + copyCandidateDataToBufferTimeTotal
+                                                + getAlignmentsTimeTotal
+                                                + findBestAlignmentDirectionTimeTotal
+                                                + gatherBestAlignmentDataTimeTotal
+                                                + mismatchRatioFilteringTimeTotal
+                                                + compactBestAlignmentDataTimeTotal
+                                                + fetchCandidateStringsAndQualitiesTimeTotal
+                                                + msaAddSequencesTimeTotal
+                                                + msaFindConsensusTimeTotal
+                                                + msaMinimizationTimeTimeTotal
+                                                + msaCorrectSubjectTimeTimeTotal
+                                                + msaCorrectCandidatesTimeTimeTotal;
+
+    auto printDuration = [&](const auto& name, const auto& duration){
+        std::cout << "# elapsed time ("<< name << "): "
+                  << duration.count()  << " s. "
+                  << (100.0 * duration / totalDuration) << " %."<< std::endl;
+    };
+
+    #define printme(x) printDuration((#x),(x));
+
+    printme(getCandidatesTimeTotal);
+    printme(copyCandidateDataToBufferTimeTotal);
+    printme(getAlignmentsTimeTotal);
+    printme(findBestAlignmentDirectionTimeTotal);
+    printme(gatherBestAlignmentDataTimeTotal);
+    printme(mismatchRatioFilteringTimeTotal);
+    printme(compactBestAlignmentDataTimeTotal);
+    printme(fetchCandidateStringsAndQualitiesTimeTotal);
+    printme(msaAddSequencesTimeTotal);
+    printme(msaFindConsensusTimeTotal);
+    printme(msaMinimizationTimeTimeTotal);
+    printme(msaCorrectSubjectTimeTimeTotal);
+    printme(msaCorrectCandidatesTimeTimeTotal);
+
+    #undef printme
+
+
 
         //std::cout << "threads done" << std::endl;
 
