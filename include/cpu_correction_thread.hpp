@@ -217,6 +217,8 @@ namespace cpu{
 #endif
     		isRunning = true;
 
+            const int max_sequence_bytes = Sequence_t::getNumBytes(fileOptions.maximum_sequence_length);
+
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
     		std::ofstream outputstream(threadOpts.outputfile);
@@ -302,7 +304,6 @@ namespace cpu{
                 std::vector<char> candidateRevcData;
                 std::vector<int> candidateLengths;
                 int max_candidate_length = 0;
-                int max_candidate_bytes = 0;
                 std::vector<char*> candidateDataPtrs;
                 std::vector<char*> candidateRevcDataPtrs;
 
@@ -377,12 +378,12 @@ namespace cpu{
 
                     assert(max_candidate_length > 0);
 
-                    max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
+                    //max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
 
                     candidateData.clear();
-                    candidateData.resize(max_candidate_bytes * myNumCandidates, 0);
+                    candidateData.resize(max_sequence_bytes * myNumCandidates, 0);
                     candidateRevcData.clear();
-                    candidateRevcData.resize(max_candidate_bytes * myNumCandidates, 0);
+                    candidateRevcData.resize(max_sequence_bytes * myNumCandidates, 0);
                     candidateDataPtrs.clear();
                     candidateDataPtrs.resize(myNumCandidates, nullptr);
                     candidateRevcDataPtrs.clear();
@@ -396,8 +397,8 @@ namespace cpu{
                         const int candidateLength = candidateLengths[i];
                         const int bytes = Sequence_t::getNumBytes(candidateLength);
 
-                        char* const candidateDataBegin = candidateData.data() + i * max_candidate_bytes;
-                        char* const candidateRevcDataBegin = candidateRevcData.data() + i * max_candidate_bytes;
+                        char* const candidateDataBegin = candidateData.data() + i * max_sequence_bytes;
+                        char* const candidateRevcDataBegin = candidateRevcData.data() + i * max_sequence_bytes;
 
                         std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
                         Sequence_t::make_reverse_complement(reinterpret_cast<std::uint8_t*>(candidateRevcDataBegin),
@@ -417,6 +418,7 @@ namespace cpu{
 #endif
 
                     //calculate alignments
+#if 0
                     auto forwardAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
                                                                 subjectLength,
                                                                 candidateDataPtrs,
@@ -431,6 +433,26 @@ namespace cpu{
                                                                 goodAlignmentProperties.min_overlap,
                                                                 goodAlignmentProperties.maxErrorRate,
                                                                 goodAlignmentProperties.min_overlap_ratio);
+
+#else
+
+                    auto forwardAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
+                                                                subjectLength,
+                                                                candidateData,
+                                                                candidateLengths,
+                                                                max_sequence_bytes,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.maxErrorRate,
+                                                                goodAlignmentProperties.min_overlap_ratio);
+                    auto revcAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
+                                                                subjectLength,
+                                                                candidateRevcData,
+                                                                candidateLengths,
+                                                                max_sequence_bytes,
+                                                                goodAlignmentProperties.min_overlap,
+                                                                goodAlignmentProperties.maxErrorRate,
+                                                                goodAlignmentProperties.min_overlap_ratio);
+#endif
 
 #ifdef ENABLE_TIMING
                     getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -480,12 +502,12 @@ namespace cpu{
                     bestAlignments.resize(numGoodDirection);
                     bestAlignmentFlags.resize(numGoodDirection);
                     bestCandidateReadIds.resize(numGoodDirection);
-                    bestCandidateData.resize(numGoodDirection * max_candidate_bytes);
+                    bestCandidateData.resize(numGoodDirection * max_sequence_bytes);
                     bestCandidateLengths.resize(numGoodDirection);
                     bestCandidatePtrs.resize(numGoodDirection);
 
                     for(int i = 0; i < numGoodDirection; i++){
-                        bestCandidatePtrs[i] = bestCandidateData.data() + i * max_candidate_bytes;
+                        bestCandidatePtrs[i] = bestCandidateData.data() + i * max_sequence_bytes;
                     }
 
                     for(int i = 0, insertpos = 0; i < int(alignmentFlags.size()); i++){
@@ -503,7 +525,7 @@ namespace cpu{
 
                             bestAlignments[insertpos] = fwdAlignment;
                             std::copy(candidateDataPtrs[i],
-                                      candidateDataPtrs[i] + max_candidate_bytes,
+                                      candidateDataPtrs[i] + max_sequence_bytes,
                                       bestCandidatePtrs[insertpos]);
                             insertpos++;
                         }else if(flag == BestAlignment_t::ReverseComplement){
@@ -513,7 +535,7 @@ namespace cpu{
 
                             bestAlignments[insertpos] = revcAlignment;
                             std::copy(candidateRevcDataPtrs[i],
-                                      candidateRevcDataPtrs[i] + max_candidate_bytes,
+                                      candidateRevcDataPtrs[i] + max_sequence_bytes,
                                       bestCandidatePtrs[insertpos]);
                             insertpos++;
                         }else{
@@ -564,7 +586,7 @@ namespace cpu{
                         bestCandidateLengths[toIndex] = bestCandidateLengths[fromIndex];
 
                         std::copy(bestCandidatePtrs[fromIndex],
-                                  bestCandidatePtrs[fromIndex] + max_candidate_bytes,
+                                  bestCandidatePtrs[fromIndex] + max_sequence_bytes,
                                   bestCandidatePtrs[toIndex]);
                     }
 
@@ -578,7 +600,7 @@ namespace cpu{
                                                bestCandidateLengths.end());
                     bestCandidatePtrs.erase(bestCandidatePtrs.begin() + goodIndices.size(),
                                             bestCandidatePtrs.end());
-                    bestCandidateData.erase(bestCandidateData.begin() + goodIndices.size() * max_candidate_bytes,
+                    bestCandidateData.erase(bestCandidateData.begin() + goodIndices.size() * max_sequence_bytes,
                                             bestCandidateData.end());
 
 #ifdef ENABLE_TIMING
@@ -1201,7 +1223,7 @@ namespace cpu{
                 }*/
             unlock(0);
 
-            
+
     	}
     };
 

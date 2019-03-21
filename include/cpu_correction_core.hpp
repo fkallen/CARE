@@ -50,7 +50,49 @@ calculate_shd_alignments(const char* subjectptr,
     }
 
     return results;
+
 }
+
+
+
+template<class Sequence_t>
+std::vector<SHDResult>
+calculate_shd_alignments(const char* subjectptr,
+                    const int subjectLength,
+                    const std::vector<char>& candidatedata,
+                    const std::vector<int>& candidateLengths,
+                    const int max_sequence_bytes,
+                    const int min_overlap,
+                    const float maxErrorRate,
+                    const float min_overlap_ratio){
+
+    auto getNumBytes = [] (int nbases){
+        return Sequence2BitHiLo::getNumBytes(nbases);
+    };
+
+    return shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
+                                                        subjectLength,
+                                                        candidatedata,
+                                                        candidateLengths,
+                                                        max_sequence_bytes,
+                                                        min_overlap,
+                                                        maxErrorRate,
+                                                        min_overlap_ratio,
+                                                        getNumBytes);
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 /*
     alignmentresults contains alignments results of candidates aligned to the subject
