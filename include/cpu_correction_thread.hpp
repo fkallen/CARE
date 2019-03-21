@@ -25,6 +25,8 @@
 
 #define MSA_IMPLICIT
 
+#define ENABLE_TIMING
+
 namespace care{
 namespace cpu{
 
@@ -174,24 +176,21 @@ namespace cpu{
         std::map<int, int> numCandidatesOfUncorrectedSubjects;
 
         std::chrono::duration<double> getCandidatesTimeTotal;
-    	std::chrono::duration<double> mapMinhashResultsToSequencesTimeTotal;
+        std::chrono::duration<double> copyCandidateDataToBufferTimeTotal;
     	std::chrono::duration<double> getAlignmentsTimeTotal;
-    	std::chrono::duration<double> determinegoodalignmentsTime;
-    	std::chrono::duration<double> fetchgoodcandidatesTime;
-    	std::chrono::duration<double> majorityvotetime;
-    	std::chrono::duration<double> basecorrectiontime;
-    	std::chrono::duration<double> readcorrectionTimeTotal;
-    	std::chrono::duration<double> mapminhashresultsdedup;
-    	std::chrono::duration<double> mapminhashresultsfetch;
-    	std::chrono::duration<double> graphbuildtime;
-    	std::chrono::duration<double> graphcorrectiontime;
+        std::chrono::duration<double> findBestAlignmentDirectionTimeTotal;
+        std::chrono::duration<double> gatherBestAlignmentDataTimeTotal;
+        std::chrono::duration<double> mismatchRatioFilteringTimeTotal;
+        std::chrono::duration<double> compactBestAlignmentDataTimeTotal;
+        std::chrono::duration<double> fetchCandidateStringsAndQualitiesTimeTotal;
+        std::chrono::duration<double> msaAddSequencesTimeTotal;
+        std::chrono::duration<double> msaFindConsensusTimeTotal;
+        std::chrono::duration<double> msaMinimizationTimeTimeTotal;
+        std::chrono::duration<double> msaCorrectSubjectTimeTimeTotal;
+        std::chrono::duration<double> msaCorrectCandidatesTimeTimeTotal;
 
 
-        std::chrono::duration<double> initIdTimeTotal;
 
-        std::chrono::duration<double> da, db, dc;
-
-        TaskTimings detailedCorrectionTimings;
 
         std::thread thread;
         bool isRunning = false;
@@ -258,10 +257,9 @@ namespace cpu{
             //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
             std::map<int, int> totalnumcandidatesmap;
-            int iterasdf = 0;
 
     		while(!stopAndAbort && !(threadOpts.readIdGenerator->empty() && readIds.empty())){
-iterasdf++;
+
                 if(readIds.empty())
                     readIds = threadOpts.readIdGenerator->next_n(100);
 
@@ -320,7 +318,11 @@ iterasdf++;
                 std::vector<std::string> bestCandidateStrings;
 
                 //this loop allows a second pass after subject has been clipped
+                int clippingIters = 0;
+
                 do{
+
+                    clippingIters++;
 
                     const char* subjectptr = originalsubjectptr;
                     int subjectLength = originalsubjectLength;
@@ -330,13 +332,21 @@ iterasdf++;
                         subjectLength = subjectsequence.length();
                     }
 
-                    if(needsSecondPassAfterClipping){
+                    if(clippingIters > 1){
                         //std::cout << "before: " << task.candidate_read_ids.size() << " candidates\n";
                     }
 
+#ifdef ENABLE_TIMING
+                    auto tpa = std::chrono::system_clock::now();
+#endif
+
                     task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, correctionOptions.hits_per_candidate, max_candidates);
 
-                    if(needsSecondPassAfterClipping){
+#ifdef ENABLE_TIMING
+                    getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+                    if(clippingIters > 1){
                         //std::cout << "after: " << task.candidate_read_ids.size() << " candidates\n";
                     }
 
@@ -351,6 +361,10 @@ iterasdf++;
                         discardThisTask = true; //no candidates to use for correction
                         break;
                     }
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
 
                     //copy candidates lengths into buffer
                     candidateLengths.reserve(myNumCandidates);
@@ -374,7 +388,7 @@ iterasdf++;
                     candidateRevcDataPtrs.clear();
                     candidateRevcDataPtrs.resize(myNumCandidates, nullptr);
 
-                    //copy candiate data and reverse complements into buffer
+                    //copy candidate data and reverse complements into buffer
 
                     for(int i = 0; i < myNumCandidates; i++){
                         const ReadId_t candidateId = task.candidate_read_ids[i];
@@ -394,6 +408,14 @@ iterasdf++;
                         candidateRevcDataPtrs[i] = candidateRevcDataBegin;
                     }
 
+#ifdef ENABLE_TIMING
+                    copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
+
                     //calculate alignments
                     auto forwardAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
                                                                 subjectLength,
@@ -410,6 +432,14 @@ iterasdf++;
                                                                 goodAlignmentProperties.maxErrorRate,
                                                                 goodAlignmentProperties.min_overlap_ratio);
 
+#ifdef ENABLE_TIMING
+                    getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
+
                     //decide whether to keep forward or reverse complement
                     auto alignmentFlags = findBestAlignmentDirection(forwardAlignments,
                                                                     revcAlignments,
@@ -418,6 +448,10 @@ iterasdf++;
                                                                     goodAlignmentProperties.min_overlap,
                                                                     goodAlignmentProperties.maxErrorRate,
                                                                     goodAlignmentProperties.min_overlap_ratio);
+
+#ifdef ENABLE_TIMING
+                    findBestAlignmentDirectionTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
 
                     int numGoodDirection = std::count_if(alignmentFlags.begin(),
                                                          alignmentFlags.end(),
@@ -429,6 +463,10 @@ iterasdf++;
                         discardThisTask = true; //no good alignments
                         break;
                     }
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
 
                     //gather data for candidates with good alignment direction
 
@@ -483,6 +521,14 @@ iterasdf++;
                         }
                     }
 
+#ifdef ENABLE_TIMING
+                    gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
+
                     //get indices of alignments which have a good mismatch ratio
                     auto goodIndices = filterAlignmentsByMismatchRatio(bestAlignments,
                                                                        correctionOptions.estimatedErrorrate,
@@ -492,10 +538,19 @@ iterasdf++;
                                                                            return hpc > 1;
                                                                        });
 
+#ifdef ENABLE_TIMING
+                   mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
                     if(goodIndices.size() == 0){
                         discardThisTask = true; //no good mismatch ratio
                         break;
                     }
+
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
 
                     //stream compaction. keep only data at positions given by goodIndices
 
@@ -526,6 +581,13 @@ iterasdf++;
                     bestCandidateData.erase(bestCandidateData.begin() + goodIndices.size() * max_candidate_bytes,
                                             bestCandidateData.end());
 
+#ifdef ENABLE_TIMING
+                   compactBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
 
                     //gather quality scores of best alignments
                     if(correctionOptions.useQualityScores){
@@ -562,11 +624,15 @@ iterasdf++;
                         bestCandidateStrings.emplace_back(Sequence_t::Impl_t::toString((const std::uint8_t*)ptr, length));
                     }
 
+#ifdef ENABLE_TIMING
+                   fetchCandidateStringsAndQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
 
 
 
-
-
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
 
                     //build multiple sequence alignment
 
@@ -623,7 +689,19 @@ iterasdf++;
 
                     }
 
+#ifdef ENABLE_TIMING
+                    msaAddSequencesTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
+
                     multipleSequenceAlignment.find_consensus();
+
+#ifdef ENABLE_TIMING
+                    msaFindConsensusTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
 
     /*
                     auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject();
@@ -765,6 +843,10 @@ iterasdf++;
 
     #endif
     #if 0
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
+
                     constexpr int max_num_minimizations = 5;
 
                     if(max_num_minimizations > 0){
@@ -835,7 +917,13 @@ iterasdf++;
                             update_after_successfull_minimization();
                         }
                     }
+
+#ifdef ENABLE_TIMING
+                    msaMinimizationTimeTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
     #endif
+
+
 
 
                     //minimization is finished here
@@ -963,16 +1051,27 @@ iterasdf++;
 
                 if(correctionOptions.classicMode){
 
+#ifdef ENABLE_TIMING
+                    auto tpa = std::chrono::system_clock::now();
+#endif
                     //get corrected subject and write it to file
 
                     auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
 
+#ifdef ENABLE_TIMING
+                    msaCorrectSubjectTimeTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
                     if(correctionResult.isCorrected){
                         //need to replace the bases in the good region by the corrected bases of the clipped read
-                        task.corrected_subject = task.original_subject_string;
-                        std::copy(correctionResult.correctedSequence.begin(),
-                                  correctionResult.correctedSequence.end(),
-                                  task.corrected_subject.begin() + task.clipping_begin);
+                        if(clippingIters == 1){
+                            task.corrected_subject = correctionResult.correctedSequence;
+                        }else{
+                            task.corrected_subject = task.original_subject_string;
+                            std::copy(correctionResult.correctedSequence.begin(),
+                                      correctionResult.correctedSequence.end(),
+                                      task.corrected_subject.begin() + task.clipping_begin);
+                        }
                     }
 
 
@@ -1003,10 +1102,17 @@ iterasdf++;
 
                     //get corrected candidates and write them to file
                     if(correctionOptions.correctCandidates && correctionResult.msaProperties.isHQ){
+#ifdef ENABLE_TIMING
+                        tpa = std::chrono::system_clock::now();
+#endif
 
                         auto correctedCandidates = multipleSequenceAlignment.getCorrectedCandidates(bestCandidateLengths,
                                                                             bestAlignments,
                                                                             correctionOptions.new_columns_to_correct);
+
+#ifdef ENABLE_TIMING
+                        msaCorrectCandidatesTimeTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
 
                         for(const auto& correctedCandidate : correctedCandidates){
                             const ReadId_t candidateId = bestCandidateReadIds[correctedCandidate.index];
@@ -1094,6 +1200,8 @@ iterasdf++;
                     std::cerr << pair.first << '\t' << pair.second << '\n';
                 }*/
             unlock(0);
+
+            
     	}
     };
 
@@ -1103,6 +1211,10 @@ iterasdf++;
 
 #ifdef MSA_IMPLICIT
 #undef MSA_IMPLICIT
+#endif
+
+#ifdef ENABLE_TIMING
+#undef ENABLE_TIMING
 #endif
 
 
