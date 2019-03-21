@@ -980,6 +980,72 @@ public:
 							dataArrays.memTilesPrefixSum,
 							H2D,
 							streams[primary_stream_index]); CUERR;
+
+                const int nSubjects = batch.copiedTasks;
+                const int nCandidates = batch.copiedCandidates;
+                const ReadId_t* subject_read_ids = dataArrays.d_subject_read_ids;
+                const ReadId_t* candidate_read_ids = dataArrays.d_candidate_read_ids;
+                char* subject_sequences_data = dataArrays.d_subject_sequences_data;
+                char* candidate_sequences_data = dataArrays.d_candidate_sequences_data;
+                int* subject_sequences_lengths = dataArrays.d_subject_sequences_lengths;
+                int* candidate_sequences_lengths = dataArrays.d_candidate_sequences_lengths;
+                const size_t encoded_sequence_pitch = dataArrays.encoded_sequence_pitch;
+
+                const size_t readstorage_sequence_pitch = std::size_t(transFuncData.gpuReadStorage->getSequencePitch());
+                const char* rs_sequence_data = transFuncData.readStorageGpuData.d_sequence_data;
+        		const int* rs_sequence_lengths = transFuncData.readStorageGpuData.d_sequence_lengths;
+                
+                //assert(encoded_sequence_pitch % 4 == 0);
+                //assert(readstorage_sequence_pitch % 4 == 0);
+                //assert(((unsigned long long)subject_sequences_data) % 4 == 0);
+                //assert(((unsigned long long)candidate_sequences_data) % 4 == 0);
+
+                dim3 grid(SDIV(batch.copiedCandidates, 128),1,1);
+                dim3 block(128,1,1);
+                cudaStream_t stream = streams[primary_stream_index];
+
+                generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+                    const int intiters = encoded_sequence_pitch / sizeof(int);
+                    
+                    /*for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nSubjects; index += blockDim.x * gridDim.x){
+                        const ReadId_t readId = subject_read_ids[index];
+                        subject_sequences_lengths[index] = rs_sequence_lengths[readId];
+                        for(int k = 0; k < encoded_sequence_pitch; k++){
+                            subject_sequences_data[index * encoded_sequence_pitch + k] = rs_sequence_data[size_t(readId) * readstorage_sequence_pitch + k];
+                        }
+                    }
+
+                    for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nCandidates; index += blockDim.x * gridDim.x){
+                        const ReadId_t readId = candidate_read_ids[index];
+                        candidate_sequences_lengths[index] = rs_sequence_lengths[readId];
+                        for(int k = 0; k < encoded_sequence_pitch; k++){
+                            candidate_sequences_data[index * encoded_sequence_pitch + k] = rs_sequence_data[size_t(readId) * readstorage_sequence_pitch + k];
+                        }
+                    }*/
+                    
+                    for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nSubjects; index += blockDim.x * gridDim.x){
+                        const ReadId_t readId = subject_read_ids[index];
+                        subject_sequences_lengths[index] = rs_sequence_lengths[readId];
+                        for(int k = 0; k < intiters; k++){
+                            ((int*)&subject_sequences_data[index * encoded_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * readstorage_sequence_pitch])[k];
+                        }
+                        for(int k = intiters * sizeof(int); k < encoded_sequence_pitch; k++){
+                            subject_sequences_data[index * encoded_sequence_pitch + k] = rs_sequence_data[size_t(readId) * readstorage_sequence_pitch + k];
+                        }
+                    }
+                    
+                    for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nCandidates; index += blockDim.x * gridDim.x){
+                        const ReadId_t readId = candidate_read_ids[index];
+                        candidate_sequences_lengths[index] = rs_sequence_lengths[readId];
+                        for(int k = 0; k < intiters; k++){
+                            ((int*)&candidate_sequences_data[index * encoded_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * readstorage_sequence_pitch])[k];
+                        }
+                        for(int k = intiters * sizeof(int); k < encoded_sequence_pitch; k++){
+                            candidate_sequences_data[index * encoded_sequence_pitch + k] = rs_sequence_data[size_t(readId) * readstorage_sequence_pitch + k];
+                        }
+                    }
+                });
+
 			}else{
 
 				/*int memcmpresult = std::memcmp(batch.collectedCandidateReads.data(),
