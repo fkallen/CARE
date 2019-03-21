@@ -211,6 +211,11 @@ namespace cpu{
     private:
 
     	void execute() {
+#ifndef MSA_IMPLICIT
+            using MSA_t = care::cpu::MultipleSequenceAlignment;
+#else
+            using MSA_t = care::cpu::MultipleSequenceAlignmentImplicit;
+#endif
     		isRunning = true;
 
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
@@ -221,12 +226,8 @@ namespace cpu{
     		auto write_read = [&](const ReadId_t readId, const auto& sequence){
                 //std::cout << readId << " " << sequence << std::endl;
     			auto& stream = outputstream;
-    #if 1
+
     			stream << readId << ' ' << sequence << '\n';
-    #else
-    			stream << readId << '\n';
-    			stream << sequence << '\n';
-    #endif
     		};
 
     		auto lock = [&](ReadId_t readId){
@@ -239,11 +240,11 @@ namespace cpu{
     			threadOpts.locksForProcessedFlags[index].unlock();
     		};
 
-            care::cpu::MultipleSequenceAlignment multipleSequenceAlignment(correctionOptions.useQualityScores,
-                                                                            correctionOptions.m_coverage,
-                                                                            correctionOptions.kmerlength,
-                                                                            correctionOptions.estimatedCoverage,
-                                                                            correctionOptions.estimatedErrorrate);
+            MSA_t multipleSequenceAlignment(correctionOptions.useQualityScores,
+                                            correctionOptions.m_coverage,
+                                            correctionOptions.kmerlength,
+                                            correctionOptions.estimatedCoverage,
+                                            correctionOptions.estimatedErrorrate);
 
             cpu::QualityScoreConversion qualityConversion;
 
@@ -314,7 +315,9 @@ iterasdf++;
                 std::vector<char> bestCandidateData;
                 std::vector<char*> bestCandidatePtrs;
 
-
+                std::vector<char> bestCandidateQualityData;
+                std::vector<char*> bestCandidateQualityPtrs;
+                std::vector<std::string> bestCandidateStrings;
 
                 //this loop allows a second pass after subject has been clipped
                 do{
@@ -349,7 +352,7 @@ iterasdf++;
                         break;
                     }
 
-                    //copy candidates lenghts into buffer
+                    //copy candidates lengths into buffer
                     candidateLengths.reserve(myNumCandidates);
                     max_candidate_length = 0;
                     for(const ReadId_t candidateId: task.candidate_read_ids){
@@ -524,6 +527,47 @@ iterasdf++;
                                             bestCandidateData.end());
 
 
+                    //gather quality scores of best alignments
+                    if(correctionOptions.useQualityScores){
+                        bestCandidateQualityData.clear();
+                        bestCandidateQualityData.resize(max_candidate_length * bestAlignments.size());
+
+                        bestCandidateQualityPtrs.clear();
+                        bestCandidateQualityPtrs.resize(bestAlignments.size());
+
+                        for(int i = 0; i < int(bestAlignments.size()); i++){
+                            const char* qualityptr = threadOpts.readStorage->fetchQuality_ptr(bestCandidateReadIds[i]);
+                            const int length = bestCandidateLengths[i];
+                            const BestAlignment_t flag = bestAlignmentFlags[i];
+
+                            if(flag == BestAlignment_t::Forward){
+                                std::copy(qualityptr, qualityptr + length, &bestCandidateQualityData[max_candidate_length * i]);
+                            }else{
+                                std::reverse_copy(qualityptr, qualityptr + length, &bestCandidateQualityData[max_candidate_length * i]);
+                            }
+                        }
+
+                        for(int i = 0; i < int(bestAlignments.size()); i++){
+                            bestCandidateQualityPtrs[i] = bestCandidateQualityData.data() + i * max_candidate_length;
+                        }
+                    }
+
+                    //decode sequences of best alignments
+                    bestCandidateStrings.clear();
+                    bestCandidateStrings.reserve(bestAlignments.size());
+
+                    for(int i = 0; i < int(bestAlignments.size()); i++){
+                        const char* ptr = bestCandidatePtrs[i];
+                        const int length = bestCandidateLengths[i];
+                        bestCandidateStrings.emplace_back(Sequence_t::Impl_t::toString((const std::uint8_t*)ptr, length));
+                    }
+
+
+
+
+
+
+
                     //build multiple sequence alignment
 
                     multipleSequenceAlignment.init(subjectLength,
@@ -533,90 +577,53 @@ iterasdf++;
 
                     const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
 
-    #ifndef MSA_IMPLICIT
                     multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
-                        //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
                         return qualityConversion.getWeight((subjectQualityPtr)[i]);
                     });
-    #else
-                    multipleSequenceAlignment.insertSubject_implicit(task.subject_string, [&](int i){
-                        //return qscore_to_weight[(unsigned char)(subjectQualityPtr)[i]];
-                        return qualityConversion.getWeight((subjectQualityPtr)[i]);
-                    });
-
-    #endif
 
                     const float desiredAlignmentMaxErrorRate = goodAlignmentProperties.maxErrorRate;
 
                     //add candidates to multiple sequence alignment
 
-    #ifdef MSA_IMPLICIT
-                    std::vector<std::string> candidateStrings;
                     std::vector<std::function<float(int)>> candidateQualityConversionFunctions;
-                    candidateStrings.reserve(bestAlignments.size());
                     candidateQualityConversionFunctions.reserve(bestAlignments.size());
-    #endif
+
 
                     for(std::size_t i = 0; i < bestAlignments.size(); i++){
 
-                        const char* candidateSequencePtr = bestCandidatePtrs[i];
-
                         const int length = bestCandidateLengths[i];
-                        const std::string candidateSequence = Sequence_t::Impl_t::toString((const std::uint8_t*)candidateSequencePtr, length);
+                        const std::string& candidateSequence = bestCandidateStrings[i];
                         const char* candidateQualityPtr = correctionOptions.useQualityScores ?
-                                                                threadOpts.readStorage->fetchQuality_ptr(bestCandidateReadIds[i])
+                                                                bestCandidateQualityPtrs[i]
                                                                 : nullptr;
-
-    #ifdef MSA_IMPLICIT
-                        candidateStrings.emplace_back(candidateSequence);
-    #endif
 
                         const int shift = bestAlignments[i].shift;
                         const float defaultweight = 1.0f - std::sqrt(bestAlignments[i].nOps
                                                                     / (bestAlignments[i].overlap
                                                                         * desiredAlignmentMaxErrorRate));
-    #ifndef MSA_IMPLICIT
-                        if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
-                            multipleSequenceAlignment.insertCandidate(candidateSequence, shift, [&](int i){
-                                //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[length - 1 - i]] * defaultweight;
-                                return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
-                            });
-                        }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
-                            multipleSequenceAlignment.insertCandidate(candidateSequence, shift, [&](int i){
-                                //return (float)qscore_to_weight[(unsigned char)(candidateQualityPtr)[i]] * defaultweight;
-                                return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
-                            });
-                        }else{
-                            assert(false);
-                        }
-    #else
+
                         if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
                             auto conversionFunction = [&, candidateQualityPtr, defaultweight, length](int i){
                                 return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
                             };
 
-                            multipleSequenceAlignment.insertCandidate_implicit(candidateSequence, shift, conversionFunction);
+                            multipleSequenceAlignment.insertCandidate(candidateSequence, shift, conversionFunction);
 
                             candidateQualityConversionFunctions.emplace_back(std::move(conversionFunction));
                         }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
                             auto conversionFunction = [&, candidateQualityPtr, defaultweight](int i){
                                 return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
                             };
-                            multipleSequenceAlignment.insertCandidate_implicit(candidateSequence, shift, conversionFunction);
+                            multipleSequenceAlignment.insertCandidate(candidateSequence, shift, conversionFunction);
 
                             candidateQualityConversionFunctions.emplace_back(std::move(conversionFunction));
                         }else{
                             assert(false);
                         }
 
-    #endif
                     }
 
-    #ifndef MSA_IMPLICIT
                     multipleSequenceAlignment.find_consensus();
-    #else
-                    multipleSequenceAlignment.find_consensus_implicit(task.subject_string);
-    #endif
 
     /*
                     auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject();
@@ -767,8 +774,8 @@ iterasdf++;
     #else
 
 
-                        auto minimizationResult = multipleSequenceAlignment.minimize_implicit(task.subject_string,
-                                                            candidateStrings,
+                        auto minimizationResult = multipleSequenceAlignment.minimize_implicit(
+                                                            bestCandidateStrings,
                                                             correctionOptions.estimatedCoverage,
                                                             candidateQualityConversionFunctions);
     #endif
@@ -778,20 +785,19 @@ iterasdf++;
                                 std::vector<BestAlignment_t> bestAlignmentFlags2(minimizationResult.remaining_candidates.size());
                                 std::vector<ReadId_t> bestCandidateReadIds2(minimizationResult.remaining_candidates.size());
                                 std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements2(minimizationResult.remaining_candidates.size());
-    #ifdef MSA_IMPLICIT
+
                                 std::vector<std::string> candidateStrings2(minimizationResult.remaining_candidates.size());
                                 std::vector<std::function<float(int)>> candidateQualityConversionFunctions2(minimizationResult.remaining_candidates.size());
-    #endif
+
                                 for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
                                     const int remaining_index = minimizationResult.remaining_candidates[i];
                                     bestAlignments2[i] = bestAlignments[remaining_index];
                                     bestAlignmentFlags2[i] = bestAlignmentFlags[remaining_index];
                                     bestCandidateReadIds2[i] = bestCandidateReadIds[remaining_index];
                                     bestReverseComplements2[i] = std::move(bestReverseComplements[remaining_index]);
-    #ifdef MSA_IMPLICIT
+
                                     candidateStrings2[i] = std::move(candidateStrings[remaining_index]);
                                     candidateQualityConversionFunctions2[i] = std::move(candidateQualityConversionFunctions[remaining_index]);
-    #endif
                                 }
 
                                 std::swap(bestAlignments2, bestAlignments);
@@ -819,7 +825,7 @@ iterasdf++;
     #else
 
 
-                            minimizationResult = multipleSequenceAlignment.minimize_implicit(task.subject_string,
+                            minimizationResult = multipleSequenceAlignment.minimize_implicit(
                                                                 candidateStrings,
                                                                 correctionOptions.estimatedCoverage,
                                                                 candidateQualityConversionFunctions);
@@ -901,7 +907,7 @@ iterasdf++;
                                                     correctionOptions.estimatedCoverage);
 #else
 
-#if 1
+#if 0
                 std::vector<MSAFeature3> MSAFeatures3 = extractFeatures3(
                                             multipleSequenceAlignment.multiple_sequence_alignment.data(),
                                             multipleSequenceAlignment.multiple_sequence_alignment_weights.data(),
@@ -958,12 +964,8 @@ iterasdf++;
                 if(correctionOptions.classicMode){
 
                     //get corrected subject and write it to file
-#ifndef MSA_IMPLICIT
-                    auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
-#else
-                    auto correctionResult = multipleSequenceAlignment.getCorrectedSubject_implicit(task.subject_string);
-#endif
 
+                    auto correctionResult = multipleSequenceAlignment.getCorrectedSubject();
 
                     if(correctionResult.isCorrected){
                         //need to replace the bases in the good region by the corrected bases of the clipped read
@@ -1001,16 +1003,11 @@ iterasdf++;
 
                     //get corrected candidates and write them to file
                     if(correctionOptions.correctCandidates && correctionResult.msaProperties.isHQ){
-#ifndef MSA_IMPLICIT
+
                         auto correctedCandidates = multipleSequenceAlignment.getCorrectedCandidates(bestCandidateLengths,
                                                                             bestAlignments,
                                                                             correctionOptions.new_columns_to_correct);
-#else
-                        auto correctedCandidates = multipleSequenceAlignment.getCorrectedCandidates_implicit(bestCandidateLengths,
-                                                                            bestAlignments,
-                                                                            correctionOptions.new_columns_to_correct);
 
-#endif
                         for(const auto& correctedCandidate : correctedCandidates){
                             const ReadId_t candidateId = bestCandidateReadIds[correctedCandidate.index];
                             bool savingIsOk = false;
