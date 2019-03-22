@@ -341,7 +341,8 @@ namespace cpu{
                     auto tpa = std::chrono::system_clock::now();
 #endif
 
-                    task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, correctionOptions.hits_per_candidate, max_candidates);
+                    const int candidate_limit = clippingIters > 1 ? std::numeric_limits<int>::max() : max_candidates;
+                    task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, correctionOptions.hits_per_candidate, candidate_limit);
 
 #ifdef ENABLE_TIMING
                     getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -951,7 +952,7 @@ namespace cpu{
 
 
                     //minimization is finished here
-#if 0
+#if 1
                     if(!needsSecondPassAfterClipping){
                         auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject();
 
