@@ -368,7 +368,9 @@ namespace cpu{
 #endif
 
                     //copy candidates lengths into buffer
+                    candidateLengths.clear();
                     candidateLengths.reserve(myNumCandidates);
+
                     max_candidate_length = 0;
                     for(const ReadId_t candidateId: task.candidate_read_ids){
                         const int candidateLength = threadOpts.readStorage->fetchSequenceLength(candidateId);
