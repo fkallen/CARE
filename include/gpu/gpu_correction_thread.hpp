@@ -1345,11 +1345,11 @@ public:
         batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
 
 		if(transFuncData.correctionOptions.useQualityScores) {
-			if(transFuncData.readStorageGpuData.isValidQualityData()) {
+			/*if(transFuncData.readStorageGpuData.isValidQualityData()) {
 				return BatchState::BuildMSA;
-			}else{
+			}else{*/
                 return BatchState::CopyQualities;
-			}
+			//}
 		}else{
 			return BatchState::BuildMSA;
 		}
@@ -1387,8 +1387,53 @@ public:
 
 			//if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
-				//we don't need to copy any quality strings. they are already present in the gpu read storage
-				return BatchState::StartClassicCorrection;
+                const char* const rs_quality_data = transFuncData.readStorageGpuData.d_quality_data;
+                const size_t readstorage_quality_pitch = std::size_t(gpuReadStorage->getQualityPitch());
+                const size_t qualitypitch = dataArrays.quality_pitch;
+                
+                char* const subject_qualities = dataArrays.d_subject_qualities;
+                char* const candidate_qualities = dataArrays.d_candidate_qualities;
+                const ReadId_t* const subject_read_ids = dataArrays.d_subject_read_ids;
+                const ReadId_t* const candidate_read_ids = dataArrays.d_candidate_read_ids;
+                const int* const subject_sequences_lengths = dataArrays.d_subject_sequences_lengths;
+                const int* const candidate_sequences_lengths = dataArrays.d_candidate_sequences_lengths;
+                const int* const indices = dataArrays.d_indices;
+                
+                const int nSubjects = dataArrays.n_subjects;
+                const int num_indices = *dataArrays.h_num_indices;
+                
+                dim3 grid(std::min(num_indices, (1<<16)),1,1);
+                dim3 block(64,1,1);
+                cudaStream_t stream = streams[primary_stream_index];
+                
+                generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+                    
+                    
+                    for(int index = blockIdx.x; index < nSubjects; index += gridDim.x){
+                        const ReadId_t readId = subject_read_ids[index];
+                        const int length = subject_sequences_lengths[index];
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            subject_qualities[index * qualitypitch + k]
+                            = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
+                        }
+                    }
+                    
+                    for(int i = blockIdx.x; i < num_indices; i += gridDim.x){
+                        const int index = indices[i];
+                        const ReadId_t readId = candidate_read_ids[index];
+                        const int length = candidate_sequences_lengths[index];
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            candidate_qualities[i * qualitypitch + k]
+                            = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
+                        }
+                    }
+                });
+                
+                assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+                
+                cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+                
+                return BatchState::BuildMSA;
 			}else{
 
 				assert(batch.copiedTasks <= int(batch.tasks.size()));
