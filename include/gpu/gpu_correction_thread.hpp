@@ -14,7 +14,7 @@
 #include "kernel_selection.hpp"
 #include "dataarrays.hpp"
 #include "nvvptimelinemarkers.hpp"
-
+#include <gpu/readstorage.hpp>
 
 #include <config.hpp>
 
@@ -52,7 +52,6 @@ namespace care {
 namespace gpu {
 
 
-template<class Sequence_t>
 struct CorrectionTask {
 	CorrectionTask(){
 	}
@@ -126,15 +125,16 @@ struct CorrectionTask {
 };
 
 #ifdef __NVCC__
-template<class minhasher_t,
-         class gpureadStorage_t,
-         class readIdGenerator_t>
 struct ErrorCorrectionThreadOnlyGPU {
-	using Minhasher_t = minhasher_t;
-	using GPUReadStorage_t = gpureadStorage_t;
-	using Sequence_t = typename GPUReadStorage_t::Sequence_t;
-	using CorrectionTask_t = CorrectionTask<Sequence_t>;
-	using ReadIdGenerator_t = readIdGenerator_t;
+	//using Minhasher_t = minhasher_t;
+	//using GPUReadStorage_t = gpureadStorage_t;
+    using Minhasher_t = Minhasher;
+    using GPUReadStorage_t = gpu::ContiguousReadStorage;
+    
+	using Sequence_t = GPUReadStorage_t::Sequence_t;
+	using CorrectionTask_t = CorrectionTask;
+	//using ReadIdGenerator_t = readIdGenerator_t;
+    using ReadIdGenerator_t = cpu::RangeGenerator<read_number>;
 
 
 	static constexpr int primary_stream_index = 0;

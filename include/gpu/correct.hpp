@@ -13,6 +13,9 @@
 #include <gpu/qualityscoreweights.hpp>
 #include <qualityscoreweights.hpp>
 
+#include <minhasher.hpp>
+#include <gpu/readstorage.hpp>
+
 #include <cuda_profiler_api.h>
 
 #include <cassert>
@@ -27,9 +30,6 @@ namespace gpu {
 
 
 
-template<class minhasher_t,
-         class readStorage_t,
-         bool indels>
 void correct_gpu(const MinhashOptions& minhashOptions,
 			const AlignmentOptions& alignmentOptions,
 			const GoodAlignmentProperties& goodAlignmentProperties,
@@ -37,20 +37,19 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
 			const SequenceFileProperties& sequenceFileProperties,
-			minhasher_t& minhasher,
-			readStorage_t& readStorage,
+            Minhasher& minhasher,
+            gpu::ContiguousReadStorage& readStorage,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
 
-	static_assert(indels == false, "indels != false");
-
-	using Minhasher_t = minhasher_t;
-	using ReadStorage_t = readStorage_t;
-	using Sequence_t = typename ReadStorage_t::Sequence_t;
+    using Minhasher_t = Minhasher;
+    using ReadStorage_t = gpu::ContiguousReadStorage;
+    
+	using Sequence_t = ReadStorage_t::Sequence_t;
 
 	using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
-	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<read_number> >;
+	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU;
 
 	constexpr int maxCPUThreadsPerGPU = 64;
 

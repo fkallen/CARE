@@ -191,7 +191,6 @@ void selectCpuCorrection(
 
 template<class minhasher_t,
          class readStorage_t,
-         bool indels,
          class StartCorrectionFunction>
 void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
 			const AlignmentOptions& alignmentOptions,
@@ -205,7 +204,6 @@ void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
 			std::size_t nLocksForProcessedFlags,
 			StartCorrectionFunction startCorrection){
 
-	constexpr bool indelAlignment = indels;
 
 	using Minhasher_t = minhasher_t;
 	using ReadStorage_t = readStorage_t;
@@ -238,15 +236,6 @@ void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
 
 	startCorrection(minhasher, readStorage, sequenceFileProperties);
 
-	/*correct<Minhasher_t,
-	                ReadStorage_t,
-	                indelAlignment>(minhashOptions, alignmentOptions,
-	                                                goodAlignmentProperties, correctionOptions,
-	                                                runtimeOptions, fileOptions, props,
-	                                                minhasher, readStorage,
-	                                                readIsCorrectedVector, locksForProcessedFlags,
-	                                                nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
-
 }
 
 void selectGpuCorrection(
@@ -265,14 +254,11 @@ void selectGpuCorrection(
 
 
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
-		constexpr bool indels = false;
 
         auto func = [&](Minhasher_t& minhasher, gpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
 				    //using Minhasher_t = decltype(minhasher);
 				    //using ReadStorage_t = decltype(readStorage);
-				    gpu::correct_gpu<Minhasher_t,
-                                     gpu::ContiguousReadStorage,
-				                     indels>(minhashOptions, alignmentOptions,
+				    gpu::correct_gpu(minhashOptions, alignmentOptions,
 							    goodAlignmentProperties, correctionOptions,
 							    runtimeOptions, fileOptions, props,
 							    minhasher, readStorage,
@@ -280,7 +266,7 @@ void selectGpuCorrection(
 							    nLocksForProcessedFlags);
 			    };
 
-        buildAndCorrect_gpu<Minhasher_t, gpu::ContiguousReadStorage, indels>
+        buildAndCorrect_gpu<Minhasher_t, gpu::ContiguousReadStorage>
 		(
 					minhashOptions,
 					alignmentOptions,
