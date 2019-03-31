@@ -35,7 +35,13 @@ void set_kernel(T* data, int index, T value){
 
 template<class T>
 void call_set_kernel_async(T* d_data, int index, const T& value, cudaStream_t stream){
-    fill_kernel<<<1, 1, 0, stream>>>(d_data, index, value); CUERR;
+    set_kernel<<<1, 1, 0, stream>>>(d_data, index, value); CUERR;
+}
+
+template<class Func>
+__global__
+void generic_kernel(Func f){
+    f();
 }
 
 #endif
