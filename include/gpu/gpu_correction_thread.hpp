@@ -1180,9 +1180,6 @@ public:
 					transFuncData.min_overlap_ratio,
 					//batch.maxSubjectLength,
 					//batch.maxQueryLength,
-					transFuncData.gpuReadStorage,
-					transFuncData.readStorageGpuData,
-					true,
 					streams[primary_stream_index],
 					batch.kernelLaunchHandle);
 
@@ -1212,9 +1209,6 @@ public:
                     transFuncData.min_overlap_ratio,
                     //batch.maxSubjectLength,
                     //batch.maxQueryLength,
-                    transFuncData.gpuReadStorage,
-                    transFuncData.readStorageGpuData,
-                    true,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
@@ -1240,9 +1234,6 @@ public:
 					dataArrays.d_candidate_sequences_lengths,
 					dataArrays.n_subjects,
 					dataArrays.n_queries,
-					transFuncData.gpuReadStorage,
-					transFuncData.readStorageGpuData,
-					true,
 					streams[primary_stream_index],
 					batch.kernelLaunchHandle);
 
@@ -1579,9 +1570,6 @@ public:
 						dataArrays.d_indices_per_subject_prefixsum,
 						dataArrays.n_subjects,
 						dataArrays.n_queries,
-						transFuncData.gpuReadStorage,
-						transFuncData.readStorageGpuData,
-						true,
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
 
@@ -1638,10 +1626,6 @@ public:
 						dataArrays.quality_pitch,
 						dataArrays.msa_pitch,
 						dataArrays.msa_weights_pitch,
-						//true,
-						transFuncData.gpuReadStorage,
-						transFuncData.readStorageGpuData,
-						true,
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
 #else
@@ -1681,10 +1665,6 @@ public:
                         dataArrays.quality_pitch,
                         dataArrays.msa_pitch,
                         dataArrays.msa_weights_pitch,
-                        //true,
-                        transFuncData.gpuReadStorage,
-                        transFuncData.readStorageGpuData,
-                        true,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
 
@@ -1731,9 +1711,6 @@ public:
                         dataArrays.encoded_sequence_pitch,
                         dataArrays.msa_pitch,
                         dataArrays.msa_weights_pitch,
-                        transFuncData.gpuReadStorage,
-                        transFuncData.readStorageGpuData,
-                        true,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
 
@@ -1882,9 +1859,6 @@ public:
 							dataArrays.maximum_sequence_length,
                             dataArrays.d_subject_read_ids,
                             dataArrays.d_subject_sequences_data,
-                            transFuncData.gpuReadStorage,
-                            transFuncData.readStorageGpuData,
-                            true,
                             streams[primary_stream_index],
                             batch.kernelLaunchHandle);
 
@@ -1934,9 +1908,6 @@ public:
 								min_coverage_threshold,
 								new_columns_to_correct,
 								dataArrays.maximum_sequence_length,
-								transFuncData.gpuReadStorage,
-								transFuncData.readStorageGpuData,
-								true,
 								streams[primary_stream_index],
 								batch.kernelLaunchHandle);
 				}

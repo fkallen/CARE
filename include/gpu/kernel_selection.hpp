@@ -16,7 +16,6 @@ struct ShiftedHammingDistanceChooserExp;
 template<class ReadId_t>
 struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(int* d_alignment_scores,
 				int* d_alignment_overlaps,
 				int* d_alignment_shifts,
@@ -36,9 +35,6 @@ struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 				int min_overlap,
 				float maxErrorRate,
 				float min_overlap_ratio,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
 
@@ -111,7 +107,6 @@ struct ShiftedHammingDistanceTiledChooser;
 template<class ReadId_t>
 struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(int* d_alignment_scores,
 				int* d_alignment_overlaps,
 				int* d_alignment_shifts,
@@ -134,9 +129,6 @@ struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
 				int min_overlap,
 				float maxErrorRate,
 				float min_overlap_ratio,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
 
@@ -208,7 +200,6 @@ struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
 template<class ReadId_t>
 struct FindBestAlignmentChooserExp {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
 				BestAlignment_t* d_alignment_best_alignment_flags,
 				int* d_alignment_scores,
@@ -226,13 +217,8 @@ struct FindBestAlignmentChooserExp {
 				const int* d_candidate_sequences_lengths,
 				int n_subjects,
 				int n_queries,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
-
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
 		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
@@ -295,7 +281,6 @@ struct FindBestAlignmentChooserExp {
 template<class ReadId_t>
 struct MSAInitChooserExp {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
 				MSAColumnProperties*  d_msa_column_properties,                         //
 				const int* d_alignment_shifts, //
@@ -309,13 +294,8 @@ struct MSAInitChooserExp {
 				const int* d_indices_per_subject_prefixsum, //
 				int n_subjects, //
 				int n_queries, //
-				const GPUReadStorage_t* gpuReadStorage, //
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage, //
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){ //
-
-	//	assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
 		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
@@ -356,7 +336,6 @@ struct MSAInitChooserExp {
 template<class Sequence_t, class ReadId_t>
 struct MSAAddSequencesChooserExp {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
 				char* d_multiple_sequence_alignments,
 				float* d_multiple_sequence_alignment_weights,
@@ -389,14 +368,8 @@ struct MSAAddSequencesChooserExp {
 				size_t quality_pitch,
 				size_t msa_row_pitch,
 				size_t msa_weights_row_pitch,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
-
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
 		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
 			//return Sequence_t::get_as_nucleotide(data, length, index);
@@ -493,7 +466,6 @@ struct MSAAddSequencesChooserExp {
 template<class Sequence_t, class ReadId_t>
 struct MSAAddSequencesChooserImplicit {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
                 int* d_counts,
                 float* d_weights,
@@ -530,14 +502,8 @@ struct MSAAddSequencesChooserImplicit {
 				size_t quality_pitch,
 				size_t msa_row_pitch,
 				size_t msa_weights_row_pitch,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
-
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
 		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
 			//return Sequence_t::get_as_nucleotide(data, length, index);
@@ -628,7 +594,6 @@ struct MSAAddSequencesChooserImplicit {
 template<class Sequence_t, class ReadId_t>
 struct MSAFindConsensusChooserImplicit {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
                 int* d_counts,
                 float* d_weights,
@@ -645,14 +610,8 @@ struct MSAFindConsensusChooserImplicit {
 				size_t encoded_sequence_pitch,
 				size_t msa_row_pitch,
 				size_t msa_weights_row_pitch,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
-
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage->max_sequence_bytes == max_sequence_bytes));
 
 		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
 			//return Sequence_t::get_as_nucleotide(data, length, index);
@@ -693,7 +652,6 @@ struct MSAFindConsensusChooserImplicit {
 template<class Sequence_t, class ReadId_t>
 struct MSACorrectSubjectChooserImplicit {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
                 char* d_consensus,
                 float* d_support,
@@ -715,13 +673,8 @@ struct MSACorrectSubjectChooserImplicit {
                 int maximum_sequence_length,
                 const ReadId_t* d_subject_read_ids,
 				const char* d_subject_sequences_data,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
-
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
 		auto nucleotide_accessor = [] __device__ (const char* data, int length, int index){
 			//return Sequence_t::get_as_nucleotide(data, length, index);
@@ -769,7 +722,6 @@ struct MSACorrectSubjectChooserImplicit {
 template<class ReadId_t>
 struct MSACorrectCandidatesChooserExp {
 
-	template<class GPUReadStorage_t>
 	static void callKernelAsync(
 				const char* d_consensus,
 				const float* d_support,
@@ -799,13 +751,8 @@ struct MSACorrectCandidatesChooserExp {
 				float min_coverage_threshold,
 				int new_columns_to_correct,
 				int maximum_sequence_length,
-				const GPUReadStorage_t* gpuReadStorage,
-				const typename GPUReadStorage_t::GPUData& gpuReadStorageGpuData,
-				bool useGpuReadStorage,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
-
-		//assert(!useGpuReadStorage || (useGpuReadStorage && gpuReadStorage != nullptr));
 
 		auto make_unpacked_reverse_complement_inplace = [] __device__ (std::uint8_t* sequence, int sequencelength){
 			return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
