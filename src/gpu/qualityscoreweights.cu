@@ -1,6 +1,7 @@
 #include <qualityscoreweights.hpp>
 #include <gpu/qualityscoreweights.hpp>
 #include <hpc_helpers.cuh>
+#include <config.hpp>
 
 #include <cmath>
 #include <cassert>

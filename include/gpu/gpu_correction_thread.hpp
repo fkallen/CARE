@@ -15,6 +15,9 @@
 #include "dataarrays.hpp"
 #include "nvvptimelinemarkers.hpp"
 
+
+#include <config.hpp>
+
 #include <thread>
 #include <vector>
 #include <string>
@@ -49,12 +52,12 @@ namespace care {
 namespace gpu {
 
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct CorrectionTask {
 	CorrectionTask(){
 	}
 
-	CorrectionTask(ReadId_t readId)
+	CorrectionTask(read_number readId)
 		:   active(true),
 		corrected(false),
 		readId(readId)
@@ -109,17 +112,17 @@ struct CorrectionTask {
 
 	bool active;
 	bool corrected;
-	ReadId_t readId;
+	read_number readId;
 
-	std::vector<ReadId_t> candidate_read_ids;
-	ReadId_t* candidate_read_ids_begin;
-	ReadId_t* candidate_read_ids_end;         // exclusive
+	std::vector<read_number> candidate_read_ids;
+	read_number* candidate_read_ids_begin;
+	read_number* candidate_read_ids_end;         // exclusive
 
 	std::string subject_string;
 
 	std::string corrected_subject;
 	std::vector<std::string> corrected_candidates;
-	std::vector<ReadId_t> corrected_candidates_read_ids;
+	std::vector<read_number> corrected_candidates_read_ids;
 };
 
 #ifdef __NVCC__
@@ -130,8 +133,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 	using Minhasher_t = minhasher_t;
 	using GPUReadStorage_t = gpureadStorage_t;
 	using Sequence_t = typename GPUReadStorage_t::Sequence_t;
-	using ReadId_t = typename GPUReadStorage_t::ReadId_t;
-	using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
+	using CorrectionTask_t = CorrectionTask<Sequence_t>;
 	using ReadIdGenerator_t = readIdGenerator_t;
 
 
@@ -195,13 +197,13 @@ struct ErrorCorrectionThreadOnlyGPU {
 		int copiedCandidates = 0;         // used if state == CandidatesPresent
 
 
-		std::vector<ReadId_t> allReadIdsOfTasks;
-		std::vector<ReadId_t> allReadIdsOfTasks_tmp;
+		std::vector<read_number> allReadIdsOfTasks;
+		std::vector<read_number> allReadIdsOfTasks_tmp;
 		std::vector<char> collectedCandidateReads;
 		int numsortedCandidateIds = 0;
 		int numsortedCandidateIdTasks = 0;
 
-		DataArrays<Sequence_t, ReadId_t>* dataArrays;
+		DataArrays<Sequence_t>* dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
@@ -313,7 +315,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 	struct TransitionFunctionData {
 		ReadIdGenerator_t* readIdGenerator;
-		std::vector<ReadId_t>* readIdBuffer;
+		std::vector<read_number>* readIdBuffer;
 		float min_overlap_ratio;
 		int min_overlap;
 		float estimatedErrorrate;
@@ -336,9 +338,9 @@ struct ErrorCorrectionThreadOnlyGPU {
 		CorrectionOptions correctionOptions;
 		std::vector<char>* readIsCorrectedVector;
 		std::ofstream* featurestream;
-		std::function<void(const ReadId_t, const std::string&)> write_read_to_stream;
-		std::function<void(const ReadId_t)> lock;
-		std::function<void(const ReadId_t)> unlock;
+		std::function<void(const read_number, const std::string&)> write_read_to_stream;
+		std::function<void(const read_number)> lock;
+		std::function<void(const read_number)> unlock;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
 	};
@@ -473,11 +475,11 @@ public:
 
 		const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-		std::vector<ReadId_t>* readIdBuffer = transFuncData.readIdBuffer;
+		std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
 
 		auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
 						auto copybegin = position_to_erase;
@@ -502,7 +504,7 @@ public:
 			if(readIdBuffer->empty())
 				continue;
 
-			ReadId_t id = readIdBuffer->back();
+			read_number id = readIdBuffer->back();
 			readIdBuffer->pop_back();
 
 			bool ok = false;
@@ -676,7 +678,7 @@ public:
 		assert(batch.state == BatchState::CopyReads);
 		assert(batch.copiedTasks <= int(batch.tasks.size()));
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -710,8 +712,8 @@ public:
 				++batch.numsortedCandidateIdTasks;
 			}
 
-			std::vector<ReadId_t> indexList(batch.numsortedCandidateIds);
-			std::iota(indexList.begin(), indexList.end(), ReadId_t(0));
+			std::vector<read_number> indexList(batch.numsortedCandidateIds);
+			std::iota(indexList.begin(), indexList.end(), read_number(0));
 			std::sort(indexList.begin(), indexList.end(),
 						[&](auto index1, auto index2){
 						return batch.allReadIdsOfTasks[index1] < batch.allReadIdsOfTasks[index2];
@@ -722,7 +724,7 @@ public:
 			constexpr std::size_t prefetch_distance = 4;
 
 			for(int i = 0; i < batch.numsortedCandidateIds && i < prefetch_distance; ++i) {
-				const ReadId_t next_candidate_read_id = batch.allReadIdsOfTasks[indexList[i]];
+				const read_number next_candidate_read_id = batch.allReadIdsOfTasks[indexList[i]];
 				const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
 				__builtin_prefetch(nextsequenceptr, 0, 0);
 			}
@@ -731,12 +733,12 @@ public:
 
 			for(int i = 0; i < batch.numsortedCandidateIds; ++i) {
 				if(i + prefetch_distance < batch.numsortedCandidateIds) {
-					const ReadId_t next_candidate_read_id = batch.allReadIdsOfTasks[indexList[i + prefetch_distance]];
+					const read_number next_candidate_read_id = batch.allReadIdsOfTasks[indexList[i + prefetch_distance]];
 					const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
 					__builtin_prefetch(nextsequenceptr, 0, 0);
 				}
 
-				const ReadId_t candidate_read_id = batch.allReadIdsOfTasks[indexList[i]];
+				const read_number candidate_read_id = batch.allReadIdsOfTasks[indexList[i]];
 				const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
 				const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
@@ -801,7 +803,7 @@ public:
 				//assert(task.candidate_read_ids_begin == &(task.candidate_read_ids[0]));
 				//assert(task.candidate_read_ids_end == &(task.candidate_read_ids[task.candidate_read_ids.size()]));
 
-				const std::size_t h_candidate_read_ids_size = arrays.memCandidateIds / sizeof(ReadId_t);
+				const std::size_t h_candidate_read_ids_size = arrays.memCandidateIds / sizeof(read_number);
 
 				assert(std::size_t(batch.copiedCandidates) + std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end) <= h_candidate_read_ids_size);
 
@@ -845,7 +847,7 @@ public:
 				constexpr std::size_t prefetch_distance = 4;
 
 				for(std::size_t i = 0; i < task.candidate_read_ids.size() && i < prefetch_distance; ++i) {
-					const ReadId_t next_candidate_read_id = task.candidate_read_ids[i];
+					const read_number next_candidate_read_id = task.candidate_read_ids[i];
 					const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
 					__builtin_prefetch(nextsequenceptr, 0, 0);
 				}
@@ -854,12 +856,12 @@ public:
 
 				for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i) {
 					if(i + prefetch_distance < task.candidate_read_ids.size()) {
-						const ReadId_t next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
+						const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
 						const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
 						__builtin_prefetch(nextsequenceptr, 0, 0);
 					}
 
-					const ReadId_t candidate_read_id = task.candidate_read_ids[i];
+					const read_number candidate_read_id = task.candidate_read_ids[i];
 					const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
 					const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
@@ -879,7 +881,7 @@ public:
 				constexpr std::size_t prefetch_distance = 4;
 
 				for(std::size_t i = 0; i < task.candidate_read_ids.size() && i < prefetch_distance; ++i) {
-					const ReadId_t next_candidate_read_id = task.candidate_read_ids[i];
+					const read_number next_candidate_read_id = task.candidate_read_ids[i];
 					const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
 					__builtin_prefetch(nextsequenceptr, 0, 0);
 				}
@@ -888,12 +890,12 @@ public:
 
 				for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i) {
 					if(i + prefetch_distance < task.candidate_read_ids.size()) {
-						const ReadId_t next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
+						const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
 						const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
 						__builtin_prefetch(nextsequenceptr, 0, 0);
 					}
 
-					const ReadId_t candidate_read_id = task.candidate_read_ids[i];
+					const read_number candidate_read_id = task.candidate_read_ids[i];
 					const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
 					const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
@@ -983,8 +985,8 @@ public:
 
                 const int nSubjects = batch.copiedTasks;
                 const int nCandidates = batch.copiedCandidates;
-                const ReadId_t* subject_read_ids = dataArrays.d_subject_read_ids;
-                const ReadId_t* candidate_read_ids = dataArrays.d_candidate_read_ids;
+                const read_number* subject_read_ids = dataArrays.d_subject_read_ids;
+                const read_number* candidate_read_ids = dataArrays.d_candidate_read_ids;
                 char* subject_sequences_data = dataArrays.d_subject_sequences_data;
                 char* candidate_sequences_data = dataArrays.d_candidate_sequences_data;
                 int* subject_sequences_lengths = dataArrays.d_subject_sequences_lengths;
@@ -1008,7 +1010,7 @@ public:
                     const int intiters = encoded_sequence_pitch / sizeof(int);
                     
                     /*for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nSubjects; index += blockDim.x * gridDim.x){
-                        const ReadId_t readId = subject_read_ids[index];
+                        const read_number readId = subject_read_ids[index];
                         subject_sequences_lengths[index] = rs_sequence_lengths[readId];
                         for(int k = 0; k < encoded_sequence_pitch; k++){
                             subject_sequences_data[index * encoded_sequence_pitch + k] = rs_sequence_data[size_t(readId) * readstorage_sequence_pitch + k];
@@ -1016,7 +1018,7 @@ public:
                     }
 
                     for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nCandidates; index += blockDim.x * gridDim.x){
-                        const ReadId_t readId = candidate_read_ids[index];
+                        const read_number readId = candidate_read_ids[index];
                         candidate_sequences_lengths[index] = rs_sequence_lengths[readId];
                         for(int k = 0; k < encoded_sequence_pitch; k++){
                             candidate_sequences_data[index * encoded_sequence_pitch + k] = rs_sequence_data[size_t(readId) * readstorage_sequence_pitch + k];
@@ -1024,7 +1026,7 @@ public:
                     }*/
                     
                     for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nSubjects; index += blockDim.x * gridDim.x){
-                        const ReadId_t readId = subject_read_ids[index];
+                        const read_number readId = subject_read_ids[index];
                         subject_sequences_lengths[index] = rs_sequence_lengths[readId];
                         for(int k = 0; k < intiters; k++){
                             ((int*)&subject_sequences_data[index * encoded_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * readstorage_sequence_pitch])[k];
@@ -1035,7 +1037,7 @@ public:
                     }
                     
                     for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nCandidates; index += blockDim.x * gridDim.x){
-                        const ReadId_t readId = candidate_read_ids[index];
+                        const read_number readId = candidate_read_ids[index];
                         candidate_sequences_lengths[index] = rs_sequence_lengths[readId];
                         for(int k = 0; k < intiters; k++){
                             ((int*)&candidate_sequences_data[index * encoded_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * readstorage_sequence_pitch])[k];
@@ -1120,7 +1122,7 @@ public:
 
 		assert(batch.state == BatchState::StartAlignment);
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -1158,7 +1160,7 @@ public:
 										 stream); CUERR;
 						 };
 #if 0
-		ShiftedHammingDistanceChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
+		ShiftedHammingDistanceChooserExp<Sequence_t>::callKernelAsync(
 					dataArrays.d_alignment_scores,
 					dataArrays.d_alignment_overlaps,
 					dataArrays.d_alignment_shifts,
@@ -1184,7 +1186,7 @@ public:
 					batch.kernelLaunchHandle);
 
 #else
-        ShiftedHammingDistanceTiledChooser<Sequence_t, ReadId_t>::callKernelAsync(
+        ShiftedHammingDistanceTiledChooser<Sequence_t>::callKernelAsync(
                     dataArrays.d_alignment_scores,
                     dataArrays.d_alignment_overlaps,
                     dataArrays.d_alignment_shifts,
@@ -1217,7 +1219,7 @@ public:
 		//Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
 		//    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
 
-		FindBestAlignmentChooserExp<ReadId_t>::callKernelAsync(
+		FindBestAlignmentChooserExp::callKernelAsync(
 					dataArrays.d_alignment_best_alignment_flags,
 					dataArrays.d_alignment_scores,
 					dataArrays.d_alignment_overlaps,
@@ -1362,7 +1364,7 @@ public:
             return expectedState;
         }
 
-        DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+        DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(*dataArrays.h_num_indices == 0){
@@ -1384,8 +1386,8 @@ public:
                 
                 char* const subject_qualities = dataArrays.d_subject_qualities;
                 char* const candidate_qualities = dataArrays.d_candidate_qualities;
-                const ReadId_t* const subject_read_ids = dataArrays.d_subject_read_ids;
-                const ReadId_t* const candidate_read_ids = dataArrays.d_candidate_read_ids;
+                const read_number* const subject_read_ids = dataArrays.d_subject_read_ids;
+                const read_number* const candidate_read_ids = dataArrays.d_candidate_read_ids;
                 const int* const subject_sequences_lengths = dataArrays.d_subject_sequences_lengths;
                 const int* const candidate_sequences_lengths = dataArrays.d_candidate_sequences_lengths;
                 const int* const indices = dataArrays.d_indices;
@@ -1401,7 +1403,7 @@ public:
                     
                     
                     for(int index = blockIdx.x; index < nSubjects; index += gridDim.x){
-                        const ReadId_t readId = subject_read_ids[index];
+                        const read_number readId = subject_read_ids[index];
                         const int length = subject_sequences_lengths[index];
                         for(int k = threadIdx.x; k < length; k += blockDim.x){
                             subject_qualities[index * qualitypitch + k]
@@ -1411,7 +1413,7 @@ public:
                     
                     for(int i = blockIdx.x; i < num_indices; i += gridDim.x){
                         const int index = indices[i];
-                        const ReadId_t readId = candidate_read_ids[index];
+                        const read_number readId = candidate_read_ids[index];
                         const int length = candidate_sequences_lengths[index];
                         for(int k = threadIdx.x; k < length; k += blockDim.x){
                             candidate_qualities[i * qualitypitch + k]
@@ -1532,7 +1534,7 @@ public:
             return expectedState;
         }
 
-        DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+        DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(*dataArrays.h_num_indices == 0){
@@ -1557,7 +1559,7 @@ public:
 
 			//Determine multiple sequence alignment properties
 
-			MSAInitChooserExp<ReadId_t>::callKernelAsync(
+			MSAInitChooserExp::callKernelAsync(
 						dataArrays.d_msa_column_properties,
 						dataArrays.d_alignment_shifts,
 						dataArrays.d_alignment_best_alignment_flags,
@@ -1594,7 +1596,7 @@ public:
                                     streams[primary_stream_index]);
 
 #ifndef MSA_IMPLICIT
-			MSAAddSequencesChooserExp<Sequence_t, ReadId_t>::callKernelAsync(
+			MSAAddSequencesChooserExp<Sequence_t>::callKernelAsync(
 						dataArrays.d_multiple_sequence_alignments,
 						dataArrays.d_multiple_sequence_alignment_weights,
 						dataArrays.d_alignment_shifts,
@@ -1629,7 +1631,7 @@ public:
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
 #else
-            MSAAddSequencesChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
+            MSAAddSequencesChooserImplicit<Sequence_t>::callKernelAsync(
                         dataArrays.d_counts,
                         dataArrays.d_weights,
                         dataArrays.d_coverage,
@@ -1695,7 +1697,7 @@ public:
 						streams[primary_stream_index],
 						batch.kernelLaunchHandle);
 #else
-            MSAFindConsensusChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
+            MSAFindConsensusChooserImplicit<Sequence_t>::callKernelAsync(
                         dataArrays.d_counts,
                         dataArrays.d_weights,
                         dataArrays.d_consensus,
@@ -1793,7 +1795,7 @@ public:
 		assert(batch.state == BatchState::StartClassicCorrection);
 		assert(transFuncData.correctionOptions.classicMode);
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -1838,7 +1840,7 @@ public:
 							streams[primary_stream_index],
 							batch.kernelLaunchHandle);
 #else
-                MSACorrectSubjectChooserImplicit<Sequence_t, ReadId_t>::callKernelAsync(
+                MSACorrectSubjectChooserImplicit<Sequence_t>::callKernelAsync(
                             dataArrays.d_consensus,
                             dataArrays.d_support,
                             dataArrays.d_coverage,
@@ -1879,7 +1881,7 @@ public:
 
 					// correct candidates
 
-					MSACorrectCandidatesChooserExp<ReadId_t>::callKernelAsync(
+					MSACorrectCandidatesChooserExp::callKernelAsync(
 								dataArrays.d_consensus,
 								dataArrays.d_support,
 								dataArrays.d_coverage,
@@ -1950,7 +1952,7 @@ public:
             return expectedState;
         }
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 
 		if(!canLaunchKernel) {
 			return BatchState::StartForestCorrection;
@@ -2024,7 +2026,7 @@ public:
             return expectedState;
         }
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2426,8 +2428,8 @@ public:
 					const int global_candidate_index = my_indices_of_corrected_candidates[i];
 					const int local_candidate_index = global_candidate_index - arrays.h_candidates_per_subject_prefixsum[subject_index];
 
-					//const ReadId_t candidate_read_id = task.candidate_read_ids[local_candidate_index];
-					const ReadId_t candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
+					//const read_number candidate_read_id = task.candidate_read_ids[local_candidate_index];
+					const read_number candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
 					const int candidate_length = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 					//const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
 					const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
@@ -2451,7 +2453,7 @@ public:
 
 		assert(batch.state == BatchState::WriteResults);
 
-		//DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		//DataArrays<Sequence_t, read_number>& dataArrays = *batch.dataArrays;
 		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2486,7 +2488,7 @@ public:
 			push_range("correctedcandidates", 6);
 			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
 
-				ReadId_t candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
+				read_number candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
 				const std::string& corrected_candidate = task.corrected_candidates[corrected_candidate_index];
 
 				bool savingIsOk = false;
@@ -2520,7 +2522,7 @@ public:
 
 		assert(batch.state == BatchState::WriteFeatures);
 
-		DataArrays<Sequence_t, ReadId_t>& dataArrays = *batch.dataArrays;
+		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
 		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2697,15 +2699,15 @@ public:
 
 		cudaSetDevice(threadOpts.deviceId); CUERR;
 
-		//std::vector<ReadId_t> readIds = threadOpts.batchGen->getNextReadIds();
+		//std::vector<read_number> readIds = threadOpts.batchGen->getNextReadIds();
 
-		std::vector<DataArrays<Sequence_t, ReadId_t> > dataArrays;
+		std::vector<DataArrays<Sequence_t> > dataArrays;
 		//std::array<Batch, nParallelBatches> batches;
 		std::array<std::array<cudaStream_t, nStreamsPerBatch>, nParallelBatches> streams;
 		std::array<std::array<cudaEvent_t, nEventsPerBatch>, nParallelBatches> cudaevents;
 
 		std::queue<Batch> batchQueue;
-		std::queue<DataArrays<Sequence_t, ReadId_t>*> freeDataArraysQueue;
+		std::queue<DataArrays<Sequence_t>*> freeDataArraysQueue;
 		std::queue<std::array<cudaStream_t, nStreamsPerBatch>*> freeStreamsQueue;
 		std::queue<std::array<cudaEvent_t, nEventsPerBatch>*> freeEventsQueue;
 
@@ -2741,7 +2743,7 @@ public:
 		for(auto& eventArray : cudaevents)
 			freeEventsQueue.push(&eventArray);
 
-		std::vector<ReadId_t> readIdBuffer;
+		std::vector<read_number> readIdBuffer;
 
 		TransitionFunctionData transFuncData;
 
@@ -2770,7 +2772,7 @@ public:
 		transFuncData.nLocksForProcessedFlags = threadOpts.nLocksForProcessedFlags;
 		transFuncData.readIsCorrectedVector = threadOpts.readIsCorrectedVector;
 		transFuncData.featurestream = &featurestream;
-		transFuncData.write_read_to_stream = [&](const ReadId_t readId, const std::string& sequence){
+		transFuncData.write_read_to_stream = [&](const read_number readId, const std::string& sequence){
 							     //std::cout << readId << " " << sequence << std::endl;
 							     auto& stream = outputstream;
     #if 1
@@ -2780,12 +2782,12 @@ public:
 							     stream << sequence << '\n';
     #endif
 						     };
-		transFuncData.lock = [&](ReadId_t readId){
-					     ReadId_t index = readId % transFuncData.nLocksForProcessedFlags;
+		transFuncData.lock = [&](read_number readId){
+					     read_number index = readId % transFuncData.nLocksForProcessedFlags;
 					     transFuncData.locksForProcessedFlags[index].lock();
 				     };
-		transFuncData.unlock = [&](ReadId_t readId){
-					       ReadId_t index = readId % transFuncData.nLocksForProcessedFlags;
+		transFuncData.unlock = [&](read_number readId){
+					       read_number index = readId % transFuncData.nLocksForProcessedFlags;
 					       transFuncData.locksForProcessedFlags[index].unlock();
 				       };
 

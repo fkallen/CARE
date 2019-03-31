@@ -6,6 +6,8 @@
 #include "msa.hpp"
 #include "utility_kernels.cuh"
 
+#include <config.hpp>
+
 #ifdef __NVCC__
 
 #include <thrust/fill.h>
@@ -19,7 +21,7 @@ namespace gpu {
 
 #ifdef __NVCC__
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct DataArrays {
 	static constexpr int padding_bytes = 4;
 	static constexpr float allocfactor = 1.1;
@@ -32,7 +34,7 @@ struct DataArrays {
 	};
 
 	void allocCandidateIds(int n_quer){
-		memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
+		memCandidateIds = SDIV(sizeof(read_number) * n_quer, padding_bytes) * padding_bytes;
 
 		std::size_t required_size = memCandidateIds;
 
@@ -69,8 +71,8 @@ struct DataArrays {
         memTilesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
 		memQueries = n_quer * encoded_sequence_pitch;
 		memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
-		memSubjectIds = SDIV(sizeof(ReadId_t) * n_sub, padding_bytes) * padding_bytes;
-		//memCandidateIds = SDIV(sizeof(ReadId_t) * n_quer, padding_bytes) * padding_bytes;
+		memSubjectIds = SDIV(sizeof(read_number) * n_sub, padding_bytes) * padding_bytes;
+		//memCandidateIds = SDIV(sizeof(read_number) * n_quer, padding_bytes) * padding_bytes;
 
 		std::size_t required_alignment_transfer_data_allocation_size = memSubjects
 		                                                               + memSubjectLengths
@@ -99,8 +101,8 @@ struct DataArrays {
 		h_candidate_sequences_lengths = (int*)(((char*)h_subject_sequences_lengths) + memSubjectLengths);
 		h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
         h_tiles_per_subject_prefixsum = (int*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
-		h_subject_read_ids = (ReadId_t*)(((char*)h_tiles_per_subject_prefixsum) + memTilesPrefixSum);
-		//h_candidate_read_ids = (ReadId_t*)(((char*)h_subject_read_ids) + memSubjectIds);
+		h_subject_read_ids = (read_number*)(((char*)h_tiles_per_subject_prefixsum) + memTilesPrefixSum);
+		//h_candidate_read_ids = (read_number*)(((char*)h_subject_read_ids) + memSubjectIds);
 
 		d_subject_sequences_data = (char*)alignment_transfer_data_device;
 		d_candidate_sequences_data = (char*)(((char*)d_subject_sequences_data) + memSubjects);
@@ -108,8 +110,8 @@ struct DataArrays {
 		d_candidate_sequences_lengths = (int*)(((char*)d_subject_sequences_lengths) + memSubjectLengths);
 		d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
         d_tiles_per_subject_prefixsum = (int*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
-		d_subject_read_ids = (ReadId_t*)(((char*)d_tiles_per_subject_prefixsum) + memTilesPrefixSum);
-		//d_candidate_read_ids = (ReadId_t*)(((char*)d_subject_read_ids) + memSubjectIds);
+		d_subject_read_ids = (read_number*)(((char*)d_tiles_per_subject_prefixsum) + memTilesPrefixSum);
+		//d_candidate_read_ids = (read_number*)(((char*)d_subject_read_ids) + memSubjectIds);
 
 		//alignment output
 		std::size_t memAlignmentScores = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
@@ -616,8 +618,8 @@ struct DataArrays {
 	int* h_candidate_sequences_lengths = nullptr;
 	int* h_candidates_per_subject_prefixsum = nullptr;
     int* h_tiles_per_subject_prefixsum = nullptr;
-	ReadId_t* h_subject_read_ids = nullptr;
-	ReadId_t* h_candidate_read_ids = nullptr;
+	read_number* h_subject_read_ids = nullptr;
+	read_number* h_candidate_read_ids = nullptr;
 
 	char* d_subject_sequences_data = nullptr;
 	char* d_candidate_sequences_data = nullptr;
@@ -625,8 +627,8 @@ struct DataArrays {
 	int* d_candidate_sequences_lengths = nullptr;
 	int* d_candidates_per_subject_prefixsum = nullptr;
     int* d_tiles_per_subject_prefixsum = nullptr;
-	ReadId_t* d_subject_read_ids = nullptr;
-	ReadId_t* d_candidate_read_ids = nullptr;
+	read_number* d_subject_read_ids = nullptr;
+	read_number* d_candidate_read_ids = nullptr;
 
 	//indices
 	void* indices_transfer_data_host = nullptr;

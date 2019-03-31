@@ -1,4 +1,5 @@
 #include "../include/util.hpp"
+#include <config.hpp>
 
 #include <algorithm>
 #include <array>

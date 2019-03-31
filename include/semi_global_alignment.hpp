@@ -1,6 +1,8 @@
 #ifndef SEMI_GLOBAL_ALIGNMENT_HPP
 #define SEMI_GLOBAL_ALIGNMENT_HPP
 
+#include <config.hpp>
+
 #include "hpc_helpers.cuh"
 #include "bestalignment.hpp"
 

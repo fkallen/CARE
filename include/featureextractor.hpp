@@ -1,6 +1,8 @@
 #ifndef CARE_FEATURE_EXTRACTOR
 #define CARE_FEATURE_EXTRACTOR
 
+#include <config.hpp>
+
 #include <vector>
 #include <iostream>
 #include <array>

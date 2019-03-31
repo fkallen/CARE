@@ -2,6 +2,7 @@
 #include <msa.hpp>
 #include <gpu/bestalignment.hpp>
 #include <hpc_helpers.cuh>
+#include <config.hpp>
 
 #include <cassert>
 

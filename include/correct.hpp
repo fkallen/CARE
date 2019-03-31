@@ -1,6 +1,8 @@
 #ifndef CARE_CORRECT_HPP
 #define CARE_CORRECT_HPP
 
+#include <config.hpp>
+
 #include "options.hpp"
 
 #include "graph.hpp"
@@ -59,7 +61,7 @@ namespace cpu{
     	using Minhasher_t = minhasher_t;
     	using ReadStorage_t = readStorage_t;
     	//using Sequence_t = typename ReadStorage_t::Sequence_t;
-    	using ReadId_t = typename ReadStorage_t::ReadId_t;
+
         using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, indels>;
 
     #if 1
@@ -136,7 +138,7 @@ namespace cpu{
             tmpfiles.emplace_back(fileOptions.outputfile + "_tmp_" + std::to_string(1000 + i));
         }
 
-        cpu::RangeGenerator<ReadId_t> readIdGenerator(sequenceFileProperties.nReads);
+        cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 
         std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCorrectorThreads);
         std::vector<char> readIsProcessedVector(readIsCorrectedVector);
@@ -144,7 +146,7 @@ namespace cpu{
 
     	for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
 
-            //cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
+            //cpubatchgenerators[threadId] = BatchGenerator<read_number>(ncpuReads, 1, threadId, nCpuThreads);
             typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
             threadOpts.threadId = threadId;
 
@@ -182,7 +184,7 @@ namespace cpu{
             std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
 
             while(showProgress){
-                ReadId_t progress = readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin();
+                read_number progress = readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin();
 
                 printf("Progress: %3.2f %% %10u %10lu (Runtime: %03d:%02d:%02d)\r",
                         ((progress * 1.0 / sequenceFileProperties.nReads) * 100.0),

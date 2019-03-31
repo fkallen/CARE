@@ -1,6 +1,8 @@
 #ifndef CARE_TASK_TIMING_HPP
 #define CARE_TASK_TIMING_HPP
 
+#include <config.hpp>
+
 #include <chrono>
 #include <iostream>
 

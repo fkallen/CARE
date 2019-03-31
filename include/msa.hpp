@@ -1,6 +1,8 @@
 #ifndef CARE_CPU_MSA_HPP
 #define CARE_CPU_MSA_HPP
 
+#include <config.hpp>
+
 #include "bestalignment.hpp"
 #include "cpu_alignment.hpp"
 #include "util.hpp"

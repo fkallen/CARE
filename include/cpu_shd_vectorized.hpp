@@ -1,6 +1,8 @@
 #ifndef CARE_CPU_SHD_VECTORIZED
 #define CARE_CPU_SHD_VECTORIZED
 
+#include <config.hpp>
+
 #include <xmmintrin.h>
 #include <cassert>
 

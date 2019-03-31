@@ -6,6 +6,8 @@
 #include <gpu/qualityscoreweights.hpp>
 #include "../msa.hpp"
 
+#include <config.hpp>
+
 #include <stdexcept>
 #include <cassert>
 #include <map>

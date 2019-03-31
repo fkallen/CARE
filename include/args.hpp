@@ -1,6 +1,8 @@
 #ifndef CARE_ARGS_HPP
 #define CARE_ARGS_HPP
 
+#include <config.hpp>
+
 #include "cxxopts/cxxopts.hpp"
 #include "options.hpp"
 

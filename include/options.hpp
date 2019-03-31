@@ -1,6 +1,8 @@
 #ifndef CARE_OPTIONS_HPP
 #define CARE_OPTIONS_HPP
 
+#include <config.hpp>
+
 #include "sequencefileio.hpp"
 
 #include <string>

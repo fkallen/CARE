@@ -1,6 +1,8 @@
 #ifndef CARE_BUILD_HPP
 #define CARE_BUILD_HPP
 
+#include <config.hpp>
+
 #include "minhasher.hpp"
 #include "readstorage.hpp"
 #include "sequencefileio.hpp"

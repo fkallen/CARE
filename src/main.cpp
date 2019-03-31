@@ -1,4 +1,5 @@
 #include <care.hpp>
+#include <config.hpp>
 
 #include "../include/cxxopts/cxxopts.hpp"
 #include "../include/args.hpp"

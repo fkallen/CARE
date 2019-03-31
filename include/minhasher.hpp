@@ -7,6 +7,8 @@
 
 #include "ntHash/nthash.hpp"
 
+#include <config.hpp>
+
 #include <cstdint>
 #include <memory>
 #include <map>
@@ -661,26 +663,23 @@ namespace care{
 		};
     }
 
-template<class Key_t, class ReadId_t>
 struct Minhasher {
-	static_assert(std::is_integral<Key_t>::value, "Minhasher Key_t must be integral");
-	static_assert(std::is_integral<ReadId_t>::value, "Minhasher ReadId_t must be integral");
 
-    using Index_t = ReadId_t; //read id type
+    using Index_t = read_number; //read id type
     using Value_t = Index_t; //Value type for hashmap
     using Result_t = Index_t; // Return value for minhash query
-    using Map_t = minhasherdetail::KeyValueMapFixedSize<Key_t, Value_t, Index_t>; //internal map type
+    using Map_t = minhasherdetail::KeyValueMapFixedSize<kmer_type, Value_t, Index_t>; //internal map type
 
-	static constexpr int bits_key = sizeof(Key_t) * 8;
+    static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
     static constexpr int maximum_number_of_maps = 16;
-    static constexpr int maximum_kmer_length = minhasherdetail::max_k<Key_t>::value;
+    static constexpr int maximum_kmer_length = minhasherdetail::max_k<kmer_type>::value;
 
 	// the actual maps
 	std::vector<std::unique_ptr<Map_t>> minhashTables;
 	MinhashOptions minparams;
-	ReadId_t nReads;
+    read_number nReads;
     bool canUseGpu = false;
     std::vector<int> deviceIds;
     bool allowUVM = false;
@@ -754,7 +753,7 @@ struct Minhasher {
         outstream.write(reinterpret_cast<const char*>(&maximum_kmer_length_tosave), sizeof(int));
 
         outstream.write(reinterpret_cast<const char*>(&minparams), sizeof(MinhashOptions));
-        outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(ReadId_t));
+        outstream.write(reinterpret_cast<const char*>(&nReads), sizeof(read_number));
         outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
         for(const auto& tableptr : minhashTables)
             tableptr->writeToStream(outstream);
@@ -784,11 +783,11 @@ struct Minhasher {
         assert(maximum_kmer_length == maximum_kmer_length_loaded);
 
         MinhashOptions minparams_loaded;
-        ReadId_t nReads_loaded;
+        read_number nReads_loaded;
         bool canUseGpu_loaded;
 
         instream.read(reinterpret_cast<char*>(&minparams_loaded), sizeof(MinhashOptions));
-        instream.read(reinterpret_cast<char*>(&nReads_loaded), sizeof(ReadId_t));
+        instream.read(reinterpret_cast<char*>(&nReads_loaded), sizeof(read_number));
         instream.read(reinterpret_cast<char*>(&canUseGpu_loaded), sizeof(bool));
 
         assert(minparams == minparams_loaded);
@@ -830,7 +829,7 @@ struct Minhasher {
 		minhashTables.shrink_to_fit();
 	}
 
-	void insertSequence(const std::string& sequence, ReadId_t readnum){
+	void insertSequence(const std::string& sequence, read_number readnum){
 		if(readnum >= nReads)
 			throw std::runtime_error("Minhasher::insertSequence: read number too large. " + std::to_string(readnum) + " > " + std::to_string(nReads));
 
@@ -847,7 +846,7 @@ struct Minhasher {
 
 		// insert
 		for (int map = 0; map < minparams.maps; ++map) {
-			Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 			Value_t value(readnum);
 
 			if (!minhashTables[map]->add(key, value, readnum)) {
@@ -899,7 +898,7 @@ struct Minhasher {
         std::vector<Value_t> tmp;
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = minhashTables[map]->get_ranged(key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
@@ -953,7 +952,7 @@ struct Minhasher {
         std::vector<Value_t> tmp;
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && std::uint64_t(std::distance(begin, curEnd)) < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = minhashTables[map]->get_ranged(key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
@@ -1009,7 +1008,7 @@ struct Minhasher {
         std::vector<const Value_t*> iters;
         iters.reserve(minparams.maps*2);
         for(int map = 0; map < minparams.maps; ++map){
-            Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = minhashTables[map]->get_ranged(key);
 
@@ -1061,7 +1060,7 @@ struct Minhasher {
         std::vector<Value_t> tmp;
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = minhashTables[map]->get_ranged(key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
@@ -1128,7 +1127,7 @@ struct Minhasher {
         std::vector<Value_t> tmp;
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 
             auto entries_range = minhashTables[map]->get_ranged(key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
@@ -1199,7 +1198,7 @@ struct Minhasher {
         std::size_t result = 0;
 
         for(int map = 0; map < minparams.maps; ++map) {
-            Key_t key = hashValues[map] & key_mask;
+            kmer_type key = hashValues[map] & key_mask;
 
 			//TIMERSTARTCPU(get_ranged);
             const auto entries_range = minhashTables[map]->get_ranged(key);
@@ -1448,593 +1447,42 @@ private:
 
 
 
-template<class Key_t, class ReadId_t>
-struct MinhasherSTD {
-	static_assert(std::is_integral<Key_t>::value, "Minhasher Key_t must be integral");
-	static_assert(std::is_integral<ReadId_t>::value, "Minhasher ReadId_t must be integral");
 
-    using Index_t = ReadId_t; //read id type
-    using Value_t = Index_t; //Value type for hashmap
-    using Result_t = Index_t; // Return value for minhash query
-    using Map_t = std::unordered_map<Key_t, std::vector<ReadId_t>>; //internal map type
 
-	static constexpr int bits_key = sizeof(Key_t) * 8;
-	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
-    static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
-    static constexpr int maximum_number_of_maps = 16;
-    static constexpr int maximum_kmer_length = minhasherdetail::max_k<Key_t>::value;
 
-	// the actual maps
-	std::vector<Map_t> minhashTables;
-	MinhashOptions minparams;
-	ReadId_t nReads;
-    bool canUseGpu = false;
-    std::vector<int> deviceIds;
-    bool allowUVM = false;
 
-    MinhasherSTD() : MinhasherSTD(MinhashOptions{2,16}){}
 
-    MinhasherSTD(const MinhashOptions& parameters)
-		: MinhasherSTD(parameters, {})
-	{
-	}
 
-	MinhasherSTD(const MinhashOptions& parameters, const std::vector<int>& deviceIds_)
-		: minparams(parameters), nReads(0), deviceIds(deviceIds_)
-	{
-		if(maximum_number_of_maps < minparams.maps)
-			throw std::runtime_error("Minhasher: Maximum number of maps is "
-									+ std::to_string(maximum_number_of_maps) + "!");
 
-		if(maximum_kmer_length < minparams.k){
-			throw std::runtime_error("Minhasher is configured for maximum kmer length of "
-									+ std::to_string(maximum_kmer_length) + "!");
-		}
-	}
 
-    bool operator==(const MinhasherSTD& rhs) const{
-        if(minparams != rhs.minparams)
-            return false;
-        if(nReads != rhs.nReads)
-            return false;
-        if(minhashTables.size() != rhs.minhashTables.size())
-            return false;
-        for(std::size_t i = 0; i < minhashTables.size(); i++){
-            if(*minhashTables[i] != *rhs.minhashTables[i])
-                return false;
-        }
-        return true;
-    }
 
-    bool operator!=(const MinhasherSTD& rhs) const{
-        return !(*this == rhs);
-    }
 
-	struct Handle{
-		std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-	};
 
-    std::size_t numBytes() const{
-        return 0;
-    }
 
 
 
-    void saveToFile(const std::string& filename) const{
-        throw std::runtime_error("save to file not supported in MinhasherSTD");
-    }
 
-    void loadFromFile(const std::string& filename){
-        throw std::runtime_error("load from file not supported in MinhasherSTD");
-    }
 
-	void init(std::uint64_t nReads_){
-		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
-		if(nReads_-1 > max_read_num)
-			throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
 
-		nReads = nReads_;
 
-		minhashTables.resize(minparams.maps);
 
-	}
 
-	void clear(){
-		minhashTables.clear();
-		nReads = 0;
-	}
 
-	void destroy(){
-		clear();
-	}
 
-	void insertSequence(const std::string& sequence, ReadId_t readnum){
-		if(readnum >= nReads)
-			throw std::runtime_error("Minhasher::insertSequence: read number too large. " + std::to_string(readnum) + " > " + std::to_string(nReads));
-
-		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
-			return;
-
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-
-		//get hash values
-		minhashfunc(sequence, hashValues, isForwardStrand);
-
-		// insert
-		for (int map = 0; map < minparams.maps; ++map) {
-			Key_t key = hashValues[map] & key_mask;
-			Value_t value(readnum);
-
-            auto& vec = minhashTables[map][key];
-            vec.push_back(value);
-		}
-	}
-// ###########################
-
-    /*
-        Query candidate ids
-    */
-
-    /*
-        Convenience wrapper
-    */
-    std::vector<Result_t> getCandidates(const std::string& sequence,
-                                        int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        std::vector<Result_t> result;
-
-        if(num_hits == 1){
-            result = getCandidates_any_map(sequence, max_number_candidates);
-        }else if(num_hits == minparams.maps){
-            result = getCandidates_all_maps(sequence, max_number_candidates);
-        }else{
-            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
-        }
-
-        return result;
-    }
-
-    std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-        // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return {};
-
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
-        //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
-        //TIMERSTOPCPU(minhashfunc);
-
-
-        std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            const auto& it = minhashTables[map].find(key);
-            if(it == minhashTables[map].end())
-                continue;
-            const auto& vec = it->second;
-            auto entries_range = std::make_pair(vec.cbegin(), vec.cend());
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(allUniqueResults.size() + n_entries);
-            auto union_end = set_union_n_or_empty(entries_range.first,
-                                                entries_range.second,
-                                                allUniqueResults.begin(),
-                                                allUniqueResults.end(),
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == union_end){
-                return {};
-            }else{
-                tmp.resize(std::distance(tmp.begin(), union_end));
-                std::swap(tmp, allUniqueResults);
-            }
-        }
-
-        return allUniqueResults;
-    }
-
-    template<class Iter>
-    Iter getCandidates_any_map(Iter begin, Iter end, const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-
-        const std::size_t totalresultrangesize = std::distance(begin, end);
-
-        // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return begin;
-
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
-        //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
-        //TIMERSTOPCPU(minhashfunc);
-
-        //Iter curBegin = begin;
-        Iter curEnd = begin;
-
-        //std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && std::uint64_t(std::distance(begin, curEnd)) < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            const auto& vec = minhashTables[map][key];
-            auto entries_range = std::make_pair(vec.begin(), vec.end());
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                //allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(std::distance(begin, curEnd) + n_entries);
-            auto union_end = set_union_n_or_empty(entries_range.first,
-                                                entries_range.second,
-                                                begin,
-                                                curEnd,
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == union_end){
-                return begin;
-            }else{
-                tmp.resize(std::distance(tmp.begin(), union_end));
-                if(tmp.size() > totalresultrangesize)
-                    std::cout << tmp.size() << " > " << totalresultrangesize << std::endl;
-                assert(tmp.size() <= totalresultrangesize);
-                curEnd = std::swap_ranges(tmp.begin(), tmp.end(), begin);
-            }
-        }
-
-        return curEnd;
-    }
-
-    /*
-        This version of getCandidates returns only read ids which are found in at least num_hits maps
-    */
-    std::vector<Result_t> getCandidates_some_maps2(const std::string& sequence,
-                                        int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-        // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return {};
-
-        if(num_hits > minparams.maps || num_hits < 1)
-            return {};
-
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
-        //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
-        //TIMERSTOPCPU(minhashfunc);
-
-        std::size_t total_num_ids = 0;
-        std::vector<const Value_t*> iters;
-        iters.reserve(minparams.maps*2);
-        for(int map = 0; map < minparams.maps; ++map){
-            Key_t key = hashValues[map] & key_mask;
-
-            const auto& vec = minhashTables[map][key];
-            auto entries_range = std::make_pair(vec.begin(), vec.end());
-
-            iters.emplace_back(entries_range.first);
-            iters.emplace_back(entries_range.second);
-
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-            //std::cout << "map " << map << ", ids " << n_entries << std::endl;
-            total_num_ids += n_entries;
-        }
-
-        std::vector<Value_t> allCandidateIds(total_num_ids);
-
-        //the following two function can probably be fused
-
-        //merge ids from all maps into vector
-        auto allCandidateIdsNewEnd = k_way_merge_naive_sortonce(allCandidateIds.begin(), iters);
-
-        //remove all ids which occure less than num_hits times.
-        allCandidateIdsNewEnd = remove_by_count_unique_with_limit(allCandidateIds.begin(),
-                                                                        allCandidateIdsNewEnd,
-                                                                        num_hits,
-                                                                        max_number_candidates);
-
-        std::vector<Value_t> result(allCandidateIds.begin(), allCandidateIdsNewEnd);
-
-        return result;
-    }
-
-    std::vector<Result_t> getCandidates_some_maps(const std::string& sequence,
-                                        int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-        // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return {};
-
-        if(num_hits > minparams.maps || num_hits < 1)
-            return {};
-
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
-        //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
-        //TIMERSTOPCPU(minhashfunc);
-
-        std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            const auto& it = minhashTables[map].find(key);
-            if(it == minhashTables[map].end())
-                continue;
-            const auto& vec = it->second;
-            auto entries_range = std::make_pair(vec.cbegin(), vec.cend());
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(allUniqueResults.size() + n_entries);
-            auto merge_end = merge_with_count_theshold(entries_range.first,
-                                                entries_range.second,
-                                                allUniqueResults.begin(),
-                                                allUniqueResults.end(),
-                                                num_hits,
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == merge_end){
-                return {};
-            }else{
-                tmp.resize(std::distance(tmp.begin(), merge_end));
-                std::swap(tmp, allUniqueResults);
-            }
-        }
-
-        //std::copy(allUniqueResults.begin(), allUniqueResults.end(), std::ostream_iterator<Value_t>(std::cout, " "));
-	    //std::cout << std::endl;
-
-        auto resultEnd = remove_by_count_unique_with_limit(allUniqueResults.begin(),
-                                                            allUniqueResults.end(),
-                                                            num_hits,
-                                                            max_number_candidates);
-
-        allUniqueResults.erase(resultEnd, allUniqueResults.end());
-
-        //std::copy(allUniqueResults.begin(), allUniqueResults.end(), std::ostream_iterator<Value_t>(std::cout, " "));
-	    //std::cout << std::endl;
-
-        //char a;
-        //std::cin >> a;
-
-        return allUniqueResults;
-    }
-
-    /*
-        This version of getCandidates returns only read ids which are found in all maps
-    */
-    std::vector<Result_t> getCandidates_all_maps(const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-        // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return {};
-
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
-        //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
-        //TIMERSTOPCPU(minhashfunc);
-
-        std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-            const auto& it = minhashTables[map].find(key);
-            if(it == minhashTables[map].end())
-                continue;
-            const auto& vec = it->second;
-            auto entries_range = std::make_pair(vec.cbegin(), vec.cend());
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(allUniqueResults.size() + n_entries);
-            auto intersection_end = set_intersection_n_or_empty(entries_range.first,
-                                                entries_range.second,
-                                                allUniqueResults.begin(),
-                                                allUniqueResults.end(),
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == intersection_end){
-                return {};
-            }else{
-                tmp.resize(std::distance(tmp.begin(), intersection_end));
-                std::swap(tmp, allUniqueResults);
-            }
-        }
-
-        return allUniqueResults;
-    }
-
-// #############################
-
-/*
-    Query number of candidates
-*/
-
-    std::int64_t getNumberOfCandidates(const std::string& sequence,
-                                        int num_hits) const noexcept{
-
-        const std::uint64_t max_number_candidates = std::numeric_limits<std::uint64_t>::max();
-
-        std::vector<Result_t> result;
-
-        if(num_hits == 1){
-            result = getCandidates_any_map(sequence, max_number_candidates);
-        }else if(num_hits == minparams.maps){
-            result = getCandidates_all_maps(sequence, max_number_candidates);
-        }else{
-            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
-        }
-
-        assert(result.size() <= std::numeric_limits<std::int64_t>::max());
-
-        return std::int64_t(result.size());
-    }
-
-    std::int64_t getNumberOfCandidatesUpperBound(const std::string& sequence) const noexcept{
-		static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-		// we do not consider reads which are shorter than k
-		if(sequence.size() < unsigned(minparams.k))
-			return 0;
-
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-		//TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
-		//TIMERSTOPCPU(minhashfunc);
-
-        std::size_t result = 0;
-
-        for(int map = 0; map < minparams.maps; ++map) {
-            Key_t key = hashValues[map] & key_mask;
-
-			//TIMERSTARTCPU(get_ranged);
-            const auto& it = minhashTables[map].find(key);
-            if(it == minhashTables[map].end())
-                continue;
-            const auto& vec = it->second;
-            auto entries_range = std::make_pair(vec.cbegin(), vec.cend());
-            const std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-            result += n_entries;
-			//TIMERSTOPCPU(get_ranged);
-        }
-
-        assert(result >= std::size_t(minparams.maps));
-        result -= minparams.maps; //remove self from each map result
-
-		return std::int64_t(result);
-
-	}
-
-//###################################################
-
-	void resize(std::uint64_t nReads_){
-		if(nReads_ == 0) throw std::runtime_error("Minhasher::init cannnot be called with argument 0");
-		if(nReads_-1 > max_read_num)
-			throw std::runtime_error("Minhasher::init: Minhasher is configured for only" + std::to_string(max_read_num) + " reads, not " + std::to_string(nReads_) + "!!!");
-
-		nReads = nReads_;
-
-	}
-
-	void transform(){
-
-	}
-
-
-
-private:
-	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept{
-        std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
-
-		std::uint64_t fhVal = 0;
-        std::uint64_t rhVal = 0;
-		bool isForward = false;
-		// calc hash values of first canonical kmer
-		NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature, fhVal, rhVal, isForward);
-
-		for (int j = 0; j < minparams.maps; ++j) {
-			isForwardStrand[j] = isForward;
-		}
-
-		//calc hash values of remaining canonical kmers
-		for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
-			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, kmerHashValues, isForward);
-
-			for (int j = 0; j < minparams.maps; ++j) {
-				if (minhashSignature[j] > kmerHashValues[j]){
-					minhashSignature[j] = kmerHashValues[j];
-					isForwardStrand[j] = isForward;
-				}
-			}
-		}
-	}
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-template<class Key_t, class ReadId_t>
 struct MinhasherAllReads {
-	static_assert(std::is_integral<Key_t>::value, "Minhasher Key_t must be integral");
-	static_assert(std::is_integral<ReadId_t>::value, "Minhasher ReadId_t must be integral");
 
-    using Index_t = ReadId_t; //read id type
+    using Index_t = read_number; //read id type
     using Value_t = Index_t; //Value type for hashmap
     using Result_t = Index_t; // Return value for minhash query
-    using Map_t = std::unordered_map<Key_t, std::vector<ReadId_t>>; //internal map type
+    using Map_t = std::unordered_map<kmer_type, std::vector<read_number>>; //internal map type
 
-	static constexpr int bits_key = sizeof(Key_t) * 8;
+	static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
     static constexpr int maximum_number_of_maps = 16;
-    static constexpr int maximum_kmer_length = minhasherdetail::max_k<Key_t>::value;
+    static constexpr int maximum_kmer_length = minhasherdetail::max_k<kmer_type>::value;
 
-	ReadId_t nReads;
+	read_number nReads;
 	std::vector<Result_t> result;
 	MinhashOptions minparams;
 
@@ -2094,7 +1542,7 @@ struct MinhasherAllReads {
 		clear();
 	}
 
-	void insertSequence(const std::string& sequence, ReadId_t readnum){
+	void insertSequence(const std::string& sequence, read_number readnum){
 
 	}
 

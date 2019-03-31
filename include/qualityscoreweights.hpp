@@ -1,6 +1,8 @@
 #ifndef CARE_CPU_QUALITY_SCORE_WEIGHTS_HPP
 #define CARE_CPU_QUALITY_SCORE_WEIGHTS_HPP
 
+#include <config.hpp>
+
 #include <array>
 #include <cmath>
 

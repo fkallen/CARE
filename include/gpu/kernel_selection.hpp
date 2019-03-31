@@ -2,6 +2,9 @@
 #define CARE_GPU_KERNEL_SELECTION_HPP
 
 #include "kernels.hpp"
+#include <config.hpp>
+
+
 #include <cassert>
 
 namespace care {
@@ -10,19 +13,19 @@ namespace gpu {
 
     #ifdef __NVCC__
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct ShiftedHammingDistanceChooserExp;
 
-template<class ReadId_t>
-struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
+template<>
+struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo> {
 
 	static void callKernelAsync(int* d_alignment_scores,
 				int* d_alignment_overlaps,
 				int* d_alignment_shifts,
 				int* d_alignment_nOps,
 				bool* d_alignment_isValid,
-				const ReadId_t* d_subject_read_ids,
-				const ReadId_t* d_candidate_read_ids,
+				const read_number* d_subject_read_ids,
+				const read_number* d_candidate_read_ids,
 				const char* d_subject_sequences_data,
 				const char* d_candidate_sequences_data,
 				const int* d_subject_sequences_lengths,
@@ -42,22 +45,22 @@ struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 			return Sequence2BitHiLo::getNumBytes(sequencelength);
 		};
 
-		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
 			return result;
 		};
 
-		auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+		auto getCandidatePtr_dense = [=] __device__ (int candidateIndex){
 			const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
 			return result;
 		};
 
-		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectLength_dense = [=] __device__ (int subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
 			return length;
 		};
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t candidateIndex){
+		auto getCandidateLength_dense = [=] __device__ (int candidateIndex){
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
 		};
@@ -101,19 +104,19 @@ struct ShiftedHammingDistanceChooserExp<Sequence2BitHiLo, ReadId_t> {
 
 
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct ShiftedHammingDistanceTiledChooser;
 
-template<class ReadId_t>
-struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
+template<>
+struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo> {
 
 	static void callKernelAsync(int* d_alignment_scores,
 				int* d_alignment_overlaps,
 				int* d_alignment_shifts,
 				int* d_alignment_nOps,
 				bool* d_alignment_isValid,
-				const ReadId_t* d_subject_read_ids,
-				const ReadId_t* d_candidate_read_ids,
+				const read_number* d_subject_read_ids,
+				const read_number* d_candidate_read_ids,
 				const char* d_subject_sequences_data,
 				const char* d_candidate_sequences_data,
 				const int* d_subject_sequences_lengths,
@@ -136,22 +139,22 @@ struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
 			return Sequence2BitHiLo::getNumBytes(sequencelength);
 		};
 
-		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
 			return result;
 		};
 
-		auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+		auto getCandidatePtr_dense = [=] __device__ (int candidateIndex){
 			const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
 			return result;
 		};
 
-		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectLength_dense = [=] __device__ (int subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
 			return length;
 		};
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t candidateIndex){
+		auto getCandidateLength_dense = [=] __device__ (int candidateIndex){
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
 		};
@@ -197,7 +200,6 @@ struct ShiftedHammingDistanceTiledChooser<Sequence2BitHiLo, ReadId_t> {
 
 
 
-template<class ReadId_t>
 struct FindBestAlignmentChooserExp {
 
 	static void callKernelAsync(
@@ -211,8 +213,8 @@ struct FindBestAlignmentChooserExp {
 				float min_overlap_ratio,
 				int min_overlap,
 				float estimatedErrorrate,
-				const ReadId_t* d_subject_read_ids,
-				const ReadId_t* d_candidate_read_ids,
+				const read_number* d_subject_read_ids,
+				const read_number* d_candidate_read_ids,
 				const int* d_subject_sequences_lengths,
 				const int* d_candidate_sequences_lengths,
 				int n_subjects,
@@ -220,12 +222,12 @@ struct FindBestAlignmentChooserExp {
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
 
-		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectLength_dense = [=] __device__ (int subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
 			return length;
 		};
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t resultIndex){
+		auto getCandidateLength_dense = [=] __device__ (int resultIndex){
 			const int length = d_candidate_sequences_lengths[resultIndex];
 			return length;
 		};
@@ -278,15 +280,14 @@ struct FindBestAlignmentChooserExp {
 };
 
 
-template<class ReadId_t>
 struct MSAInitChooserExp {
 
 	static void callKernelAsync(
 				MSAColumnProperties*  d_msa_column_properties,                         //
 				const int* d_alignment_shifts, //
 				const BestAlignment_t* d_alignment_best_alignment_flags, //
-				const ReadId_t* d_subject_read_ids, //
-				const ReadId_t* d_candidate_read_ids, //
+				const read_number* d_subject_read_ids, //
+				const read_number* d_candidate_read_ids, //
 				const int* d_subject_sequences_lengths, //
 				const int* d_candidate_sequences_lengths, //
 				const int* d_indices, //
@@ -297,12 +298,12 @@ struct MSAInitChooserExp {
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){ //
 
-		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectLength_dense = [=] __device__ (int subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
 			return length;
 		};
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
+		auto getCandidateLength_dense = [=] __device__ (int subjectIndex, int localCandidateIndex){
 			const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
 			const int index = indices_for_this_subject[localCandidateIndex];
 			const int length = d_candidate_sequences_lengths[index];
@@ -333,7 +334,7 @@ struct MSAInitChooserExp {
 
 
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct MSAAddSequencesChooserExp {
 
 	static void callKernelAsync(
@@ -341,8 +342,8 @@ struct MSAAddSequencesChooserExp {
 				float* d_multiple_sequence_alignment_weights,
 				const int* d_alignment_shifts,
 				const BestAlignment_t* d_alignment_best_alignment_flags,
-				const ReadId_t* d_subject_read_ids,
-				const ReadId_t* d_candidate_read_ids,
+				const read_number* d_subject_read_ids,
+				const read_number* d_candidate_read_ids,
 				const char* d_subject_sequences_data,
 				const char* d_candidate_sequences_data,
 				const int* d_subject_sequences_lengths,
@@ -380,32 +381,32 @@ struct MSAAddSequencesChooserExp {
 			return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
 		};
 
-		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
 			return result;
 		};
 
-		auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+		auto getCandidatePtr_dense = [=] __device__ (int candidateIndex){
 			const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encoded_sequence_pitch;
 			return result;
 		};
 
-		auto getSubjectQualityPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectQualityPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
 			return result;
 		};
 
-		auto getCandidateQualityPtr_dense = [=] __device__ (ReadId_t localCandidateIndex){
+		auto getCandidateQualityPtr_dense = [=] __device__ (int localCandidateIndex){
 			const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
 			return result;
 		};
 
-		auto getSubjectLength_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectLength_dense = [=] __device__ (int subjectIndex){
 			const int length = d_subject_sequences_lengths[subjectIndex];
 			return length;
 		};
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t localCandidateIndex){
+		auto getCandidateLength_dense = [=] __device__ (int localCandidateIndex){
 			const int candidateIndex = d_indices[localCandidateIndex];
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
@@ -463,7 +464,7 @@ struct MSAAddSequencesChooserExp {
 
 
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct MSAAddSequencesChooserImplicit {
 
 	static void callKernelAsync(
@@ -474,8 +475,8 @@ struct MSAAddSequencesChooserImplicit {
                 int* d_origCoverages,
 				const int* d_alignment_shifts,
 				const BestAlignment_t* d_alignment_best_alignment_flags,
-				const ReadId_t* d_subject_read_ids,
-				const ReadId_t* d_candidate_read_ids,
+				const read_number* d_subject_read_ids,
+				const read_number* d_candidate_read_ids,
 				const char* d_subject_sequences_data,
 				const char* d_candidate_sequences_data,
 				const int* d_subject_sequences_lengths,
@@ -514,27 +515,27 @@ struct MSAAddSequencesChooserImplicit {
 			return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
 		};
 
-		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
 			return result;
 		};
 
-		auto getCandidatePtr_dense = [=] __device__ (ReadId_t candidateIndex){
+		auto getCandidatePtr_dense = [=] __device__ (int candidateIndex){
 			const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encoded_sequence_pitch;
 			return result;
 		};
 
-		auto getSubjectQualityPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectQualityPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
 			return result;
 		};
 
-		auto getCandidateQualityPtr_dense = [=] __device__ (ReadId_t localCandidateIndex){
+		auto getCandidateQualityPtr_dense = [=] __device__ (int localCandidateIndex){
 			const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
 			return result;
 		};
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t localCandidateIndex){
+		auto getCandidateLength_dense = [=] __device__ (int localCandidateIndex){
 			const int candidateIndex = d_indices[localCandidateIndex];
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
@@ -591,7 +592,7 @@ struct MSAAddSequencesChooserImplicit {
 
 
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct MSAFindConsensusChooserImplicit {
 
 	static void callKernelAsync(
@@ -602,7 +603,7 @@ struct MSAFindConsensusChooserImplicit {
                 int* d_coverage,
                 float* d_origWeights,
                 int* d_origCoverages,
-				const ReadId_t* d_subject_read_ids,
+				const read_number* d_subject_read_ids,
 				const char* d_subject_sequences_data,
 				const MSAColumnProperties*  d_msa_column_properties,
 				int n_subjects,
@@ -618,7 +619,7 @@ struct MSAFindConsensusChooserImplicit {
             return Sequence_t::get(data, length, index);
 		};
 
-		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
 			return result;
 		};
@@ -649,7 +650,7 @@ struct MSAFindConsensusChooserImplicit {
 
 
 
-template<class Sequence_t, class ReadId_t>
+template<class Sequence_t>
 struct MSACorrectSubjectChooserImplicit {
 
 	static void callKernelAsync(
@@ -671,7 +672,7 @@ struct MSACorrectSubjectChooserImplicit {
                 float min_coverage_threshold,
                 int k_region,
                 int maximum_sequence_length,
-                const ReadId_t* d_subject_read_ids,
+                const read_number* d_subject_read_ids,
 				const char* d_subject_sequences_data,
 				cudaStream_t stream,
 				KernelLaunchHandle& kernelLaunchHandle){
@@ -681,7 +682,7 @@ struct MSACorrectSubjectChooserImplicit {
             return Sequence_t::get(data, length, index);
 		};
 
-		auto getSubjectPtr_dense = [=] __device__ (ReadId_t subjectIndex){
+		auto getSubjectPtr_dense = [=] __device__ (int subjectIndex){
 			const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
 			return result;
 		};
@@ -719,7 +720,7 @@ struct MSACorrectSubjectChooserImplicit {
 
 
 
-template<class ReadId_t>
+
 struct MSACorrectCandidatesChooserExp {
 
 	static void callKernelAsync(
@@ -736,7 +737,7 @@ struct MSACorrectCandidatesChooserExp {
 				const int* d_num_high_quality_subject_indices,
 				const int* d_alignment_shifts,
 				const BestAlignment_t* d_alignment_best_alignment_flags,
-				const ReadId_t* d_candidate_read_ids,
+				const read_number* d_candidate_read_ids,
 				const int* d_candidate_sequences_lengths,
 				int* d_num_corrected_candidates,
 				char* d_corrected_candidates,
@@ -759,7 +760,7 @@ struct MSACorrectCandidatesChooserExp {
 		};
 
 
-		auto getCandidateLength_dense = [=] __device__ (ReadId_t subjectIndex, ReadId_t localCandidateIndex){
+		auto getCandidateLength_dense = [=] __device__ (int subjectIndex, int localCandidateIndex){
 			const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
 			const int index = my_indices[localCandidateIndex];
 			const int length = d_candidate_sequences_lengths[index];

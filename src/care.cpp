@@ -5,10 +5,10 @@
 #include "../include/correct.hpp"
 #include "../include/minhasher.hpp"
 #include "../include/options.hpp"
-#include "../include/readstorage.hpp"
-#include "../include/sequence.hpp"
 
-#include "../include/config.hpp"
+#include "../include/sequence.hpp"
+#include <readstorage.hpp>
+#include <config.hpp>
 
 #include <vector>
 #include <iostream>
@@ -145,19 +145,14 @@ void selectCpuCorrection(
 			std::size_t nLocksForProcessedFlags){
 
 
-    using Minhasher_t = Minhasher<kmer_type, read_number>;
-
-	using NoIndelSequence_t = Sequence2BitHiLo;
-	//using IndelSequence_t = Sequence2BitHiLo;
-    using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, read_number>;
-    //using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, read_number>;
+    using Minhasher_t = Minhasher;
 
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
 		constexpr bool indels = false;
 
-		auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
+        auto func = [&](Minhasher_t& minhasher, cpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
 				    cpu::correct_cpu<Minhasher_t,
-				                     NoIndelReadStorage_t,
+                    cpu::ContiguousReadStorage,
 				                     indels>(minhashOptions, alignmentOptions,
 							    goodAlignmentProperties, correctionOptions,
 							    runtimeOptions, fileOptions, props,
@@ -167,7 +162,7 @@ void selectCpuCorrection(
 			    };
 
 		buildAndCorrect_cpu<Minhasher_t,
-		                    NoIndelReadStorage_t,
+                            cpu::ContiguousReadStorage,
 		                    indels>
 		(
 					minhashOptions,
@@ -266,21 +261,17 @@ void selectGpuCorrection(
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
 
-    using Minhasher_t = Minhasher<kmer_type, read_number>;
+    using Minhasher_t = Minhasher;
 
-	using NoIndelSequence_t = Sequence2BitHiLo;
-	//using IndelSequence_t = Sequence2BitHiLo;
-    using NoIndelReadStorage_t = gpu::ContiguousReadStorage<NoIndelSequence_t, read_number>;
-    //using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, read_number>;
 
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
 		constexpr bool indels = false;
 
-		auto func = [&](Minhasher_t& minhasher, NoIndelReadStorage_t& readStorage, SequenceFileProperties props){
+        auto func = [&](Minhasher_t& minhasher, gpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
 				    //using Minhasher_t = decltype(minhasher);
 				    //using ReadStorage_t = decltype(readStorage);
 				    gpu::correct_gpu<Minhasher_t,
-				                     NoIndelReadStorage_t,
+                                     gpu::ContiguousReadStorage,
 				                     indels>(minhashOptions, alignmentOptions,
 							    goodAlignmentProperties, correctionOptions,
 							    runtimeOptions, fileOptions, props,
@@ -289,7 +280,7 @@ void selectGpuCorrection(
 							    nLocksForProcessedFlags);
 			    };
 
-		buildAndCorrect_gpu<Minhasher_t, NoIndelReadStorage_t, indels>
+        buildAndCorrect_gpu<Minhasher_t, gpu::ContiguousReadStorage, indels>
 		(
 					minhashOptions,
 					alignmentOptions,

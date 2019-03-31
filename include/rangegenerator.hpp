@@ -1,6 +1,8 @@
 #ifndef CARE_CPU_RANGE_GENERATOR_HPP
 #define CARE_CPU_RANGE_GENERATOR_HPP
 
+#include <config.hpp>
+
 #include <atomic>
 #include <mutex>
 #include <stdexcept>

@@ -1,6 +1,8 @@
 #ifndef CARE_CPU_BEST_ALIGNMENT_HPP
 #define CARE_CPU_BEST_ALIGNMENT_HPP
 
+#include <config.hpp>
+
 namespace care{
 namespace cpu{
 

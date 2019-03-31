@@ -3,6 +3,7 @@
 
 
 #include "sequence.hpp"
+#include <config.hpp>
 
 #include <vector>
 

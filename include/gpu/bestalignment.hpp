@@ -2,6 +2,7 @@
 #define CARE_GPU_BEST_ALIGNMENT_HPP
 
 #include "../hpc_helpers.cuh"
+#include <config.hpp>
 
 namespace care {
 namespace gpu {

@@ -1,6 +1,8 @@
 #ifndef CARE_SEQUENCEFILEIO_HPP
 #define CARE_SEQUENCEFILEIO_HPP
 
+#include <config.hpp>
+
 #include <cstdint>
 #include <fstream>
 #include <string>

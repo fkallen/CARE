@@ -7,6 +7,9 @@
 
 namespace care{
 
+
+
+
     //unsigned integral type large enough to enumerate all reads
     using read_number = std::uint32_t;
 
@@ -20,11 +23,8 @@ namespace care{
     static_assert(std::is_unsigned<kmer_type>::value, "kmer_type must be unsigned.");
 
 
-
-
-
     
-
+//##################################################
 
 }
 

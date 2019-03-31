@@ -1,6 +1,8 @@
 #ifndef CARE_HPP
 #define CARE_HPP
 
+#include <config.hpp>
+
 #include <options.hpp>
 
 namespace care{

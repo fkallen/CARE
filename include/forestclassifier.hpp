@@ -1,6 +1,8 @@
 #ifndef CARE_FOREST_CLASSIFIER
 #define CARE_FOREST_CLASSIFIER
 
+#include <config.hpp>
+
 #include <dlfcn.h> //linux load shared object
 
 #include <functional>

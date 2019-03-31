@@ -1,6 +1,8 @@
 #include "../include/args.hpp"
 #include "../include/hpc_helpers.cuh"
 #include "../include/util.hpp"
+#include <config.hpp>
+
 
 #include <iostream>
 #include <thread>

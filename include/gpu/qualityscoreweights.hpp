@@ -1,6 +1,8 @@
 #ifndef CARE_GPU_QUALITY_SCORE_WEIGHTS_HPP
 #define CARE_GPU_QUALITY_SCORE_WEIGHTS_HPP
 
+#include <config.hpp>
+
 #include <vector>
 
 namespace care {

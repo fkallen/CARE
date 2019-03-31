@@ -1,6 +1,9 @@
 #ifndef READ_STORAGE_HPP
 #define READ_STORAGE_HPP
 
+#include <config.hpp>
+#include <sequence.hpp>
+
 #include <algorithm>
 #include <limits>
 #include <cassert>
@@ -25,295 +28,10 @@ namespace cpu{
     /*
         Data structure to store sequences and their quality scores
     */
-    template<class sequence_t,
-    		 class readId_t>
-    struct ReadStorage{
 
-    	using Sequence_t = sequence_t;
-    	using ReadId_t = readId_t;
-
-        static constexpr bool has_reverse_complement = false;
-
-    	bool useQualityScores = false;
-
-        std::vector<std::string> qualityscores;
-        std::vector<Sequence_t> sequences;
-
-        ReadStorage(ReadId_t nSequences) : ReadStorage(nSequences, false){}
-
-        ReadStorage(ReadId_t nSequences, bool b) : ReadStorage(nSequences, b, -1){
-        }
-
-        ReadStorage(ReadId_t nSequences, bool b, int /*maximum_sequence_length*/) : useQualityScores(b){
-            sequences.resize(nSequences);
-            if(useQualityScores){
-                qualityscores.resize(nSequences);
-            }
-        }
-
-        ReadStorage(const ReadStorage&) = default;
-        ReadStorage(ReadStorage&&) = default;
-
-        ReadStorage& operator=(const ReadStorage& other){
-            useQualityScores = other.useQualityScores;
-            qualityscores = other.qualityscores;
-            sequences = other.sequences;
-            return *this;
-        }
-
-        ReadStorage& operator=(ReadStorage&& other){
-            useQualityScores = other.useQualityScores;
-            qualityscores = std::move(other.qualityscores);
-            sequences = std::move(other.sequences);
-            return *this;
-        }
-
-        bool operator==(const ReadStorage& other){
-            if(useQualityScores != other.useQualityScores)
-                return false;
-            if(sequences.size() != other.sequences.size())
-                return false;
-            if(qualityscores.size() != other.qualityscores.size())
-                return false;
-
-            for(std::size_t i = 0; i < sequences.size(); i++){
-                if(sequences[i] != other.sequences[i])
-                    return false;
-            }
-            for(std::size_t i = 0; i < qualityscores.size(); i++){
-                if(qualityscores[i] != other.qualityscores[i])
-                    return false;
-            }
-            return true;
-        }
-
-        bool operator!=(const ReadStorage& other){
-            return !(*this == other);
-        }
-
-        std::size_t size() const{
-            std::size_t result = 0;
-
-    		std::map<std::size_t, std::uint64_t> map;
-
-            for(const auto& s : qualityscores){
-                result += sizeof(std::string) + s.capacity();
-            }
-
-            for(const auto& s : sequences){
-    			std::size_t t = sizeof(Sequence_t) + s.getNumBytes();
-
-    			map[t]++;
-
-                result += t;
-            }
-
-            for(const auto& p : map){
-    			std::cout << p.first << " : " << p.second << std::endl;
-    		}
-
-            return result;
-        }
-
-        std::size_t sizereal() const{
-            std::size_t result = 0;
-
-            for(std::size_t i = 0; i < qualityscores.capacity(); i++){
-                result += sizeof(std::string) + qualityscores[i].capacity();
-            }
-
-            for(std::size_t i = 0; i < sequences.capacity(); i++){
-                result += sizeof(Sequence_t) + sequences[i].getNumBytes();
-            }
-
-            return result;
-        }
-
-    	void resize(ReadId_t nReads){
-    		assert(getNumberOfSequences() >= nReads);
-
-    		sequences.resize(nReads);
-    		if(useQualityScores)
-    			qualityscores.resize(nReads);
-    	}
-
-    	void destroy(){
-            std::vector<std::string> tmp1;
-            std::vector<Sequence_t> tmp2;
-
-    		qualityscores.swap(tmp1);
-    		sequences.swap(tmp2);
-    	}
-
-        void insertRead(ReadId_t readNumber, const std::string& sequence){
-    		if(useQualityScores){
-    			insertRead(readNumber, sequence, std::string(sequence.length(), 'A'));
-    		}else{
-    			Sequence_t seq(sequence);
-    			sequences[readNumber] = std::move(seq);
-                //sequences.at(readNumber) = std::move(seq);
-    		}
-    	}
-
-        void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
-    		Sequence_t seq(sequence);
-
-    		sequences[readNumber] = std::move(seq);
-            //sequences.at(readNumber) = std::move(seq);
-    		if(useQualityScores){
-    			//qualityscores[readNumber] = std::move(quality);
-                qualityscores.at(readNumber) = std::move(quality);
-    		}
-    	}
-
-    	const std::string* fetchQuality_ptr(ReadId_t readNumber) const{
-    		if(useQualityScores){
-    			return &(qualityscores[readNumber]);
-    		}else{
-    			//return nullptr;
-                throw std::runtime_error("cannot fetchQuality_ptr if useQualityScores == false");
-    		}
-    	}
-private:
-    	const Sequence_t* fetchSequence_ptr(ReadId_t readNumber) const{
-    		return &sequences[readNumber];
-    	}
-public:
-
-       const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
-    		auto ptr = fetchSequence_ptr(readNumber);
-    		return (const char*)ptr->begin();
-       }
-
-       int fetchSequenceLength(ReadId_t readNumber) const{
-    		auto ptr = fetchSequence_ptr(readNumber);
-    		return ptr->length();
-       }
-
-    	std::uint64_t getNumberOfSequences() const{
-    		return sequences.size();
-    	}
-
-        void saveToFile(const std::string& filename) const{
-            std::ofstream stream(filename, std::ios::binary);
-
-            auto writesequence = [&](const Sequence_t& seq){
-                const int length = seq.length();
-                const int bytes = seq.getNumBytes();
-                stream.write(reinterpret_cast<const char*>(&length), sizeof(int));
-                stream.write(reinterpret_cast<const char*>(&bytes), sizeof(int));
-                stream.write(reinterpret_cast<const char*>(seq.begin()), bytes);
-            };
-
-            auto writequality = [&](const std::string& qual){
-                const std::size_t bytes = qual.length();
-                stream.write(reinterpret_cast<const char*>(&bytes), sizeof(int));
-                stream.write(reinterpret_cast<const char*>(qual.c_str()), bytes);
-            };
-
-            std::size_t numReads = sequences.size();
-            stream.write(reinterpret_cast<const char*>(&numReads), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-
-            for(std::size_t i = 0; i < numReads; i++){
-                writesequence(sequences[i]);
-                if(useQualityScores)
-                    writequality(qualityscores[i]);
-            }
-        }
-
-        void loadFromFile(const std::string& filename){
-            std::ifstream stream(filename);
-            if(!stream)
-                throw std::runtime_error("cannot load binary sequences from file " + filename);
-
-            auto readsequence = [&](){
-                int length;
-                int bytes;
-                stream.read(reinterpret_cast<char*>(&length), sizeof(int));
-                stream.read(reinterpret_cast<char*>(&bytes), sizeof(int));
-
-                auto data = std::make_unique<std::uint8_t[]>(bytes);
-                stream.read(reinterpret_cast<char*>(data.get()), bytes);
-
-                return Sequence_t{data.get(), length};
-            };
-
-            auto readquality = [&](){
-                static_assert(sizeof(char) == 1);
-
-                std::size_t bytes;
-                stream.read(reinterpret_cast<char*>(&bytes), sizeof(int));
-                auto data = std::make_unique<char[]>(bytes);
-
-                stream.read(reinterpret_cast<char*>(data.get()), bytes);
-
-                return std::string{data.get(), bytes};
-            };
-
-            std::size_t numReads;
-            stream.read(reinterpret_cast<char*>(&numReads), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&useQualityScores), sizeof(bool));
-
-            if(numReads > getNumberOfSequences()){
-                throw std::runtime_error("Readstorage was constructed for "
-                                        + std::to_string(getNumberOfSequences())
-                                        + " sequences, but binary file contains "
-                                        + std::to_string(numReads) + " sequences!");
-            }
-
-            sequences.clear();
-            sequences.reserve(numReads);
-            if(useQualityScores){
-                qualityscores.clear();
-                qualityscores.reserve(numReads);
-            }
-
-            for(std::size_t i = 0; i < numReads; i++){
-                sequences.emplace_back(readsequence());
-                if(useQualityScores)
-                    qualityscores.emplace_back(readquality());
-            }
-        }
-
-        SequenceStatistics getSequenceStatistics() const{
-            return getSequenceStatistics(1);
-        }
-
-        SequenceStatistics getSequenceStatistics(int numThreads) const{
-            int maxSequenceLength = 0;
-            int minSequenceLength = std::numeric_limits<int>::max();
-
-            const int oldnumthreads = omp_get_thread_num();
-
-            omp_set_num_threads(numThreads);
-
-            #pragma omp parallel for reduction(max:maxSequenceLength) reduction(min:minSequenceLength)
-            for(std::size_t readId = 0; readId < getNumberOfSequences(); readId++){
-                const int len = fetchSequenceLength(readId);
-                if(len > maxSequenceLength)
-                    maxSequenceLength = len;
-                if(len < minSequenceLength)
-                    minSequenceLength = len;
-            }
-
-            omp_set_num_threads(oldnumthreads);
-
-            SequenceStatistics stats;
-            stats.minSequenceLength = minSequenceLength;
-            stats.maxSequenceLength = maxSequenceLength;
-
-            return stats;
-        }
-
-    };
-
-    template<class sequence_t,
-    		 class readId_t>
     struct ContiguousReadStorage{
 
-    	using Sequence_t = sequence_t;
-    	using ReadId_t = readId_t;
+        using Sequence_t = care::Sequence2BitHiLo;
 
         static constexpr bool has_reverse_complement = false;
         static constexpr int serialization_id = 1;
@@ -326,17 +44,17 @@ public:
         int maximum_allowed_sequence_length = 0;
         int maximum_allowed_sequence_bytes = 0;
         bool useQualityScores = false;
-        ReadId_t num_sequences = 0;
+        read_number num_sequences = 0;
         std::size_t sequence_data_bytes = 0;
         std::size_t sequence_lengths_bytes = 0;
         std::size_t quality_data_bytes = 0;
 
-        ContiguousReadStorage(ReadId_t nSequences) : ContiguousReadStorage(nSequences, false){}
+        ContiguousReadStorage(read_number nSequences) : ContiguousReadStorage(nSequences, false){}
 
-        ContiguousReadStorage(ReadId_t nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0){
+        ContiguousReadStorage(read_number nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0){
         }
 
-        ContiguousReadStorage(ReadId_t nSequences, bool b, int maximum_sequence_length)
+        ContiguousReadStorage(read_number nSequences, bool b, int maximum_sequence_length)
             : maximum_allowed_sequence_length(maximum_sequence_length),
                 maximum_allowed_sequence_bytes(Sequence_t::getNumBytes(maximum_sequence_length)),
                 useQualityScores(b),
@@ -439,7 +157,7 @@ public:
             return result;
         }
 
-    	void resize(ReadId_t nReads){
+    	void resize(read_number nReads){
     		assert(getNumberOfSequences() >= nReads);
 
             num_sequences = nReads;
@@ -452,7 +170,7 @@ public:
     	}
 
 private:
-        void insertSequence(ReadId_t readNumber, const std::string& sequence){
+        void insertSequence(read_number readNumber, const std::string& sequence){
             Sequence_t seq(sequence);
             std::memcpy(&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)],
                         seq.begin(),
@@ -461,9 +179,9 @@ private:
             h_sequence_lengths[readNumber] = Length_t(sequence.length());
         }
 public:
-        void insertRead(ReadId_t readNumber, const std::string& sequence){
+        void insertRead(read_number readNumber, const std::string& sequence){
             assert(readNumber < getNumberOfSequences());
-            assert(sequence.length() <= maximum_allowed_sequence_length);
+            assert(int(sequence.length()) <= maximum_allowed_sequence_length);
 
     		if(useQualityScores){
     			insertRead(readNumber, sequence, std::string(sequence.length(), 'A'));
@@ -472,7 +190,7 @@ public:
     		}
     	}
 
-        void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
+        void insertRead(read_number readNumber, const std::string& sequence, const std::string& quality){
             assert(readNumber < getNumberOfSequences());
             assert(int(sequence.length()) <= maximum_allowed_sequence_length);
             assert(int(quality.length()) <= maximum_allowed_sequence_length);
@@ -487,7 +205,7 @@ public:
     		}
     	}
 
-        const char* fetchQuality_ptr(ReadId_t readNumber) const{
+        const char* fetchQuality_ptr(read_number readNumber) const{
             if(useQualityScores){
                 return &h_quality_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_length)];
             }else{
@@ -495,11 +213,11 @@ public:
             }
         }
 
-       const char* fetchSequenceData_ptr(ReadId_t readNumber) const{
+       const char* fetchSequenceData_ptr(read_number readNumber) const{
     		return &h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
        }
 
-       int fetchSequenceLength(ReadId_t readNumber) const{
+       int fetchSequenceLength(read_number readNumber) const{
     		return h_sequence_lengths[readNumber];
        }
 
@@ -517,7 +235,7 @@ public:
             stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_length), sizeof(int));
             stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_bytes), sizeof(int));
             stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-            stream.write(reinterpret_cast<const char*>(&num_sequences), sizeof(ReadId_t));
+            stream.write(reinterpret_cast<const char*>(&num_sequences), sizeof(read_number));
             stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&sequence_lengths_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
@@ -540,7 +258,7 @@ public:
             int loaded_maximum_allowed_sequence_length = 0;
             int loaded_maximum_allowed_sequence_bytes = 0;
             bool loaded_useQualityScores = false;
-            ReadId_t loaded_num_sequences = 0;
+            read_number loaded_num_sequences = 0;
             std::size_t loaded_sequence_data_bytes = 0;
             std::size_t loaded_sequence_lengths_bytes = 0;
             std::size_t loaded_quality_data_bytes = 0;
@@ -550,7 +268,7 @@ public:
             stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_length), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_bytes), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
-            stream.read(reinterpret_cast<char*>(&loaded_num_sequences), sizeof(ReadId_t));
+            stream.read(reinterpret_cast<char*>(&loaded_num_sequences), sizeof(read_number));
             stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));

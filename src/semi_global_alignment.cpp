@@ -1,4 +1,5 @@
 #include "../include/semi_global_alignment.hpp"
+#include <config.hpp>
 
 #include <cassert>
 

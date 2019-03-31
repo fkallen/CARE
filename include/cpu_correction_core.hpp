@@ -4,6 +4,8 @@
 #include "bestalignment.hpp"
 #include "cpu_alignment.hpp"
 
+#include <config.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cassert>

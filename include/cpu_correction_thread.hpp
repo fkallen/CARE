@@ -1,6 +1,8 @@
 #ifndef CARE_GPU_CPU_CORRECTION_THREAD_HPP
 #define CARE_GPU_CPU_CORRECTION_THREAD_HPP
 
+#include <config.hpp>
+
 #include "options.hpp"
 #include "tasktiming.hpp"
 #include "cpu_alignment.hpp"
@@ -45,11 +47,11 @@ namespace cpu{
     struct CPUCorrectionThread{
         static_assert(indels == false, "indels != false");
 
-        template<class Sequence_t, class ReadId_t>
+        template<class Sequence_t>
         struct CorrectionTask{
             CorrectionTask(){}
 
-            CorrectionTask(ReadId_t readId)
+            CorrectionTask(read_number readId)
                 :   active(true),
                     corrected(false),
                     readId(readId)
@@ -109,11 +111,11 @@ namespace cpu{
 
             bool active;
             bool corrected;
-            ReadId_t readId;
+            read_number readId;
 
-            std::vector<ReadId_t> candidate_read_ids;
-            ReadId_t* candidate_read_ids_begin;
-            ReadId_t* candidate_read_ids_end; // exclusive
+            std::vector<read_number> candidate_read_ids;
+            read_number* candidate_read_ids_begin;
+            read_number* candidate_read_ids_end; // exclusive
 
             std::string original_subject_string;
             std::string subject_string;
@@ -123,17 +125,16 @@ namespace cpu{
 
             std::string corrected_subject;
             std::vector<std::string> corrected_candidates;
-            std::vector<ReadId_t> corrected_candidates_read_ids;
+            std::vector<read_number> corrected_candidates_read_ids;
         };
 
         using Minhasher_t = minhasher_t;
     	using ReadStorage_t = readStorage_t;
     	using Sequence_t = typename ReadStorage_t::Sequence_t;
-    	using ReadId_t = typename ReadStorage_t::ReadId_t;
         using AlignmentResult_t = SHDResult;//typename alignment_result_type<indels>::type;
 
-        using CorrectionTask_t = CorrectionTask<Sequence_t, ReadId_t>;
-        using RangeGenerator_t = RangeGenerator<ReadId_t>;
+        using CorrectionTask_t = CorrectionTask<Sequence_t>;
+        using RangeGenerator_t = RangeGenerator<read_number>;
 
     	struct CorrectionThreadOptions{
     		int threadId;
@@ -224,20 +225,20 @@ namespace cpu{
     		std::ofstream outputstream(threadOpts.outputfile);
 
             std::ofstream featurestream(threadOpts.outputfile + "_features");
-    		auto write_read = [&](const ReadId_t readId, const auto& sequence){
+    		auto write_read = [&](const read_number readId, const auto& sequence){
                 //std::cout << readId << " " << sequence << std::endl;
     			auto& stream = outputstream;
 
     			stream << readId << ' ' << sequence << '\n';
     		};
 
-    		auto lock = [&](ReadId_t readId){
-    			ReadId_t index = readId % threadOpts.nLocksForProcessedFlags;
+    		auto lock = [&](read_number readId){
+    			read_number index = readId % threadOpts.nLocksForProcessedFlags;
     			threadOpts.locksForProcessedFlags[index].lock();
     		};
 
-    		auto unlock = [&](ReadId_t readId){
-    			ReadId_t index = readId % threadOpts.nLocksForProcessedFlags;
+    		auto unlock = [&](read_number readId){
+    			read_number index = readId % threadOpts.nLocksForProcessedFlags;
     			threadOpts.locksForProcessedFlags[index].unlock();
     		};
 
@@ -249,7 +250,7 @@ namespace cpu{
 
             cpu::QualityScoreConversion qualityConversion;
 
-            std::vector<ReadId_t> readIds;
+            std::vector<read_number> readIds;
 
             ForestClassifier forestClassifier;
             if(!correctionOptions.classicMode){
@@ -309,7 +310,7 @@ namespace cpu{
 
                 std::vector<AlignmentResult_t> bestAlignments;
                 std::vector<BestAlignment_t> bestAlignmentFlags;
-                std::vector<ReadId_t> bestCandidateReadIds;
+                std::vector<read_number> bestCandidateReadIds;
                 std::vector<int> bestCandidateLengths;
                 std::vector<char> bestCandidateData;
                 std::vector<char*> bestCandidatePtrs;
@@ -373,7 +374,7 @@ namespace cpu{
                     candidateLengths.reserve(myNumCandidates);
 
                     max_candidate_length = 0;
-                    for(const ReadId_t candidateId: task.candidate_read_ids){
+                    for(const read_number candidateId: task.candidate_read_ids){
                         const int candidateLength = threadOpts.readStorage->fetchSequenceLength(candidateId);
                         candidateLengths.emplace_back(candidateLength);
                         max_candidate_length = std::max(max_candidate_length, candidateLength);
@@ -395,7 +396,7 @@ namespace cpu{
                     //copy candidate data and reverse complements into buffer
 
                     for(int i = 0; i < myNumCandidates; i++){
-                        const ReadId_t candidateId = task.candidate_read_ids[i];
+                        const read_number candidateId = task.candidate_read_ids[i];
                         const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
                         const int candidateLength = candidateLengths[i];
                         const int bytes = Sequence_t::getNumBytes(candidateLength);
@@ -518,7 +519,7 @@ namespace cpu{
                         const BestAlignment_t flag = alignmentFlags[i];
                         const auto& fwdAlignment = forwardAlignments[i];
                         const auto& revcAlignment = revcAlignments[i];
-                        const ReadId_t candidateId = task.candidate_read_ids[i];
+                        const read_number candidateId = task.candidate_read_ids[i];
                         const int candidateLength = candidateLengths[i];
 
                         if(flag == BestAlignment_t::Forward){
@@ -890,7 +891,7 @@ namespace cpu{
                             if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
                                 std::vector<AlignmentResult_t> bestAlignments2(minimizationResult.remaining_candidates.size());
                                 std::vector<BestAlignment_t> bestAlignmentFlags2(minimizationResult.remaining_candidates.size());
-                                std::vector<ReadId_t> bestCandidateReadIds2(minimizationResult.remaining_candidates.size());
+                                std::vector<read_number> bestCandidateReadIds2(minimizationResult.remaining_candidates.size());
                                 std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements2(minimizationResult.remaining_candidates.size());
 
                                 std::vector<std::string> candidateStrings2(minimizationResult.remaining_candidates.size());
@@ -1140,7 +1141,7 @@ namespace cpu{
 #endif
 
                         for(const auto& correctedCandidate : correctedCandidates){
-                            const ReadId_t candidateId = bestCandidateReadIds[correctedCandidate.index];
+                            const read_number candidateId = bestCandidateReadIds[correctedCandidate.index];
                             bool savingIsOk = false;
                             if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
                                 lock(candidateId);

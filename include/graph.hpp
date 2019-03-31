@@ -1,6 +1,8 @@
 #ifndef GRAPH_HPP
 #define GRAPH_HPP
 
+#include <config.hpp>
+
 #include "qualityscoreweights.hpp"
 
 #include <cassert>

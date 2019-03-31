@@ -1,6 +1,8 @@
 #ifndef CARE_CORRECT_GPU_HPP
 #define CARE_CORRECT_GPU_HPP
 
+#include <config.hpp>
+
 #include "../options.hpp"
 #include "../rangegenerator.hpp"
 
@@ -46,10 +48,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 	using Minhasher_t = minhasher_t;
 	using ReadStorage_t = readStorage_t;
 	using Sequence_t = typename ReadStorage_t::Sequence_t;
-	using ReadId_t = typename ReadStorage_t::ReadId_t;
 
 	using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
-	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<ReadId_t> >;
+	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU<Minhasher_t, ReadStorage_t, care::cpu::RangeGenerator<read_number> >;
 
 	constexpr int maxCPUThreadsPerGPU = 64;
 
@@ -137,7 +138,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 	int nGpuThreads = std::min(nCorrectorThreads, runtimeOptions.threadsForGPUs);
 	int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
-	cpu::RangeGenerator<ReadId_t> readIdGenerator(sequenceFileProperties.nReads);
+	cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 
 	std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
 	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
@@ -146,7 +147,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 	for(int threadId = 0; threadId < nCpuThreads; threadId++) {
 
-		//cpubatchgenerators[threadId] = BatchGenerator<ReadId_t>(ncpuReads, 1, threadId, nCpuThreads);
+		//cpubatchgenerators[threadId] = BatchGenerator<read_number>(ncpuReads, 1, threadId, nCpuThreads);
 		typename CPUErrorCorrectionThread_t::CorrectionThreadOptions threadOpts;
 		threadOpts.threadId = threadId;
 
@@ -221,8 +222,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 				std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
 
 				while(showProgress) {
-				        ReadId_t progress = 0;
-				        /*ReadId_t correctorProgress = 0;
+				        read_number progress = 0;
+				        /*read_number correctorProgress = 0;
 
 				           for(int i = 0; i < nCpuThreads; i++){
 				            correctorProgress += cpucorrectorThreads[i].nProcessedReads;

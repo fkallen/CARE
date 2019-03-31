@@ -1,6 +1,8 @@
 #ifndef READ_HPP
 #define READ_HPP
 
+#include <config.hpp>
+
 
 #include "hpc_helpers.cuh"
 

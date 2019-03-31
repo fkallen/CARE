@@ -2,7 +2,9 @@
 #define CARE_GPU_CONTIG_READ_STORAGE_HPP
 
 #include "../hpc_helpers.cuh"
-#include "../readstorage.hpp"
+//#include "../readstorage.hpp"
+
+#include <config.hpp>
 
 #include <iostream>
 #include <limits>
@@ -40,13 +42,10 @@ void ContiguousReadStorage_quality_test_kernel(char* result, const char* d_quali
 	}
 }
 
-template<class sequence_t,
-         class readId_t>
 struct ContiguousReadStorage {
 
-	using Length_t = int;
-	using Sequence_t = sequence_t;
-	using ReadId_t = readId_t;
+    using Length_t = int;
+    using Sequence_t = care::Sequence2BitHiLo;
 	using SequenceStatistics = cpu::SequenceStatistics;
 
 	static constexpr bool has_reverse_complement = false;
@@ -102,7 +101,7 @@ struct ContiguousReadStorage {
 	int maximum_allowed_sequence_length = 0;
 	int maximum_allowed_sequence_bytes = 0;
 	bool useQualityScores = false;
-	ReadId_t num_sequences = 0;
+	read_number num_sequences = 0;
 	std::size_t sequence_data_bytes = 0;
 	std::size_t sequence_lengths_bytes = 0;
 	std::size_t quality_data_bytes = 0;
@@ -118,13 +117,13 @@ struct ContiguousReadStorage {
 
 	std::mutex mutex;
 
-	ContiguousReadStorage(ReadId_t nSequences) : ContiguousReadStorage(nSequences, false){
+	ContiguousReadStorage(read_number nSequences) : ContiguousReadStorage(nSequences, false){
 	}
 
-	ContiguousReadStorage(ReadId_t nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0, {}){
+	ContiguousReadStorage(read_number nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0, {}){
 	}
 
-	ContiguousReadStorage(ReadId_t nSequences, bool useQualityScores, int maximum_allowed_sequence_length, const std::vector<int>& deviceIds)
+	ContiguousReadStorage(read_number nSequences, bool useQualityScores, int maximum_allowed_sequence_length, const std::vector<int>& deviceIds)
 		: maximum_allowed_sequence_length(maximum_allowed_sequence_length),
 		maximum_allowed_sequence_bytes(Sequence_t::getNumBytes(maximum_allowed_sequence_length)),
 		useQualityScores(useQualityScores),
@@ -278,7 +277,7 @@ struct ContiguousReadStorage {
 		return result;
 	}
 
-	void resize(ReadId_t nReads){
+	void resize(read_number nReads){
 		assert(getNumberOfSequences() >= nReads);
 
 		num_sequences = nReads;
@@ -358,7 +357,7 @@ struct ContiguousReadStorage {
 	}
 
 private:
-	void insertSequence(ReadId_t readNumber, const std::string& sequence){
+	void insertSequence(read_number readNumber, const std::string& sequence){
 		Sequence_t seq(sequence);
 		std::memcpy(&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)],
 					seq.begin(),
@@ -367,7 +366,7 @@ private:
 		h_sequence_lengths[readNumber] = Length_t(sequence.length());
 	}
 public:
-	void insertRead(ReadId_t readNumber, const std::string& sequence){
+	void insertRead(read_number readNumber, const std::string& sequence){
 		assert(readNumber < getNumberOfSequences());
 		assert(sequence.length() <= maximum_allowed_sequence_length);
 
@@ -378,7 +377,7 @@ public:
 		}
 	}
 
-	void insertRead(ReadId_t readNumber, const std::string& sequence, const std::string& quality){
+	void insertRead(read_number readNumber, const std::string& sequence, const std::string& quality){
 		assert(readNumber < getNumberOfSequences());
 		assert(sequence.length() <= maximum_allowed_sequence_length);
 		assert(quality.length() <= maximum_allowed_sequence_length);
@@ -393,7 +392,7 @@ public:
 		}
 	}
 
-	const char* fetchQuality_ptr(ReadId_t readNumber) const {
+	const char* fetchQuality_ptr(read_number readNumber) const {
 		if(useQualityScores) {
 			return &h_quality_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_length)];
 		}else{
@@ -401,11 +400,11 @@ public:
 		}
 	}
 
-	const char* fetchSequenceData_ptr(ReadId_t readNumber) const {
+	const char* fetchSequenceData_ptr(read_number readNumber) const {
 		return &h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
 	}
 
-	int fetchSequenceLength(ReadId_t readNumber) const {
+	int fetchSequenceLength(read_number readNumber) const {
 		return h_sequence_lengths[readNumber];
 	}
 
@@ -481,10 +480,10 @@ public:
 
 						std::mt19937 gen;
 						gen.seed(std::random_device()());
-						std::uniform_int_distribution<ReadId_t> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
+						std::uniform_int_distribution<read_number> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
 
-						for(ReadId_t i = 0; i < getNumberOfSequences(); i++) {
-							ReadId_t readId = i;//dist(gen);
+						for(read_number i = 0; i < getNumberOfSequences(); i++) {
+							read_number readId = i;//dist(gen);
 							ContiguousReadStorage_sequence_test_kernel<<<1,32>>>(d_test, data.d_sequence_data, maximum_allowed_sequence_bytes, readId); CUERR;
 							cudaMemcpy(h_test, d_test, maximum_allowed_sequence_bytes, D2H); CUERR;
 							cudaDeviceSynchronize(); CUERR;
@@ -514,10 +513,10 @@ public:
 
 						std::mt19937 gen;
 						gen.seed(std::random_device()());
-						std::uniform_int_distribution<ReadId_t> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
+						std::uniform_int_distribution<read_number> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
 
-						for(ReadId_t i = 0; i < getNumberOfSequences(); i++) {
-							ReadId_t readId = i;//dist(gen);
+						for(read_number i = 0; i < getNumberOfSequences(); i++) {
+							read_number readId = i;//dist(gen);
 							ContiguousReadStorage_sequencelength_test_kernel<<<1,1>>>(d_test, data.d_sequence_lengths, readId); CUERR;
 							cudaMemcpy(h_test, d_test, sizeof(Length_t), D2H); CUERR;
 							cudaDeviceSynchronize(); CUERR;
@@ -550,10 +549,10 @@ public:
 
 					std::mt19937 gen;
 					gen.seed(std::random_device()());
-					std::uniform_int_distribution<ReadId_t> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
+					std::uniform_int_distribution<read_number> dist(0, getNumberOfSequences()-1); // distribution in range [1, 6]
 
-					for(ReadId_t i = 0; i < getNumberOfSequences(); i++) {
-						ReadId_t readId = i;//dist(gen);
+					for(read_number i = 0; i < getNumberOfSequences(); i++) {
+						read_number readId = i;//dist(gen);
 						ContiguousReadStorage_quality_test_kernel<<<1,128>>>(d_test, data.d_quality_data, maximum_allowed_sequence_length, readId); CUERR;
 						cudaMemcpy(h_test, d_test, maximum_allowed_sequence_length, D2H); CUERR;
 						cudaDeviceSynchronize(); CUERR;
@@ -689,7 +688,7 @@ public:
 		stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_length), sizeof(int));
 		stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_bytes), sizeof(int));
 		stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-		stream.write(reinterpret_cast<const char*>(&num_sequences), sizeof(ReadId_t));
+		stream.write(reinterpret_cast<const char*>(&num_sequences), sizeof(read_number));
 		stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
 		stream.write(reinterpret_cast<const char*>(&sequence_lengths_bytes), sizeof(std::size_t));
 		stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
@@ -713,7 +712,7 @@ public:
 		int loaded_maximum_allowed_sequence_length = 0;
 		int loaded_maximum_allowed_sequence_bytes = 0;
 		bool loaded_useQualityScores = false;
-		ReadId_t loaded_num_sequences = 0;
+		read_number loaded_num_sequences = 0;
 		std::size_t loaded_sequence_data_bytes = 0;
 		std::size_t loaded_sequence_lengths_bytes = 0;
 		std::size_t loaded_quality_data_bytes = 0;
@@ -725,7 +724,7 @@ public:
 		stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_length), sizeof(int));
 		stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_bytes), sizeof(int));
 		stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
-		stream.read(reinterpret_cast<char*>(&loaded_num_sequences), sizeof(ReadId_t));
+		stream.read(reinterpret_cast<char*>(&loaded_num_sequences), sizeof(read_number));
 		stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
 		stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
 		stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));

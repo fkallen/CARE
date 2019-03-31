@@ -1,6 +1,10 @@
 #ifndef CARE_CANDIDATE_DISTRIBUTION_HPP
 #define CARE_CANDIDATE_DISTRIBUTION_HPP
 
+#include <config.hpp>
+
+#include "config.hpp"
+
 #include <map>
 #include <algorithm>
 #include <vector>
@@ -116,17 +120,16 @@ namespace cpu{
 
         using ReadStorage_t = readStorage_t;
         using Sequence_t = typename ReadStorage_t::Sequence_t;
-        using ReadId_t = typename ReadStorage_t::ReadId_t;
 
         std::vector<std::future<std::map<std::int64_t, std::int64_t>>> candidateCounterFutures;
-        const ReadId_t sampleCount = candidatesToCheck;
+        const read_number sampleCount = candidatesToCheck;
         for(int i = 0; i < threads; i++){
             candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
                 std::map<std::int64_t, std::int64_t> candidateMap;
-                std::vector<std::pair<ReadId_t, const Sequence_t*>> numseqpairs;
+                std::vector<std::pair<read_number, const Sequence_t*>> numseqpairs;
                 typename minhasher_t::Handle handle;
 
-                for(ReadId_t readId = i; readId < sampleCount; readId += threads){
+                for(read_number readId = i; readId < sampleCount; readId += threads){
                     //std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
 					const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
 					const int sequencelength = readStorage.fetchSequenceLength(readId);

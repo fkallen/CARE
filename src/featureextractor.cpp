@@ -1,4 +1,5 @@
 #include "../include/featureextractor.hpp"
+#include <config.hpp>
 
 #include <iomanip>
 #include <limits>
