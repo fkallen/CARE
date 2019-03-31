@@ -8,6 +8,8 @@
 #include "../include/readstorage.hpp"
 #include "../include/sequence.hpp"
 
+#include "../include/config.hpp"
+
 #include <vector>
 #include <iostream>
 #include <mutex>
@@ -25,8 +27,7 @@ namespace filesys = std::experimental::filesystem;
 
 namespace care {
 
-using Key_t = std::uint32_t;         // asume minhashOptions.k <= 16
-using ReadId_t = std::uint32_t;         // asume nReads <= std::numeric_limits<std::uint32_t>::max()
+
 
 template<class minhasher_t,
          class readStorage_t>
@@ -144,12 +145,12 @@ void selectCpuCorrection(
 			std::size_t nLocksForProcessedFlags){
 
 
-	using Minhasher_t = Minhasher<Key_t, ReadId_t>;
+    using Minhasher_t = Minhasher<kmer_type, read_number>;
 
 	using NoIndelSequence_t = Sequence2BitHiLo;
 	//using IndelSequence_t = Sequence2BitHiLo;
-	using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
-	//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+    using NoIndelReadStorage_t = cpu::ContiguousReadStorage<NoIndelSequence_t, read_number>;
+    //using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, read_number>;
 
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
 		constexpr bool indels = false;
@@ -265,12 +266,12 @@ void selectGpuCorrection(
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
 
-	using Minhasher_t = Minhasher<Key_t, ReadId_t>;
+    using Minhasher_t = Minhasher<kmer_type, read_number>;
 
 	using NoIndelSequence_t = Sequence2BitHiLo;
 	//using IndelSequence_t = Sequence2BitHiLo;
-	using NoIndelReadStorage_t = gpu::ContiguousReadStorage<NoIndelSequence_t, ReadId_t>;
-	//using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, ReadId_t>;
+    using NoIndelReadStorage_t = gpu::ContiguousReadStorage<NoIndelSequence_t, read_number>;
+    //using IndelReadStorage_t = ReadStorageMinMemory<IndelSequence_t, read_number>;
 
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
 		constexpr bool indels = false;
