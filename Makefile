@@ -22,7 +22,9 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl
 
 
 SOURCES_CPU = $(wildcard src/*.cpp)
-SOURCES_GPU = src/gpu/kernels.cu src/gpu/qualityscoreweights.cu src/care.cpp src/minhasher_transform.cpp
+SOURCES_GPU = src/gpu/kernels.cu src/gpu/qualityscoreweights.cu \
+			 src/gpu/gpu_correction_thread.cu src/gpu/readstorage.cu \
+			 src/care.cpp src/minhasher_transform.cpp
 
 OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU))
 OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU))
@@ -97,6 +99,14 @@ buildgpu/qualityscoreweights.o : src/gpu/qualityscoreweights.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
+buildgpu/gpu_correction_thread.o : src/gpu/gpu_correction_thread.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+
+buildgpu/readstorage.o : src/gpu/readstorage.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+
 buildgpu/care.o : src/care.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
@@ -110,6 +120,14 @@ buildgpu/kernels.dbg.o : src/gpu/kernels.cu | makedir
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 buildgpu/qualityscoreweights.dbg.o : src/gpu/qualityscoreweights.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+
+buildgpu/gpu_correction_thread.dbg.o : src/gpu/gpu_correction_thread.cu | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+
+buildgpu/readstorage.dbg.o : src/gpu/readstorage.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
