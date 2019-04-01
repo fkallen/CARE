@@ -292,8 +292,25 @@ struct ErrorCorrectionThreadOnlyGPU {
 		bool noProgressBlocking = false;
 		bool noProgressLaunching = false;
 	};
+    
+    struct CorrectionThreadOptions {
+        int threadId;
+        int deviceId;
+        bool canUseGpu;
+        
+        std::string outputfile;
+        ReadIdGenerator_t* readIdGenerator;
+        const Minhasher_t* minhasher;
+        GPUReadStorage_t* gpuReadStorage;
+        std::mutex* coutLock;
+        std::vector<char>* readIsProcessedVector;
+        std::vector<char>* readIsCorrectedVector;
+        std::mutex* locksForProcessedFlags;
+        std::size_t nLocksForProcessedFlags;
+    };
 
 	struct TransitionFunctionData {
+        CorrectionThreadOptions threadOpts;
 		ReadIdGenerator_t* readIdGenerator;
 		std::vector<read_number>* readIdBuffer;
 		float min_overlap_ratio;
@@ -325,21 +342,7 @@ struct ErrorCorrectionThreadOnlyGPU {
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
 	};
 
-	struct CorrectionThreadOptions {
-		int threadId;
-		int deviceId;
-		bool canUseGpu;
-
-		std::string outputfile;
-		ReadIdGenerator_t* readIdGenerator;
-		const Minhasher_t* minhasher;
-		GPUReadStorage_t* gpuReadStorage;
-		std::mutex* coutLock;
-		std::vector<char>* readIsProcessedVector;
-		std::vector<char>* readIsCorrectedVector;
-		std::mutex* locksForProcessedFlags;
-		std::size_t nLocksForProcessedFlags;
-	};
+	
 
 	AlignmentOptions alignmentOptions;
 	GoodAlignmentProperties goodAlignmentProperties;

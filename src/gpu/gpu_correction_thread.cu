@@ -610,7 +610,7 @@ namespace gpu{
 							dataArrays.memTilesPrefixSum,
 							H2D,
 							streams[primary_stream_index]); CUERR;
-
+#if 0
                 const int nSubjects = batch.copiedTasks;
                 const int nCandidates = batch.copiedCandidates;
                 const read_number* subject_read_ids = dataArrays.d_subject_read_ids;
@@ -675,6 +675,30 @@ namespace gpu{
                         }
                     }
                 });
+#else
+
+                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths, 
+                                                                             dataArrays.d_subject_read_ids, 
+                                                                             dataArrays.n_subjects, 
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+
+                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_candidate_sequences_lengths, 
+                                                                             dataArrays.d_candidate_read_ids, 
+                                                                             dataArrays.n_queries, 
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+                
+                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data, 
+                                                                             dataArrays.encoded_sequence_pitch, 
+                                                                             dataArrays.d_subject_read_ids, 
+                                                                             dataArrays.n_subjects, 
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+                
+                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_candidate_sequences_data, 
+                                                                             dataArrays.encoded_sequence_pitch, 
+                                                                             dataArrays.d_candidate_read_ids, 
+                                                                             dataArrays.n_queries, 
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+#endif
 
 			}else{
 
@@ -2363,6 +2387,7 @@ namespace gpu{
 		TransitionFunctionData transFuncData;
 
 		//transFuncData.mybatchgen = &mybatchgen;
+        transFuncData.threadOpts = threadOpts;
 		transFuncData.readIdGenerator = threadOpts.readIdGenerator;
 		transFuncData.readIdBuffer = &readIdBuffer;
 		transFuncData.minhasher = threadOpts.minhasher;

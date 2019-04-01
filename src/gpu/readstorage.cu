@@ -1,5 +1,6 @@
 #include <readstorage.hpp>
 #include <gpu/readstorage.hpp>
+#include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 
@@ -378,6 +379,51 @@ namespace gpu {
     	int ContiguousReadStorage::getQualityPitch() const {
             return cpuReadStorage->maximum_allowed_sequence_length;
     	}
+    	
+    	void ContiguousReadStorage::copyGpuLengthsToGpuBufferAsync(Length_t* d_lengths, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
+            auto gpuData = getGPUData(deviceId);
+            
+            const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
+            
+            dim3 grid(SDIV(nReadIds, 128),1,1);
+            dim3 block(128,1,1);
+            
+            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){                
+                for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
+                    const read_number readId = d_readIds[index];
+                    d_lengths[index] = rs_sequence_lengths[readId];
+                }
+            });
+            
+        }
+        
+        void ContiguousReadStorage::copyGpuSequenceDataToGpuBufferAsync(char* d_sequence_data, size_t out_sequence_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
+            assert(size_t(cpuReadStorage->maximum_allowed_sequence_bytes) <= out_sequence_pitch);
+            
+            auto gpuData = getGPUData(deviceId);
+            
+            const char* const rs_sequence_data = gpuData.d_sequence_data;
+            const size_t rs_sequence_pitch = std::size_t(getSequencePitch());
+            
+            dim3 grid(SDIV(nReadIds, 128),1,1);
+            dim3 block(128,1,1);
+            
+            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){ 
+                const int intiters = out_sequence_pitch / sizeof(int);
+
+                for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
+                    const read_number readId = d_readIds[index];
+                    
+                    for(int k = 0; k < intiters; k++){
+                        ((int*)&d_sequence_data[index * out_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * rs_sequence_pitch])[k];
+                    }
+                    for(int k = intiters * sizeof(int); k < out_sequence_pitch; k++){
+                        d_sequence_data[index * out_sequence_pitch + k] = rs_sequence_data[size_t(readId) * rs_sequence_pitch + k];
+                    }
+                }
+            });
+            
+        }
 
 
 
