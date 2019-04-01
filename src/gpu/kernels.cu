@@ -3254,7 +3254,7 @@ namespace gpu{
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
 
-    	const int blocksize = 128;
+    	const int blocksize = msa_add_sequences_kernel_implicit_shared_blocksize;
         const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
     	//const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;

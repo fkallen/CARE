@@ -45,7 +45,6 @@
 
 
 #define shd_tilesize 32
-#define addsequences_implict_shared_blocksize 128
 
 namespace care {
 namespace gpu {
@@ -1567,7 +1566,7 @@ public:
             //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
 
             auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
-                return SDIV(indices_for_subject, addsequences_implict_shared_blocksize);
+                return SDIV(indices_for_subject, msa_add_sequences_kernel_implicit_shared_blocksize);
             };
             cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
                 d_blocksPerSubject(dataArrays.d_indices_per_subject,
