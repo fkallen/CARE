@@ -22,7 +22,7 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl
 
 
 SOURCES_CPU = $(wildcard src/*.cpp)
-SOURCES_GPU = src/gpu/kernels.cu src/gpu/qualityscoreweights.cu src/care.cpp
+SOURCES_GPU = src/gpu/kernels.cu src/gpu/qualityscoreweights.cu src/care.cpp src/minhasher_transform.cpp
 
 OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU))
 OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU))
@@ -30,8 +30,8 @@ OBJECTS_GPU_ = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES_GPU))
 OBJECTS_GPU = $(patsubst src/gpu/%.cu, buildgpu/%.o, $(OBJECTS_GPU_))
 OBJECTS_GPU_DEBUG = $(patsubst buildgpu/%.o, buildgpu/%.dbg.o, $(OBJECTS_GPU))
 
-OBJECTS_CPU_AND_GPU = $(filter-out buildcpu/care.o,$(OBJECTS_CPU))
-OBJECTS_CPU_AND_GPU_DEBUG = $(filter-out buildcpu/care.dbg.o,$(OBJECTS_CPU_DEBUG))
+OBJECTS_CPU_AND_GPU = $(filter-out buildcpu/care.o buildcpu/minhasher_transform.o,$(OBJECTS_CPU))
+OBJECTS_CPU_AND_GPU_DEBUG = $(filter-out buildcpu/care.dbg.o buildcpu/minhasher_transform.dbg.o,$(OBJECTS_CPU_DEBUG))
 
 
 SOURCES_FORESTS = $(wildcard src/forests/*.cpp)
@@ -101,6 +101,10 @@ buildgpu/care.o : src/care.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
+buildgpu/minhasher_transform.o : src/minhasher_transform.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
+
 buildgpu/kernels.dbg.o : src/gpu/kernels.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
@@ -110,6 +114,10 @@ buildgpu/qualityscoreweights.dbg.o : src/gpu/qualityscoreweights.cu | makedir
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
 buildgpu/care.dbg.o : src/care.cpp | makedir
+	@echo Compiling $< to $@
+	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
+
+buildgpu/minhasher_transform.dbg.o : src/minhasher_transform.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
@@ -125,7 +133,7 @@ minhashertest:
 	@echo Building minhashertest
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" tests/minhashertest/main.cpp src/sequencefileio.cpp $(LDFLAGSGPU) -o tests/minhashertest/main
 
-alignmenttest: 
+alignmenttest:
 	@echo Building alignmenttest
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" tests/alignmenttest/main.cpp src/gpu/kernels.cu  $(LDFLAGSGPU) -o tests/alignmenttest/main
 
