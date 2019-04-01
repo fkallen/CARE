@@ -393,8 +393,7 @@ namespace gpu {
                     const read_number readId = d_readIds[index];
                     d_lengths[index] = rs_sequence_lengths[readId];
                 }
-            });
-            
+            });            
         }
         
         void ContiguousReadStorage::copyGpuSequenceDataToGpuBufferAsync(char* d_sequence_data, size_t out_sequence_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
@@ -421,8 +420,32 @@ namespace gpu {
                         d_sequence_data[index * out_sequence_pitch + k] = rs_sequence_data[size_t(readId) * rs_sequence_pitch + k];
                     }
                 }
-            });
+            });            
+        }
+        
+        void ContiguousReadStorage::copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
+            assert(size_t(cpuReadStorage->maximum_allowed_sequence_length) <= out_quality_pitch);
             
+            auto gpuData = getGPUData(deviceId);
+            
+            const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
+            const char* const rs_quality_data = gpuData.d_quality_data;
+            const size_t rs_quality_pitch = std::size_t(getQualityPitch());
+            
+            dim3 grid(std::min(nReadIds, (1<<16)),1,1);
+            dim3 block(64,1,1);
+            
+            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){ 
+                
+                for(int index = blockIdx.x; index < nReadIds; index += gridDim.x){
+                    const read_number readId = d_readIds[index];
+                    const int length = rs_sequence_lengths[index];
+                    for(int k = threadIdx.x; k < length; k += blockDim.x){
+                        d_quality_data[index * out_quality_pitch + k]
+                                = rs_quality_data[size_t(readId) * rs_quality_pitch + k];
+                    }
+                }
+            });            
         }
 
 
