@@ -38,16 +38,18 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			const FileOptions& fileOptions,
 			const SequenceFileProperties& sequenceFileProperties,
             Minhasher& minhasher,
-            gpu::ContiguousReadStorage& readStorage,
+            cpu::ContiguousReadStorage& cpuReadStorage,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
 
     using Minhasher_t = Minhasher;
-    using ReadStorage_t = gpu::ContiguousReadStorage;
+    //using ReadStorage_t = gpu::ContiguousReadStorage;
     
-	using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
+    using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, cpu::ContiguousReadStorage, false>;
 	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU;
+    
+    
 
 	constexpr int maxCPUThreadsPerGPU = 64;
 
@@ -86,7 +88,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			TIMERSTARTCPU(candidateestimation);
 			std::map<std::int64_t, std::int64_t> candidateHistogram
 			        = cpu::getCandidateCountHistogram(minhasher,
-						readStorage,
+                        cpuReadStorage,
 						sequenceFileProperties.nReads / 10,
 						correctionOptions.hits_per_candidate,
 						runtimeOptions.threads);
@@ -151,7 +153,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		threadOpts.outputfile = tmpfiles[threadId];
 		threadOpts.readIdGenerator = &readIdGenerator;
 		threadOpts.minhasher = &minhasher;
-		threadOpts.readStorage = &readStorage;
+		threadOpts.readStorage = &cpuReadStorage;
 		threadOpts.coutLock = &writelock;
 		threadOpts.readIsProcessedVector = &readIsProcessedVector;
 		threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
@@ -169,10 +171,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		cpucorrectorThreads[threadId].run();
 	}
 
-	readStorage.initGPUData();
+	gpu::ContiguousReadStorage gpuReadStorage(&cpuReadStorage, deviceIds);
+    
+	gpuReadStorage.initGPUData();
 
-	std::cout << "Sequence Type: " << readStorage.getNameOfSequenceType() << std::endl;
-	std::cout << "Quality Type: " << readStorage.getNameOfQualityType() << std::endl;
+    std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
+    std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
 
 	assert(!(deviceIds.size() == 0 && nGpuThreads > 0));
 
@@ -185,7 +189,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		threadOpts.outputfile = tmpfiles[nCpuThreads + threadId];
 		threadOpts.readIdGenerator = &readIdGenerator;
 		threadOpts.minhasher = &minhasher;
-		threadOpts.gpuReadStorage = &readStorage;
+        threadOpts.gpuReadStorage = &gpuReadStorage;
 		threadOpts.coutLock = &writelock;
 		threadOpts.readIsProcessedVector = &readIsProcessedVector;
 		threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
@@ -312,7 +316,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
 	minhasher.destroy();
-	readStorage.destroy();
+    cpuReadStorage.destroy();
+    gpuReadStorage.destroy();
 
 	// generators.clear();
 	// ecthreads.clear();

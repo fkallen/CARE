@@ -26,8 +26,9 @@ namespace gpu {
 
 struct ContiguousReadStorage {
 
-    using Length_t = int;
-    using Sequence_t = care::Sequence2BitHiLo;
+    using Length_t = cpu::ContiguousReadStorage::Length_t;
+    using Sequence_t = cpu::ContiguousReadStorage::Sequence_t;
+    
 	using SequenceStatistics = cpu::SequenceStatistics;
 
 	static constexpr bool has_reverse_complement = false;
@@ -70,23 +71,18 @@ struct ContiguousReadStorage {
 			return !(*this == rhs);
 		}
 	};
+    
+    const cpu::ContiguousReadStorage* cpuReadStorage;
 
 
-	char* h_sequence_data = nullptr;
-	Length_t* h_sequence_lengths = nullptr;
-	char* h_quality_data = nullptr;
+
 	//managed gpu memory
 	char* d_sequence_data = nullptr;
 	Length_t* d_sequence_lengths = nullptr;
 	char* d_quality_data = nullptr;
 
-	int maximum_allowed_sequence_length = 0;
-	int maximum_allowed_sequence_bytes = 0;
-	bool useQualityScores = false;
-	read_number num_sequences = 0;
-	std::size_t sequence_data_bytes = 0;
-	std::size_t sequence_lengths_bytes = 0;
-	std::size_t quality_data_bytes = 0;
+
+
 
 	//ContiguousReadStorage::Type sequenceType = ContiguousReadStorage::Type::None;
 	//ContiguousReadStorage::Type qualityType = ContiguousReadStorage::Type::None;
@@ -99,11 +95,7 @@ struct ContiguousReadStorage {
 
 	std::mutex mutex;
 
-	ContiguousReadStorage(read_number nSequences);
-
-	ContiguousReadStorage(read_number nSequences, bool b);
-
-	ContiguousReadStorage(read_number nSequences, bool useQualityScores, int maximum_allowed_sequence_length, const std::vector<int>& deviceIds);
+    ContiguousReadStorage(const cpu::ContiguousReadStorage* readStorage, const std::vector<int>& deviceIds);
 
     ContiguousReadStorage(const ContiguousReadStorage& other) = delete;
     ContiguousReadStorage& operator=(const ContiguousReadStorage& other) = delete;
@@ -112,22 +104,13 @@ struct ContiguousReadStorage {
 
 	ContiguousReadStorage& operator=(ContiguousReadStorage&& other);
 
-	bool operator==(const ContiguousReadStorage& other);
+	bool operator==(const ContiguousReadStorage& other) const;
 
-	bool operator!=(const ContiguousReadStorage& other);
+	bool operator!=(const ContiguousReadStorage& other) const;
 
 	std::size_t size() const ;
 
-	void resize(read_number nReads);
-
 	void destroy();
-
-private:
-	void insertSequence(read_number readNumber, const std::string& sequence);
-public:
-	void insertRead(read_number readNumber, const std::string& sequence);
-
-	void insertRead(read_number readNumber, const std::string& sequence, const std::string& quality);
 
 	const char* fetchQuality_ptr(read_number readNumber) const;
 
@@ -144,9 +127,6 @@ public:
 	DataProperties findDataProperties(std::size_t requiredSequenceMem,
 				std::size_t requiredQualityMem) const;
 
-	void saveToFile(const std::string& filename) const;
-
-	void loadFromFile(const std::string& filename);
 
 	std::string nameOf(ContiguousReadStorage::Type type) const;
 

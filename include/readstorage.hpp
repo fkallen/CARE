@@ -109,7 +109,7 @@ namespace cpu{
             return *this;
         }
 
-        bool operator==(const ContiguousReadStorage& other){
+        bool operator==(const ContiguousReadStorage& other) const{
             if(maximum_allowed_sequence_length != other.maximum_allowed_sequence_length)
                 return false;
             if(maximum_allowed_sequence_bytes != other.maximum_allowed_sequence_bytes)
@@ -137,7 +137,7 @@ namespace cpu{
             return true;
         }
 
-        bool operator!=(const ContiguousReadStorage& other){
+        bool operator!=(const ContiguousReadStorage& other) const{
             return !(*this == other);
         }
 

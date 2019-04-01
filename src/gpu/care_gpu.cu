@@ -202,18 +202,14 @@ void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
 			std::size_t nLocksForProcessedFlags,
 			StartCorrectionFunction startCorrection){
 
-
-	using Minhasher_t = Minhasher;
-	using ReadStorage_t = gpu::ContiguousReadStorage;
-	using Sequence_t = typename ReadStorage_t::Sequence_t;
+    using Sequence_t = cpu::ContiguousReadStorage::Sequence_t;
 
 	std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
 
-	Minhasher_t minhasher(minhashOptions, runtimeOptions.deviceIds);
-	ReadStorage_t readStorage(sequenceFileProperties.nReads,
+    Minhasher minhasher(minhashOptions, runtimeOptions.deviceIds);
+    cpu::ContiguousReadStorage readStorage(sequenceFileProperties.nReads,
 	                          correctionOptions.useQualityScores,
-	                          sequenceFileProperties.maxSequenceLength,
-	                          runtimeOptions.deviceIds);
+	                          sequenceFileProperties.maxSequenceLength);
 
 	std::cout << "loading file and building data structures..." << std::endl;
 
@@ -250,7 +246,7 @@ void selectGpuCorrection(
 
     assert(correctionOptions.correctionMode == CorrectionMode::Hamming);
 
-    auto func = [&](Minhasher& minhasher, gpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
+    auto func = [&](Minhasher& minhasher, cpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
 
 	    gpu::correct_gpu(minhashOptions, alignmentOptions,
 				    goodAlignmentProperties, correctionOptions,
