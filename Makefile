@@ -21,36 +21,38 @@ LDFLAGSGPU = -lpthread -lgomp -lstdc++fs -lnvToolsExt -ldl
 LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl
 
 
-SOURCES_CPU = $(wildcard src/*.cpp)
-SOURCES_GPU = src/gpu/kernels.cu src/gpu/qualityscoreweights.cu \
-			 src/gpu/gpu_correction_thread.cu src/gpu/readstorage.cu \
-			 src/care.cpp src/minhasher_transform.cpp
+# sources which are used by both cpu version and gpu version
+SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
+SOURCES_CPU_AND_GPU = $(filter-out src/care.cpp src/minhasher_transform.cpp,$(SOURCES_CPU_AND_GPU_))
 
-OBJECTS_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU))
-OBJECTS_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU))
-OBJECTS_GPU_ = $(patsubst src/%.cpp, buildgpu/%.o, $(SOURCES_GPU))
-OBJECTS_GPU = $(patsubst src/gpu/%.cu, buildgpu/%.o, $(OBJECTS_GPU_))
-OBJECTS_GPU_DEBUG = $(patsubst buildgpu/%.o, buildgpu/%.dbg.o, $(OBJECTS_GPU))
+# sources which are used by gpu version exclusively
+SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
-OBJECTS_CPU_AND_GPU = $(filter-out buildcpu/care.o buildcpu/minhasher_transform.o,$(OBJECTS_CPU))
-OBJECTS_CPU_AND_GPU_DEBUG = $(filter-out buildcpu/care.dbg.o buildcpu/minhasher_transform.dbg.o,$(OBJECTS_CPU_DEBUG))
+# sources which are used by cpu version exclusively
+SORCES_ONLY_CPU = src/care.cpp src/minhasher_transform.cpp
+
+
+OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))
+OBJECTS_CPU_AND_GPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CPU_AND_GPU))
+
+OBJECTS_ONLY_GPU = $(patsubst src/gpu/%.cu, buildgpu/%.o, $(SOURCES_ONLY_GPU))
+OBJECTS_ONLY_GPU_DEBUG = $(patsubst src/gpu/%.cu, buildgpu/%.dbg.o, $(SOURCES_ONLY_GPU))
+
+OBJECTS_ONLY_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SORCES_ONLY_CPU))
+OBJECTS_ONLY_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SORCES_ONLY_CPU))
 
 
 SOURCES_FORESTS = $(wildcard src/forests/*.cpp)
 OBJECTS_FORESTS = $(patsubst src/forests/%.cpp, forests/%.so, $(SOURCES_FORESTS))
 OBJECTS_FORESTS_DEBUG = $(patsubst src/forests/%.cpp, forests/%.dbg.so, $(SOURCES_FORESTS))
 
-#$(info $$SOURCES_CPU is [${SOURCES_CPU}])
-#$(info $$SOURCES_GPU is [${SOURCES_GPU}])
-#$(info $$OBJECTS_GPU is [${OBJECTS_GPU}])
+#$(info $SOURCES_CPU_AND_GPU is [${SOURCES_CPU_AND_GPU}])
+#$(info $SOURCES_ONLY_GPU is [${SOURCES_ONLY_GPU}])
+#$(info $SORCES_ONLY_CPU is [${SORCES_ONLY_CPU}])
 
 #$(info $$OBJECTS_FORESTS is [${OBJECTS_FORESTS}])
 #$(info $$OBJECTS_FORESTS_DEBUG is [${OBJECTS_FORESTS_DEBUG}])
 
-
-PATH_CORRECTOR=$(shell pwd)
-
-INC_CORRECTOR=$(PATH_CORRECTOR)/include
 
 GPU_VERSION = errorcorrector_gpu
 CPU_VERSION = errorcorrector_cpu
@@ -67,21 +69,21 @@ gpud:	$(GPU_VERSION_DEBUG)
 
 forests:	$(OBJECTS_FORESTS) $(OBJECTS_FORESTS_DEBUG)
 
-$(GPU_VERSION) : $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU)
+$(GPU_VERSION) : $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
 	@echo Linking $(GPU_VERSION)
-	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSGPU) -o $(GPU_VERSION)
+	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSGPU) -o $(GPU_VERSION)
 
-$(CPU_VERSION) : $(OBJECTS_CPU)
+$(CPU_VERSION) : $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU)
 	@echo Linking $(CPU_VERSION)
-	@$(HOSTLINKER) $(OBJECTS_CPU) $(LDFLAGSCPU) -o $(CPU_VERSION)
+	@$(HOSTLINKER) $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU) $(LDFLAGSCPU) -o $(CPU_VERSION)
 
-$(GPU_VERSION_DEBUG) : $(OBJECTS_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
+$(GPU_VERSION_DEBUG) : $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 	@echo Linking $(GPU_VERSION_DEBUG)
-	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG) $(LDFLAGSGPU) -o $(GPU_VERSION_DEBUG)
+	@$(CUDACC) $(CUDA_ARCH) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG) $(LDFLAGSGPU) -o $(GPU_VERSION_DEBUG)
 
-$(CPU_VERSION_DEBUG) : $(OBJECTS_CPU_DEBUG)
+$(CPU_VERSION_DEBUG) : $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 	@echo Linking $(CPU_VERSION_DEBUG)
-	@$(HOSTLINKER) $(OBJECTS_CPU_DEBUG) $(LDFLAGSCPU) -o $(CPU_VERSION_DEBUG)
+	@$(HOSTLINKER) $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG) $(LDFLAGSCPU) -o $(CPU_VERSION_DEBUG)
 
 buildcpu/%.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
@@ -91,51 +93,11 @@ buildcpu/%.dbg.o : src/%.cpp | makedir
 	@echo Compiling $< to $@
 	@$(CXX) $(CXXFLAGS) $(CFLAGS_DEBUG) -c $< -o $@
 
-buildgpu/kernels.o : src/gpu/kernels.cu | makedir
+buildgpu/%.o : src/gpu/%.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
 
-buildgpu/qualityscoreweights.o : src/gpu/qualityscoreweights.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
-
-buildgpu/gpu_correction_thread.o : src/gpu/gpu_correction_thread.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
-
-buildgpu/readstorage.o : src/gpu/readstorage.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
-
-buildgpu/care.o : src/care.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
-
-buildgpu/minhasher_transform.o : src/minhasher_transform.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS) -Xcompiler "$(CFLAGS)" -c $< -o $@
-
-buildgpu/kernels.dbg.o : src/gpu/kernels.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
-
-buildgpu/qualityscoreweights.dbg.o : src/gpu/qualityscoreweights.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
-
-buildgpu/gpu_correction_thread.dbg.o : src/gpu/gpu_correction_thread.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
-
-buildgpu/readstorage.dbg.o : src/gpu/readstorage.cu | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
-
-buildgpu/care.dbg.o : src/care.cpp | makedir
-	@echo Compiling $< to $@
-	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
-
-buildgpu/minhasher_transform.dbg.o : src/minhasher_transform.cpp | makedir
+buildgpu/%.dbg.o : src/gpu/%.cu | makedir
 	@echo Compiling $< to $@
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" -c $< -o $@
 
@@ -156,15 +118,17 @@ alignmenttest:
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" tests/alignmenttest/main.cpp src/gpu/kernels.cu  $(LDFLAGSGPU) -o tests/alignmenttest/main
 
 clean:
-	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(GPU_VERSION_DEBUG) $(CPU_VERSION_DEBUG) $(OBJECTS_GPU) $(OBJECTS_CPU) $(OBJECTS_GPU_DEBUG) $(OBJECTS_CPU_DEBUG)
+	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(GPU_VERSION_DEBUG) \
+			$(OBJECTS_CPU_AND_GPU) $(OBJECTS_ONLY_GPU) $(OBJECTS_ONLY_CPU) \
+			$(OBJECTS_CPU_AND_GPU_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG)
 cleancpu:
-	@rm -f $(CPU_VERSION) $(OBJECTS_CPU)
+	@rm -f $(CPU_VERSION) $(OBJECTS_ONLY_CPU) $(OBJECTS_CPU_AND_GPU)
 cleangpu:
-	@rm -f $(GPU_VERSION) $(OBJECTS_GPU)
+	@rm -f $(GPU_VERSION) $(OBJECTS_ONLY_GPU) $(OBJECTS_CPU_AND_GPU)
 cleancpud:
-	@rm -f $(CPU_VERSION_DEBUG) $(OBJECTS_CPU_DEBUG)
+	@rm -f $(CPU_VERSION_DEBUG) $(OBJECTS_ONLY_CPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 cleangpud:
-	@rm -f $(GPU_VERSION_DEBUG) $(OBJECTS_GPU_DEBUG)
+	@rm -f $(GPU_VERSION_DEBUG) $(OBJECTS_ONLY_GPU_DEBUG) $(OBJECTS_CPU_AND_GPU_DEBUG)
 makedir:
 	@mkdir -p buildcpu
 	@mkdir -p buildgpu

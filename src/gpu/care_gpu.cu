@@ -187,6 +187,95 @@ void selectCpuCorrection(
 }
 
 
+#ifdef __NVCC__
+
+template<class StartCorrectionFunction>
+void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
+			const AlignmentOptions& alignmentOptions,
+			const GoodAlignmentProperties& goodAlignmentProperties,
+			const CorrectionOptions& correctionOptions,
+			const RuntimeOptions& runtimeOptions,
+			const FileOptions& fileOptions,
+			SequenceFileProperties& sequenceFileProperties,
+			std::vector<char>& readIsCorrectedVector,
+			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+			std::size_t nLocksForProcessedFlags,
+			StartCorrectionFunction startCorrection){
+
+
+	using Minhasher_t = Minhasher;
+	using ReadStorage_t = gpu::ContiguousReadStorage;
+	using Sequence_t = typename ReadStorage_t::Sequence_t;
+
+	std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
+
+	Minhasher_t minhasher(minhashOptions, runtimeOptions.deviceIds);
+	ReadStorage_t readStorage(sequenceFileProperties.nReads,
+	                          correctionOptions.useQualityScores,
+	                          sequenceFileProperties.maxSequenceLength,
+	                          runtimeOptions.deviceIds);
+
+	std::cout << "loading file and building data structures..." << std::endl;
+
+	TIMERSTARTCPU(load_and_build);
+	sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+	saveReadStorageToFile(readStorage, fileOptions);
+	build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
+	saveMinhasherToFile(minhasher, fileOptions);
+	TIMERSTOPCPU(load_and_build);
+
+	printFileProperties(fileOptions.inputfile, sequenceFileProperties);
+
+//		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
+
+	readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
+
+	printDataStructureMemoryUsage(minhasher, readStorage);
+
+	startCorrection(minhasher, readStorage, sequenceFileProperties);
+
+}
+
+void selectGpuCorrection(
+			const MinhashOptions& minhashOptions,
+			const AlignmentOptions& alignmentOptions,
+			const GoodAlignmentProperties& goodAlignmentProperties,
+			const CorrectionOptions& correctionOptions,
+			const RuntimeOptions& runtimeOptions,
+			const FileOptions& fileOptions,
+			SequenceFileProperties& sequenceFileProperties,
+			std::vector<char>& readIsCorrectedVector,
+			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+			std::size_t nLocksForProcessedFlags){
+
+    assert(correctionOptions.correctionMode == CorrectionMode::Hamming);
+
+    auto func = [&](Minhasher& minhasher, gpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
+
+	    gpu::correct_gpu(minhashOptions, alignmentOptions,
+				    goodAlignmentProperties, correctionOptions,
+				    runtimeOptions, fileOptions, props,
+				    minhasher, readStorage,
+				    readIsCorrectedVector, locksForProcessedFlags,
+				    nLocksForProcessedFlags);
+    };
+
+    buildAndCorrect_gpu(
+				minhashOptions,
+				alignmentOptions,
+				goodAlignmentProperties,
+				correctionOptions,
+				runtimeOptions,
+				fileOptions,
+				sequenceFileProperties,
+				readIsCorrectedVector,
+				locksForProcessedFlags,
+				nLocksForProcessedFlags,
+				func);
+
+}
+#endif
+
 
 
 
@@ -296,6 +385,7 @@ void performCorrection(MinhashOptions minhashOptions,
 		}
 	#endif
 
+#ifndef __NVCC__
 		std::cout << "Running CARE CPU" << std::endl;
 
 		selectCpuCorrection(minhashOptions, alignmentOptions,
@@ -304,6 +394,61 @@ void performCorrection(MinhashOptions minhashOptions,
 					sequenceFileProperties,
 					readIsCorrectedVector, locksForProcessedFlags,
 					nLocksForProcessedFlags);
+#else
+		int nDevices;
+
+		cudaGetDeviceCount(&nDevices); CUERR;
+
+		std::vector<int> invalidIds;
+
+		for(int id : runtimeOptions.deviceIds) {
+			if(id >= nDevices) {
+				invalidIds.emplace_back(id);
+				std::cout << "Found invalid device Id: " << id << std::endl;
+			}
+		}
+
+		if(invalidIds.size() > 0) {
+			std::cout << "Available GPUs on your machine:" << std::endl;
+			for(int j = 0; j < nDevices; j++) {
+				cudaDeviceProp prop;
+				cudaGetDeviceProperties(&prop, j); CUERR;
+				std::cout << "Id " << j << " : " << prop.name << std::endl;
+			}
+
+			for(int invalidid : invalidIds) {
+				runtimeOptions.deviceIds.erase(std::find(runtimeOptions.deviceIds.begin(), runtimeOptions.deviceIds.end(), invalidid));
+			}
+		}
+
+		runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
+
+		if(runtimeOptions.canUseGpu && runtimeOptions.deviceIds.size() > 0 && runtimeOptions.threadsForGPUs > 0) {
+			std::cout << "Running CARE GPU" << std::endl;
+			std::cout << "Can use the following GPU device Ids: ";
+
+			for(int i : runtimeOptions.deviceIds)
+				std::cout << i << " ";
+
+			std::cout << std::endl;
+
+			selectGpuCorrection(minhashOptions, alignmentOptions,
+						goodAlignmentProperties, correctionOptions,
+						runtimeOptions, iterFileOptions,
+						sequenceFileProperties,
+						readIsCorrectedVector, locksForProcessedFlags,
+						nLocksForProcessedFlags);
+		}else{
+			std::cout << "Running CARE CPU" << std::endl;
+
+			selectCpuCorrection(minhashOptions, alignmentOptions,
+						goodAlignmentProperties, correctionOptions,
+						runtimeOptions, iterFileOptions,
+						sequenceFileProperties,
+						readIsCorrectedVector, locksForProcessedFlags,
+						nLocksForProcessedFlags);
+		}
+		#endif
 
 		iter++;
 

@@ -46,8 +46,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     using Minhasher_t = Minhasher;
     using ReadStorage_t = gpu::ContiguousReadStorage;
     
-	using Sequence_t = ReadStorage_t::Sequence_t;
-
 	using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, false>;
 	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU;
 
