@@ -103,7 +103,7 @@ namespace gpu{
 
 		const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -249,6 +249,7 @@ namespace gpu{
 				dataArrays.set_problem_dimensions(int(batch.tasks.size()),
 							batch.initialNumberOfCandidates,
 							transFuncData.maxSequenceLength,
+                            Sequence_t::getNumBytes(transFuncData.maxSequenceLength),
 							transFuncData.min_overlap,
 							transFuncData.min_overlap_ratio,
 							transFuncData.correctionOptions.useQualityScores); CUERR;
@@ -306,7 +307,7 @@ namespace gpu{
 		assert(batch.state == BatchState::CopyReads);
 		assert(batch.copiedTasks <= int(batch.tasks.size()));
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -611,26 +612,26 @@ namespace gpu{
 							H2D,
 							streams[primary_stream_index]); CUERR;
 
-                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths, 
-                                                                             dataArrays.d_subject_read_ids, 
-                                                                             dataArrays.n_subjects, 
+                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
+                                                                             dataArrays.d_subject_read_ids,
+                                                                             dataArrays.n_subjects,
                                                                              transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
 
-                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_candidate_sequences_lengths, 
-                                                                             dataArrays.d_candidate_read_ids, 
-                                                                             dataArrays.n_queries, 
+                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_candidate_sequences_lengths,
+                                                                             dataArrays.d_candidate_read_ids,
+                                                                             dataArrays.n_queries,
                                                                              transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
-                
-                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data, 
-                                                                             dataArrays.encoded_sequence_pitch, 
-                                                                             dataArrays.d_subject_read_ids, 
-                                                                             dataArrays.n_subjects, 
+
+                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data,
+                                                                             dataArrays.encoded_sequence_pitch,
+                                                                             dataArrays.d_subject_read_ids,
+                                                                             dataArrays.n_subjects,
                                                                              transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
-                
-                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_candidate_sequences_data, 
-                                                                             dataArrays.encoded_sequence_pitch, 
-                                                                             dataArrays.d_candidate_read_ids, 
-                                                                             dataArrays.n_queries, 
+
+                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_candidate_sequences_data,
+                                                                             dataArrays.encoded_sequence_pitch,
+                                                                             dataArrays.d_candidate_read_ids,
+                                                                             dataArrays.n_queries,
                                                                              transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
 
 			}else{
@@ -707,7 +708,7 @@ namespace gpu{
 
 		assert(batch.state == BatchState::StartAlignment);
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -940,7 +941,7 @@ namespace gpu{
             return expectedState;
         }
 
-        DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+        DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(*dataArrays.h_num_indices == 0){
@@ -956,7 +957,7 @@ namespace gpu{
 
 			//if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
-#if 1                
+#if 1
                 const char* const rs_quality_data = transFuncData.readStorageGpuData.d_quality_data;
                 const size_t readstorage_quality_pitch = std::size_t(gpuReadStorage->getQualityPitch());
                 const size_t qualitypitch = dataArrays.quality_pitch;
@@ -998,17 +999,17 @@ namespace gpu{
                         }
                     }
                 });
-#else                
-                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities, 
-                                                                   dataArrays.quality_pitch, 
-                                                                   dataArrays.d_subject_read_ids, 
-                                                                   dataArrays.n_subjects, 
+#else
+                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
+                                                                   dataArrays.quality_pitch,
+                                                                   dataArrays.d_subject_read_ids,
+                                                                   dataArrays.n_subjects,
                                                                    transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
-                
-                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities, 
-                                                                   dataArrays.quality_pitch, 
-                                                                   dataArrays.d_candidate_read_ids, 
-                                                                   *dataArrays.h_num_indices, 
+
+                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
+                                                                   dataArrays.quality_pitch,
+                                                                   dataArrays.d_candidate_read_ids,
+                                                                   *dataArrays.h_num_indices,
                                                                    transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
 #endif
                 assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
@@ -1123,7 +1124,7 @@ namespace gpu{
             return expectedState;
         }
 
-        DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+        DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(*dataArrays.h_num_indices == 0){
@@ -1381,7 +1382,7 @@ namespace gpu{
 		assert(batch.state == BatchState::StartClassicCorrection);
 		assert(transFuncData.correctionOptions.classicMode);
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -1537,7 +1538,7 @@ namespace gpu{
             return expectedState;
         }
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 
 		if(!canLaunchKernel) {
 			return BatchState::StartForestCorrection;
@@ -1611,7 +1612,7 @@ namespace gpu{
             return expectedState;
         }
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2107,7 +2108,7 @@ namespace gpu{
 
 		assert(batch.state == BatchState::WriteFeatures);
 
-		DataArrays<Sequence_t>& dataArrays = *batch.dataArrays;
+		DataArrays& dataArrays = *batch.dataArrays;
 		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2286,13 +2287,13 @@ namespace gpu{
 
 		//std::vector<read_number> readIds = threadOpts.batchGen->getNextReadIds();
 
-		std::vector<DataArrays<Sequence_t> > dataArrays;
+		std::vector<DataArrays > dataArrays;
 		//std::array<Batch, nParallelBatches> batches;
 		std::array<std::array<cudaStream_t, nStreamsPerBatch>, nParallelBatches> streams;
 		std::array<std::array<cudaEvent_t, nEventsPerBatch>, nParallelBatches> cudaevents;
 
 		std::queue<Batch> batchQueue;
-		std::queue<DataArrays<Sequence_t>*> freeDataArraysQueue;
+		std::queue<DataArrays*> freeDataArraysQueue;
 		std::queue<std::array<cudaStream_t, nStreamsPerBatch>*> freeStreamsQueue;
 		std::queue<std::array<cudaEvent_t, nEventsPerBatch>*> freeEventsQueue;
 
@@ -2311,13 +2312,6 @@ namespace gpu{
 			for(int j = 0; j < nEventsPerBatch; ++j) {
 				cudaEventCreateWithFlags(&cudaevents[i][j], cudaEventDisableTiming); CUERR;
 			}
-
-			/*dataArrays[i].set_problem_dimensions(readIds.size(),
-			                                            max_candidates * readIds.size(),
-			                                            fileProperties.maxSequenceLength,
-			                                            goodAlignmentProperties.min_overlap,
-			                                            goodAlignmentProperties.min_overlap_ratio,
-			                                            correctionOptions.useQualityScores);*/
 
 		}
 

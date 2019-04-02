@@ -10,6 +10,9 @@
 
 #ifdef __NVCC__
 
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+
 #include <thrust/fill.h>
 #include <thrust/device_ptr.h>
 #include <thrust/async/for_each.h>
@@ -21,7 +24,548 @@ namespace gpu {
 
 #ifdef __NVCC__
 
-template<class Sequence_t>
+enum class DataLocation {Host, Device};
+
+template<DataLocation location, class T>
+struct ThrustVectorSelection;
+
+template<class T>
+struct ThrustVectorSelection<DataLocation::Host, T>{
+    using Type = thrust::host_vector<T>;
+};
+
+template<class T>
+struct ThrustVectorSelection<DataLocation::Device, T>{
+    using Type = thrust::device_vector<T>;
+};
+
+
+
+
+template<DataLocation location>
+struct BatchSequenceQualityData{
+    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
+
+    ThrustVectorChar subject_qualities; // at least n_candidates * encoded_sequence_pitch elements
+    ThrustVectorChar candidate_qualities; // at least n_candidates * encoded_sequence_pitch elements
+
+    int n_subjects;
+    int n_candidates;
+    int quality_pitch;
+
+    BatchSequenceQualityData() : BatchSequenceQualityData(0,0,0){}
+
+    BatchSequenceQualityData(int n_sub, int n_cand, int qual_pitch){
+        resize(n_sub, n_cand, qual_pitch);
+    }
+
+    void resize(int n_sub, int n_cand, int qual_pitch){
+        n_subjects = n_sub;
+        n_candidates = n_cand;
+        quality_pitch = qual_pitch;
+
+        subject_qualities.resize(n_subjects * qual_pitch);
+        candidate_qualities.resize(n_candidates * qual_pitch);
+    }
+
+    char* getSubjectQualities() const{
+        return thrust::raw_pointer_cast(subject_qualities.data());
+    }
+
+    char* getCandidateQualities() const{
+        return thrust::raw_pointer_cast(candidate_qualities.data());
+    }
+
+    size_t getSubjectQualitiesSize() const{
+        return subject_qualities.size();
+    }
+
+    size_t getCandidateQualitiesSize() const{
+        return candidate_qualities.size();
+    }
+
+    int getQualityPitch() const{
+        return quality_pitch;
+    }
+};
+
+template<DataLocation location>
+struct BatchSequenceData{
+    using ThrustVectorReadNumber = typename ThrustVectorSelection<location, read_number>::Type;
+    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
+    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+
+    ThrustVectorReadNumber subject_read_ids;
+    ThrustVectorReadNumber candidate_read_ids;
+    ThrustVectorInt subject_sequences_lengths;
+    ThrustVectorInt candidate_sequences_lengths;
+    ThrustVectorChar subject_sequences_data;
+    ThrustVectorChar candidate_sequences_data;
+
+    ThrustVectorInt candidates_per_subject;
+    ThrustVectorInt candidates_per_subject_prefixsum;
+
+    int n_subjects;
+    int n_candidates;
+
+    int encoded_sequence_pitch;
+
+    BatchSequenceData() : BatchSequenceData(0,0,0){}
+    BatchSequenceData(int n_subjects, int n_candidates, int encoded_sequence_pitch){
+        resize(n_subjects, n_candidates, encoded_sequence_pitch);
+    }
+
+    void resize(int n_sub, int n_cand, int encoded_seq_pitch){
+        n_subjects = n_sub;
+        n_candidates = n_cand;
+        encoded_sequence_pitch = encoded_seq_pitch;
+
+        subject_read_ids.resize(n_subjects);
+        candidate_read_ids.resize(n_candidates);
+        subject_sequences_lengths.resize(n_subjects);
+        candidate_sequences_lengths.resize(n_candidates);
+        subject_sequences_data.resize(n_subjects * encoded_sequence_pitch);
+        candidate_sequences_data.resize(n_candidates * encoded_sequence_pitch);
+        candidates_per_subject.resize(n_subjects);
+        candidates_per_subject_prefixsum.resize(n_subjects+1);
+    }
+
+    read_number* getSubjectReadIds() const{
+        return thrust::raw_pointer_cast(subject_read_ids.data());
+    }
+
+    read_number* getCandidateReadIds() const{
+        return thrust::raw_pointer_cast(candidate_read_ids.data());
+    }
+
+    int* getSubjectSequencesLengths() const{
+        return thrust::raw_pointer_cast(subject_sequences_lengths.data());
+    }
+
+    int* getCandidateSequencesLengths() const{
+        return thrust::raw_pointer_cast(candidate_sequences_lengths.data());
+    }
+
+    char* getSubjectSequencesData() const{
+        return thrust::raw_pointer_cast(subject_sequences_data.data());
+    }
+
+    char* getCandidateSequencesData() const{
+        return thrust::raw_pointer_cast(candidate_sequences_data.data());
+    }
+
+    int* getCandidatesPerSubject() const{
+        return thrust::raw_pointer_cast(candidates_per_subject.data());
+    }
+
+    int* getCandidatesPerSubjectPrefixSum() const{
+        return thrust::raw_pointer_cast(candidates_per_subject_prefixsum.data());
+    }
+
+    size_t getSubjectReadIdsSize() const{
+        return subject_read_ids.size();
+    }
+
+    size_t getCandidateReadIdsSize() const{
+        return candidate_read_ids.size();
+    }
+
+    size_t getSubjectSequencesLengthsSize() const{
+        return subject_sequences_lengths.size();
+    }
+
+    size_t getCandidateSequencesLengthsSize() const{
+        return candidate_sequences_lengths.size();
+    }
+
+    size_t getSubjectSequencesDataSize() const{
+        return subject_sequences_data.size();
+    }
+
+    size_t getCandidateSequencesDataSize() const{
+        return candidate_sequences_data.size();
+    }
+
+    size_t getCandidatesPerSubjectSize() const{
+        return candidates_per_subject.size();
+    }
+
+    size_t getCandidatesPerSubjectPrefixSumSize() const{
+        return candidates_per_subject_prefixsum.size();
+    }
+};
+
+template<DataLocation location>
+struct BatchAlignmentResults{
+    using ThrustVectorBool = typename ThrustVectorSelection<location, bool>::Type;
+    using ThrustVectorBestAl = typename ThrustVectorSelection<location, BestAlignment_t>::Type;
+    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+
+    ThrustVectorInt alignment_scores;
+    ThrustVectorInt alignment_overlaps;
+    ThrustVectorInt alignment_shifts;
+    ThrustVectorInt alignment_nOps;
+    ThrustVectorBool alignment_isValid;
+    ThrustVectorBestAl alignment_best_alignment_flags;
+
+    int n_alignments;
+
+    BatchAlignmentResults() : BatchAlignmentResults(0){}
+    BatchAlignmentResults(int n_alignments){
+        resize(n_alignments);
+    }
+
+    void resize(int num_alignments){
+        n_alignments = num_alignments;
+
+        alignment_scores.resize(n_alignments);
+        alignment_overlaps.resize(n_alignments);
+        alignment_shifts.resize(n_alignments);
+        alignment_nOps.resize(n_alignments);
+        alignment_isValid.resize(n_alignments);
+        alignment_best_alignment_flags.resize(n_alignments);
+    }
+
+    int* getAlignmentScores() const{
+        return thrust::raw_pointer_cast(alignment_scores.data());
+    }
+
+    int* getAlignmentOverlaps() const{
+        return thrust::raw_pointer_cast(alignment_overlaps.data());
+    }
+
+    int* getAlignmentShifts() const{
+        return thrust::raw_pointer_cast(alignment_shifts.data());
+    }
+
+    int* getAlignmentNops() const{
+        return thrust::raw_pointer_cast(alignment_nOps.data());
+    }
+
+    bool* getValidityFlags() const{
+        return thrust::raw_pointer_cast(alignment_isValid.data());
+    }
+
+    BestAlignment_t* getBestAlignmentFlags() const{
+        return thrust::raw_pointer_cast(alignment_best_alignment_flags.data());
+    }
+
+    size_t getAlignmentScoresSize() const{
+        return alignment_scores.size();
+    }
+
+    size_t getAlignmentOverlapsSize() const{
+        return alignment_overlaps.size();
+    }
+
+    size_t getAlignmentShiftsSize() const{
+        return alignment_shifts.size();
+    }
+
+    size_t getAlignmentNopsSize() const{
+        return alignment_nOps.size();
+    }
+
+    size_t getValidityFlagsSize() const{
+        return alignment_isValid.size();
+    }
+
+    size_t getBestAlignmentFlagsSize() const{
+        return alignment_best_alignment_flags.size();
+    }
+};
+
+
+template<DataLocation location>
+struct BatchCorrectionResults{
+    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
+    using ThrustVectorBool = typename ThrustVectorSelection<location, bool>::Type;
+    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+
+    ThrustVectorChar corrected_subjects;
+    ThrustVectorChar corrected_candidates;
+    ThrustVectorInt num_corrected_candidates_per_subject;
+    ThrustVectorBool subject_is_corrected;
+    ThrustVectorInt indices_of_corrected_candidates;
+
+    int n_subjects;
+    int n_candidates;
+    int encoded_sequence_pitch;
+
+    BatchCorrectionResults() : BatchCorrectionResults(0,0,0){}
+    BatchCorrectionResults(int n_sub, int n_cand, int encoded_seq_pitch){
+        resize(n_sub, n_cand, encoded_seq_pitch);
+    }
+
+    void resize(int n_sub, int n_cand, int encoded_seq_pitch){
+        n_subjects = n_sub;
+        n_candidates = n_cand;
+        encoded_sequence_pitch = encoded_seq_pitch;
+
+        corrected_subjects.resize(n_subjects * encoded_sequence_pitch);
+        corrected_candidates.resize(n_candidates * encoded_sequence_pitch);
+        num_corrected_candidates_per_subject.resize(n_subjects);
+        subject_is_corrected.resize(n_subjects);
+        indices_of_corrected_candidates.resize(n_candidates);
+    }
+
+    char* getCorrectedSubjects() const{
+        return thrust::raw_pointer_cast(corrected_subjects.data());
+    }
+
+    char* getCorrectedCandidates() const{
+        return thrust::raw_pointer_cast(corrected_candidates.data());
+    }
+
+    int* getNumCorrectedCandidatesPerSubject() const{
+        return thrust::raw_pointer_cast(num_corrected_candidates_per_subject.data());
+    }
+
+    bool* getSubjectIsCorrectedFlags() const{
+        return thrust::raw_pointer_cast(subject_is_corrected.data());
+    }
+
+    int* getIndicesOfCorrectedCandidates() const{
+        return thrust::raw_pointer_cast(indices_of_corrected_candidates.data());
+    }
+
+    size_t getCorrectedSubjectsSize() const{
+        return corrected_subjects.size();
+    }
+
+    size_t getCorrectedCandidatesSize() const{
+        return corrected_candidates.size();
+    }
+
+    size_t getNumCorrectedCandidatesPerSubjectSize() const{
+        return num_corrected_candidates_per_subject.size();
+    }
+
+    size_t getSubjectIsCorrectedFlagsSize() const{
+        return subject_is_corrected.size();
+    }
+
+    size_t getIndicesOfCorrectedCandidatesSize() const{
+        return indices_of_corrected_candidates.size();
+    }
+};
+
+template<DataLocation location>
+struct BatchMSAData{
+    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
+    using ThrustVectorMSAColumnProperties = typename ThrustVectorSelection<location, MSAColumnProperties>::Type;
+    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+    using ThrustVectorFloat = typename ThrustVectorSelection<location, float>::Type;
+
+    static constexpr int padding_bytes = 4;
+
+    ThrustVectorChar multiple_sequence_alignments;
+    ThrustVectorFloat multiple_sequence_alignment_weights;
+    ThrustVectorChar consensus;
+    ThrustVectorFloat support;
+    ThrustVectorInt coverage;
+    ThrustVectorFloat origWeights;
+    ThrustVectorInt origCoverages;
+    ThrustVectorMSAColumnProperties msa_column_properties;
+    ThrustVectorInt counts;
+    ThrustVectorFloat weights;
+
+    int n_subjects;
+    int n_candidates;
+    int max_msa_columns;
+    int row_pitch_char;
+    int row_pitch_int;
+    int row_pitch_float;
+
+
+
+    BatchMSAData() : BatchMSAData(0,0,0){}
+    BatchMSAData(int n_sub, int n_cand, int max_msa_cols){
+        resize(n_sub, n_cand, max_msa_cols);
+    }
+
+    void resize(int n_sub, int n_cand, int max_msa_cols){
+        n_subjects = n_sub;
+        n_candidates = n_cand;
+        max_msa_columns = max_msa_cols;
+        row_pitch_char = SDIV(sizeof(char)*max_msa_columns, padding_bytes) * padding_bytes;
+        row_pitch_int = SDIV(sizeof(int)*max_msa_columns, padding_bytes) * padding_bytes;
+        row_pitch_float = SDIV(sizeof(float)*max_msa_columns, padding_bytes) * padding_bytes;
+
+        multiple_sequence_alignments.resize((n_subjects + n_candidates) * row_pitch_char);
+        multiple_sequence_alignment_weights.resize((n_subjects + n_candidates) * row_pitch_float);
+        consensus.resize(n_subjects * row_pitch_char);
+        support.resize(n_subjects * row_pitch_float);
+        coverage.resize(n_subjects * row_pitch_int);
+        origWeights.resize(n_subjects * row_pitch_float);
+        origCoverages.resize(n_subjects * row_pitch_int);
+        msa_column_properties.resize(n_subjects);
+        counts.resize(n_subjects * 4 * row_pitch_int);
+        weights.resize(n_subjects * 4 * row_pitch_float);
+    }
+
+    char* getMSASequenceMatrix() const{
+        return thrust::raw_pointer_cast(multiple_sequence_alignments.data());
+    }
+
+    float* getMSAWeightMatrix() const{
+        return thrust::raw_pointer_cast(multiple_sequence_alignment_weights.data());
+    }
+
+    char* getConsensus() const{
+        return thrust::raw_pointer_cast(consensus.data());
+    }
+
+    float* getSupport() const{
+        return thrust::raw_pointer_cast(support.data());
+    }
+
+    int* getCoverage() const{
+        return thrust::raw_pointer_cast(coverage.data());
+    }
+
+    float* getOrigWeights() const{
+        return thrust::raw_pointer_cast(origWeights.data());
+    }
+
+    int* getOrigCoverages() const{
+        return thrust::raw_pointer_cast(origCoverages.data());
+    }
+
+    MSAColumnProperties* getMSAColumnProperties() const{
+        return thrust::raw_pointer_cast(msa_column_properties.data());
+    }
+
+    int* getCounts() const{
+        return thrust::raw_pointer_cast(counts.data());
+    }
+
+    float* getWeights() const{
+        return thrust::raw_pointer_cast(weights.data());
+    }
+
+    size_t getMSASequenceMatrixSize() const{
+        return multiple_sequence_alignments.size();
+    }
+
+    size_t getMSAWeightMatrixSize() const{
+        return multiple_sequence_alignment_weights.size();
+    }
+
+    size_t getConsensusSize() const{
+        return consensus.size();
+    }
+
+    size_t getSupportSize() const{
+        return support.size();
+    }
+
+    size_t getCoverageSize() const{
+        return coverage.size();
+    }
+
+    size_t getOrigWeightsSize() const{
+        return origWeights.size();
+    }
+
+    size_t getOrigCoveragesSize() const{
+        return origCoverages.size();
+    }
+
+    size_t getMSAColumnPropertiesSize() const{
+        return msa_column_properties.size();
+    }
+
+    size_t getCountsSize() const{
+        return counts.size();
+    }
+
+    size_t getWeightsSize() const{
+        return weights.size();
+    }
+
+    int getRowPitchChar() const{
+        return row_pitch_char;
+    }
+
+    int getRowPitchInt() const{
+        return row_pitch_int;
+    }
+
+    int getRowPitchFloat() const{
+        return row_pitch_float;
+    }
+};
+
+template<DataLocation location>
+struct BatchTmpData{
+    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
+
+    ThrustVectorChar data;
+
+    BatchTmpData() : BatchTmpData(0){}
+    BatchTmpData(size_t bytes){
+        resize(bytes);
+    }
+
+    void resize(size_t bytes){
+        data.resize(bytes);
+    }
+
+    template<class T>
+    T* get() const{
+        return static_cast<T*>(thrust::raw_pointer_cast(data.data()));
+    }
+
+    void getSize() const{
+        return data.size();
+    }
+
+
+};
+
+template<DataLocation location>
+struct BatchData{
+    BatchSequenceData<location> sequenceData;
+    BatchSequenceQualityData<location> qualityData;
+    BatchAlignmentResults<location> alignmentResults;
+    BatchMSAData<location> msaData;
+    BatchCorrectionResults<location> correctionResults;
+
+    BatchTmpData<location> cubTemp;
+
+    std::array<BatchTmpData<location>, 4> tmpStorage;
+
+    int n_subjects;
+    int n_candidates;
+    int maximum_sequence_length;
+    int maximum_sequence_bytes;
+
+
+    BatchData() : BatchData(0,0,0,0,0,0,0){}
+
+    BatchData(int n_sub, int n_cand, int encoded_seq_pitch, int qual_pitch, int max_seq_length, int max_seq_bytes, int max_msa_cols){
+        resize(n_sub, n_cand, encoded_seq_pitch, qual_pitch, max_seq_length, max_seq_bytes, max_msa_cols);
+    }
+
+    void resize(int n_sub, int n_cand, int encoded_seq_pitch, int qual_pitch, int max_seq_length, int max_seq_bytes, int max_msa_cols){
+        n_subjects = n_sub;
+        n_candidates = n_cand;
+        maximum_sequence_length = max_seq_length;
+        maximum_sequence_bytes = max_seq_bytes;
+
+        sequenceData.resize(n_sub, n_cand, encoded_seq_pitch);
+        qualityData.resize(n_sub, n_cand, qual_pitch);
+        alignmentResults.resize(n_cand * 2);
+        msaData.resize(n_sub, n_cand, max_msa_cols);
+        correctionResults.resize(n_sub, n_cand, encoded_seq_pitch);
+
+        for(auto& x : tmpStorage){
+            x.resize(n_cand);
+        }
+    }
+};
+
 struct DataArrays {
 	static constexpr int padding_bytes = 4;
 	static constexpr float allocfactor = 1.1;
@@ -51,13 +595,14 @@ struct DataArrays {
 		candidate_ids_usable_size = required_size;
 	}
 
-	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int min_overlap_, float min_overlap_ratio_, bool useQualityScores){
+	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores){
         n_subjects = n_sub;
 		n_queries = n_quer;
 		maximum_sequence_length = max_seq_length;
+        maximum_sequence_bytes = max_seq_bytes;
 		min_overlap = std::max(1, std::max(min_overlap_, int(maximum_sequence_length * min_overlap_ratio_)));
 
-		encoded_sequence_pitch = SDIV(Sequence_t::getNumBytes(max_seq_length), padding_bytes) * padding_bytes;
+		encoded_sequence_pitch = SDIV(maximum_sequence_bytes, padding_bytes) * padding_bytes;
 		quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
 		sequence_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
 		int msa_max_column_count = (3*max_seq_length - 2*min_overlap_);
@@ -544,6 +1089,7 @@ struct DataArrays {
 		a.n_queries = 0;
 		a.n_indices = 0;
 		a.maximum_sequence_length = 0;
+        a.maximum_sequence_bytes = 0;
 		a.min_overlap = 1;
 		a.subject_indices_data_allocation_size = 0;
 		a.subject_indices_data_usable_size = 0;
@@ -576,6 +1122,7 @@ struct DataArrays {
 	int n_queries = 0;
 	int n_indices = 0;
 	int maximum_sequence_length = 0;
+    int maximum_sequence_bytes = 0;
 	int min_overlap = 1;
 
 	//subject indices

@@ -183,7 +183,11 @@ struct ErrorCorrectionThreadOnlyGPU {
 		int numsortedCandidateIds = 0;
 		int numsortedCandidateIdTasks = 0;
 
-		DataArrays<Sequence_t>* dataArrays;
+		DataArrays* dataArrays;
+
+        BatchData<DataLocation::Host> batchDataHost;
+        BatchData<DataLocation::Device> batchDataDevice;
+
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
@@ -292,12 +296,12 @@ struct ErrorCorrectionThreadOnlyGPU {
 		bool noProgressBlocking = false;
 		bool noProgressLaunching = false;
 	};
-    
+
     struct CorrectionThreadOptions {
         int threadId;
         int deviceId;
         bool canUseGpu;
-        
+
         std::string outputfile;
         ReadIdGenerator_t* readIdGenerator;
         const Minhasher_t* minhasher;
@@ -342,7 +346,7 @@ struct ErrorCorrectionThreadOnlyGPU {
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
 	};
 
-	
+
 
 	AlignmentOptions alignmentOptions;
 	GoodAlignmentProperties goodAlignmentProperties;
