@@ -288,8 +288,32 @@ namespace gpu{
 
 				temp_storage_bytes = max_temp_storage_bytes;
 
-				dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
+				//dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
 				dataArrays.zero_gpu(streams[primary_stream_index]);
+
+				auto roundToNextMultiple = [](int num, int factor){
+					return SDIV(num, factor) * factor;
+				};
+
+				const int minOverlapForMaxSeqLength = std::max(1, 
+														std::max(transFuncData.min_overlap, 
+																	int(transFuncData.maxSequenceLength * transFuncData.min_overlap_ratio)));
+				const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);
+
+				batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
+				batch.batchDataDevice.resize(int(batch.tasks.size()), 
+											batch.initialNumberOfCandidates, 
+											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
+											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
+											transFuncData.maxSequenceLength, 
+											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
+
+				batch.batchDataHost.resize(int(batch.tasks.size()), 
+											batch.initialNumberOfCandidates, 
+											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
+											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
+											transFuncData.maxSequenceLength, 
+											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
 
 				batch.initialNumberOfCandidates = 0;
 
@@ -735,7 +759,7 @@ namespace gpu{
 							 d_isGoodAlignment(dataArray.d_alignment_best_alignment_flags,
 							                   select_alignment_op);
 
-							 cub::DeviceSelect::Flagged(dataArray.d_temp_storage,
+							 /*cub::DeviceSelect::Flagged(dataArray.d_temp_storage,
 										 dataArray.tmp_storage_allocation_size,
 										 cub::CountingInputIterator<int>(0),
 										 d_isGoodAlignment,
@@ -743,7 +767,17 @@ namespace gpu{
 										 dataArray.d_num_indices,
 										 //nTotalCandidates,
 										 dataArray.n_queries,
-										 stream); CUERR;
+										 stream); CUERR;*/
+
+                             cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
+                                         batch.batchDataDevice.cubTemp.sizeRef(),
+                                         cub::CountingInputIterator<int>(0),
+                                         d_isGoodAlignment,
+                                         dataArray.d_indices,
+                                         dataArray.d_num_indices,
+                                         //nTotalCandidates,
+                                         dataArray.n_queries,
+                                         stream); CUERR;
 						 };
 #if 0
 		call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
@@ -874,6 +908,7 @@ namespace gpu{
         batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
 
 		//update indices_per_subject
+/*
 		cub::DeviceHistogram::HistogramRange(dataArrays.d_temp_storage,
 					dataArrays.tmp_storage_allocation_size,
 					dataArrays.d_indices,
@@ -891,6 +926,26 @@ namespace gpu{
 					dataArrays.d_indices_per_subject_prefixsum,
 					dataArrays.n_subjects,
 					streams[primary_stream_index]); CUERR;
+*/
+
+
+        cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.n_subjects+1,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    // *dataArrays.h_num_indices,
+                    dataArrays.n_queries,
+                    streams[primary_stream_index]); CUERR;
+
+        //Make indices_per_subject_prefixsum
+        cub::DeviceScan::ExclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.n_subjects,
+                    streams[primary_stream_index]); CUERR;
 
 		//cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]); CUERR;
 
@@ -1172,12 +1227,24 @@ namespace gpu{
             cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
                 d_blocksPerSubject(dataArrays.d_indices_per_subject,
                               getBlocksPerSubject);
+
+
+            /*
             cub::DeviceScan::InclusiveSum(dataArrays.d_temp_storage,
     					dataArrays.tmp_storage_allocation_size,
     					d_blocksPerSubject,
     					dataArrays.d_tiles_per_subject_prefixsum+1,
     					dataArrays.n_subjects,
     					streams[primary_stream_index]); CUERR;
+*/
+
+            cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                        batch.batchDataDevice.cubTemp.sizeRef(),
+                        d_blocksPerSubject,
+                        dataArrays.d_tiles_per_subject_prefixsum+1,
+                        dataArrays.n_subjects,
+                        streams[primary_stream_index]); CUERR;
+
 
             call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
                                     0,
@@ -1458,7 +1525,8 @@ namespace gpu{
 
 					// find subject ids of subjects with high quality multiple sequence alignment
 
-					cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
+					/*
+                    cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
 								dataArrays.tmp_storage_allocation_size,
 								cub::CountingInputIterator<int>(0),
 								dataArrays.d_is_high_quality_subject,
@@ -1466,6 +1534,15 @@ namespace gpu{
 								dataArrays.d_num_high_quality_subject_indices,
 								dataArrays.n_subjects,
 								streams[primary_stream_index]); CUERR;
+*/
+                    cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
+                                batch.batchDataDevice.cubTemp.sizeRef(),
+                                cub::CountingInputIterator<int>(0),
+                                dataArrays.d_is_high_quality_subject,
+                                dataArrays.d_high_quality_subject_indices,
+                                dataArrays.d_num_high_quality_subject_indices,
+                                dataArrays.n_subjects,
+                                streams[primary_stream_index]); CUERR;
 
 					// correct candidates
                     call_msa_correct_candidates_kernel_async_exp(

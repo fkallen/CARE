@@ -5,6 +5,7 @@
 #include "bestalignment.hpp"
 #include "msa.hpp"
 #include "utility_kernels.cuh"
+#include <gpu/thrust_custom_allocators.hpp>
 
 #include <config.hpp>
 
@@ -17,6 +18,8 @@
 #include <thrust/device_ptr.h>
 #include <thrust/async/for_each.h>
 
+#include <thrust/system/cuda/experimental/pinned_allocator.h>
+
 #endif
 
 namespace care {
@@ -24,30 +27,134 @@ namespace gpu {
 
 #ifdef __NVCC__
 
-enum class DataLocation {Host, Device};
 
-template<DataLocation location, class T>
-struct ThrustVectorSelection;
+namespace detail{
 
-template<class T>
-struct ThrustVectorSelection<DataLocation::Host, T>{
-    using Type = thrust::host_vector<T>;
-};
+	enum class DataLocation {Host, PinnedHost, Device};
 
-template<class T>
-struct ThrustVectorSelection<DataLocation::Device, T>{
-    using Type = thrust::device_vector<T>;
-};
+	template<DataLocation location, class T>
+	struct ThrustVectorSelection;
+
+	template<class T>
+	struct ThrustVectorSelection<DataLocation::Host, T>{
+		using Type = thrust::host_vector<T>;
+	};
+
+	template<class T>
+	struct ThrustVectorSelection<DataLocation::PinnedHost, T>{
+		using Type = thrust::host_vector<T, thrust::system::cuda::experimental::pinned_allocator<T>>;
+	};
+
+	template<class T>
+	struct ThrustVectorSelection<DataLocation::Device, T>{
+		using Type = thrust::device_vector<T, ThrustUninitializedDeviceAllocator<T>>;
+	};
+
+	template<DataLocation location, class T>
+	struct SimpleAllocator;
+
+	template<class T>
+	struct SimpleAllocator<DataLocation::Host, T>{
+		T* allocate(size_t elements){
+			T* ptr{};
+			ptr = new T[elements];
+			return ptr;
+		}
+
+		void deallocate(T* ptr){
+			delete [] ptr;
+		}
+	};
+
+	template<class T>
+	struct SimpleAllocator<DataLocation::PinnedHost, T>{
+		T* allocate(size_t elements){
+			T* ptr{};
+			cudaMallocHost(&ptr, elements * sizeof(T)); CUERR;
+			return ptr;
+		}
+
+		void deallocate(T* ptr){
+			cudaFreeHost(ptr); CUERR;
+		}
+	};
+
+	template<class T>
+	struct SimpleAllocator<DataLocation::Device, T>{
+		T* allocate(size_t elements){
+			T* ptr;
+			cudaMalloc(&ptr, elements * sizeof(T)); CUERR;
+			return ptr;
+		}
+
+		void deallocate(T* ptr){
+			cudaFree(ptr); CUERR;
+		}
+	};
+
+
+	template<DataLocation location, class T>
+	struct SimpleAllocation{
+		using Allocator = SimpleAllocator<location, T>;
+
+		T* data_{};
+		size_t size_{};
+		size_t capacity_{};
+
+		SimpleAllocation() : SimpleAllocation(0){}
+		SimpleAllocation(size_t size){
+			resize(size);
+		}
+
+		void resize(size_t newsize){
+			if(capacity_ < newsize){
+				Allocator alloc;
+				alloc.deallocate(data_);
+				data_ = alloc.allocate(newsize);
+				capacity_ = newsize;
+			}
+			size_ = newsize;
+		}
+
+		T* get() const{
+			return data_;
+		}
+
+		size_t size() const{
+			return size_;
+		}
+
+		size_t& sizeRef(){
+			return size_;
+		}
+	};
+
+	template<class T>
+	using SimpleAllocationHost = SimpleAllocation<DataLocation::Host, T>;
+
+	template<class T>
+	using SimpleAllocationPinnedHost = SimpleAllocation<DataLocation::PinnedHost, T>;
+
+	template<class T>
+	using SimpleAllocationDevice = SimpleAllocation<DataLocation::Device, T>;
+}
 
 
 
 
-template<DataLocation location>
+
+
+
+
+template<detail::DataLocation location>
 struct BatchSequenceQualityData{
-    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
+    ////using ThrustVectorChar = typename detail::ThrustVectorSelection<location, char>::Type;
 
-    ThrustVectorChar subject_qualities; // at least n_candidates * encoded_sequence_pitch elements
-    ThrustVectorChar candidate_qualities; // at least n_candidates * encoded_sequence_pitch elements
+    //ThrustVectorChar subject_qualities; // at least n_candidates * encoded_sequence_pitch elements
+    //ThrustVectorChar candidate_qualities; // at least n_candidates * encoded_sequence_pitch elements
+
+	detail::SimpleAllocation<location, char> subject_qualities;
+	detail::SimpleAllocation<location, char> candidate_qualities;
 
     int n_subjects;
     int n_candidates;
@@ -69,11 +176,11 @@ struct BatchSequenceQualityData{
     }
 
     char* getSubjectQualities() const{
-        return thrust::raw_pointer_cast(subject_qualities.data());
+        return subject_qualities.get();
     }
 
     char* getCandidateQualities() const{
-        return thrust::raw_pointer_cast(candidate_qualities.data());
+        return candidate_qualities.get();
     }
 
     size_t getSubjectQualitiesSize() const{
@@ -89,21 +196,21 @@ struct BatchSequenceQualityData{
     }
 };
 
-template<DataLocation location>
+template<detail::DataLocation location>
 struct BatchSequenceData{
-    using ThrustVectorReadNumber = typename ThrustVectorSelection<location, read_number>::Type;
-    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
-    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+    ////using ThrustVectorReadNumber = typename detail::ThrustVectorSelection<location, read_number>::Type;
+    ////using ThrustVectorChar = typename detail::ThrustVectorSelection<location, char>::Type;
+    ////using ThrustVectorInt = typename detail::ThrustVectorSelection<location, int>::Type;
 
-    ThrustVectorReadNumber subject_read_ids;
-    ThrustVectorReadNumber candidate_read_ids;
-    ThrustVectorInt subject_sequences_lengths;
-    ThrustVectorInt candidate_sequences_lengths;
-    ThrustVectorChar subject_sequences_data;
-    ThrustVectorChar candidate_sequences_data;
+    detail::SimpleAllocation<location, read_number> subject_read_ids;
+    detail::SimpleAllocation<location, read_number> candidate_read_ids;
+    detail::SimpleAllocation<location, int> subject_sequences_lengths;
+    detail::SimpleAllocation<location, int> candidate_sequences_lengths;
+    detail::SimpleAllocation<location, char>  subject_sequences_data;
+    detail::SimpleAllocation<location, char>  candidate_sequences_data;
 
-    ThrustVectorInt candidates_per_subject;
-    ThrustVectorInt candidates_per_subject_prefixsum;
+    detail::SimpleAllocation<location, int>  candidates_per_subject;
+    detail::SimpleAllocation<location, int>  candidates_per_subject_prefixsum;
 
     int n_subjects;
     int n_candidates;
@@ -131,35 +238,35 @@ struct BatchSequenceData{
     }
 
     read_number* getSubjectReadIds() const{
-        return thrust::raw_pointer_cast(subject_read_ids.data());
+        return subject_read_ids.get();
     }
 
     read_number* getCandidateReadIds() const{
-        return thrust::raw_pointer_cast(candidate_read_ids.data());
+        return candidate_read_ids.get();
     }
 
     int* getSubjectSequencesLengths() const{
-        return thrust::raw_pointer_cast(subject_sequences_lengths.data());
+        return subject_sequences_lengths.get();
     }
 
     int* getCandidateSequencesLengths() const{
-        return thrust::raw_pointer_cast(candidate_sequences_lengths.data());
+        return candidate_sequences_lengths.get();
     }
 
     char* getSubjectSequencesData() const{
-        return thrust::raw_pointer_cast(subject_sequences_data.data());
+        return subject_sequences_data.get();
     }
 
     char* getCandidateSequencesData() const{
-        return thrust::raw_pointer_cast(candidate_sequences_data.data());
+        return candidate_sequences_data.get();
     }
 
     int* getCandidatesPerSubject() const{
-        return thrust::raw_pointer_cast(candidates_per_subject.data());
+        return candidates_per_subject.get();
     }
 
     int* getCandidatesPerSubjectPrefixSum() const{
-        return thrust::raw_pointer_cast(candidates_per_subject_prefixsum.data());
+        return candidates_per_subject_prefixsum.get();
     }
 
     size_t getSubjectReadIdsSize() const{
@@ -195,18 +302,18 @@ struct BatchSequenceData{
     }
 };
 
-template<DataLocation location>
+template<detail::DataLocation location>
 struct BatchAlignmentResults{
-    using ThrustVectorBool = typename ThrustVectorSelection<location, bool>::Type;
-    using ThrustVectorBestAl = typename ThrustVectorSelection<location, BestAlignment_t>::Type;
-    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+    //using ThrustVectorBool = typename detail::ThrustVectorSelection<location, bool>::Type;
+    //using ThrustVectorBestAl = typename detail::ThrustVectorSelection<location, BestAlignment_t>::Type;
+    //using ThrustVectorInt = typename detail::ThrustVectorSelection<location, int>::Type;
 
-    ThrustVectorInt alignment_scores;
-    ThrustVectorInt alignment_overlaps;
-    ThrustVectorInt alignment_shifts;
-    ThrustVectorInt alignment_nOps;
-    ThrustVectorBool alignment_isValid;
-    ThrustVectorBestAl alignment_best_alignment_flags;
+    detail::SimpleAllocation<location, int> alignment_scores;
+    detail::SimpleAllocation<location, int> alignment_overlaps;
+    detail::SimpleAllocation<location, int> alignment_shifts;
+    detail::SimpleAllocation<location, int> alignment_nOps;
+    detail::SimpleAllocation<location, bool> alignment_isValid;
+    detail::SimpleAllocation<location, BestAlignment_t> alignment_best_alignment_flags;
 
     int n_alignments;
 
@@ -227,27 +334,27 @@ struct BatchAlignmentResults{
     }
 
     int* getAlignmentScores() const{
-        return thrust::raw_pointer_cast(alignment_scores.data());
+        return alignment_scores.get();
     }
 
     int* getAlignmentOverlaps() const{
-        return thrust::raw_pointer_cast(alignment_overlaps.data());
+        return alignment_overlaps.get();
     }
 
     int* getAlignmentShifts() const{
-        return thrust::raw_pointer_cast(alignment_shifts.data());
+        return alignment_shifts.get();
     }
 
     int* getAlignmentNops() const{
-        return thrust::raw_pointer_cast(alignment_nOps.data());
+        return alignment_nOps.get();
     }
 
     bool* getValidityFlags() const{
-        return thrust::raw_pointer_cast(alignment_isValid.data());
+        return alignment_isValid.get();
     }
 
     BestAlignment_t* getBestAlignmentFlags() const{
-        return thrust::raw_pointer_cast(alignment_best_alignment_flags.data());
+        return alignment_best_alignment_flags.get();
     }
 
     size_t getAlignmentScoresSize() const{
@@ -276,17 +383,17 @@ struct BatchAlignmentResults{
 };
 
 
-template<DataLocation location>
+template<detail::DataLocation location>
 struct BatchCorrectionResults{
-    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
-    using ThrustVectorBool = typename ThrustVectorSelection<location, bool>::Type;
-    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
+    //using ThrustVectorChar = typename detail::ThrustVectorSelection<location, char>::Type;
+    //using ThrustVectorBool = typename detail::ThrustVectorSelection<location, bool>::Type;
+    //using ThrustVectorInt = typename detail::ThrustVectorSelection<location, int>::Type;
 
-    ThrustVectorChar corrected_subjects;
-    ThrustVectorChar corrected_candidates;
-    ThrustVectorInt num_corrected_candidates_per_subject;
-    ThrustVectorBool subject_is_corrected;
-    ThrustVectorInt indices_of_corrected_candidates;
+    detail::SimpleAllocation<location, char> corrected_subjects;
+    detail::SimpleAllocation<location, char> corrected_candidates;
+    detail::SimpleAllocation<location, int> num_corrected_candidates_per_subject;
+    detail::SimpleAllocation<location, bool> subject_is_corrected;
+    detail::SimpleAllocation<location, int> indices_of_corrected_candidates;
 
     int n_subjects;
     int n_candidates;
@@ -310,23 +417,23 @@ struct BatchCorrectionResults{
     }
 
     char* getCorrectedSubjects() const{
-        return thrust::raw_pointer_cast(corrected_subjects.data());
+        return corrected_subjects.get();
     }
 
     char* getCorrectedCandidates() const{
-        return thrust::raw_pointer_cast(corrected_candidates.data());
+        return corrected_candidates.get();
     }
 
     int* getNumCorrectedCandidatesPerSubject() const{
-        return thrust::raw_pointer_cast(num_corrected_candidates_per_subject.data());
+        return num_corrected_candidates_per_subject.get();
     }
 
     bool* getSubjectIsCorrectedFlags() const{
-        return thrust::raw_pointer_cast(subject_is_corrected.data());
+        return subject_is_corrected.get();
     }
 
     int* getIndicesOfCorrectedCandidates() const{
-        return thrust::raw_pointer_cast(indices_of_corrected_candidates.data());
+        return indices_of_corrected_candidates.get();
     }
 
     size_t getCorrectedSubjectsSize() const{
@@ -350,25 +457,25 @@ struct BatchCorrectionResults{
     }
 };
 
-template<DataLocation location>
+template<detail::DataLocation location>
 struct BatchMSAData{
-    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
-    using ThrustVectorMSAColumnProperties = typename ThrustVectorSelection<location, MSAColumnProperties>::Type;
-    using ThrustVectorInt = typename ThrustVectorSelection<location, int>::Type;
-    using ThrustVectorFloat = typename ThrustVectorSelection<location, float>::Type;
+    //using ThrustVectorChar = typename detail::ThrustVectorSelection<location, char>::Type;
+    //using ThrustVectorMSAColumnProperties = typename detail::ThrustVectorSelection<location, MSAColumnProperties>::Type;
+    //using ThrustVectorInt = typename detail::ThrustVectorSelection<location, int>::Type;
+    //using ThrustVectorFloat = typename detail::ThrustVectorSelection<location, float>::Type;
 
     static constexpr int padding_bytes = 4;
 
-    ThrustVectorChar multiple_sequence_alignments;
-    ThrustVectorFloat multiple_sequence_alignment_weights;
-    ThrustVectorChar consensus;
-    ThrustVectorFloat support;
-    ThrustVectorInt coverage;
-    ThrustVectorFloat origWeights;
-    ThrustVectorInt origCoverages;
-    ThrustVectorMSAColumnProperties msa_column_properties;
-    ThrustVectorInt counts;
-    ThrustVectorFloat weights;
+    detail::SimpleAllocation<location, char> multiple_sequence_alignments;
+    detail::SimpleAllocation<location, float> multiple_sequence_alignment_weights;
+    detail::SimpleAllocation<location, char> consensus;
+    detail::SimpleAllocation<location, float> support;
+    detail::SimpleAllocation<location, int> coverage;
+    detail::SimpleAllocation<location, float> origWeights;
+    detail::SimpleAllocation<location, int> origCoverages;
+    detail::SimpleAllocation<location, MSAColumnProperties> msa_column_properties;
+    detail::SimpleAllocation<location, int> counts;
+    detail::SimpleAllocation<location, float> weights;
 
     int n_subjects;
     int n_candidates;
@@ -405,43 +512,43 @@ struct BatchMSAData{
     }
 
     char* getMSASequenceMatrix() const{
-        return thrust::raw_pointer_cast(multiple_sequence_alignments.data());
+        return multiple_sequence_alignments.get();
     }
 
     float* getMSAWeightMatrix() const{
-        return thrust::raw_pointer_cast(multiple_sequence_alignment_weights.data());
+        return multiple_sequence_alignment_weights.get();
     }
 
     char* getConsensus() const{
-        return thrust::raw_pointer_cast(consensus.data());
+        return consensus.get();
     }
 
     float* getSupport() const{
-        return thrust::raw_pointer_cast(support.data());
+        return support.get();
     }
 
     int* getCoverage() const{
-        return thrust::raw_pointer_cast(coverage.data());
+        return coverage.get();
     }
 
     float* getOrigWeights() const{
-        return thrust::raw_pointer_cast(origWeights.data());
+        return origWeights.get();
     }
 
     int* getOrigCoverages() const{
-        return thrust::raw_pointer_cast(origCoverages.data());
+        return origCoverages.get();
     }
 
     MSAColumnProperties* getMSAColumnProperties() const{
-        return thrust::raw_pointer_cast(msa_column_properties.data());
+        return msa_column_properties.get();
     }
 
     int* getCounts() const{
-        return thrust::raw_pointer_cast(counts.data());
+        return counts.get();
     }
 
     float* getWeights() const{
-        return thrust::raw_pointer_cast(weights.data());
+        return weights.get();
     }
 
     size_t getMSASequenceMatrixSize() const{
@@ -497,34 +604,10 @@ struct BatchMSAData{
     }
 };
 
-template<DataLocation location>
-struct BatchTmpData{
-    using ThrustVectorChar = typename ThrustVectorSelection<location, char>::Type;
-
-    ThrustVectorChar data;
-
-    BatchTmpData() : BatchTmpData(0){}
-    BatchTmpData(size_t bytes){
-        resize(bytes);
-    }
-
-    void resize(size_t bytes){
-        data.resize(bytes);
-    }
-
-    template<class T>
-    T* get() const{
-        return static_cast<T*>(thrust::raw_pointer_cast(data.data()));
-    }
-
-    void getSize() const{
-        return data.size();
-    }
 
 
-};
 
-template<DataLocation location>
+template<detail::DataLocation location>
 struct BatchData{
     BatchSequenceData<location> sequenceData;
     BatchSequenceQualityData<location> qualityData;
@@ -532,9 +615,9 @@ struct BatchData{
     BatchMSAData<location> msaData;
     BatchCorrectionResults<location> correctionResults;
 
-    BatchTmpData<location> cubTemp;
+    detail::SimpleAllocation<location, char> cubTemp;
 
-    std::array<BatchTmpData<location>, 4> tmpStorage;
+    std::array<detail::SimpleAllocation<location, char>, 4> tmpStorage;
 
     int n_subjects;
     int n_candidates;
@@ -565,6 +648,14 @@ struct BatchData{
         }
     }
 };
+
+using BatchDataHost = BatchData<detail::DataLocation::Host>;
+using BatchDataPinnedHost = BatchData<detail::DataLocation::PinnedHost>;
+using BatchDataDevice = BatchData<detail::DataLocation::Device>;
+
+
+
+
 
 struct DataArrays {
 	static constexpr int padding_bytes = 4;

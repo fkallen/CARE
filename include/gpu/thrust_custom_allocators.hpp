@@ -9,6 +9,16 @@
 
 #include <thrust/device_malloc_allocator.h>
 
+template<typename T>
+struct ThrustUninitializedDeviceAllocator : thrust::device_malloc_allocator<T>{
+
+  __host__ __device__
+  void construct(T *p)
+  {
+    // no-op
+  }
+};
+
 template<class T, bool allowFallback>
 struct ThrustFallbackDeviceAllocator;
 

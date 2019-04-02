@@ -185,8 +185,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 		DataArrays* dataArrays;
 
-        BatchData<DataLocation::Host> batchDataHost;
-        BatchData<DataLocation::Device> batchDataDevice;
+        BatchDataHost batchDataHost;
+        BatchDataDevice batchDataDevice;
 
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
