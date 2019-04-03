@@ -81,7 +81,9 @@ int main(int argc, const char** argv){
 		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 		("hits_per_candidate", "A read must be hit in at least hits_per_candidate maps to be considered a candidate",
 		cxxopts::value<int>()->default_value("1")->implicit_value("1"))
-        ("forest", "A read must be hit in at least hits_per_candidate maps to be considered a candidate",
+        ("forest", "Forest model",
+		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+        ("nnmodel", "DL model",
 		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 	;
 

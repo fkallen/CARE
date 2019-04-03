@@ -45,11 +45,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
     using Minhasher_t = Minhasher;
     //using ReadStorage_t = gpu::ContiguousReadStorage;
-    
+
     using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, cpu::ContiguousReadStorage, false>;
 	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU;
-    
-    
+
+
 
 	constexpr int maxCPUThreadsPerGPU = 64;
 
@@ -138,6 +138,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 	int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
 	cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    NN_Correction_Classifier_Base nnClassifierBase{"./nn_sources", fileOptions.nnmodelfilename};
 
 	std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
 	std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
@@ -167,12 +168,13 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		cpucorrectorThreads[threadId].threadOpts = threadOpts;
 		cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
 		cpucorrectorThreads[threadId].max_candidates = max_candidates;
+        cpucorrectorThreads[threadId].classifierBase = &nnClassifierBase;
 
 		cpucorrectorThreads[threadId].run();
 	}
 
 	gpu::ContiguousReadStorage gpuReadStorage(&cpuReadStorage, deviceIds);
-    
+
 	gpuReadStorage.initGPUData();
 
     std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
@@ -203,6 +205,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 		gpucorrectorThreads[threadId].threadOpts = threadOpts;
 		gpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
 		gpucorrectorThreads[threadId].max_candidates = max_candidates;
+        gpucorrectorThreads[threadId].classifierBase = &nnClassifierBase;
 
 		gpucorrectorThreads[threadId].run();
 	}

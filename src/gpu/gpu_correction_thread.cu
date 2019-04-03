@@ -295,24 +295,24 @@ namespace gpu{
 					return SDIV(num, factor) * factor;
 				};
 
-				const int minOverlapForMaxSeqLength = std::max(1, 
-														std::max(transFuncData.min_overlap, 
+				const int minOverlapForMaxSeqLength = std::max(1,
+														std::max(transFuncData.min_overlap,
 																	int(transFuncData.maxSequenceLength * transFuncData.min_overlap_ratio)));
 				const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);
 
 				batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
-				batch.batchDataDevice.resize(int(batch.tasks.size()), 
-											batch.initialNumberOfCandidates, 
+				batch.batchDataDevice.resize(int(batch.tasks.size()),
+											batch.initialNumberOfCandidates,
 											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
 											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
-											transFuncData.maxSequenceLength, 
+											transFuncData.maxSequenceLength,
 											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
 
-				batch.batchDataHost.resize(int(batch.tasks.size()), 
-											batch.initialNumberOfCandidates, 
+				batch.batchDataHost.resize(int(batch.tasks.size()),
+											batch.initialNumberOfCandidates,
 											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
 											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
-											transFuncData.maxSequenceLength, 
+											transFuncData.maxSequenceLength,
 											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
 
 				batch.initialNumberOfCandidates = 0;
@@ -1620,9 +1620,13 @@ namespace gpu{
 		if(!canLaunchKernel) {
 			return BatchState::StartForestCorrection;
 		}else{
-
+#if 0
 			for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
 				auto& task = batch.tasks[subject_index];
+
+                task.corrected_subject = task.subject_string;
+
+
 				const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
 				const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
 
@@ -1667,7 +1671,97 @@ namespace gpu{
 						task.corrected_subject[msafeature.position] = cons[globalIndex];
 					}
 				}
+
 			}
+#endif
+            std::vector<MSAFeature3> MSAFeatures;
+            std::vector<int> MSAFeaturesPerSubject(batch.tasks.size());
+            std::vector<int> MSAFeaturesPerSubjectPrefixSum(batch.tasks.size()+1);
+            MSAFeaturesPerSubjectPrefixSum[0] = 0;
+
+            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+
+                auto& task = batch.tasks[subject_index];
+
+                const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+
+                //std::cout << task.readId << "feature" << std::endl;
+
+                const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+
+                //const size_t msa_weights_pitch_floats = dataarrays.msa_weights_pitch / sizeof(float);
+                //const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+                //const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+
+                //const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
+                //const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
+                const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
+
+                const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
+                const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
+                const int* const countsA = &dataArrays.h_counts[countsOffset + 0 * msa_weights_pitch_floats];
+                const int* const countsC = &dataArrays.h_counts[countsOffset + 1 * msa_weights_pitch_floats];
+                const int* const countsG = &dataArrays.h_counts[countsOffset + 2 * msa_weights_pitch_floats];
+                const int* const countsT = &dataArrays.h_counts[countsOffset + 3 * msa_weights_pitch_floats];
+                const float* const weightsA = &dataArrays.h_weights[weightsOffset + 0 * msa_weights_pitch_floats];
+                const float* const weightsC = &dataArrays.h_weights[weightsOffset + 1 * msa_weights_pitch_floats];
+                const float* const weightsG = &dataArrays.h_weights[weightsOffset + 2 * msa_weights_pitch_floats];
+                const float* const weightsT = &dataArrays.h_weights[weightsOffset + 3 * msa_weights_pitch_floats];
+
+                std::vector<MSAFeature3> tmpfeatures
+                        = extractFeatures3_2(
+                                            countsA,
+                                            countsC,
+                                            countsG,
+                                            countsT,
+                                            weightsA,
+                                            weightsC,
+                                            weightsG,
+                                            weightsT,
+                                            msa_rows,
+                                            columnProperties.columnsToCheck,
+                                            dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                            dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                                            dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                                            dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                            columnProperties.subjectColumnsBegin_incl,
+                                            columnProperties.subjectColumnsEnd_excl,
+                                            task.subject_string,
+                                            transFuncData.estimatedCoverage);
+
+                MSAFeatures.insert(MSAFeatures.end(), tmpfeatures.begin(), tmpfeatures.end());
+                MSAFeaturesPerSubject[subject_index] = tmpfeatures.size();
+            }
+
+            std::partial_sum(MSAFeaturesPerSubject.begin(), MSAFeaturesPerSubject.end(),MSAFeaturesPerSubjectPrefixSum.begin()+1);
+
+            std::vector<float> predictions = transFuncData.nnClassifier.infer(MSAFeatures);
+            assert(predictions.size() == MSAFeatures.size());
+
+            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+                auto& task = batch.tasks[subject_index];
+                task.corrected_subject = task.subject_string;
+
+                const int offset = MSAFeaturesPerSubjectPrefixSum[subject_index];
+                const int end_index = offset + MSAFeaturesPerSubject[subject_index];
+
+                const char* const consensus = &dataArrays.h_consensus[subject_index * dataArrays.msa_pitch];
+                const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+
+                for(int index = offset; index < end_index; index++){
+                    constexpr float threshold = 0.8;
+                    const auto& msafeature = MSAFeatures[index];
+
+                    if(predictions[index] >= threshold){
+                        task.corrected = true;
+
+						const int globalIndex = columnProperties.subjectColumnsBegin_incl + msafeature.position;
+						task.corrected_subject[msafeature.position] = consensus[globalIndex];
+                    }
+                }
+
+            }
+
 
 			return BatchState::WriteResults;
 		}
@@ -2450,6 +2544,12 @@ namespace gpu{
 
         if(!correctionOptions.classicMode){
            transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
+        }
+
+        NN_Correction_Classifier nnClassifier;
+
+        if(!correctionOptions.classicMode){
+            transFuncData.nnClassifier = std::move(NN_Correction_Classifier{classifierBase});
         }
 
 

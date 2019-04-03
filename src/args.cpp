@@ -142,6 +142,7 @@ namespace args{
         result.save_hashtables_to = pr["save-hashtables-to"].as<std::string>();
         result.load_hashtables_from = pr["load-hashtables-from"].as<std::string>();
         result.forestfilename = pr["forest"].as<std::string>();
+        result.nnmodelfilename = pr["nnmodel"].as<std::string>();
 
         return result;
 	}

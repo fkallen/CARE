@@ -12,6 +12,7 @@
 #include "rangegenerator.hpp"
 #include "featureextractor.hpp"
 #include "forestclassifier.hpp"
+#include "nn_classifier.hpp"
 
 #include "cpu_correction_core.hpp"
 
@@ -158,6 +159,8 @@ namespace cpu{
 
         SequenceFileProperties fileProperties;
 
+        NN_Correction_Classifier_Base* classifierBase;
+
         std::uint64_t max_candidates;
 
 
@@ -255,6 +258,12 @@ namespace cpu{
             ForestClassifier forestClassifier;
             if(!correctionOptions.classicMode){
                 forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
+            }
+
+            NN_Correction_Classifier nnClassifier;
+
+            if(!correctionOptions.classicMode){
+                nnClassifier = std::move(NN_Correction_Classifier{classifierBase});
             }
 
             //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
@@ -1006,6 +1015,7 @@ namespace cpu{
 
 
                 std::vector<MSAFeature> MSAFeatures;
+                std::vector<MSAFeature3> MSAFeatures3;
 
                 if(correctionOptions.extractFeatures || !correctionOptions.classicMode){
 #if 0
@@ -1038,7 +1048,7 @@ namespace cpu{
                                             correctionOptions.estimatedCoverage,
                                             false);
 #else
-                std::vector<MSAFeature3> MSAFeatures3 = extractFeatures3_2(
+                MSAFeatures3 = extractFeatures3_2(
                                             multipleSequenceAlignment.countsA.data(),
                                             multipleSequenceAlignment.countsC.data(),
                                             multipleSequenceAlignment.countsG.data(),
@@ -1166,7 +1176,7 @@ namespace cpu{
 
                     task.corrected_subject = task.subject_string;
                     bool isCorrected = false;
-
+#if 0
                     for(const auto& msafeature : MSAFeatures){
                         constexpr float maxgini = 0.05f;
                         constexpr float forest_correction_fraction = 0.5f;
@@ -1194,6 +1204,25 @@ namespace cpu{
                             task.corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
                         }
                     }
+#endif
+
+#if 1
+                    std::vector<float> predictions = nnClassifier.infer(MSAFeatures3);
+                    assert(predictions.size() == MSAFeatures3.size());
+
+                    for(size_t index = 0; index < predictions.size(); index++){
+                        constexpr float threshold = 0.8;
+                        const auto& msafeature = MSAFeatures3[index];
+
+                        if(predictions[index] >= threshold){
+                            isCorrected = true;
+
+                            const int globalIndex = multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
+                            task.corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
+                        }
+                    }
+
+#endif
 
                     if(isCorrected){
                         write_read(task.readId, task.corrected_subject);

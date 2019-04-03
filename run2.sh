@@ -50,8 +50,9 @@ fi
 deviceIds="--deviceIds=0"
 datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
-classicMode=true
+classicMode=false
 forest="./forests/combinedforestaligncov.so"
+nnmodel="./nn_models/model_conv_04-01_0006.ckpt"
 fileformat=fastq
 useQualityScores=true
 
@@ -102,6 +103,7 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
                  --extractFeatures=$extractFeatures $deviceIds --classicMode=$classicMode --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
+		 --nnmodel=$nnmodel\
                  --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables
 
 $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfile --threads=$threads\
@@ -110,4 +112,5 @@ $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --o
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
                  --extractFeatures=$extractFeatures $deviceIds --classicMode=$classicMode --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
+		 --nnmodel=$nnmodel\
                  --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables

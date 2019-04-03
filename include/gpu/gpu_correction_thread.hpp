@@ -8,7 +8,8 @@
 #include "../sequence.hpp"
 #include "../featureextractor.hpp"
 
-#include "../forestclassifier.hpp"
+#include <forestclassifier.hpp>
+#include <nn_classifier.hpp>
 #include <minhasher.hpp>
 #include <rangegenerator.hpp>
 
@@ -344,6 +345,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 		std::function<void(const read_number)> unlock;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
+        NN_Correction_Classifier nnClassifier;
 	};
 
 
@@ -354,6 +356,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 	CorrectionThreadOptions threadOpts;
     FileOptions fileOptions;
 	SequenceFileProperties fileProperties;
+
+    NN_Correction_Classifier_Base* classifierBase;
 
 	std::uint64_t max_candidates = 0;
 
