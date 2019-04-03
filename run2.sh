@@ -52,7 +52,8 @@ datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
 classicMode=false
 forest="./forests/combinedforestaligncov.so"
-nnmodel="./nn_models/model_conv_04-01_0006.ckpt"
+#nnmodel="./nn_models/model_conv_04-01_0006.ckpt"
+nnmodel="./nn_models/conv_ele736/model_conv_03-27_0006.ckpt"
 fileformat=fastq
 useQualityScores=true
 
