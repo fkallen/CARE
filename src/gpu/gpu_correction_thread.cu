@@ -1689,14 +1689,8 @@ namespace gpu{
 
                 const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
 
-                //const size_t msa_weights_pitch_floats = dataarrays.msa_weights_pitch / sizeof(float);
-                //const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
-                //const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
-
-                //const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
-                //const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
                 const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
-
+#if 0
                 const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
                 const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
                 const int* const countsA = &dataArrays.h_counts[countsOffset + 0 * msa_weights_pitch_floats];
@@ -1728,7 +1722,31 @@ namespace gpu{
                                             columnProperties.subjectColumnsEnd_excl,
                                             task.subject_string,
                                             transFuncData.estimatedCoverage);
+#else
+                const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+                const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
 
+                const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
+                const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
+
+                std::vector<MSAFeature3> tmpfeatures = extractFeatures3(
+                                            my_multiple_sequence_alignment,
+                                            my_multiple_sequence_alignment_weight,
+                                            msa_rows,
+                                            columnProperties.columnsToCheck,
+                                            transFuncData.correctionOptions.useQualityScores,
+                                            dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                            dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                    						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                    						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                            columnProperties.subjectColumnsBegin_incl,
+                    						columnProperties.subjectColumnsEnd_excl,
+                                            task.subject_string,
+                                            transFuncData.estimatedCoverage,
+                                            true,
+                                            dataArrays.msa_pitch,
+                                            msa_weights_pitch_floats);
+#endif
                 MSAFeatures.insert(MSAFeatures.end(), tmpfeatures.begin(), tmpfeatures.end());
                 MSAFeaturesPerSubject[subject_index] = tmpfeatures.size();
             }
@@ -1749,7 +1767,7 @@ namespace gpu{
                 const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
 
                 for(int index = offset; index < end_index; index++){
-                    constexpr float threshold = 0.8;
+                    constexpr float threshold = 0.95;
                     const auto& msafeature = MSAFeatures[index];
 
                     if(predictions[index] >= threshold){
