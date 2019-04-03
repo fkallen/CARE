@@ -42,11 +42,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
-
-    using Minhasher_t = Minhasher;
-    //using ReadStorage_t = gpu::ContiguousReadStorage;
     
-    using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, cpu::ContiguousReadStorage, false>;
+    using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread;
 	using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU;
     
     

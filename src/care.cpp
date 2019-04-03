@@ -75,10 +75,7 @@ void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t&
 
 
 
-template<class minhasher_t,
-         class readStorage_t,
-         bool indels,
-         class StartCorrectionFunction>
+template<class StartCorrectionFunction>
 void buildAndCorrect_cpu(const MinhashOptions& minhashOptions,
 			const AlignmentOptions& alignmentOptions,
 			const GoodAlignmentProperties& goodAlignmentProperties,
@@ -91,16 +88,8 @@ void buildAndCorrect_cpu(const MinhashOptions& minhashOptions,
 			std::size_t nLocksForProcessedFlags,
 			StartCorrectionFunction startCorrection){
 
-	//constexpr bool indelAlignment = indels;
-
-	using Minhasher_t = minhasher_t;
-	using ReadStorage_t = readStorage_t;
-	using Sequence_t = typename ReadStorage_t::Sequence_t;
-
-	std::cout << "Sequence type: " << getSequenceType<Sequence_t>() << std::endl;
-
-	Minhasher_t minhasher(minhashOptions);
-	ReadStorage_t readStorage(sequenceFileProperties.nReads, correctionOptions.useQualityScores, sequenceFileProperties.maxSequenceLength);
+	Minhasher minhasher(minhashOptions);
+	cpu::ContiguousReadStorage readStorage(sequenceFileProperties.nReads, correctionOptions.useQualityScores, sequenceFileProperties.maxSequenceLength);
 
 	std::cout << "loading file and building data structures..." << std::endl;
 
@@ -144,16 +133,9 @@ void selectCpuCorrection(
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
 
-
-    using Minhasher_t = Minhasher;
-
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
-		constexpr bool indels = false;
-
-        auto func = [&](Minhasher_t& minhasher, cpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
-				    cpu::correct_cpu<Minhasher_t,
-                    cpu::ContiguousReadStorage,
-				                     indels>(minhashOptions, alignmentOptions,
+        auto func = [&](Minhasher& minhasher, cpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
+				    cpu::correct_cpu(minhashOptions, alignmentOptions,
 							    goodAlignmentProperties, correctionOptions,
 							    runtimeOptions, fileOptions, props,
 							    minhasher, readStorage,
@@ -161,10 +143,7 @@ void selectCpuCorrection(
 							    nLocksForProcessedFlags);
 			    };
 
-		buildAndCorrect_cpu<Minhasher_t,
-                            cpu::ContiguousReadStorage,
-		                    indels>
-		(
+		buildAndCorrect_cpu(
 					minhashOptions,
 					alignmentOptions,
 					goodAlignmentProperties,
@@ -175,8 +154,7 @@ void selectCpuCorrection(
 					readIsCorrectedVector,
 					locksForProcessedFlags,
 					nLocksForProcessedFlags,
-					func
-		);
+					func);
 	}else{
 		//constexpr bool indels = true;
 

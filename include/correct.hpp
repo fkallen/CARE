@@ -14,8 +14,8 @@
 
 #include "featureextractor.hpp"
 #include "bestalignment.hpp"
-
-
+#include "readstorage.hpp"
+#include "minhasher.hpp"
 #include "rangegenerator.hpp"
 
 
@@ -38,9 +38,6 @@
 namespace care{
 namespace cpu{
 
-    template<class minhasher_t,
-    		 class readStorage_t,
-    		 bool indels>
     void correct_cpu(const MinhashOptions& minhashOptions,
     				  const AlignmentOptions& alignmentOptions,
     				  const GoodAlignmentProperties& goodAlignmentProperties,
@@ -48,21 +45,15 @@ namespace cpu{
     				  const RuntimeOptions& runtimeOptions,
     				  const FileOptions& fileOptions,
                       const SequenceFileProperties& sequenceFileProperties,
-                      minhasher_t& minhasher,
-                      readStorage_t& readStorage,
+                      Minhasher& minhasher,
+                      cpu::ContiguousReadStorage& readStorage,
     				  std::vector<char>& readIsCorrectedVector,
     				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
     				  std::size_t nLocksForProcessedFlags){
 
-    	assert(indels == false);
-
         std::cout << "correct_cpu" << std::endl;
 
-    	using Minhasher_t = minhasher_t;
-    	using ReadStorage_t = readStorage_t;
-    	//using Sequence_t = typename ReadStorage_t::Sequence_t;
-
-        using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread<Minhasher_t, ReadStorage_t, indels>;
+        using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread;
 
     #if 1
         const int nCorrectorThreads = runtimeOptions.nCorrectorThreads;

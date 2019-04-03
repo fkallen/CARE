@@ -41,13 +41,8 @@ namespace cpu{
     template<>
     struct alignment_result_type<false>{using type = SHDResult;};*/
 
-    template<class minhasher_t,
-    		 class readStorage_t,
-    		 bool indels = false>
     struct CPUCorrectionThread{
-        static_assert(indels == false, "indels != false");
 
-        template<class Sequence_t>
         struct CorrectionTask{
             CorrectionTask(){}
 
@@ -60,12 +55,12 @@ namespace cpu{
             CorrectionTask(const CorrectionTask& other)
                 : active(other.active),
                 corrected(other.corrected),
-                readId(other.readId),
-                original_subject_string(other.original_subject_string),
-                subject_string(other.subject_string),
+                readId(other.readId),                
                 candidate_read_ids(other.candidate_read_ids),
                 candidate_read_ids_begin(other.candidate_read_ids_begin),
                 candidate_read_ids_end(other.candidate_read_ids_end),
+                original_subject_string(other.original_subject_string),
+                subject_string(other.subject_string),
                 clipping_begin(other.clipping_begin),
                 clipping_end(other.clipping_end),
                 corrected_subject(other.corrected_subject),
@@ -128,12 +123,12 @@ namespace cpu{
             std::vector<read_number> corrected_candidates_read_ids;
         };
 
-        using Minhasher_t = minhasher_t;
+        using Minhasher_t = Minhasher;
         using ReadStorage_t = cpu::ContiguousReadStorage;
     	using Sequence_t = typename ReadStorage_t::Sequence_t;
         using AlignmentResult_t = SHDResult;//typename alignment_result_type<indels>::type;
 
-        using CorrectionTask_t = CorrectionTask<Sequence_t>;
+        using CorrectionTask_t = CorrectionTask;
         using RangeGenerator_t = RangeGenerator<read_number>;
 
     	struct CorrectionThreadOptions{
