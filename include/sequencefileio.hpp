@@ -14,9 +14,9 @@ namespace care{
 enum class FileFormat {FASTQ};
 
 struct SequenceFileProperties{
-        std::uint64_t nReads;
-        int minSequenceLength;
-        int maxSequenceLength;
+        std::uint64_t nReads{};
+        int minSequenceLength{};
+        int maxSequenceLength{};
 };
 
 class SkipException : public std::exception {

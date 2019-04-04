@@ -375,6 +375,12 @@ struct Minhasher {
 
 	Minhasher(const MinhashOptions& parameters, const std::vector<int>& deviceIds);
 
+    Minhasher(const Minhasher&) = delete;
+    Minhasher& operator=(const Minhasher&) = delete;
+
+    Minhasher(Minhasher&& rhs);
+    Minhasher& operator=(Minhasher&& rhs);
+
     bool operator==(const Minhasher& rhs) const;
 
     bool operator!=(const Minhasher& rhs) const;
@@ -492,9 +498,6 @@ struct Minhasher {
 //###################################################
 
 	void resize(std::uint64_t nReads_);
-
-	void transform();
-
 
 
 private:

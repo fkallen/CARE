@@ -1,5 +1,4 @@
-#ifndef CARE_CORRECT_HPP
-#define CARE_CORRECT_HPP
+#include <correct_cpu.hpp>
 
 #include <config.hpp>
 
@@ -347,5 +346,3 @@ namespace cpu{
 
 }
 }
-
-#endif

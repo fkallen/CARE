@@ -23,13 +23,13 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
-SOURCES_CPU_AND_GPU = $(filter-out src/care.cpp src/minhasher_transform.cpp,$(SOURCES_CPU_AND_GPU_))
+SOURCES_CPU_AND_GPU = $(filter-out src/cpugpuproxy_cpu.cpp src/dispatch_correction_cpu.cpp src/minhasher_transform.cpp,$(SOURCES_CPU_AND_GPU_))
 
 # sources which are used by gpu version exclusively
 SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 
 # sources which are used by cpu version exclusively
-SORCES_ONLY_CPU = src/care.cpp src/minhasher_transform.cpp
+SOURCES_ONLY_CPU = src/cpugpuproxy_cpu.cpp src/dispatch_correction_cpu.cpp src/minhasher_transform.cpp
 
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))
@@ -38,8 +38,8 @@ OBJECTS_CPU_AND_GPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_CP
 OBJECTS_ONLY_GPU = $(patsubst src/gpu/%.cu, buildgpu/%.o, $(SOURCES_ONLY_GPU))
 OBJECTS_ONLY_GPU_DEBUG = $(patsubst src/gpu/%.cu, buildgpu/%.dbg.o, $(SOURCES_ONLY_GPU))
 
-OBJECTS_ONLY_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SORCES_ONLY_CPU))
-OBJECTS_ONLY_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SORCES_ONLY_CPU))
+OBJECTS_ONLY_CPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_ONLY_CPU))
+OBJECTS_ONLY_CPU_DEBUG = $(patsubst src/%.cpp, buildcpu/%.dbg.o, $(SOURCES_ONLY_CPU))
 
 
 SOURCES_FORESTS = $(wildcard src/forests/*.cpp)

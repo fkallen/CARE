@@ -49,6 +49,8 @@ namespace cpu{
         std::size_t sequence_lengths_bytes = 0;
         std::size_t quality_data_bytes = 0;
 
+        ContiguousReadStorage() : ContiguousReadStorage(0,false,0){}
+
         ContiguousReadStorage(read_number nSequences) : ContiguousReadStorage(nSequences, false){}
 
         ContiguousReadStorage(read_number nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0){
@@ -213,13 +215,17 @@ public:
             }
         }
 
-       const char* fetchSequenceData_ptr(read_number readNumber) const{
-    		return &h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
-       }
+        const char* fetchSequenceData_ptr(read_number readNumber) const{
+        	return &h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
+        }
 
-       int fetchSequenceLength(read_number readNumber) const{
-    		return h_sequence_lengths[readNumber];
-       }
+        int fetchSequenceLength(read_number readNumber) const{
+        	return h_sequence_lengths[readNumber];
+        }
+
+        bool hasQualityScores() const{
+            return useQualityScores;
+        }
 
     	std::uint64_t getNumberOfSequences() const{
     		return num_sequences;
@@ -277,10 +283,10 @@ public:
             //    throw std::runtime_error("Wrong serialization id!");
             if(loaded_lengthsize != lengthsize)
                 throw std::runtime_error("Wrong size of length type!");
-            if(useQualityScores && !loaded_useQualityScores)
-                throw std::runtime_error("Quality scores are required but not present in binary sequence file!");
-            if(!useQualityScores && loaded_useQualityScores)
-                std::cerr << "The loaded compressed read file contains quality scores, but program does not use them!\n";
+            //if(useQualityScores && !loaded_useQualityScores)
+            //    throw std::runtime_error("Quality scores are required but not present in binary sequence file!");
+            //if(!useQualityScores && loaded_useQualityScores)
+            //    std::cerr << "The loaded compressed read file contains quality scores, but program does not use them!\n";
 
             destroy();
 
@@ -295,6 +301,7 @@ public:
             maximum_allowed_sequence_length = loaded_maximum_allowed_sequence_length;
             maximum_allowed_sequence_bytes = loaded_maximum_allowed_sequence_bytes;
             num_sequences = loaded_num_sequences;
+            useQualityScores = loaded_useQualityScores;
             sequence_data_bytes = loaded_sequence_data_bytes;
             sequence_lengths_bytes = loaded_sequence_lengths_bytes;
             quality_data_bytes = loaded_quality_data_bytes;
