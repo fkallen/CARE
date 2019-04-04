@@ -1,13 +1,14 @@
-#include "../include/care.hpp"
+#include <care.hpp>
 
-//#include "../include/args.hpp"
-#include "../include/build.hpp"
-#include "../include/correct.hpp"
-#include "../include/minhasher.hpp"
+//#include <args.hpp>
+#include <build.hpp>
+
+#include <minhasher.hpp>
 #include <minhasher_transform.hpp>
-#include "../include/options.hpp"
+#include <dispatch_correction.hpp>
+#include <options.hpp>
 
-#include "../include/sequence.hpp"
+#include <sequence.hpp>
 #include <readstorage.hpp>
 #include <config.hpp>
 
@@ -73,123 +74,6 @@ void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t&
 	saveReadStorageToFile(readStorage, fileOptions);
 	saveMinhasherToFile(minhasher, fileOptions);
 }
-
-
-
-template<class StartCorrectionFunction>
-void buildAndCorrect_cpu(const MinhashOptions& minhashOptions,
-			const AlignmentOptions& alignmentOptions,
-			const GoodAlignmentProperties& goodAlignmentProperties,
-			const CorrectionOptions& correctionOptions,
-			const RuntimeOptions& runtimeOptions,
-			const FileOptions& fileOptions,
-			std::vector<char>& readIsCorrectedVector,
-			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-			std::size_t nLocksForProcessedFlags,
-			StartCorrectionFunction startCorrection){
-
-    std::cout << "loading file and building data structures..." << std::endl;
-
-	TIMERSTARTCPU(load_and_build);
-
-    SequenceFileProperties sequenceFileProperties;
-
-    if(fileOptions.load_binary_reads_from == "") {
-        if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
-            std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
-            sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-        }else{
-            sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-            sequenceFileProperties.minSequenceLength = 0;
-            sequenceFileProperties.nReads = fileOptions.nReads;
-        }
-    }
-
-    cpu::ContiguousReadStorage readStorage = build_readstorage(fileOptions,
-                                                              runtimeOptions,
-                                                              correctionOptions.useQualityScores,
-                                                              sequenceFileProperties.nReads,
-                                                              sequenceFileProperties.maxSequenceLength);
-
-	saveReadStorageToFile(readStorage, fileOptions);
-
-    if(fileOptions.load_binary_reads_from != "") {
-        auto stats = readStorage.getSequenceStatistics(runtimeOptions.threads);
-        sequenceFileProperties.nReads = readStorage.getNumberOfSequences();
-        sequenceFileProperties.maxSequenceLength = stats.maxSequenceLength;
-        sequenceFileProperties.minSequenceLength = stats.minSequenceLength;
-    }
-
-    Minhasher minhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);//, minhasher);
-    TIMERSTARTCPU(finalize_hashtables);
-    transform_minhasher(minhasher, runtimeOptions.deviceIds);
-    TIMERSTOPCPU(finalize_hashtables);
-	saveMinhasherToFile(minhasher, fileOptions);
-	TIMERSTOPCPU(load_and_build);
-
-	printFileProperties(fileOptions.inputfile, sequenceFileProperties);
-
-//		saveDataStructuresToFile(minhasher, readStorage, fileOptions);
-
-	readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
-
-	printDataStructureMemoryUsage(minhasher, readStorage);
-
-	startCorrection(minhasher, readStorage, sequenceFileProperties);
-
-	/*correct<Minhasher_t,
-	                ReadStorage_t,
-	                indelAlignment>(minhashOptions, alignmentOptions,
-	                                                goodAlignmentProperties, correctionOptions,
-	                                                runtimeOptions, fileOptions, props,
-	                                                minhasher, readStorage,
-	                                                readIsCorrectedVector, locksForProcessedFlags,
-	                                                nLocksForProcessedFlags, runtimeOptions.deviceIds);*/
-
-}
-
-void selectCpuCorrection(
-			const MinhashOptions& minhashOptions,
-			const AlignmentOptions& alignmentOptions,
-			const GoodAlignmentProperties& goodAlignmentProperties,
-			const CorrectionOptions& correctionOptions,
-			const RuntimeOptions& runtimeOptions,
-			const FileOptions& fileOptions,
-			std::vector<char>& readIsCorrectedVector,
-			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-			std::size_t nLocksForProcessedFlags){
-
-	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
-        auto func = [&](Minhasher& minhasher, cpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
-				    cpu::correct_cpu(minhashOptions, alignmentOptions,
-							    goodAlignmentProperties, correctionOptions,
-							    runtimeOptions, fileOptions, props,
-							    minhasher, readStorage,
-							    readIsCorrectedVector, locksForProcessedFlags,
-							    nLocksForProcessedFlags);
-			    };
-
-		buildAndCorrect_cpu(
-					minhashOptions,
-					alignmentOptions,
-					goodAlignmentProperties,
-					correctionOptions,
-					runtimeOptions,
-					fileOptions,
-					readIsCorrectedVector,
-					locksForProcessedFlags,
-					nLocksForProcessedFlags,
-					func);
-	}else{
-		//constexpr bool indels = true;
-
-		std::cout << "Cannot correct indels with CPU version" << std::endl;
-		return;
-	}
-
-}
-
-
 
 
 
@@ -279,13 +163,37 @@ void performCorrection(MinhashOptions minhashOptions,
 		}
 	#endif
 
-		std::cout << "Running CARE CPU" << std::endl;
+        std::cout << "loading file and building data structures..." << std::endl;
 
-		selectCpuCorrection(minhashOptions, alignmentOptions,
-					goodAlignmentProperties, correctionOptions,
-					runtimeOptions, iterFileOptions,
-					readIsCorrectedVector, locksForProcessedFlags,
-					nLocksForProcessedFlags);
+        TIMERSTARTCPU(load_and_build);
+
+        BuiltDataStructures dataStructures = buildDataStructures(minhashOptions,
+                                                                correctionOptions,
+                                                                runtimeOptions,
+                                                                iterFileOptions);
+
+        TIMERSTOPCPU(load_and_build);
+
+        auto& readStorage = dataStructures.builtReadStorage.data;
+        auto& minhasher = dataStructures.builtMinhasher.data;
+        auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
+
+        saveReadStorageToFile(readStorage, iterFileOptions);
+        saveMinhasherToFile(minhasher, iterFileOptions);
+
+        printFileProperties(fileOptions.inputfile, sequenceFileProperties);
+
+        readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
+
+        printDataStructureMemoryUsage(minhasher, readStorage);
+
+        dispatch_correction(minhashOptions, alignmentOptions,
+                            goodAlignmentProperties, correctionOptions,
+                            runtimeOptions, iterFileOptions, sequenceFileProperties,
+                            minhasher, readStorage,
+                            readIsCorrectedVector, locksForProcessedFlags,
+                            nLocksForProcessedFlags);
+
 
 		iter++;
 

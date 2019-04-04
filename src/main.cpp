@@ -5,6 +5,8 @@
 #include "../include/args.hpp"
 #include "../include/options.hpp"
 
+#include <cpugpuproxy.hpp>
+
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -123,6 +125,9 @@ int main(int argc, const char** argv){
             }
         }
     }
+
+    runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
+    runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
 
 	care::performCorrection(minhashOptions,
 				alignmentOptions,
