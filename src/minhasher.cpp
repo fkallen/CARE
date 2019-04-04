@@ -42,6 +42,21 @@ namespace care{
 		}
 	}
 
+    Minhasher::Minhasher(Minhasher&& rhs){
+        *this = std::move(rhs);
+    }
+
+    Minhasher& Minhasher::operator=(Minhasher&& rhs){
+        minhashTables = std::move(rhs.minhashTables);
+        minparams = std::move(rhs.minparams);
+        nReads = std::move(rhs.nReads);
+        canUseGpu = std::move(rhs.canUseGpu);
+        deviceIds = std::move(rhs.deviceIds);
+        allowUVM = std::move(rhs.allowUVM);
+
+        return *this;
+    }
+
     bool Minhasher::operator==(const Minhasher& rhs) const{
         if(minparams != rhs.minparams)
             return false;

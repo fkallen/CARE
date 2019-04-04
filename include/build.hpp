@@ -21,10 +21,9 @@
 
 namespace care{
 
+
 	namespace builddetail{
-		template<class Minhasher_t,
-				 class ReadStorage_t,
-				 class Buffer_t>
+		template<class Buffer_t>
 		struct BuildThread{
 			BuildThread(): progress(0), isRunning(false){}
 			~BuildThread() = default;
@@ -34,8 +33,8 @@ namespace care{
 			BuildThread& operator=(BuildThread&& other) = default;
 
 			Buffer_t* buffer;
-			ReadStorage_t* readStorage;
-			Minhasher_t* minhasher;
+			cpu::ContiguousReadStorage* readStorage;
+			Minhasher* minhasher;
 			std::uint64_t totalNumberOfReads;
 
 			int maxSequenceLength = 0;
@@ -121,17 +120,13 @@ namespace care{
 		};
 	}
 
+#if 0
 
-
-
-
-	template<class Minhasher_t,
-			class ReadStorage_t>
     SequenceFileProperties build(const FileOptions& fileOptions,
 			   const RuntimeOptions& runtimeOptions,
 			   std::uint64_t nReads,
-			   ReadStorage_t& readStorage,
-			   Minhasher_t& minhasher){
+			   cpu::ContiguousReadStorage& readStorage,
+			   Minhasher& minhasher){
 
         minhasher.init(nReads);
 
@@ -268,7 +263,7 @@ namespace care{
                 //multi-threaded insertion
     #if 1
                 using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
-    			using BuildThread_t = builddetail::BuildThread<Minhasher_t, ReadStorage_t, Buffer_t>;
+    			using BuildThread_t = builddetail::BuildThread<Buffer_t>;
     #if 1
                 std::vector<BuildThread_t> buildthreads(nThreads);
                 std::vector<Buffer_t> buffers(nThreads);
@@ -565,13 +560,12 @@ namespace care{
         }
 
     }
+#endif
 
 
-
-    template<class ReadStorage_t>
     SequenceFileProperties build_readstorage(const FileOptions& fileOptions,
                const RuntimeOptions& runtimeOptions,
-               ReadStorage_t& readStorage){
+               cpu::ContiguousReadStorage& readStorage){
 
         if(fileOptions.load_binary_reads_from != ""){
             readStorage.loadFromFile(fileOptions.load_binary_reads_from);
@@ -815,15 +809,15 @@ namespace care{
 
 
 
-    template<class Minhasher_t,
-			class ReadStorage_t>
-    void build_minhasher(const FileOptions& fileOptions,
+    Minhasher build_minhasher(const FileOptions& fileOptions,
 			   const RuntimeOptions& runtimeOptions,
 			   std::uint64_t nReads,
-			   ReadStorage_t& readStorage,
-			   Minhasher_t& minhasher){
+               const MinhashOptions& minhashOptions,
+			   cpu::ContiguousReadStorage& readStorage){
 
-		using Sequence_t = typename ReadStorage_t::Sequence_t;
+		using Sequence_t = typename cpu::ContiguousReadStorage::Sequence_t;
+
+        Minhasher minhasher(minhashOptions);
 
         minhasher.init(nReads);
 
@@ -848,10 +842,11 @@ namespace care{
             omp_set_num_threads(oldnumthreads);
         }
 
-        TIMERSTARTCPU(finalize_hashtables);
-        minhasher.transform();
-        TIMERSTOPCPU(finalize_hashtables);
+        //TIMERSTARTCPU(finalize_hashtables);
+        //minhasher.transform();
+        //TIMERSTOPCPU(finalize_hashtables);
 
+        return minhasher;
     }
 }
 

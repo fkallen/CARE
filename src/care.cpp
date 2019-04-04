@@ -4,6 +4,7 @@
 #include "../include/build.hpp"
 #include "../include/correct.hpp"
 #include "../include/minhasher.hpp"
+#include <minhasher_transform.hpp>
 #include "../include/options.hpp"
 
 #include "../include/sequence.hpp"
@@ -88,7 +89,7 @@ void buildAndCorrect_cpu(const MinhashOptions& minhashOptions,
 			std::size_t nLocksForProcessedFlags,
 			StartCorrectionFunction startCorrection){
 
-	Minhasher minhasher(minhashOptions);
+	//Minhasher minhasher(minhashOptions);
 	cpu::ContiguousReadStorage readStorage(sequenceFileProperties.nReads, correctionOptions.useQualityScores, sequenceFileProperties.maxSequenceLength);
 
 	std::cout << "loading file and building data structures..." << std::endl;
@@ -96,7 +97,11 @@ void buildAndCorrect_cpu(const MinhashOptions& minhashOptions,
 	TIMERSTARTCPU(load_and_build);
 	sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
 	saveReadStorageToFile(readStorage, fileOptions);
-	build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
+	//build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
+    Minhasher minhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);//, minhasher);
+    TIMERSTARTCPU(finalize_hashtables);
+    transform_minhasher(minhasher, runtimeOptions.deviceIds);
+    TIMERSTOPCPU(finalize_hashtables);
 	saveMinhasherToFile(minhasher, fileOptions);
 	TIMERSTOPCPU(load_and_build);
 

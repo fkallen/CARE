@@ -1,6 +1,9 @@
 #ifndef CARE_MINHASHER_TRANSFORM_HPP
 #define CARE_MINHASHER_TRANSFORM_HPP
 
+#include <minhasher.hpp>
+#include <config.hpp>
+
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -23,6 +26,9 @@
 
 
 namespace care{
+
+    void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds = {});
+
 
     template<class Key_t, class Value_t, class Index_t>
     void cpu_transformation(std::vector<Key_t>& keys,
