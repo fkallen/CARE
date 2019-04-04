@@ -83,21 +83,44 @@ void buildAndCorrect_cpu(const MinhashOptions& minhashOptions,
 			const CorrectionOptions& correctionOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
-			SequenceFileProperties& sequenceFileProperties,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags,
 			StartCorrectionFunction startCorrection){
 
-	//Minhasher minhasher(minhashOptions);
-	cpu::ContiguousReadStorage readStorage(sequenceFileProperties.nReads, correctionOptions.useQualityScores, sequenceFileProperties.maxSequenceLength);
-
-	std::cout << "loading file and building data structures..." << std::endl;
+    std::cout << "loading file and building data structures..." << std::endl;
 
 	TIMERSTARTCPU(load_and_build);
-	sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+
+    SequenceFileProperties sequenceFileProperties;
+
+    if(fileOptions.load_binary_reads_from == "") {
+        if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
+            std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
+            sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+        }else{
+            sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+            sequenceFileProperties.minSequenceLength = 0;
+            sequenceFileProperties.nReads = fileOptions.nReads;
+        }
+    }
+
+    cpu::ContiguousReadStorage readStorage = build_readstorage(fileOptions,
+                                                              runtimeOptions,
+                                                              correctionOptions.useQualityScores,
+                                                              sequenceFileProperties.nReads,
+                                                              sequenceFileProperties.maxSequenceLength);
+
 	saveReadStorageToFile(readStorage, fileOptions);
-	Minhasher minhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);//, minhasher);
+
+    if(fileOptions.load_binary_reads_from != "") {
+        auto stats = readStorage.getSequenceStatistics(runtimeOptions.threads);
+        sequenceFileProperties.nReads = readStorage.getNumberOfSequences();
+        sequenceFileProperties.maxSequenceLength = stats.maxSequenceLength;
+        sequenceFileProperties.minSequenceLength = stats.minSequenceLength;
+    }
+
+    Minhasher minhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);//, minhasher);
     TIMERSTARTCPU(finalize_hashtables);
     transform_minhasher(minhasher, runtimeOptions.deviceIds);
     TIMERSTOPCPU(finalize_hashtables);
@@ -132,13 +155,11 @@ void selectCpuCorrection(
 			const CorrectionOptions& correctionOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
-			SequenceFileProperties& sequenceFileProperties,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
 
 	if(correctionOptions.correctionMode == CorrectionMode::Hamming) {
-
         auto func = [&](Minhasher& minhasher, cpu::ContiguousReadStorage& readStorage, SequenceFileProperties props){
 				    cpu::correct_cpu(minhashOptions, alignmentOptions,
 							    goodAlignmentProperties, correctionOptions,
@@ -155,7 +176,6 @@ void selectCpuCorrection(
 					correctionOptions,
 					runtimeOptions,
 					fileOptions,
-					sequenceFileProperties,
 					readIsCorrectedVector,
 					locksForProcessedFlags,
 					nLocksForProcessedFlags,
@@ -179,24 +199,43 @@ void buildAndCorrect_gpu(const MinhashOptions& minhashOptions,
 			const CorrectionOptions& correctionOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
-			SequenceFileProperties& sequenceFileProperties,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags,
 			StartCorrectionFunction startCorrection){
 
-
-    //Minhasher minhasher(minhashOptions, runtimeOptions.deviceIds);
-    cpu::ContiguousReadStorage readStorage(sequenceFileProperties.nReads,
-	                          correctionOptions.useQualityScores,
-	                          sequenceFileProperties.maxSequenceLength);
-
-	std::cout << "loading file and building data structures..." << std::endl;
+    std::cout << "loading file and building data structures..." << std::endl;
 
 	TIMERSTARTCPU(load_and_build);
-	sequenceFileProperties = build_readstorage(fileOptions, runtimeOptions, readStorage);
+
+    SequenceFileProperties sequenceFileProperties;
+
+    if(fileOptions.load_binary_reads_from == "") {
+        if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
+            std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
+            sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+        }else{
+            sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+            sequenceFileProperties.minSequenceLength = 0;
+            sequenceFileProperties.nReads = fileOptions.nReads;
+        }
+    }
+
+    cpu::ContiguousReadStorage readStorage = build_readstorage(fileOptions,
+                                                              runtimeOptions,
+                                                              correctionOptions.useQualityScores,
+                                                              sequenceFileProperties.nReads,
+                                                              sequenceFileProperties.maxSequenceLength);
+
 	saveReadStorageToFile(readStorage, fileOptions);
-	//build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, readStorage, minhasher);
+
+    if(fileOptions.load_binary_reads_from != "") {
+        auto stats = readStorage.getSequenceStatistics(runtimeOptions.threads);
+        sequenceFileProperties.nReads = readStorage.getNumberOfSequences();
+        sequenceFileProperties.maxSequenceLength = stats.maxSequenceLength;
+        sequenceFileProperties.minSequenceLength = stats.minSequenceLength;
+    }
+
     Minhasher minhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);//, minhasher);
     TIMERSTARTCPU(finalize_hashtables);
     transform_minhasher(minhasher, runtimeOptions.deviceIds);
@@ -223,7 +262,6 @@ void selectGpuCorrection(
 			const CorrectionOptions& correctionOptions,
 			const RuntimeOptions& runtimeOptions,
 			const FileOptions& fileOptions,
-			SequenceFileProperties& sequenceFileProperties,
 			std::vector<char>& readIsCorrectedVector,
 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
 			std::size_t nLocksForProcessedFlags){
@@ -247,7 +285,6 @@ void selectGpuCorrection(
 				correctionOptions,
 				runtimeOptions,
 				fileOptions,
-				sequenceFileProperties,
 				readIsCorrectedVector,
 				locksForProcessedFlags,
 				nLocksForProcessedFlags,
@@ -296,26 +333,6 @@ void performCorrection(MinhashOptions minhashOptions,
 #endif
 	//create output directory
 	filesys::create_directories(fileOptions.outputdirectory);
-
-	SequenceFileProperties sequenceFileProperties;
-	sequenceFileProperties.maxSequenceLength = 0;
-	sequenceFileProperties.minSequenceLength = 0;
-	sequenceFileProperties.nReads = 0;
-
-	if(fileOptions.load_binary_reads_from == "") {
-		if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
-			std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
-			sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-		}else{
-			sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-			sequenceFileProperties.minSequenceLength = 0;
-			sequenceFileProperties.nReads = fileOptions.nReads;
-		}
-	}
-
-	std::cerr << "sequenceFileProperties.maxSequenceLength = " << sequenceFileProperties.maxSequenceLength << '\n';
-	std::cerr << "sequenceFileProperties.minSequenceLength = " << sequenceFileProperties.minSequenceLength << '\n';
-	std::cerr << "sequenceFileProperties.nReads = " << sequenceFileProperties.nReads << '\n';
 
 	std::vector<char> readIsCorrectedVector;
 	std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
@@ -371,7 +388,6 @@ void performCorrection(MinhashOptions minhashOptions,
 		selectCpuCorrection(minhashOptions, alignmentOptions,
 					goodAlignmentProperties, correctionOptions,
 					runtimeOptions, iterFileOptions,
-					sequenceFileProperties,
 					readIsCorrectedVector, locksForProcessedFlags,
 					nLocksForProcessedFlags);
 #else
@@ -415,7 +431,6 @@ void performCorrection(MinhashOptions minhashOptions,
 			selectGpuCorrection(minhashOptions, alignmentOptions,
 						goodAlignmentProperties, correctionOptions,
 						runtimeOptions, iterFileOptions,
-						sequenceFileProperties,
 						readIsCorrectedVector, locksForProcessedFlags,
 						nLocksForProcessedFlags);
 		}else{
@@ -424,7 +439,6 @@ void performCorrection(MinhashOptions minhashOptions,
 			selectCpuCorrection(minhashOptions, alignmentOptions,
 						goodAlignmentProperties, correctionOptions,
 						runtimeOptions, iterFileOptions,
-						sequenceFileProperties,
 						readIsCorrectedVector, locksForProcessedFlags,
 						nLocksForProcessedFlags);
 		}

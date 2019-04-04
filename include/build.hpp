@@ -563,6 +563,160 @@ namespace care{
 #endif
 
 
+
+    enum class BuiltType {Constructed, Loaded};
+
+    template<class T>
+    struct BuiltDataStructure{
+        T data;
+        BuiltType builtType;
+    };
+
+    struct BuiltDataStructures{
+        BuiltDataStructure<cpu::ContiguousReadStorage> builtReadStorage;
+        BuiltDataStructure<Minhasher> builtMinhasher;
+
+        SequenceFileProperties sequenceFileProperties;
+    };
+
+
+    BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
+                                                const RuntimeOptions& runtimeOptions,
+                                                bool useQualityScores,
+                                                size_t expectedNumberOfReads,
+                                                int expectedMaximumReadLength){
+
+
+
+        if(fileOptions.load_binary_reads_from != ""){
+            BuiltDataStructure<cpu::ContiguousReadStorage> result;
+
+            result.data.loadFromFile(fileOptions.load_binary_reads_from);
+            result.builtType = BuiltType::Loaded;
+
+            if(useQualityScores && !readStorage.hasQualityScores())
+                throw std::runtime_error("Quality scores are required but not present in compressed sequence file!");
+            if(!useQualityScores && readStorage.hasQualityScores())
+                std::cerr << "Warning. The loaded compressed read file contains quality scores, but program does not use them!\n";
+
+            std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
+
+            return result;
+        }else{
+            int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
+
+            constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
+            int Ncount = 0;
+
+            BuiltDataStructure<cpu::ContiguousReadStorage> result;
+
+            result.data = std::move(cpu::ContiguousReadStorage{expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
+            result.builtType = BuiltType::Constructed;
+
+            auto handle_read = [&](std::uint64_t readIndex, Read& read){
+                const int readLength = int(read.sequence.size());
+
+                if(readIndex >= expectedNumberOfReads){
+                    throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
+                                            + " reads, but file contains at least "
+                                            + std::to_string(readIndex) + " reads.");
+                }
+
+                if(readLength > expectedMaximumReadLength){
+                    throw std::runtime_error("Error! Expected maximum read length = "
+                                            + std::to_string(expectedMaximumReadLength)
+                                            + ", but read " + std::to_string(readIndex)
+                                            + "has length " + std::to_string(readLength));
+                }
+
+                for(auto& c : read.sequence){
+                    if(c == 'a') c = 'A';
+                    if(c == 'c') c = 'C';
+                    if(c == 'g') c = 'G';
+                    if(c == 't') c = 'T';
+                    if(c == 'N' || c == 'n'){
+                        c = bases[Ncount];
+                        Ncount = (Ncount + 1) % 4;
+                    }
+                }
+
+                result.data.insertRead(readIndex, read.sequence, read.quality);
+            };
+
+            if(nThreads == 1){
+                std::unique_ptr<SequenceFileReader> reader;
+
+                switch(fileOptions.format) {
+                    case FileFormat::FASTQ: reader.reset(new FastqReader(fileOptions.inputfile)); break;
+                    default: assert(false && "inputfileformat"); break;
+                }
+
+                Read read;
+
+                while (reader->getNextRead(&read)) {
+                    std::uint64_t readIndex = reader->getReadnum() - 1;
+
+                    handle_read(readIndex, read);
+                }
+
+            }else{
+
+                using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
+
+                std::vector<std::thread> threads;
+                std::vector<Buffer_t> buffers(nThreads);
+
+                for(int i = 0; i < nThreads; i++){
+                    threads.emplace_back([&, i]{
+
+                            auto pair = buffers[i].get();
+
+                            while (pair != buffers[i].defaultValue) {
+                                Read& read = pair.first;
+                                const std::uint64_t readIndex = pair.second;
+
+                                handle_read(readIndex, read);
+
+                                pair = buffers[i].get();
+                            }
+                        });
+                }
+
+                std::unique_ptr<SequenceFileReader> reader;
+
+                switch (fileOptions.format) {
+                case FileFormat::FASTQ:
+                    reader.reset(new FastqReader(fileOptions.inputfile));
+                    break;
+                default:
+                    assert(false && "inputfileformat");
+                    break;
+                }
+
+                Read read;
+                int target = 0;
+                while (reader->getNextRead(&read)) {
+                    std::uint64_t readnum = reader->getReadnum()-1;
+                    target = readnum % nThreads;
+                    buffers[target].add( { read, readnum });
+                }
+
+                for (auto& b : buffers) {
+                    b.done();
+                }
+
+                for(auto& thread : threads){
+                    thread.join();
+                }
+            }
+
+            return result;
+        }
+
+    }
+
+
+
     SequenceFileProperties build_readstorage(const FileOptions& fileOptions,
                const RuntimeOptions& runtimeOptions,
                cpu::ContiguousReadStorage& readStorage){
@@ -809,23 +963,29 @@ namespace care{
 
 
 
-    Minhasher build_minhasher(const FileOptions& fileOptions,
-			   const RuntimeOptions& runtimeOptions,
-			   std::uint64_t nReads,
-               const MinhashOptions& minhashOptions,
-			   cpu::ContiguousReadStorage& readStorage){
+    BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
+                                			   const RuntimeOptions& runtimeOptions,
+                                			   std::uint64_t nReads,
+                                               const MinhashOptions& minhashOptions,
+                                			   cpu::ContiguousReadStorage& readStorage){
 
 		using Sequence_t = typename cpu::ContiguousReadStorage::Sequence_t;
 
-        Minhasher minhasher(minhashOptions);
+        BuiltDataStructure<Minhasher> result;
+        auto& minhasher = result.data;
+
+        minhasher = std::move(Minhasher{minhashOptions});
 
         minhasher.init(nReads);
 
         if(fileOptions.load_hashtables_from != ""){
             minhasher.loadFromFile(fileOptions.load_hashtables_from);
+            result.builtType = BuiltType::Loaded;
 
             std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
         }else{
+            result.builtType = BuiltType::Constructed;
+
             const int oldnumthreads = omp_get_thread_num();
 
             omp_set_num_threads(runtimeOptions.threads);
@@ -846,7 +1006,70 @@ namespace care{
         //minhasher.transform();
         //TIMERSTOPCPU(finalize_hashtables);
 
-        return minhasher;
+        return result;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    BuiltDataStructures buildDataStructures(const MinhashOptions& minhashOptions,
+                                			const CorrectionOptions& correctionOptions,
+                                			const RuntimeOptions& runtimeOptions,
+                                			const FileOptions& fileOptions){
+
+        BuiltDataStructures result;
+
+        SequenceFileProperties sequenceFileProperties;
+
+        if(fileOptions.load_binary_reads_from == "") {
+            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
+                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
+                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+            }else{
+                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+                sequenceFileProperties.minSequenceLength = 0;
+                sequenceFileProperties.nReads = fileOptions.nReads;
+            }
+        }
+
+        TIMERSTARTCPU(build_readstorage);
+        result.builtReadStorage = build_readstorage(fileOptions,
+                                                  runtimeOptions,
+                                                  correctionOptions.useQualityScores,
+                                                  sequenceFileProperties.nReads,
+                                                  sequenceFileProperties.maxSequenceLength);
+        TIMERSTOPCPU(build_readstorage);
+
+        if(result.builtReadStorage.builtType = BuiltType::Loaded) {
+            auto stats = readStorage.getSequenceStatistics(runtimeOptions.threads);
+            sequenceFileProperties.nReads = readStorage.getNumberOfSequences();
+            sequenceFileProperties.maxSequenceLength = stats.maxSequenceLength;
+            sequenceFileProperties.minSequenceLength = stats.minSequenceLength;
+        }
+
+        TIMERSTARTCPU(build_minhasher);
+        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);
+        TIMERSTOPCPU(build_minhasher);
+
+        TIMERSTARTCPU(finalize_hashtables);
+        transform_minhasher(minhasher, runtimeOptions.deviceIds);
+        TIMERSTOPCPU(finalize_hashtables);
+
     }
 }
 
