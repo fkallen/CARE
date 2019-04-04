@@ -2,8 +2,10 @@
 #define CARE_CPU_ALIGNMENT_HPP
 
 
-#include "sequence.hpp"
+#include <sequence.hpp>
+
 #include <config.hpp>
+#include <shiftedhammingdistance_common.hpp>
 
 #include <vector>
 
@@ -95,60 +97,9 @@ namespace shd{
                                 float min_overlap_ratio,
                                 B getNumBytes) noexcept{
 
-        auto shiftEncodedBasesLeftBy = [](unsigned int* array, int size, int shiftamount){
-            const int completeInts = shiftamount / (8 * sizeof(unsigned int));
+        auto popcount = [](auto i){return __builtin_popcount(i);};
 
-            for(int i = 0; i < size - completeInts; ++i){
-                array[i] = array[completeInts + i];
-            }
-
-            for(int i = size - completeInts; i < size; ++i){
-                array[i] = 0;
-            }
-
-            shiftamount -= completeInts * 8 * sizeof(unsigned int);
-
-            assert(shiftamount < int(8 * sizeof(unsigned int)));
-
-            for(int i = 0; i < size - completeInts - 1; ++i){
-                array[i] = (array[i] >> shiftamount) | (array[i+1] << (8 * sizeof(unsigned int) - shiftamount));
-            }
-            array[size - completeInts - 1] >>= shiftamount;
-        };
-
-        auto hammingdistanceHiLo = [](const unsigned int* lhi,
-                                        const unsigned int* llo,
-                                        const unsigned int* rhi,
-                                        const unsigned int* rlo,
-                                        int lhi_bitcount,
-                                        int rhi_bitcount,
-                                        int max_errors){
-
-        	const int overlap_bitcount = lhi_bitcount < rhi_bitcount ? lhi_bitcount : rhi_bitcount;
-            const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-            const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-        	int result = 0;
-
-        	for(int i = 0; i < partitions - 1 && result < max_errors; i++){
-        		const int hixor = lhi[i] ^ rhi[i];
-        		const int loxor = llo[i] ^ rlo[i];
-        		const int bits = hixor | loxor;
-        		result += __builtin_popcount(bits);
-        	}
-
-            if(result >= max_errors)
-                return result;
-
-            //in last partition, we ignore the bits which are not part of the overlap
-            const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
-            const int hixor = lhi[partitions - 1] ^ rhi[partitions - 1];
-            const int loxor = llo[partitions - 1] ^ rlo[partitions - 1];
-            const int bits = hixor | loxor;
-            result += __builtin_popcount(bits & mask);
-
-            return result;
-        };
+        auto identity = [](auto i){return i;};
 
         const int subjectbytes = getNumBytes(subjectLength);
         const int querybytes = getNumBytes(queryLength);
@@ -188,7 +139,10 @@ namespace shd{
                                 querydata_lo,
                                 overlapsize,
                                 overlapsize,
-                                max_errors);
+                                max_errors,
+                                identity,
+                                identity,
+                                popcount);
 
                 score = (score < max_errors ?
                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
@@ -205,8 +159,8 @@ namespace shd{
             const int overlapsize = std::min(subjectLength, queryLength + shift);
             const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-            shiftEncodedBasesLeftBy((unsigned int*)querydata_hi, querybytes / 2 / sizeof(unsigned int), 1);
-            shiftEncodedBasesLeftBy((unsigned int*)querydata_lo, querybytes / 2 / sizeof(unsigned int), 1);
+            shiftBitArrayLeftBy((unsigned int*)querydata_hi, querybytes / 2 / sizeof(unsigned int), 1, identity);
+            shiftBitArrayLeftBy((unsigned int*)querydata_lo, querybytes / 2 / sizeof(unsigned int), 1, identity);
 
             int score = hammingdistanceHiLo(subjectdata_hi,
                                 subjectdata_lo,
@@ -214,7 +168,10 @@ namespace shd{
                                 querydata_lo,
                                 overlapsize,
                                 overlapsize,
-                                max_errors);
+                                max_errors,
+                                identity,
+                                identity,
+                                popcount);
 
                 score = (score < max_errors ?
                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
@@ -235,8 +192,8 @@ namespace shd{
             const int overlapsize = std::min(subjectLength - shift, queryLength);
             const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-            shiftEncodedBasesLeftBy((unsigned int*)subjectdata_hi, subjectbytes / 2 / sizeof(unsigned int), 1);
-            shiftEncodedBasesLeftBy((unsigned int*)subjectdata_lo, subjectbytes / 2 / sizeof(unsigned int), 1);
+            shiftBitArrayLeftBy((unsigned int*)subjectdata_hi, subjectbytes / 2 / sizeof(unsigned int), 1, identity);
+            shiftBitArrayLeftBy((unsigned int*)subjectdata_lo, subjectbytes / 2 / sizeof(unsigned int), 1, identity);
 
             int score = hammingdistanceHiLo(subjectdata_hi,
                                 subjectdata_lo,
@@ -244,7 +201,10 @@ namespace shd{
                                 querydata_lo,
                                 overlapsize,
                                 overlapsize,
-                                max_errors);
+                                max_errors,
+                                identity,
+                                identity,
+                                popcount);
 
                 score = (score < max_errors ?
                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
@@ -294,60 +254,9 @@ namespace shd{
 
         if(queryLengths.size() == 0) return {};
 
-        auto shiftEncodedBasesLeftBy = [](unsigned int* array, int size, int shiftamount){
-            const int completeInts = shiftamount / (8 * sizeof(unsigned int));
+        auto popcount = [](auto i){return __builtin_popcount(i);};
 
-            for(int i = 0; i < size - completeInts; ++i){
-                array[i] = array[completeInts + i];
-            }
-
-            for(int i = size - completeInts; i < size; ++i){
-                array[i] = 0;
-            }
-
-            shiftamount -= completeInts * 8 * sizeof(unsigned int);
-
-            assert(shiftamount < int(8 * sizeof(unsigned int)));
-
-            for(int i = 0; i < size - completeInts - 1; ++i){
-                array[i] = (array[i] >> shiftamount) | (array[i+1] << (8 * sizeof(unsigned int) - shiftamount));
-            }
-            array[size - completeInts - 1] >>= shiftamount;
-        };
-
-        auto hammingdistanceHiLo = [](const unsigned int* lhi,
-                                        const unsigned int* llo,
-                                        const unsigned int* rhi,
-                                        const unsigned int* rlo,
-                                        int lhi_bitcount,
-                                        int rhi_bitcount,
-                                        int max_errors){
-
-        	const int overlap_bitcount = lhi_bitcount < rhi_bitcount ? lhi_bitcount : rhi_bitcount;
-            const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-            const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-        	int result = 0;
-
-        	for(int i = 0; i < partitions - 1 && result < max_errors; i++){
-        		const int hixor = lhi[i] ^ rhi[i];
-        		const int loxor = llo[i] ^ rlo[i];
-        		const int bits = hixor | loxor;
-        		result += __builtin_popcount(bits);
-        	}
-
-            if(result >= max_errors)
-                return result;
-
-            //in last partition, we ignore the bits which are not part of the overlap
-            const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
-            const int hixor = lhi[partitions - 1] ^ rhi[partitions - 1];
-            const int loxor = llo[partitions - 1] ^ rlo[partitions - 1];
-            const int bits = hixor | loxor;
-            result += __builtin_popcount(bits & mask);
-
-            return result;
-        };
+        auto identity = [](auto i){return i;};
 
 
         const int nQueries = int(queryLengths.size());
@@ -397,7 +306,10 @@ namespace shd{
                                                 queryBackup_lo,
                                                 overlapsize,
                                                 overlapsize,
-                                                max_errors);
+                                                max_errors,
+                                                identity,
+                                                identity,
+                                                popcount);
 
                 score = (score < max_errors ?
                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
@@ -418,8 +330,8 @@ namespace shd{
                 const int overlapsize = std::min(subjectLength, queryLength + shift);
                 const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-                shiftEncodedBasesLeftBy(shiftbuffer_hi, queryints / 2, 1);
-                shiftEncodedBasesLeftBy(shiftbuffer_lo, queryints / 2, 1);
+                shiftBitArrayLeftBy(shiftbuffer_hi, queryints / 2, 1, identity);
+                shiftBitArrayLeftBy(shiftbuffer_lo, queryints / 2, 1, identity);
 
                 int score = hammingdistanceHiLo(subjectBackup_hi,
                                                 subjectBackup_lo,
@@ -427,7 +339,10 @@ namespace shd{
                                                 shiftbuffer_lo,
                                                 overlapsize,
                                                 overlapsize,
-                                                max_errors);
+                                                max_errors,
+                                                identity,
+                                                identity,
+                                                popcount);
 
                 score = (score < max_errors ?
                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
@@ -448,8 +363,8 @@ namespace shd{
                 const int overlapsize = std::min(subjectLength - shift, queryLength);
                 const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-                shiftEncodedBasesLeftBy(shiftbuffer_hi, subjectints / 2, 1);
-                shiftEncodedBasesLeftBy(shiftbuffer_lo, subjectints / 2, 1);
+                shiftBitArrayLeftBy(shiftbuffer_hi, subjectints / 2, 1, identity);
+                shiftBitArrayLeftBy(shiftbuffer_lo, subjectints / 2, 1, identity);
 
                 int score = hammingdistanceHiLo(shiftbuffer_hi,
                                                 shiftbuffer_lo,
@@ -457,7 +372,10 @@ namespace shd{
                                                 queryBackup_lo,
                                                 overlapsize,
                                                 overlapsize,
-                                                max_errors);
+                                                max_errors,
+                                                identity,
+                                                identity,
+                                                popcount);
 
                 score = (score < max_errors ?
                         score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches

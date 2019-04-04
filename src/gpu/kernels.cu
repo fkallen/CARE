@@ -5,6 +5,8 @@
 #include <msa.hpp>
 #include <sequence.hpp>
 
+#include <shiftedhammingdistance_common.hpp>
+
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 
@@ -81,122 +83,17 @@ namespace gpu{
 			return length;
 		};
 
-    	auto no_bank_conflict_index = [](int logical_index) -> int {
-    					      return logical_index * BLOCKSIZE;
-    				      };
+        auto no_bank_conflict_index = [](int logical_index) -> int {
+            return logical_index * BLOCKSIZE;
+        };
 
-    	auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength){
+        auto identity = [](int logical_index) -> int {
+            return logical_index;
+        };
 
-    						       auto reverse_complement_int = [](auto n) {
-    											     n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
-    											     n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
-    											     n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
-    											     n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
-    											     n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
-    											     return ~n;
-    										     };
-
-    						       const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
-    						       const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
-
-    						       unsigned int* const hi = sequence;
-    						       unsigned int* const lo = sequence + ints/2;
-
-    						       const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
-    						       for(int i = 0; i < intsPerHalf/2; ++i) {
-    							       const unsigned int hifront = reverse_complement_int(hi[i]);
-    							       const unsigned int hiback = reverse_complement_int(hi[intsPerHalf - 1 - i]);
-    							       hi[i] = hiback;
-    							       hi[intsPerHalf - 1 - i] = hifront;
-
-    							       const unsigned int lofront = reverse_complement_int(lo[i]);
-    							       const unsigned int loback = reverse_complement_int(lo[intsPerHalf - 1 - i]);
-    							       lo[i] = loback;
-    							       lo[intsPerHalf - 1 - i] = lofront;
-    						       }
-    						       if(intsPerHalf % 2 == 1) {
-    							       const int middleindex = intsPerHalf/2;
-    							       hi[middleindex] = reverse_complement_int(hi[middleindex]);
-    							       lo[middleindex] = reverse_complement_int(lo[middleindex]);
-    						       }
-
-    						       if(unusedBitsInt != 0) {
-    							       for(int i = 0; i < intsPerHalf - 1; ++i) {
-    								       hi[i] = (hi[i] >> unusedBitsInt) | (hi[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
-    								       lo[i] = (lo[i] >> unusedBitsInt) | (lo[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
-    							       }
-
-    							       hi[intsPerHalf - 1] >>= unusedBitsInt;
-    							       lo[intsPerHalf - 1] >>= unusedBitsInt;
-    						       }
-    					       };
-
-
-    	auto shiftEncodedBasesLeftBy = [&](unsigned int* array, int size, int shiftamount){
-                if(shiftamount == 0) return;
-    					       const int completeInts = shiftamount / (8 * sizeof(unsigned int));
-
-    					       for(int i = 0; i < size - completeInts; i += 1) {
-    						       array[no_bank_conflict_index(i)] = array[no_bank_conflict_index(completeInts + i)];
-    					       }
-
-    					       for(int i = size - completeInts; i < size; i += 1) {
-    						       array[no_bank_conflict_index(i)] = 0;
-    					       }
-
-    					       shiftamount -= completeInts * 8 * sizeof(unsigned int);
-
-    					       for(int i = 0; i < size - completeInts - 1; i += 1) {
-    						       const unsigned int a = array[no_bank_conflict_index(i)];
-    						       const unsigned int b = array[no_bank_conflict_index(i+1)];
-
-    						       array[no_bank_conflict_index(i)] = (a >> shiftamount) | (b << (8 * sizeof(unsigned int) - shiftamount));
-    					       }
-
-    					       array[no_bank_conflict_index(size - completeInts - 1)] >>= shiftamount;
-    				       };
-
-            auto hammingdistanceHiLo2 = [&](
-                //the i-th entry of l must be located at l[no_bank_conflict_index(i)]
-            	const unsigned int* lhi,
-            	const unsigned int* llo,
-                //the i-th entry of r must be located at r[i]
-            	const unsigned int* rhi,
-            	const unsigned int* rlo,
-            	int lhi_bitcount,
-            	int rhi_bitcount,
-            	int max_errors){
-
-    		   const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
-
-    		   if(overlap_bitcount == 0)
-    			   return max_errors+1;
-
-    		   const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-    		   const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-    		   int result = 0;
-
-    		   for(int i = 0; i < partitions - 1 && result < max_errors; i += 1) {
-    			   const unsigned int hixor = lhi[no_bank_conflict_index(i)] ^ rhi[i];
-    			   const unsigned int loxor = llo[no_bank_conflict_index(i)] ^ rlo[i];
-    			   const unsigned int bits = hixor | loxor;
-    			   result += __popc(bits);
-    		   }
-
-    		   if(result >= max_errors)
-    			   return result;
-
-    		   // i == partitions - 1
-
-    		   const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
-    		   const unsigned int hixor = lhi[no_bank_conflict_index(partitions - 1)] ^ rhi[partitions - 1];
-    		   const unsigned int loxor = llo[no_bank_conflict_index(partitions - 1)] ^ rlo[partitions - 1];
-    		   const unsigned int bits = hixor | loxor;
-    		   result += __popc(bits & mask);
-
-    		   return result;
-    	   };
+    	auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
+            Sequence2BitHiLo::Impl_t::make_reverse_complement_inplace((std::uint8_t*)sequence, sequencelength, indextrafo);
+        };
 
     	using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
 
@@ -244,7 +141,7 @@ namespace gpu{
 
     		//queryIndex != resultIndex -> reverse complement
     		if(threadIdx.x == 0 && queryIndex != resultIndex) {
-    			make_reverse_complement_inplace(queryBackup, querybases);
+    			make_reverse_complement_inplace(queryBackup, querybases, identity);
     		}
 
     		__syncthreads();
@@ -290,8 +187,8 @@ namespace gpu{
                 }
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
-                shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
+                shiftBitArrayLeftBy(shiftptr_hi, size, shiftamount, no_bank_conflict_index);
+                shiftBitArrayLeftBy(shiftptr_lo, size, shiftamount, no_bank_conflict_index);
     #if 0
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
                 for(int i = 0; i < 8; i++){
@@ -303,14 +200,17 @@ namespace gpu{
                 }
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                int score = hammingdistanceHiLo2(
+                int score = hammingdistanceHiLo(
                             mySequence_hi,
                             mySequence_lo,
                             queryBackup,
                             queryBackup + queryints / 2,
                             max(0, subjectbases - abs(shift)),
                             max(0, querybases - abs(shift)),
-                            max_errors);
+                            max_errors,
+                            no_bank_conflict_index,
+                            identity,
+                            __popc);
     #if 0
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d shiftamount %d\n", shift, score, score + totalbases - 2*overlapsize, shiftamount);
     #endif
@@ -356,8 +256,8 @@ namespace gpu{
                 }
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                shiftEncodedBasesLeftBy(shiftptr_hi, size, shiftamount);
-                shiftEncodedBasesLeftBy(shiftptr_lo, size, shiftamount);
+                shiftBitArrayLeftBy(shiftptr_hi, size, shiftamount, no_bank_conflict_index);
+                shiftBitArrayLeftBy(shiftptr_lo, size, shiftamount, no_bank_conflict_index);
     #if 0
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
                 for(int i = 0; i < 8; i++){
@@ -369,14 +269,17 @@ namespace gpu{
                 }
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                int score = hammingdistanceHiLo2(
+                int score = hammingdistanceHiLo(
                                 mySequence_hi,
                                 mySequence_lo,
                                 subjectBackup,
                                 subjectBackup + subjectints / 2,
                                 max(0, querybases - abs(shift)),
                                 max(0, subjectbases - abs(shift)),
-                                max_errors);
+                                max_errors,
+                                no_bank_conflict_index,
+                                identity,
+                                __popc);
     #if 0
                 if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
     #endif
@@ -469,119 +372,9 @@ namespace gpu{
             return length;
         };
 
-        auto make_reverse_complement_inplace_single_thread = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-
-            auto reverse_complement_int = [](auto n) {
-                n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
-                n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
-                n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
-                n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
-                n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
-                return ~n;
-            };
-
-            const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
-            const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
-
-            unsigned int* const hi = sequence;
-            unsigned int* const lo = sequence + indextrafo(ints/2);
-
-            const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
-            for(int i = 0; i < intsPerHalf/2; ++i) {
-                const unsigned int hifront = reverse_complement_int(hi[indextrafo(i)]);
-                const unsigned int hiback = reverse_complement_int(hi[indextrafo(intsPerHalf - 1 - i)]);
-                hi[indextrafo(i)] = hiback;
-                hi[indextrafo(intsPerHalf - 1 - i)] = hifront;
-
-                const unsigned int lofront = reverse_complement_int(lo[indextrafo(i)]);
-                const unsigned int loback = reverse_complement_int(lo[indextrafo(intsPerHalf - 1 - i)]);
-                lo[indextrafo(i)] = loback;
-                lo[indextrafo(intsPerHalf - 1 - i)] = lofront;
-            }
-            if(intsPerHalf % 2 == 1) {
-                const int middleindex = intsPerHalf/2;
-                hi[indextrafo(middleindex)] = reverse_complement_int(hi[indextrafo(middleindex)]);
-                lo[indextrafo(middleindex)] = reverse_complement_int(lo[indextrafo(middleindex)]);
-            }
-
-            if(unusedBitsInt != 0) {
-                for(int i = 0; i < intsPerHalf - 1; ++i) {
-                    hi[indextrafo(i)] = (hi[indextrafo(i)] >> unusedBitsInt) | (hi[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
-                    lo[indextrafo(i)] = (lo[indextrafo(i)] >> unusedBitsInt) | (lo[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
-                }
-
-                hi[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
-                lo[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
-            }
+        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
+            Sequence2BitHiLo::Impl_t::make_reverse_complement_inplace((std::uint8_t*)sequence, sequencelength, indextrafo);
         };
-
-
-        auto shiftEncodedBasesLeftBy_single_thread = [&](unsigned int* array, int size, int shiftamount, auto indextrafo){
-                if(shiftamount == 0) return;
-
-               const int completeInts = shiftamount / (8 * sizeof(unsigned int));
-
-               for(int i = 0; i < size - completeInts; i += 1) {
-                   array[indextrafo(i)] = array[indextrafo(completeInts + i)];
-               }
-
-               for(int i = size - completeInts; i < size; i += 1) {
-                   array[indextrafo(i)] = 0;
-               }
-
-               shiftamount -= completeInts * 8 * sizeof(unsigned int);
-
-               for(int i = 0; i < size - completeInts - 1; i += 1) {
-                   const unsigned int a = array[indextrafo(i)];
-                   const unsigned int b = array[indextrafo(i+1)];
-
-                   array[indextrafo(i)] = (a >> shiftamount) | (b << (8 * sizeof(unsigned int) - shiftamount));
-               }
-
-               array[indextrafo(size - completeInts - 1)] >>= shiftamount;
-           };
-
-            auto hammingdistanceHiLo2_single_thread = [&](
-                const unsigned int* lhi,
-                const unsigned int* llo,
-                const unsigned int* rhi,
-                const unsigned int* rlo,
-                int lhi_bitcount,
-                int rhi_bitcount,
-                int max_errors,
-                auto indextrafoL,
-                auto indextrafoR){
-
-               const int overlap_bitcount = min(lhi_bitcount, rhi_bitcount);
-
-               if(overlap_bitcount == 0)
-                   return max_errors+1;
-
-               const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
-               const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
-
-               int result = 0;
-
-               for(int i = 0; i < partitions - 1 && result < max_errors; i += 1) {
-                   const unsigned int hixor = lhi[indextrafoL(i)] ^ rhi[indextrafoR(i)];
-                   const unsigned int loxor = llo[indextrafoL(i)] ^ rlo[indextrafoR(i)];
-                   const unsigned int bits = hixor | loxor;
-                   result += __popc(bits);
-               }
-
-               if(result >= max_errors)
-                   return result;
-
-               // i == partitions - 1
-
-               const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
-               const unsigned int hixor = lhi[indextrafoL(partitions - 1)] ^ rhi[indextrafoR(partitions - 1)];
-               const unsigned int loxor = llo[indextrafoL(partitions - 1)] ^ rlo[indextrafoR(partitions - 1)];
-               const unsigned int bits = hixor | loxor;
-               result += __popc(bits & mask);
-
-               return result;
-           };
 
         auto no_bank_conflict_index_tile = [&](int logical_index) -> int {
             return logical_index * tilesize;
@@ -688,7 +481,7 @@ namespace gpu{
 
                 //queryIndex != resultIndex -> reverse complement
                 if(isReverseComplement) {
-                    make_reverse_complement_inplace_single_thread(queryBackup, querybases, no_bank_conflict_index);
+                    make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
                 }
 
                 //begin SHD algorithm
@@ -732,8 +525,8 @@ namespace gpu{
                     }
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                    shiftEncodedBasesLeftBy_single_thread(mySequence_hi, size, shiftamount, no_bank_conflict_index);
-                    shiftEncodedBasesLeftBy_single_thread(mySequence_lo, size, shiftamount, no_bank_conflict_index);
+                    shiftBitArrayLeftBy(mySequence_hi, size, shiftamount, no_bank_conflict_index);
+                    shiftBitArrayLeftBy(mySequence_lo, size, shiftamount, no_bank_conflict_index);
     #if 0
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
                     for(int i = 0; i < 8; i++){
@@ -745,16 +538,17 @@ namespace gpu{
                     }
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                    int score = hammingdistanceHiLo2_single_thread(
-                                mySequence_hi,
-                                mySequence_lo,
-                                queryBackup_hi,
-                                queryBackup_lo,
-                                overlapsize,
-                                overlapsize,
-                                max_errors,
-                                no_bank_conflict_index,
-                                no_bank_conflict_index);
+                    int score = hammingdistanceHiLo(
+                                    mySequence_hi,
+                                    mySequence_lo,
+                                    queryBackup_hi,
+                                    queryBackup_lo,
+                                    overlapsize,
+                                    overlapsize,
+                                    max_errors,
+                                    no_bank_conflict_index,
+                                    no_bank_conflict_index,
+                                    __popc);
     #if 0
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
     #endif
@@ -792,8 +586,8 @@ namespace gpu{
                     }
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                    shiftEncodedBasesLeftBy_single_thread(mySequence_hi, size, 1, no_bank_conflict_index);
-                    shiftEncodedBasesLeftBy_single_thread(mySequence_lo, size, 1, no_bank_conflict_index);
+                    shiftBitArrayLeftBy(mySequence_hi, size, 1, no_bank_conflict_index);
+                    shiftBitArrayLeftBy(mySequence_lo, size, 1, no_bank_conflict_index);
     #if 0
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
                     for(int i = 0; i < 8; i++){
@@ -805,7 +599,7 @@ namespace gpu{
                     }
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
     #endif
-                    int score = hammingdistanceHiLo2_single_thread(
+                    int score = hammingdistanceHiLo(
                                     mySequence_hi,
                                     mySequence_lo,
                                     subjectBackup_hi,
@@ -814,7 +608,8 @@ namespace gpu{
                                     overlapsize,
                                     max_errors,
                                     no_bank_conflict_index,
-                                    identity);
+                                    identity,
+                                    __popc);
     #if 0
                     if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
     #endif

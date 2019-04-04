@@ -498,8 +498,11 @@ struct Sequence2BitHiLoImpl{
         }
     };
 #if 1
+    template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
-    static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength){
+    static void make_reverse_complement_inplace(std::uint8_t* sequence, int sequencelength, IndexTransformation indextrafo = [](auto i){return i;}){
+
+        static_assert(sizeof(PaddingType) == sizeof(unsigned int), "");
 
         auto reverse_complement_int = [](auto n) {
             n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
@@ -510,38 +513,38 @@ struct Sequence2BitHiLoImpl{
             return ~n;
         };
 
-        const int bytes = getNumBytes(sequencelength);
+        const int ints = getNumBytes(sequencelength) / sizeof(unsigned int);
         const int unusedBitsInt = SDIV(sequencelength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - sequencelength;
 
         unsigned int* const hi = (unsigned int*)sequence;
-        unsigned int* const lo = (unsigned int*)(sequence + bytes/2);
+        unsigned int* const lo = hi + indextrafo(ints/2);
 
         const int intsPerHalf = SDIV(sequencelength, 8 * sizeof(unsigned int));
         for(int i = 0; i < intsPerHalf/2; ++i){
-            const unsigned int hifront = reverse_complement_int(hi[i]);
-            const unsigned int hiback = reverse_complement_int(hi[intsPerHalf - 1 - i]);
-            hi[i] = hiback;
-            hi[intsPerHalf - 1 - i] = hifront;
+            const unsigned int hifront = reverse_complement_int(hi[indextrafo(i)]);
+            const unsigned int hiback = reverse_complement_int(hi[indextrafo(intsPerHalf - 1 - i)]);
+            hi[indextrafo(i)] = hiback;
+            hi[indextrafo(intsPerHalf - 1 - i)] = hifront;
 
-            const unsigned int lofront = reverse_complement_int(lo[i]);
-            const unsigned int loback = reverse_complement_int(lo[intsPerHalf - 1 - i]);
-            lo[i] = loback;
-            lo[intsPerHalf - 1 - i] = lofront;
+            const unsigned int lofront = reverse_complement_int(lo[indextrafo(i)]);
+            const unsigned int loback = reverse_complement_int(lo[indextrafo(intsPerHalf - 1 - i)]);
+            lo[indextrafo(i)] = loback;
+            lo[indextrafo(intsPerHalf - 1 - i)] = lofront;
         }
         if(intsPerHalf % 2 == 1){
             const int middleindex = intsPerHalf/2;
-            hi[middleindex] = reverse_complement_int(hi[middleindex]);
-            lo[middleindex] = reverse_complement_int(lo[middleindex]);
+            hi[indextrafo(middleindex)] = reverse_complement_int(hi[indextrafo(middleindex)]);
+            lo[indextrafo(middleindex)] = reverse_complement_int(lo[indextrafo(middleindex)]);
         }
 
         if(unusedBitsInt != 0){
             for(int i = 0; i < intsPerHalf - 1; ++i){
-                hi[i] = (hi[i] >> unusedBitsInt) | (hi[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
-                lo[i] = (lo[i] >> unusedBitsInt) | (lo[i+1] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                hi[indextrafo(i)] = (hi[indextrafo(i)] >> unusedBitsInt) | (hi[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
+                lo[indextrafo(i)] = (lo[indextrafo(i)] >> unusedBitsInt) | (lo[indextrafo(i+1)] << (8 * sizeof(unsigned int) - unusedBitsInt));
             }
 
-            hi[intsPerHalf - 1] >>= unusedBitsInt;
-            lo[intsPerHalf - 1] >>= unusedBitsInt;
+            hi[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
+            lo[indextrafo(intsPerHalf - 1)] >>= unusedBitsInt;
         }
     };
 #else
