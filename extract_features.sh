@@ -10,7 +10,7 @@ count=0
 for indexfile in ~/storage/evaluationtool/index/*; do
 	if [ $count -gt 0 ]
 	then
-		./run2.sh gpu $indexfile 16 1 false true
+		./run2.sh gpu $indexfile 1 1 false true
 
 		IFS=$'\n' array=($(cat $indexfile ))
 

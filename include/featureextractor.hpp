@@ -75,9 +75,11 @@ namespace care{
         using WeightColumn = std::array<float, 4>;
         using CountColumn = std::array<float, 4>;
 
+        static constexpr int ncolumns = 33;
+
         int position = -1; //required for labeling, not included in data
-        std::array<CountColumn, 17> counts; //normalized by alignment_coverage
-        std::array<WeightColumn, 17> weights; //normalized by alignment_coverage
+        std::array<CountColumn, ncolumns> counts; //normalized by alignment_coverage
+        std::array<WeightColumn, ncolumns> weights; //normalized by alignment_coverage
     };
 
     std::ostream& operator<<(std::ostream& os, const MSAFeature3& f);

@@ -251,7 +251,7 @@ namespace care{
                                             int columnpitch_chars,
                                             int weightscolumnpitch_floats){
 
-        constexpr int k = 16;
+        constexpr int k = (MSAFeature3::ncolumns / 2) * 2;
 
         auto isValidColumnIndexInMSA = [&](int i){
             return 0 <= i && i < nColumns;
@@ -347,7 +347,7 @@ namespace care{
                                             const std::string& sequence,
                                             int dataset_coverage){
 
-        constexpr int k = 16;
+        constexpr int k = (MSAFeature3::ncolumns / 2) * 2;
 
         auto isValidColumnIndexInMSA = [&](int i){
             return 0 <= i && i < nColumns;
