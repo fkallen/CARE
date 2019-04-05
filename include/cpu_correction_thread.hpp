@@ -55,7 +55,7 @@ namespace cpu{
             CorrectionTask(const CorrectionTask& other)
                 : active(other.active),
                 corrected(other.corrected),
-                readId(other.readId),                
+                readId(other.readId),
                 candidate_read_ids(other.candidate_read_ids),
                 candidate_read_ids_begin(other.candidate_read_ids_begin),
                 candidate_read_ids_end(other.candidate_read_ids_end),
@@ -417,25 +417,9 @@ namespace cpu{
 #endif
 
                     //calculate alignments
-#if 0
-                    auto forwardAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
-                                                                subjectLength,
-                                                                candidateDataPtrs,
-                                                                candidateLengths,
-                                                                goodAlignmentProperties.min_overlap,
-                                                                goodAlignmentProperties.maxErrorRate,
-                                                                goodAlignmentProperties.min_overlap_ratio);
-                    auto revcAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
-                                                                subjectLength,
-                                                                candidateRevcDataPtrs,
-                                                                candidateLengths,
-                                                                goodAlignmentProperties.min_overlap,
-                                                                goodAlignmentProperties.maxErrorRate,
-                                                                goodAlignmentProperties.min_overlap_ratio);
 
-#else
 
-                    auto forwardAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
+                    auto forwardAlignments = shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
                                                                 subjectLength,
                                                                 candidateData,
                                                                 candidateLengths,
@@ -443,7 +427,7 @@ namespace cpu{
                                                                 goodAlignmentProperties.min_overlap,
                                                                 goodAlignmentProperties.maxErrorRate,
                                                                 goodAlignmentProperties.min_overlap_ratio);
-                    auto revcAlignments = calculate_shd_alignments<Sequence_t>(subjectptr,
+                    auto revcAlignments = shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
                                                                 subjectLength,
                                                                 candidateRevcData,
                                                                 candidateLengths,
@@ -451,7 +435,6 @@ namespace cpu{
                                                                 goodAlignmentProperties.min_overlap,
                                                                 goodAlignmentProperties.maxErrorRate,
                                                                 goodAlignmentProperties.min_overlap_ratio);
-#endif
 
 #ifdef ENABLE_TIMING
                     getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
