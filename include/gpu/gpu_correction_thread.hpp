@@ -317,6 +317,7 @@ struct ErrorCorrectionThreadOnlyGPU {
         CorrectionThreadOptions threadOpts;
 		ReadIdGenerator_t* readIdGenerator;
 		std::vector<read_number>* readIdBuffer;
+        std::vector<CorrectionTask_t>* tmptasksBuffer;
 		float min_overlap_ratio;
 		int min_overlap;
 		float estimatedErrorrate;
@@ -416,6 +417,12 @@ public:
 	void makeTransitionFunctionTable();
 
 	static BatchState state_unprepared_func(Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const TransitionFunctionData& transFuncData);
+
+    static BatchState state_unprepared_func2(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
