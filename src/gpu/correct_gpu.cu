@@ -25,6 +25,8 @@
 #include <sstream>
 #include <cstdlib>
 
+//#define DO_PROFILE
+
 namespace care{
 namespace gpu{
 
@@ -44,13 +46,10 @@ namespace gpu{
     using CPUErrorCorrectionThread_t = cpu::CPUCorrectionThread;
     using GPUErrorCorrectionThread_t = gpu::ErrorCorrectionThreadOnlyGPU;
 
-
-
     constexpr int maxCPUThreadsPerGPU = 64;
 
     const auto& deviceIds = runtimeOptions.deviceIds;
 
-    //#define DO_PROFILE
 
     #if 1
     const int nCorrectorThreads = deviceIds.size() == 0 ? runtimeOptions.nCorrectorThreads
