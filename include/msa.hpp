@@ -199,6 +199,37 @@ std::pair<int,int> find_good_consensus_region_of_subject(const View<char>& subje
 }
 
 
+
+
+
+template<int dummy=0>
+std::pair<int,int> find_good_consensus_region_of_subject2(const View<char>& subject,
+                                                    const View<int>& coverage){
+    constexpr int max_clip = 10;
+    constexpr int coverage_threshold = 4;
+
+    const int subjectLength = subject.size();
+
+    int remainingRegionBegin = 0;
+    int remainingRegionEnd = subjectLength; //exclusive
+
+    if(coverage[subjectLength - 1] < coverage_threshold){
+
+        for(int i = subjectLength - 2; i >= subjectLength - max_clip; i--){
+            if(coverage[i] < coverage_threshold){
+                remainingRegionEnd = i;
+            }else{
+                break;
+            }
+        }
+
+    }
+
+    return {remainingRegionBegin, remainingRegionEnd};
+
+}
+
+
 #endif
 
 
@@ -772,6 +803,23 @@ public:
         auto result = find_good_consensus_region_of_subject(subjectview, consensusview, shiftview, lengthview);
 
         return result;
+    }
+
+    std::pair<int,int> findGoodConsensusRegionOfSubject2() const{
+
+        if(columnProperties.columnsToCheck - columnProperties.subjectColumnsEnd_excl <= 3){
+            const View<char> subjectview{&multiple_sequence_alignment[columnProperties.subjectColumnsBegin_incl],
+                                    columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
+
+            const View<int> coverageview{&coverage[columnProperties.subjectColumnsBegin_incl],
+                                        columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
+
+            auto result = find_good_consensus_region_of_subject2(subjectview, coverageview);
+
+            return result;
+        }else{
+            return std::make_pair(0, columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl);
+        }
     }
 
     MSAProperties getMSAProperties() const{
@@ -1417,6 +1465,22 @@ public:
         auto result = find_good_consensus_region_of_subject(subjectview, consensusview, shiftview, lengthview);
 
         return result;
+    }
+
+    std::pair<int,int> findGoodConsensusRegionOfSubject2() const{
+
+        if(columnProperties.columnsToCheck - columnProperties.subjectColumnsEnd_excl <= 3){
+            View<char> subjectview{&subject[0], int(subject.size())};
+
+            const View<int> coverageview{&coverage[columnProperties.subjectColumnsBegin_incl],
+                                        columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
+
+            auto result = find_good_consensus_region_of_subject2(subjectview, coverageview);
+
+            return result;
+        }else{
+            return std::make_pair(0, columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl);
+        }
     }
 };
 
