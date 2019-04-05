@@ -18,7 +18,6 @@ namespace gpu {
 using MSAColumnProperties = care::cpu::MultipleSequenceAlignment::ColumnProperties;
 
 enum class KernelId {
-	PopcountSHD,
     PopcountSHDTiled,
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
@@ -69,41 +68,6 @@ void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 			float goodAlignmentsCountThreshold,
 			cudaStream_t stream,
 			KernelLaunchHandle& handle);
-
-
-
-
-
-
-
-
-
-
-
-
-
-void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
-            int* d_alignment_scores,
-            int* d_alignment_overlaps,
-            int* d_alignment_shifts,
-            int* d_alignment_nOps,
-            bool* d_alignment_isValid,
-            const char* d_subject_sequences_data,
-            const char* d_candidate_sequences_data,
-            const int* d_subject_sequences_lengths,
-            const int* d_candidate_sequences_lengths,
-            const int* d_candidates_per_subject_prefixsum,
-            int n_subjects,
-            int n_queries,
-            size_t encodedsequencepitch,
-            int max_sequence_bytes,
-            int min_overlap,
-            float maxErrorRate,
-            float min_overlap_ratio,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
-
-
 
 
 void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(

@@ -8,6 +8,7 @@
 
 namespace care{
 
+    HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
     void shiftBitArrayLeftBy(unsigned int* array, int size, int shiftamount, IndexTransformation indextrafo){
@@ -35,6 +36,7 @@ namespace care{
         array[indextrafo(size - completeInts - 1)] >>= shiftamount;
     }
 
+    HD_WARNING_DISABLE
     template<class IndexTransformation1,
              class IndexTransformation2,
              class PopcountFunc>

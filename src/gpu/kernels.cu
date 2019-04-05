@@ -13,7 +13,6 @@
 #include <cassert>
 
 
-
 #ifdef __NVCC__
 #include <cub/cub.cuh>
 #include <cooperative_groups.h>
@@ -35,294 +34,6 @@ namespace gpu{
 
 
     //####################   KERNELS   ####################
-
-
-    template<int BLOCKSIZE>
-    __global__
-    void
-    cuda_popcount_shifted_hamming_distance_with_revcompl_kernel(
-                int* __restrict__ alignment_scores,
-    			int* __restrict__ alignment_overlaps,
-    			int* __restrict__ alignment_shifts,
-    			int* __restrict__ alignment_nOps,
-    			bool* __restrict__ alignment_isValid,
-                const char* __restrict__ subject_sequences_data,
-                const char* __restrict__ candidate_sequences_data,
-                const int* __restrict__ subject_sequences_lengths,
-                const int* __restrict__ candidate_sequences_lengths,
-    			const int* __restrict__ candidates_per_subject_prefixsum,
-    			int n_subjects,
-    			int n_candidates,
-                size_t encodedsequencepitch,
-    			int max_sequence_bytes,
-    			int min_overlap,
-    			float maxErrorRate,
-    			float min_overlap_ratio){
-
-        auto getNumBytes = [] (int sequencelength){
-			return Sequence2BitHiLo::getNumBytes(sequencelength);
-		};
-
-		auto getSubjectPtr = [&] (int subjectIndex){
-			const char* result = subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
-			return result;
-		};
-
-		auto getCandidatePtr = [&] (int candidateIndex){
-			const char* result = candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
-			return result;
-		};
-
-		auto getSubjectLength = [&] (int subjectIndex){
-			const int length = subject_sequences_lengths[subjectIndex];
-			return length;
-		};
-
-		auto getCandidateLength = [&] (int candidateIndex){
-			const int length = candidate_sequences_lengths[candidateIndex];
-			return length;
-		};
-
-        auto no_bank_conflict_index = [](int logical_index) -> int {
-            return logical_index * BLOCKSIZE;
-        };
-
-        auto identity = [](int logical_index) -> int {
-            return logical_index;
-        };
-
-    	auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            Sequence2BitHiLo::Impl_t::make_reverse_complement_inplace((std::uint8_t*)sequence, sequencelength, indextrafo);
-        };
-
-    	using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
-
-    	__shared__ union {
-    		typename BlockReduceInt2::TempStorage reduce;
-    	} temp_storage;
-
-    	// sizeof(char) * (2 * max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
-    	extern __shared__ unsigned int sharedmemory[];
-
-    	//set up shared memory pointers
-
-        unsigned int* const subjectBackup = (unsigned int*)((char*)sharedmemory);
-        unsigned int* const queryBackup = (unsigned int*)(((char*)subjectBackup) + max_sequence_bytes);
-        unsigned int* const mySequence = ((unsigned int*)(((char*)queryBackup) + max_sequence_bytes)) + threadIdx.x;
-
-    	const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
-
-    	for(unsigned resultIndex = blockIdx.x; resultIndex < n_candidates * 2; resultIndex += gridDim.x) {
-
-    		const int queryIndex = resultIndex < n_candidates ? resultIndex : resultIndex - n_candidates;
-
-    		//find subjectindex
-    		int subjectIndex = 0;
-    		for(; subjectIndex < n_subjects; subjectIndex++) {
-    			if(queryIndex < candidates_per_subject_prefixsum[subjectIndex+1])
-    				break;
-    		}
-
-
-    		const int subjectbases = getSubjectLength(subjectIndex);
-    		const char* subjectptr = getSubjectPtr(subjectIndex);
-            const int querybases = getCandidateLength(queryIndex);
-    		const char* candidateptr = getCandidatePtr(queryIndex);
-
-            //save subject in shared memory
-    		for(int lane = threadIdx.x; lane < max_sequence_ints; lane += BLOCKSIZE) {
-    			subjectBackup[lane] = ((unsigned int*)(subjectptr))[lane];
-    		}
-
-    		//save query in shared memory
-    		for(int lane = threadIdx.x; lane < max_sequence_ints; lane += BLOCKSIZE) {
-    			queryBackup[lane] = ((unsigned int*)(candidateptr))[lane];
-    		}
-
-    		//queryIndex != resultIndex -> reverse complement
-    		if(threadIdx.x == 0 && queryIndex != resultIndex) {
-    			make_reverse_complement_inplace(queryBackup, querybases, identity);
-    		}
-
-    		__syncthreads();
-
-    		//begin SHD algorithm
-
-    		const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
-    		const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
-    		const int totalbases = subjectbases + querybases;
-    		const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
-
-    		int bestScore = totalbases;                 // score is number of mismatches
-    		int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
-
-            //initialize threadlocal smem array with subject
-            for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-                mySequence[no_bank_conflict_index(lane)] = subjectBackup[lane];
-            }
-
-            unsigned int* mySequence_hi = mySequence;
-            unsigned int* mySequence_lo = mySequence + subjectints / 2 * BLOCKSIZE;
-
-            int previousShift = std::numeric_limits<int>::min();
-
-            for(int shift = threadIdx.x; shift < subjectbases - minoverlap + 1; shift += BLOCKSIZE) {
-                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-                const int max_errors = int(float(overlapsize) * maxErrorRate);
-
-                unsigned int* const shiftptr_hi = mySequence_hi;
-                unsigned int* const shiftptr_lo = mySequence_lo;
-                const int size = subjectints / 2;
-                const int shiftamount = previousShift == std::numeric_limits<int>::min()
-                                            ? shift
-                                            : BLOCKSIZE;
-    #if 0
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                for(int i = 0; i < 8; i++){
-                if(resultIndex == 0 || resultIndex >= n_candidates)     printf("%d ", queryBackup[(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                shiftBitArrayLeftBy(shiftptr_hi, size, shiftamount, no_bank_conflict_index);
-                shiftBitArrayLeftBy(shiftptr_lo, size, shiftamount, no_bank_conflict_index);
-    #if 0
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", queryBackup[(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                int score = hammingdistanceHiLo(
-                            mySequence_hi,
-                            mySequence_lo,
-                            queryBackup,
-                            queryBackup + queryints / 2,
-                            max(0, subjectbases - abs(shift)),
-                            max(0, querybases - abs(shift)),
-                            max_errors,
-                            no_bank_conflict_index,
-                            identity,
-                            __popc);
-    #if 0
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d shiftamount %d\n", shift, score, score + totalbases - 2*overlapsize, shiftamount);
-    #endif
-                score = (score < max_errors ?
-                         score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
-                         : std::numeric_limits<int>::max());                         // too many errors, discard
-
-                if(score < bestScore) {
-                    bestScore = score;
-                    bestShift = shift;
-                }
-
-                previousShift = shift;
-            }
-
-            //initialize threadlocal smem array with query
-            for(int lane = 0; lane < max_sequence_ints; lane += 1) {
-                mySequence[no_bank_conflict_index(lane)] = queryBackup[lane];
-            }
-
-            mySequence_hi = mySequence;
-            mySequence_lo = mySequence + queryints / 2 * BLOCKSIZE;
-
-            previousShift = std::numeric_limits<int>::min();
-
-            for(int shift = -1-int(threadIdx.x); shift >= -querybases + minoverlap; shift -= BLOCKSIZE) {
-                const int overlapsize = min(querybases, subjectbases - shift) - max(-shift, 0);
-                const int max_errors = int(float(overlapsize) * maxErrorRate);
-
-                unsigned int* const shiftptr_hi = mySequence_hi;
-                unsigned int* const shiftptr_lo = mySequence_lo;
-                const int size = queryints / 2;
-                const int shiftamount = previousShift == std::numeric_limits<int>::min()
-                                            ? abs(shift) : BLOCKSIZE;
-    #if 0
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                shiftBitArrayLeftBy(shiftptr_hi, size, shiftamount, no_bank_conflict_index);
-                shiftBitArrayLeftBy(shiftptr_lo, size, shiftamount, no_bank_conflict_index);
-    #if 0
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                for(int i = 0; i < 8; i++){
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[(i)]);
-                }
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                int score = hammingdistanceHiLo(
-                                mySequence_hi,
-                                mySequence_lo,
-                                subjectBackup,
-                                subjectBackup + subjectints / 2,
-                                max(0, querybases - abs(shift)),
-                                max(0, subjectbases - abs(shift)),
-                                max_errors,
-                                no_bank_conflict_index,
-                                identity,
-                                __popc);
-    #if 0
-                if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
-    #endif
-                score = (score < max_errors ?
-                         score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
-                         : std::numeric_limits<int>::max());                         // too many errors, discard
-
-                if(score < bestScore) {
-                    bestScore = score;
-                    bestShift = shift;
-                }
-
-                previousShift = shift;
-            }
-
-    		int2 myval = make_int2(bestScore, bestShift);
-
-    		myval = BlockReduceInt2(temp_storage.reduce).Reduce(myval, [](auto a, auto b){
-    					return a.x < b.x ? a : b;
-    				});
-    		__syncthreads();
-
-    		//make result
-    		if(threadIdx.x == 0) {
-    			bestScore = myval.x;
-    			bestShift = myval.y;
-
-    			const int queryoverlapbegin_incl = max(-bestShift, 0);
-    			const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-    			const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-    			const int opnr = bestScore - totalbases + 2*overlapsize;
-
-                //if(resultIndex == 0 || resultIndex >= n_candidates)
-                    //printf("resultIndex %d bestScore %d bestShift %d overlapsize %d opnr %d isValid %d\n", resultIndex, bestScore, bestShift, overlapsize, opnr,(bestShift != -querybases));
-
-    			alignment_scores[resultIndex] = bestScore;
-    			alignment_overlaps[resultIndex] = overlapsize;
-    			alignment_shifts[resultIndex] = bestShift;
-    			alignment_nOps[resultIndex] = opnr;
-    			alignment_isValid[resultIndex] = (bestShift != -querybases);
-    		}
-    	}
-    }
 
 
     __global__
@@ -386,6 +97,33 @@ namespace gpu{
 
         auto identity = [](auto logical_index){
             return logical_index;
+        };
+
+        auto popcount = [](auto i){return __popc(i);};
+
+        auto hammingDistanceWithShift = [&](int shift, int overlapsize, int max_errors,
+                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
+                                    int shiftptr_size,
+                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
+                                    auto transfunc2){
+
+            const int shiftamount = shift == 0 ? 0 : 1;
+
+            shiftBitArrayLeftBy(shiftptr_hi, shiftptr_size / 2, shiftamount, transfunc1);
+            shiftBitArrayLeftBy(shiftptr_lo, shiftptr_size / 2, shiftamount, transfunc1);
+
+            const int score = hammingdistanceHiLo(shiftptr_hi,
+                                                shiftptr_lo,
+                                                otherptr_hi,
+                                                otherptr_lo,
+                                                overlapsize,
+                                                overlapsize,
+                                                max_errors,
+                                                transfunc1,
+                                                transfunc2,
+                                                popcount);
+
+            return score;
         };
 
         // sizeof(char) * (max_sequence_bytes * num_tiles   // tiles share the subject
@@ -500,6 +238,29 @@ namespace gpu{
                 int bestScore = totalbases;                 // score is number of mismatches
                 int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
 
+                auto handle_shift = [&](int shift, int overlapsize,
+                                            unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
+                                            int shiftptr_size,
+                                            const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
+                                            auto transfunc2){
+
+                    const int max_errors = int(float(overlapsize) * maxErrorRate);
+
+                    int score = hammingDistanceWithShift(shift, overlapsize, max_errors,
+                                        shiftptr_hi,shiftptr_lo, transfunc1,
+                                        shiftptr_size,
+                                        otherptr_hi, otherptr_lo, transfunc2);
+
+                    score = (score < max_errors ?
+                            score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                            : std::numeric_limits<int>::max()); // too many errors, discard
+
+                    if(score < bestScore){
+                        bestScore = score;
+                        bestShift = shift;
+                    }
+                };
+
                 //initialize threadlocal smem array with subject
                 for(int i = 0; i < max_sequence_ints; i += 1) {
                     mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
@@ -510,56 +271,11 @@ namespace gpu{
 
                 for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
                     const int overlapsize = min(subjectbases - shift, querybases);
-                    const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-                    const int size = subjectints / 2;
-                    const int shiftamount = shift == 0 ? 0 : 1;
-    #if 0
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", queryBackup[no_bank_conflict_index(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                    shiftBitArrayLeftBy(mySequence_hi, size, shiftamount, no_bank_conflict_index);
-                    shiftBitArrayLeftBy(mySequence_lo, size, shiftamount, no_bank_conflict_index);
-    #if 0
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", queryBackup[no_bank_conflict_index(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                    int score = hammingdistanceHiLo(
-                                    mySequence_hi,
-                                    mySequence_lo,
-                                    queryBackup_hi,
-                                    queryBackup_lo,
-                                    overlapsize,
-                                    overlapsize,
-                                    max_errors,
-                                    no_bank_conflict_index,
-                                    no_bank_conflict_index,
-                                    __popc);
-    #if 0
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
-    #endif
-                    score = (score < max_errors ?
-                             score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
-                             : std::numeric_limits<int>::max());                         // too many errors, discard
-
-                    if(score < bestScore) {
-                        bestScore = score;
-                        bestShift = shift;
-                    }
+                    handle_shift(shift, overlapsize,
+                                    mySequence_hi, mySequence_lo, no_bank_conflict_index,
+                                    subjectints,
+                                    queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
                 }
 
                 //initialize threadlocal smem array with query
@@ -572,55 +288,11 @@ namespace gpu{
 
                 for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
                     const int overlapsize = min(subjectbases, querybases + shift);
-                    const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-                    const int size = queryints / 2;
-    #if 0
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("before shift %d\n", shift);
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[identity(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                    shiftBitArrayLeftBy(mySequence_hi, size, 1, no_bank_conflict_index);
-                    shiftBitArrayLeftBy(mySequence_lo, size, 1, no_bank_conflict_index);
-    #if 0
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("after shift %d\n", shift);
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", mySequence[no_bank_conflict_index(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-                    for(int i = 0; i < 8; i++){
-                        if(resultIndex == 0 || resultIndex >= n_candidates) printf("%d ", subjectBackup[identity(i)]);
-                    }
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("\n");
-    #endif
-                    int score = hammingdistanceHiLo(
-                                    mySequence_hi,
-                                    mySequence_lo,
-                                    subjectBackup_hi,
-                                    subjectBackup_lo,
-                                    overlapsize,
-                                    overlapsize,
-                                    max_errors,
-                                    no_bank_conflict_index,
-                                    identity,
-                                    __popc);
-    #if 0
-                    if(resultIndex == 0 || resultIndex >= n_candidates) printf("shift %d score %d modscore %d\n", shift, score, score + totalbases - 2*overlapsize);
-    #endif
-                    score = (score < max_errors ?
-                             score + totalbases - 2*overlapsize                         // non-overlapping regions count as mismatches
-                             : std::numeric_limits<int>::max());                         // too many errors, discard
-
-                    if(score < bestScore) {
-                        bestScore = score;
-                        bestShift = shift;
-                    }
+                    handle_shift(shift, overlapsize,
+                                    mySequence_hi, mySequence_lo, no_bank_conflict_index,
+                                    queryints,
+                                    subjectBackup_hi, subjectBackup_lo, identity);
                 }
 
                 const int queryoverlapbegin_incl = max(-bestShift, 0);
@@ -628,27 +300,11 @@ namespace gpu{
                 const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
                 const int opnr = bestScore - totalbases + 2*overlapsize;
 
-                /*printf("block %d tile %d thread %d logicalTileId %d requiredTiles %d isReverseComplement %d forwardTileId %d candidatesBeforeThisSubject %d tileForThisSubject %d subjectIndex %d queryIndex %d resultIndex %d bestScore %d bestShift%d\n",
-                        blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
-                        candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex, bestScore, bestShift);*/
-
-                //if(resultIndex == 0 || resultIndex >= n_candidates)
-                //    printf("resultIndex %d bestScore %d bestShift %d overlapsize %d opnr %d isValid %d\n", resultIndex, bestScore, bestShift, overlapsize, opnr,(bestShift != -querybases));
-
                 alignment_scores[resultIndex] = bestScore;
                 alignment_overlaps[resultIndex] = overlapsize;
                 alignment_shifts[resultIndex] = bestShift;
                 alignment_nOps[resultIndex] = opnr;
                 alignment_isValid[resultIndex] = (bestShift != -querybases);
-                /*printf("thread %d resultindex %d\n", threadIdx.x + blockIdx.x * blockDim.x, resultIndex);
-
-                if(alignment_isValid[resultIndex] && abs(bestShift) == 101){
-                    assert(false);
-                }
-
-                if(!alignment_isValid[resultIndex] && abs(bestShift) != 101){
-                    assert(false);
-                }*/
             }
         }
     }
@@ -2287,116 +1943,6 @@ namespace gpu{
 
     //####################   KERNEL DISPATCH   ####################
 
-
-    void call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
-    			int* d_alignment_scores,
-    			int* d_alignment_overlaps,
-    			int* d_alignment_shifts,
-    			int* d_alignment_nOps,
-    			bool* d_alignment_isValid,
-                const char* d_subject_sequences_data,
-                const char* d_candidate_sequences_data,
-                const int* d_subject_sequences_lengths,
-                const int* d_candidate_sequences_lengths,
-    			const int* d_candidates_per_subject_prefixsum,
-    			int n_subjects,
-    			int n_queries,
-                size_t encodedsequencepitch,
-    			int max_sequence_bytes,
-    			int min_overlap,
-    			float maxErrorRate,
-    			float min_overlap_ratio,
-    			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
-
-    	    #define mycall(blocksize) cuda_popcount_shifted_hamming_distance_with_revcompl_kernel<(blocksize)> \
-    	        <<<grid, block, smem, stream>>>( \
-        		d_alignment_scores, \
-        		d_alignment_overlaps, \
-        		d_alignment_shifts, \
-        		d_alignment_nOps, \
-        		d_alignment_isValid, \
-                d_subject_sequences_data, \
-                d_candidate_sequences_data, \
-                d_subject_sequences_lengths, \
-                d_candidate_sequences_lengths, \
-        		d_candidates_per_subject_prefixsum, \
-        		n_subjects, \
-        		n_queries, \
-                encodedsequencepitch, \
-        		max_sequence_bytes, \
-        		min_overlap, \
-        		maxErrorRate, \
-        		min_overlap_ratio); CUERR;
-
-        	const int blocksize = 32;
-        	const std::size_t smem = sizeof(char) * (max_sequence_bytes * blocksize + 2 * max_sequence_bytes);
-
-        	int max_blocks_per_device = 1;
-
-        	KernelLaunchConfig kernelLaunchConfig;
-        	kernelLaunchConfig.threads_per_block = blocksize;
-        	kernelLaunchConfig.smem = smem;
-
-        	auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHD);
-        	if(iter == handle.kernelPropertiesMap.end()) {
-
-        		std::map<KernelLaunchConfig, KernelProperties> mymap;
-
-        		#define getProp(blocksize) { \
-                		KernelLaunchConfig kernelLaunchConfig; \
-                		kernelLaunchConfig.threads_per_block = (blocksize); \
-                		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * (blocksize) + 2 * max_sequence_bytes); \
-                		KernelProperties kernelProperties; \
-                		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                					cuda_popcount_shifted_hamming_distance_with_revcompl_kernel<(blocksize)>, \
-                					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-                		mymap[kernelLaunchConfig] = kernelProperties; \
-                }
-
-                getProp(1);
-        		getProp(32);
-        		getProp(64);
-        		getProp(96);
-        		getProp(128);
-        		getProp(160);
-        		getProp(192);
-        		getProp(224);
-        		getProp(256);
-
-        		const auto& kernelProperties = mymap[kernelLaunchConfig];
-        		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-
-        		handle.kernelPropertiesMap[KernelId::PopcountSHD] = std::move(mymap);
-
-        		#undef getProp
-        	}else{
-        		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
-        		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-        		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
-        	}
-
-        	dim3 block(blocksize, 1, 1);
-        	dim3 grid(std::min(n_queries*2, max_blocks_per_device), 1, 1);         // one block per candidate
-            //dim3 block(1,1,1);
-            //dim3 grid(1,1,1);
-
-        	switch(blocksize) {
-            case 1: mycall(1); break;
-        	case 32: mycall(32); break;
-        	case 64: mycall(64); break;
-        	case 96: mycall(96); break;
-        	case 128: mycall(128); break;
-        	case 160: mycall(160); break;
-        	case 192: mycall(192); break;
-        	case 224: mycall(224); break;
-        	case 256: mycall(256); break;
-        	default: throw std::runtime_error("Want to call cuda_popcount_shifted_hamming_distance_with_revcompl_kernel with wrong blocksize due to a bug.");
-        	}
-
-    	    #undef mycall
-
-    }
 
     void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
     			int* d_alignment_scores,

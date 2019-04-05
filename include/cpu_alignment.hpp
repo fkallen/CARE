@@ -103,6 +103,8 @@ namespace shd{
 
         const int subjectbytes = getNumBytes(subjectLength);
         const int querybytes = getNumBytes(queryLength);
+        const int subjectInts = subjectbytes / sizeof(unsigned int);
+        const int queryInts = querybytes / sizeof(unsigned int);
         const int totalbases = subjectLength + queryLength;
         const int minoverlap = std::max(min_overlap, int(float(subjectLength) * min_overlap_ratio));
 
@@ -120,100 +122,77 @@ namespace shd{
         std::copy(subject, subject + subjectbytes, subjectdata.begin());
         std::copy(query, query + querybytes, querydata.begin());
 
-        /*
-            The goal is to calculate the hamming distance for each shift in
-            for(int shift = -queryLength + minoverlap; shift < subjectLength - minoverlap; shift++)
+        auto hammingDistanceWithShift = [&](int shift, int overlapsize, int max_errors,
+                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
+                                    int shiftptr_size,
+                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
+                                    auto transfunc2){
 
-            This loop is split into 3 parts. shift = 0, shift < 0 and shift > 0
-        */
+            const int shiftamount = shift == 0 ? 0 : 1;
 
-        //shift == 0
-        {
-            const int shift = 0;
-            const int overlapsize = std::min(subjectLength, queryLength);
+            shiftBitArrayLeftBy(shiftptr_hi, shiftptr_size / 2, shiftamount, transfunc1);
+            shiftBitArrayLeftBy(shiftptr_lo, shiftptr_size / 2, shiftamount, transfunc1);
+
+            const int score = hammingdistanceHiLo(shiftptr_hi,
+                                                shiftptr_lo,
+                                                otherptr_hi,
+                                                otherptr_lo,
+                                                overlapsize,
+                                                overlapsize,
+                                                max_errors,
+                                                transfunc1,
+                                                transfunc2,
+                                                popcount);
+
+            return score;
+        };
+
+        auto handle_shift = [&](int shift, int overlapsize,
+                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
+                                    int shiftptr_size,
+                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
+                                    auto transfunc2){
+
             const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-            int score = hammingdistanceHiLo(subjectdata_hi,
-                                subjectdata_lo,
-                                querydata_hi,
-                                querydata_lo,
-                                overlapsize,
-                                overlapsize,
-                                max_errors,
-                                identity,
-                                identity,
-                                popcount);
+            int score = hammingDistanceWithShift(shift, overlapsize, max_errors,
+                                shiftptr_hi,shiftptr_lo, transfunc1,
+                                shiftptr_size,
+                                otherptr_hi, otherptr_lo, transfunc2);
 
-                score = (score < max_errors ?
-                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                        : std::numeric_limits<int>::max()); // too many errors, discard
+            score = (score < max_errors ?
+                    score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                    : std::numeric_limits<int>::max()); // too many errors, discard
 
             if(score < bestScore){
                 bestScore = score;
                 bestShift = shift;
             }
+        };
+
+        //calculate hamming distance for each shift
+
+        //shift >= 0
+        for(int shift = 0; shift < subjectLength - minoverlap + 1; ++shift){
+            const int overlapsize = std::min(subjectLength - shift, queryLength);
+
+            handle_shift(shift, overlapsize,
+                            subjectdata_hi, subjectdata_lo, identity,
+                            subjectInts,
+                            querydata_hi, querydata_lo, identity);
         }
+
+        //load subject again from memory since it has been modified by calculations with shift >= 0
+        std::copy(subject, subject + subjectbytes, subjectdata.begin());
 
         // shift < 0
         for(int shift = -1; shift >= -queryLength + minoverlap; --shift){
             const int overlapsize = std::min(subjectLength, queryLength + shift);
-            const int max_errors = int(float(overlapsize) * maxErrorRate);
 
-            shiftBitArrayLeftBy((unsigned int*)querydata_hi, querybytes / 2 / sizeof(unsigned int), 1, identity);
-            shiftBitArrayLeftBy((unsigned int*)querydata_lo, querybytes / 2 / sizeof(unsigned int), 1, identity);
-
-            int score = hammingdistanceHiLo(subjectdata_hi,
-                                subjectdata_lo,
-                                querydata_hi,
-                                querydata_lo,
-                                overlapsize,
-                                overlapsize,
-                                max_errors,
-                                identity,
-                                identity,
-                                popcount);
-
-                score = (score < max_errors ?
-                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-            if(score < bestScore){
-                bestScore = score;
-                bestShift = shift;
-            }
-        }
-
-        //shift > 0
-
-        //load query again from memory since it has been modified by calculations with shift < 0
-        std::copy(query, query + querybytes, querydata.begin());
-
-        for(int shift = 1; shift < subjectLength - minoverlap + 1; ++shift){
-            const int overlapsize = std::min(subjectLength - shift, queryLength);
-            const int max_errors = int(float(overlapsize) * maxErrorRate);
-
-            shiftBitArrayLeftBy((unsigned int*)subjectdata_hi, subjectbytes / 2 / sizeof(unsigned int), 1, identity);
-            shiftBitArrayLeftBy((unsigned int*)subjectdata_lo, subjectbytes / 2 / sizeof(unsigned int), 1, identity);
-
-            int score = hammingdistanceHiLo(subjectdata_hi,
-                                subjectdata_lo,
-                                querydata_hi,
-                                querydata_lo,
-                                overlapsize,
-                                overlapsize,
-                                max_errors,
-                                identity,
-                                identity,
-                                popcount);
-
-                score = (score < max_errors ?
-                        score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                        : std::numeric_limits<int>::max()); // too many errors, discard
-
-            if(score < bestScore){
-                bestScore = score;
-                bestShift = shift;
-            }
+            handle_shift(shift, overlapsize,
+                            querydata_hi, querydata_lo, identity,
+                            queryInts,
+                            subjectdata_hi, subjectdata_lo, identity);
         }
 
         AlignmentResult result;

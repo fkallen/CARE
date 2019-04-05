@@ -295,24 +295,24 @@ namespace gpu{
 					return SDIV(num, factor) * factor;
 				};
 
-				const int minOverlapForMaxSeqLength = std::max(1, 
-														std::max(transFuncData.min_overlap, 
+				const int minOverlapForMaxSeqLength = std::max(1,
+														std::max(transFuncData.min_overlap,
 																	int(transFuncData.maxSequenceLength * transFuncData.min_overlap_ratio)));
 				const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);
 
 				batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
-				batch.batchDataDevice.resize(int(batch.tasks.size()), 
-											batch.initialNumberOfCandidates, 
+				batch.batchDataDevice.resize(int(batch.tasks.size()),
+											batch.initialNumberOfCandidates,
 											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
 											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
-											transFuncData.maxSequenceLength, 
+											transFuncData.maxSequenceLength,
 											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
 
-				batch.batchDataHost.resize(int(batch.tasks.size()), 
-											batch.initialNumberOfCandidates, 
+				batch.batchDataHost.resize(int(batch.tasks.size()),
+											batch.initialNumberOfCandidates,
 											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
 											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
-											transFuncData.maxSequenceLength, 
+											transFuncData.maxSequenceLength,
 											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
 
 				batch.initialNumberOfCandidates = 0;
@@ -779,31 +779,6 @@ namespace gpu{
                                          dataArray.n_queries,
                                          stream); CUERR;
 						 };
-#if 0
-		call_cuda_popcount_shifted_hamming_distance_with_revcompl_kernel_async(
-					dataArrays.d_alignment_scores,
-					dataArrays.d_alignment_overlaps,
-					dataArrays.d_alignment_shifts,
-					dataArrays.d_alignment_nOps,
-					dataArrays.d_alignment_isValid,
-					dataArrays.d_subject_sequences_data,
-					dataArrays.d_candidate_sequences_data,
-					dataArrays.d_subject_sequences_lengths,
-					dataArrays.d_candidate_sequences_lengths,
-					dataArrays.d_candidates_per_subject_prefixsum,
-					dataArrays.n_subjects,
-					dataArrays.n_queries,
-                    dataArrays.encoded_sequence_pitch,
-					Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
-					transFuncData.min_overlap,
-					transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0f,
-					transFuncData.min_overlap_ratio,
-					//batch.maxSubjectLength,
-					//batch.maxQueryLength,
-					streams[primary_stream_index],
-					batch.kernelLaunchHandle);
-
-#else
 
         call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
                     dataArrays.d_alignment_scores,
@@ -824,14 +799,12 @@ namespace gpu{
                     dataArrays.encoded_sequence_pitch,
                     Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
                     transFuncData.min_overlap,
-                    transFuncData.maxErrorRate, //correctionOptions.estimatedErrorrate * 4.0f,
+                    transFuncData.maxErrorRate,
                     transFuncData.min_overlap_ratio,
                     //batch.maxSubjectLength,
-                    //batch.maxQueryLength,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
-#endif
 
 		//Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
 		//    If reverse complement is the best, it is copied into the first half, replacing the forward alignment

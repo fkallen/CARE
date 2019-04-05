@@ -35,6 +35,12 @@
     #define HOSTQUALIFIER
 #endif
 
+#ifdef __CUDACC__
+    #define HD_WARNING_DISABLE #pragma hd_warning_disable
+#else
+    #define HD_WARNING_DISABLE
+#endif
+
 
     #define TIMERSTARTCPU(label)                                                  \
         std::chrono::time_point<std::chrono::system_clock> a##label, b##label; \
