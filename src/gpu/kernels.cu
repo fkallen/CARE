@@ -1593,7 +1593,7 @@ namespace gpu{
                 bool foundAColumn = false;
                 for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
                     const int globalIndex = subjectColumnsBegin_incl + i;
-
+#if 1
                     if(my_corrected_subject[i] != my_consensus[globalIndex]
                                 && my_support[globalIndex] > 0.5f
                                 && my_orig_coverage[globalIndex] <= min_coverage_threshold){
@@ -1620,7 +1620,17 @@ namespace gpu{
                             foundAColumn = true;
                         }
                     }
+#else
+                    constexpr float support_theshold = 0.5;
+
+                    if(my_support[globalIndex] >= support_theshold){
+                        my_corrected_subject[i] = my_consensus[globalIndex];
+                        foundAColumn = true;
+                    }
+
+#endif
                 }
+
                 //perform block wide or-reduction on foundAColumn
                 foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
                 __syncthreads();
