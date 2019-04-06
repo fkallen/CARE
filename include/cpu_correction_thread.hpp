@@ -178,7 +178,8 @@ namespace cpu{
         std::chrono::duration<double> gatherBestAlignmentDataTimeTotal;
         std::chrono::duration<double> mismatchRatioFilteringTimeTotal;
         std::chrono::duration<double> compactBestAlignmentDataTimeTotal;
-        std::chrono::duration<double> fetchCandidateStringsAndQualitiesTimeTotal;
+        std::chrono::duration<double> fetchQualitiesTimeTotal;
+        std::chrono::duration<double> makeCandidateStringsTimeTotal;
         std::chrono::duration<double> msaAddSequencesTimeTotal;
         std::chrono::duration<double> msaFindConsensusTimeTotal;
         std::chrono::duration<double> msaMinimizationTimeTimeTotal;
@@ -312,7 +313,8 @@ namespace cpu{
 
                 std::vector<char> bestCandidateQualityData;
                 std::vector<char*> bestCandidateQualityPtrs;
-                std::vector<std::string> bestCandidateStrings;
+                //std::vector<std::string> bestCandidateStrings;
+                std::vector<char> bestCandidateStrings;
 
                 //this loop allows a second pass after subject has been clipped
                 int clippingIters = 0;
@@ -389,8 +391,22 @@ namespace cpu{
                     candidateRevcDataPtrs.resize(myNumCandidates, nullptr);
 
                     //copy candidate data and reverse complements into buffer
+                    
+                    constexpr int prefetch_distance_sequences = 4;
+                    
+                    for(int i = 0; i < myNumCandidates && i < prefetch_distance_sequences; ++i) {
+                        const read_number next_candidate_read_id = task.candidate_read_ids[i];
+                        const char* nextsequenceptr = threadOpts.readStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                        __builtin_prefetch(nextsequenceptr, 0, 0);
+                    }
 
                     for(int i = 0; i < myNumCandidates; i++){
+                        if(i + prefetch_distance_sequences < myNumCandidates) {
+                            const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
+                            const char* nextsequenceptr = threadOpts.readStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                            __builtin_prefetch(nextsequenceptr, 0, 0);
+                        }
+                        
                         const read_number candidateId = task.candidate_read_ids[i];
                         const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
                         const int candidateLength = candidateLengths[i];
@@ -600,8 +616,21 @@ namespace cpu{
 
                         bestCandidateQualityPtrs.clear();
                         bestCandidateQualityPtrs.resize(bestAlignments.size());
+                        
+                        constexpr int prefetch_distance_qualities = 4;
+                        
+                        for(int i = 0; i < int(bestAlignments.size()) && i < prefetch_distance_qualities; ++i) {
+                            const read_number next_candidate_read_id = bestCandidateReadIds[i];
+                            const char* nextqualityptr = threadOpts.readStorage->fetchQuality_ptr(next_candidate_read_id);
+                            __builtin_prefetch(nextqualityptr, 0, 0);
+                        }                            
 
                         for(int i = 0; i < int(bestAlignments.size()); i++){
+                            if(i + prefetch_distance_qualities < int(bestAlignments.size())) {
+                                const read_number next_candidate_read_id = bestCandidateReadIds[i + prefetch_distance_qualities];
+                                const char* nextqualityptr = threadOpts.readStorage->fetchQuality_ptr(next_candidate_read_id);
+                                __builtin_prefetch(nextqualityptr, 0, 0);
+                            }
                             const char* qualityptr = threadOpts.readStorage->fetchQuality_ptr(bestCandidateReadIds[i]);
                             const int length = bestCandidateLengths[i];
                             const BestAlignment_t flag = bestAlignmentFlags[i];
@@ -617,19 +646,61 @@ namespace cpu{
                             bestCandidateQualityPtrs[i] = bestCandidateQualityData.data() + i * max_candidate_length;
                         }
                     }
-
+#ifdef ENABLE_TIMING
+                    fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+                    
+#ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+#endif
+                    
                     //decode sequences of best alignments
+                    auto decode_Sequence2BitHiLo = [](char* dest, const char* src, int nBases){
+                        //return decode_2bit_hilo(data, nBases);
+                        
+                        constexpr char BASE_A = 0x00;
+                        constexpr char BASE_C = 0x01;
+                        constexpr char BASE_G = 0x02;
+                        constexpr char BASE_T = 0x03;
+                                               
+                        const int bytes = Sequence2BitHiLo::getNumBytes(nBases);
+                        
+                        const unsigned int* const hi = (const unsigned int*)src;
+                        const unsigned int* const lo = (const unsigned int*)(src + bytes/2);
+                        
+                        for(int i = 0; i < nBases; i++){
+                            const int intIndex = i / (8 * sizeof(unsigned int));
+                            const int pos = i % (8 * sizeof(unsigned int));
+                            
+                            const unsigned char hibit = (hi[intIndex] >> pos) & 1u;
+                            const unsigned char lobit = (lo[intIndex] >> pos) & 1u;
+                            const unsigned char base = (hibit << 1) | lobit;
+                            
+                            switch(base){
+                                case BASE_A: dest[i] = 'A'; break;
+                                case BASE_C: dest[i] = 'C'; break;
+                                case BASE_G: dest[i] = 'G'; break;
+                                case BASE_T: dest[i] = 'T'; break;
+                                default: dest[i] = '_'; break; // cannot happen
+                            }
+                        }
+                    };
+                    
                     bestCandidateStrings.clear();
-                    bestCandidateStrings.reserve(bestAlignments.size());
+                    //bestCandidateStrings.reserve(bestAlignments.size());
+                    bestCandidateStrings.reserve(bestAlignments.size() * fileProperties.maxSequenceLength);
 
                     for(int i = 0; i < int(bestAlignments.size()); i++){
                         const char* ptr = bestCandidatePtrs[i];
                         const int length = bestCandidateLengths[i];
-                        bestCandidateStrings.emplace_back(Sequence_t::Impl_t::toString((const std::uint8_t*)ptr, length));
+                        //bestCandidateStrings.emplace_back(Sequence_t::Impl_t::toString((const std::uint8_t*)ptr, length));
+                        decode_Sequence2BitHiLo(&bestCandidateStrings[i * fileProperties.maxSequenceLength],
+                                                ptr,
+                                                length);
                     }
 
 #ifdef ENABLE_TIMING
-                   fetchCandidateStringsAndQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
+                    makeCandidateStringsTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
 
@@ -662,7 +733,8 @@ namespace cpu{
                     for(std::size_t i = 0; i < bestAlignments.size(); i++){
 
                         const int length = bestCandidateLengths[i];
-                        const std::string& candidateSequence = bestCandidateStrings[i];
+                        //const std::string& candidateSequence = bestCandidateStrings[i];
+                        const char* candidateSequence = &bestCandidateStrings[i * fileProperties.maxSequenceLength];
                         const char* candidateQualityPtr = correctionOptions.useQualityScores ?
                                                                 bestCandidateQualityPtrs[i]
                                                                 : nullptr;
@@ -677,14 +749,14 @@ namespace cpu{
                                 return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
                             };
 
-                            multipleSequenceAlignment.insertCandidate(candidateSequence, shift, conversionFunction);
+                            multipleSequenceAlignment.insertCandidate(candidateSequence, length, shift, conversionFunction);
 
                             candidateQualityConversionFunctions.emplace_back(std::move(conversionFunction));
                         }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
                             auto conversionFunction = [&, candidateQualityPtr, defaultweight](int i){
                                 return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
                             };
-                            multipleSequenceAlignment.insertCandidate(candidateSequence, shift, conversionFunction);
+                            multipleSequenceAlignment.insertCandidate(candidateSequence, length, shift, conversionFunction);
 
                             candidateQualityConversionFunctions.emplace_back(std::move(conversionFunction));
                         }else{
@@ -931,9 +1003,9 @@ namespace cpu{
 
 
                     //minimization is finished here
-#if 1
+#if 0
                     if(!needsSecondPassAfterClipping){
-                        auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject();
+                        auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject2();
 
                         if(goodregion.first > 0 || goodregion.second < int(task.subject_string.size())){
                             /*const int negativeShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),

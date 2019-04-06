@@ -413,35 +413,53 @@ public:
     }
 
     template<class GetQualityWeight>
-    void insert(int row, int column, const std::string& sequence, GetQualityWeight getQualityWeight){
+    void insert(int row, int column, const char* sequence, int sequencelength, GetQualityWeight getQualityWeight){
         assert(row < nRows);
         assert(column < nColumns);
-        assert(column + int(sequence.length()) <= nColumns);
+        assert(column + sequencelength <= nColumns);
 
-        std::copy(sequence.begin(), sequence.end(), multiple_sequence_alignment.begin() + row * nColumns + column);
-        sequenceLengths[row] = int(sequence.length());
+        std::copy(sequence, sequence + sequencelength, multiple_sequence_alignment.begin() + row * nColumns + column);
+        sequenceLengths[row] = sequencelength;
         shifts[row] = column - columnProperties.subjectColumnsBegin_incl;
 
         if(canUseWeights){
-            for(std::size_t i = 0; i < sequence.length(); ++i){
+            for(int i = 0; i < sequencelength; ++i){
                 multiple_sequence_alignment_weights[row * nColumns + column + i] = getQualityWeight(i);
             }
         }
     }
 
     template<class GetQualityWeight>
-    void insertSubject(const std::string& subject, GetQualityWeight getQualityWeight){
-        insert(0, columnProperties.subjectColumnsBegin_incl, subject, getQualityWeight);
+    void insertSubject(const char* subject, int subjectlength, GetQualityWeight getQualityWeight){
+        insert(0, columnProperties.subjectColumnsBegin_incl, subject, subjectlength, getQualityWeight);
     }
 
     template<class GetQualityWeight>
-    void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
+    void insertCandidate(const char* candidate, int candidatelength, int alignment_shift, GetQualityWeight getQualityWeight){
         assert(insertedCandidates < nRows-1);
 
 
-        insert(1 + insertedCandidates, columnProperties.subjectColumnsBegin_incl + alignment_shift, candidate, getQualityWeight);
+        insert(1 + insertedCandidates, columnProperties.subjectColumnsBegin_incl + alignment_shift, candidate, candidatelength, getQualityWeight);
 
         ++insertedCandidates;
+    }
+    
+    template<class GetQualityWeight>
+    void insertSubject(const std::string& subject, GetQualityWeight getQualityWeight){
+        const int subjectlength = subject.size();
+        const char* const subjectdata = subject.c_str();
+        
+        insertSubject(subjectdata, subjectlength, getQualityWeight);
+    }
+    
+    template<class GetQualityWeight>
+    void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
+        assert(insertedCandidates < nRows-1);
+        
+        const int candidatelength = candidate.size();
+        const char* const candidatedata = candidate.c_str();
+        
+        insertCandidate(candidatedata, candidatelength, alignment_shift, getQualityWeight);
     }
 
     void find_consensus(){
@@ -1050,13 +1068,13 @@ public:
 
         fillzero();
     }
-
+    
     template<class GetQualityWeight>
-    void insert(int row, const std::string& sequence, int alignment_shift, GetQualityWeight getQualityWeight){
-        sequenceLengths[row] = int(sequence.length());
+    void insert(int row, const char* sequence, int sequencelength, int alignment_shift, GetQualityWeight getQualityWeight){
+        sequenceLengths[row] = sequencelength;
         shifts[row] = alignment_shift;
 
-        for(int i = 0; i < int(sequence.length()); i++){
+        for(int i = 0; i < sequencelength; i++){
             const int globalIndex = columnProperties.subjectColumnsBegin_incl + alignment_shift + i;
             const char base = sequence[i];
             const float weight = canUseWeights ? getQualityWeight(i) : 1.0f;
@@ -1072,18 +1090,38 @@ public:
     }
 
     template<class GetQualityWeight>
-    void insertSubject(const std::string& subjectsequence, GetQualityWeight getQualityWeight){
-        insert(0, subjectsequence, 0, getQualityWeight);
-        subject = subjectsequence;
+    void insertSubject(const char* subjectsequence, int subjectlength, GetQualityWeight getQualityWeight){
+        insert(0, subjectsequence, subjectlength, 0, getQualityWeight);
+        
+        subject.resize(subjectlength);
+        std::copy(subjectsequence, subjectsequence + subjectlength, subject.begin());
     }
 
     template<class GetQualityWeight>
-    void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
+    void insertCandidate(const char* candidate, int candidatelength, int alignment_shift, GetQualityWeight getQualityWeight){
         assert(insertedCandidates < nRows-1);
 
-        insert(1+insertedCandidates, candidate, alignment_shift, getQualityWeight);
+        insert(1+insertedCandidates, candidate, candidatelength, alignment_shift, getQualityWeight);
 
         ++insertedCandidates;
+    }
+    
+    template<class GetQualityWeight>
+    void insertSubject(const std::string& subject, GetQualityWeight getQualityWeight){
+        const int subjectlength = subject.size();
+        const char* const subjectdata = subject.c_str();
+        
+        insertSubject(subjectdata, subjectlength, getQualityWeight);
+    }
+    
+    template<class GetQualityWeight>
+    void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
+        assert(insertedCandidates < nRows-1);
+        
+        const int candidatelength = candidate.size();
+        const char* const candidatedata = candidate.c_str();
+        
+        insertCandidate(candidatedata, candidatelength, alignment_shift, getQualityWeight);
     }
 
     void find_consensus(){

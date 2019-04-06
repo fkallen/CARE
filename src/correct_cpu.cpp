@@ -210,7 +210,8 @@ namespace cpu{
     std::chrono::duration<double> gatherBestAlignmentDataTimeTotal{0};
     std::chrono::duration<double> mismatchRatioFilteringTimeTotal{0};
     std::chrono::duration<double> compactBestAlignmentDataTimeTotal{0};
-    std::chrono::duration<double> fetchCandidateStringsAndQualitiesTimeTotal{0};
+    std::chrono::duration<double> fetchQualitiesTimeTotal{0};
+    std::chrono::duration<double> makeCandidateStringsTimeTotal{0};
     std::chrono::duration<double> msaAddSequencesTimeTotal{0};
     std::chrono::duration<double> msaFindConsensusTimeTotal{0};
     std::chrono::duration<double> msaMinimizationTimeTimeTotal{0};
@@ -225,7 +226,8 @@ namespace cpu{
         gatherBestAlignmentDataTimeTotal += cput.gatherBestAlignmentDataTimeTotal;
         mismatchRatioFilteringTimeTotal += cput.mismatchRatioFilteringTimeTotal;
         compactBestAlignmentDataTimeTotal += cput.compactBestAlignmentDataTimeTotal;
-        fetchCandidateStringsAndQualitiesTimeTotal += cput.fetchCandidateStringsAndQualitiesTimeTotal;
+        fetchQualitiesTimeTotal += cput.fetchQualitiesTimeTotal;
+        makeCandidateStringsTimeTotal += cput.makeCandidateStringsTimeTotal;
         msaAddSequencesTimeTotal += cput.msaAddSequencesTimeTotal;
         msaFindConsensusTimeTotal += cput.msaFindConsensusTimeTotal;
         msaMinimizationTimeTimeTotal += cput.msaMinimizationTimeTimeTotal;
@@ -240,7 +242,8 @@ namespace cpu{
     gatherBestAlignmentDataTimeTotal /= cpucorrectorThreads.size();
     mismatchRatioFilteringTimeTotal /= cpucorrectorThreads.size();
     compactBestAlignmentDataTimeTotal /= cpucorrectorThreads.size();
-    fetchCandidateStringsAndQualitiesTimeTotal /= cpucorrectorThreads.size();
+    fetchQualitiesTimeTotal /= cpucorrectorThreads.size();
+    makeCandidateStringsTimeTotal /= cpucorrectorThreads.size();
     msaAddSequencesTimeTotal /= cpucorrectorThreads.size();
     msaFindConsensusTimeTotal /= cpucorrectorThreads.size();
     msaMinimizationTimeTimeTotal /= cpucorrectorThreads.size();
@@ -254,7 +257,8 @@ namespace cpu{
                                                 + gatherBestAlignmentDataTimeTotal
                                                 + mismatchRatioFilteringTimeTotal
                                                 + compactBestAlignmentDataTimeTotal
-                                                + fetchCandidateStringsAndQualitiesTimeTotal
+                                                + fetchQualitiesTimeTotal
+                                                + makeCandidateStringsTimeTotal
                                                 + msaAddSequencesTimeTotal
                                                 + msaFindConsensusTimeTotal
                                                 + msaMinimizationTimeTimeTotal
@@ -276,7 +280,8 @@ namespace cpu{
     printme(gatherBestAlignmentDataTimeTotal);
     printme(mismatchRatioFilteringTimeTotal);
     printme(compactBestAlignmentDataTimeTotal);
-    printme(fetchCandidateStringsAndQualitiesTimeTotal);
+    printme(fetchQualitiesTimeTotal);
+    printme(makeCandidateStringsTimeTotal);
     printme(msaAddSequencesTimeTotal);
     printme(msaFindConsensusTimeTotal);
     printme(msaMinimizationTimeTimeTotal);
