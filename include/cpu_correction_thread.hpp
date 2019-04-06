@@ -303,6 +303,9 @@ namespace cpu{
                 int max_candidate_length = 0;
                 std::vector<char*> candidateDataPtrs;
                 std::vector<char*> candidateRevcDataPtrs;
+                
+                std::vector<AlignmentResult_t> forwardAlignments;
+                std::vector<AlignmentResult_t> revcAlignments;
 
                 std::vector<AlignmentResult_t> bestAlignments;
                 std::vector<BestAlignment_t> bestAlignmentFlags;
@@ -433,9 +436,10 @@ namespace cpu{
 #endif
 
                     //calculate alignments
+                    forwardAlignments.resize(myNumCandidates);
+                    revcAlignments.resize(myNumCandidates);
 
-
-                    auto forwardAlignments = shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
+                    /*auto forwardAlignments = shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
                                                                 subjectLength,
                                                                 candidateData,
                                                                 candidateLengths,
@@ -450,7 +454,27 @@ namespace cpu{
                                                                 max_sequence_bytes,
                                                                 goodAlignmentProperties.min_overlap,
                                                                 goodAlignmentProperties.maxErrorRate,
-                                                                goodAlignmentProperties.min_overlap_ratio);
+                                                                goodAlignmentProperties.min_overlap_ratio);*/
+                    
+                    shd::cpu_multi_shifted_hamming_distance_popcount(forwardAlignments.begin(),
+                                                                    subjectptr,
+                                                                    subjectLength,
+                                                                    candidateData,
+                                                                    candidateLengths,
+                                                                    max_sequence_bytes,
+                                                                    goodAlignmentProperties.min_overlap,
+                                                                    goodAlignmentProperties.maxErrorRate,
+                                                                    goodAlignmentProperties.min_overlap_ratio);
+                    
+                    shd::cpu_multi_shifted_hamming_distance_popcount(revcAlignments.begin(),
+                                                                    subjectptr,
+                                                                    subjectLength,
+                                                                    candidateRevcData,
+                                                                    candidateLengths,
+                                                                    max_sequence_bytes,
+                                                                    goodAlignmentProperties.min_overlap,
+                                                                    goodAlignmentProperties.maxErrorRate,
+                                                                    goodAlignmentProperties.min_overlap_ratio);
 
 #ifdef ENABLE_TIMING
                     getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
