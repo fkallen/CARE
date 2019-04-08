@@ -213,16 +213,20 @@ std::pair<int,int> find_good_consensus_region_of_subject2(const View<char>& subj
     int remainingRegionBegin = 0;
     int remainingRegionEnd = subjectLength; //exclusive
 
-    if(coverage[subjectLength - 1] < coverage_threshold){
-
-        for(int i = subjectLength - 2; i >= subjectLength - max_clip; i--){
-            if(coverage[i] < coverage_threshold){
-                remainingRegionEnd = i;
-            }else{
-                break;
-            }
+    for(int i = 0; i < std::min(max_clip, subjectLength); i++){
+        if(coverage[i] < coverage_threshold){
+            remainingRegionBegin = i+1;
+        }else{
+            break;
         }
+    }
 
+    for(int i = subjectLength - 1; i >= std::max(0, subjectLength - max_clip); i--){
+        if(coverage[i] < coverage_threshold){
+            remainingRegionEnd = i;
+        }else{
+            break;
+        }
     }
 
     return {remainingRegionBegin, remainingRegionEnd};
@@ -443,22 +447,22 @@ public:
 
         ++insertedCandidates;
     }
-    
+
     template<class GetQualityWeight>
     void insertSubject(const std::string& subject, GetQualityWeight getQualityWeight){
         const int subjectlength = subject.size();
         const char* const subjectdata = subject.c_str();
-        
+
         insertSubject(subjectdata, subjectlength, getQualityWeight);
     }
-    
+
     template<class GetQualityWeight>
     void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
         assert(insertedCandidates < nRows-1);
-        
+
         const int candidatelength = candidate.size();
         const char* const candidatedata = candidate.c_str();
-        
+
         insertCandidate(candidatedata, candidatelength, alignment_shift, getQualityWeight);
     }
 
@@ -1068,7 +1072,7 @@ public:
 
         fillzero();
     }
-    
+
     template<class GetQualityWeight>
     void insert(int row, const char* sequence, int sequencelength, int alignment_shift, GetQualityWeight getQualityWeight){
         sequenceLengths[row] = sequencelength;
@@ -1092,7 +1096,7 @@ public:
     template<class GetQualityWeight>
     void insertSubject(const char* subjectsequence, int subjectlength, GetQualityWeight getQualityWeight){
         insert(0, subjectsequence, subjectlength, 0, getQualityWeight);
-        
+
         subject.resize(subjectlength);
         std::copy(subjectsequence, subjectsequence + subjectlength, subject.begin());
     }
@@ -1105,22 +1109,22 @@ public:
 
         ++insertedCandidates;
     }
-    
+
     template<class GetQualityWeight>
     void insertSubject(const std::string& subject, GetQualityWeight getQualityWeight){
         const int subjectlength = subject.size();
         const char* const subjectdata = subject.c_str();
-        
+
         insertSubject(subjectdata, subjectlength, getQualityWeight);
     }
-    
+
     template<class GetQualityWeight>
     void insertCandidate(const std::string& candidate, int alignment_shift, GetQualityWeight getQualityWeight){
         assert(insertedCandidates < nRows-1);
-        
+
         const int candidatelength = candidate.size();
         const char* const candidatedata = candidate.c_str();
-        
+
         insertCandidate(candidatedata, candidatelength, alignment_shift, getQualityWeight);
     }
 
@@ -1330,7 +1334,8 @@ public:
     //candidates in vector must be in the same order as they were inserted into the msa!!!
 
     template<class T>
-    MinimizationResult minimize(const std::vector<std::string>& candidates,
+    MinimizationResult minimize(const char* candidateStrings,
+                                int pitch,
                                 int dataset_coverage,
                                 const std::vector<T>& getQualityWeightFunctions){
         auto is_significant_count = [&](int count, int consensuscount, int columncoverage, int dataset_coverage)->bool{
@@ -1427,7 +1432,7 @@ public:
                     const int row_begin_incl = columnProperties.subjectColumnsBegin_incl + shifts[row];
                     const int row_end_excl = row_begin_incl + sequenceLengths[row];
                     const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
-                    const char base = notAffected ? 'F' : candidates[row-1][col - row_begin_incl];
+                    const char base = notAffected ? 'F' : candidateStrings[(row-1) * pitch + (col - row_begin_incl)];
 
                     if(notAffected || (!(keepMatching ^ (base == foundBase)))){
 
@@ -1439,7 +1444,7 @@ public:
                     }else{
                         for(int i = 0; i < sequenceLengths[row]; i++){
                             const int globalIndex = columnProperties.subjectColumnsBegin_incl + shifts[row] + i;
-                            const char base = candidates[row-1][i];
+                            const char base = candidateStrings[(row-1) * pitch + (i)];
                             const float weight = canUseWeights ? getQualityWeightFunctions[row-1](i) : 1.0f;
                             switch(base){
                                 case 'A': countsA[globalIndex]--; weightsA[globalIndex] -= weight;break;
