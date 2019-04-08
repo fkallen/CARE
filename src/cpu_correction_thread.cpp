@@ -36,18 +36,43 @@
 namespace care{
 namespace cpu{
 
+        template<class Iter>
+        void initializeTasks(std::vector<CPUCorrectionThread::CorrectionTask>& tasks,
+                             const cpu::ContiguousReadStorage& readStorage,
+                             const std::vector<read_number>& readIds,
+                             int numThreads = 1){
+
+            using Sequence_t = cpu::ContiguousReadStorage::Sequence_t;
+
+            omp_set_num_threads(numThreads);
+
+            #pragma omp parallel for schedule(dynamic, 5)
+            for(size_t i = 0; i < readIds.size(); i++){
+                auto& task = tasks[i];
+                const read_number readId = readIds[i];
+
+                const char* const originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
+                const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
+
+                task = std::move(CPUCorrectionThread::CorrectionTask{readId});
+
+                task.original_subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)originalsubjectptr, originalsubjectLength);
+            }
+        }
+
         void getCandidates(std::vector<CPUCorrectionThread::CorrectionTask>& tasks,
                             const Minhasher& minhasher,
                             int maxNumberOfCandidates,
-                            int requiredHitsPerCandidate
+                            int requiredHitsPerCandidate,
                             int numThreads = 1){
 
             omp_set_num_threads(numThreads);
 
             #pragma omp parallel for schedule(dynamic, 5)
             for(size_t i = 0; i < tasks.size(); i++){
-                task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
-                                                                   hits_per_candidate,
+                auto& task = tasks[i];
+                task.candidate_read_ids = minhasher.getCandidates(task.subject_string,
+                                                                   requiredHitsPerCandidate,
                                                                    maxNumberOfCandidates);
 
                 //remove our own read id from candidate list. candidate_read_ids is sorted.
@@ -120,6 +145,8 @@ namespace cpu{
                 forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
             }
 
+            std::vector<CorrectionTask_t> correctionTasks(1);
+
             //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
             std::map<int, int> totalnumcandidatesmap;
@@ -132,28 +159,28 @@ namespace cpu{
                 if(readIds.empty())
                     continue;
 
-                CorrectionTask_t task(readIds.back());
+                correctionTasks[0] = std::move(CorrectionTask_t(readIds.back()));
                 readIds.pop_back();
 
                 bool ok = false;
-                lock(task.readId);
-                if ((*threadOpts.readIsCorrectedVector)[task.readId] == 0) {
-                    (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
+                lock(correctionTasks[0].readId);
+                if ((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 0) {
+                    (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 1;
                     ok = true;
                 }else{
                 }
-                unlock(task.readId);
+                unlock(correctionTasks[0].readId);
 
                 if(!ok)
                     continue; //already corrected
 
-                const char* originalsubjectptr = threadOpts.readStorage->fetchSequenceData_ptr(task.readId);
-                const int originalsubjectLength = threadOpts.readStorage->fetchSequenceLength(task.readId);
+                const char* originalsubjectptr = threadOpts.readStorage->fetchSequenceData_ptr(correctionTasks[0].readId);
+                const int originalsubjectLength = threadOpts.readStorage->fetchSequenceLength(correctionTasks[0].readId);
 
-                task.original_subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)originalsubjectptr, originalsubjectLength);
-                task.subject_string = task.original_subject_string;
-                task.clipping_begin = 0;
-                task.clipping_end = originalsubjectLength;
+                correctionTasks[0].original_subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)originalsubjectptr, originalsubjectLength);
+                correctionTasks[0].subject_string = correctionTasks[0].original_subject_string;
+                correctionTasks[0].clipping_begin = 0;
+                correctionTasks[0].clipping_end = originalsubjectLength;
 
 
 
@@ -196,13 +223,13 @@ namespace cpu{
                     const char* subjectptr = originalsubjectptr;
                     int subjectLength = originalsubjectLength;
                     if(needsSecondPassAfterClipping){
-                        subjectsequence = std::move(Sequence_t{task.subject_string});
+                        subjectsequence = std::move(Sequence_t{correctionTasks[0].subject_string});
                         subjectptr = (const char*)subjectsequence.begin();
                         subjectLength = subjectsequence.length();
                     }
 
                     if(clippingIters > 1){
-                        //std::cout << "before: " << task.candidate_read_ids.size() << " candidates\n";
+                        //std::cout << "before: " << correctionTasks[0].candidate_read_ids.size() << " candidates\n";
                     }
 
 #ifdef ENABLE_TIMING
@@ -210,22 +237,22 @@ namespace cpu{
 #endif
                     const int candidate_limit = clippingIters > 1 ? std::numeric_limits<int>::max() : max_candidates;
 
-                    task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, correctionOptions.hits_per_candidate, candidate_limit);
+                    getCandidates(correctionTasks,
+                                    *threadOpts.minhasher,
+                                    candidate_limit,
+                                    correctionOptions.hits_per_candidate,
+                                    1);
+
 
 #ifdef ENABLE_TIMING
                     getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
                     if(clippingIters > 1){
-                        //std::cout << "after: " << task.candidate_read_ids.size() << " candidates\n";
+                        //std::cout << "after: " << correctionTasks[0].candidate_read_ids.size() << " candidates\n";
                     }
 
-                    //remove our own read id from candidate list. candidate_read_ids is sorted.
-                    auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-                    if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId)
-                        task.candidate_read_ids.erase(readIdPos);
-
-                    int myNumCandidates = int(task.candidate_read_ids.size());
+                    int myNumCandidates = int(correctionTasks[0].candidate_read_ids.size());
 
                     if(myNumCandidates == 0){
                         discardThisTask = true; //no candidates to use for correction
@@ -241,7 +268,7 @@ namespace cpu{
                     candidateLengths.reserve(myNumCandidates);
 
                     max_candidate_length = 0;
-                    for(const read_number candidateId: task.candidate_read_ids){
+                    for(const read_number candidateId: correctionTasks[0].candidate_read_ids){
                         const int candidateLength = threadOpts.readStorage->fetchSequenceLength(candidateId);
                         candidateLengths.emplace_back(candidateLength);
                         max_candidate_length = std::max(max_candidate_length, candidateLength);
@@ -265,19 +292,19 @@ namespace cpu{
                     constexpr int prefetch_distance_sequences = 4;
 
                     for(int i = 0; i < myNumCandidates && i < prefetch_distance_sequences; ++i) {
-                        const read_number next_candidate_read_id = task.candidate_read_ids[i];
+                        const read_number next_candidate_read_id = correctionTasks[0].candidate_read_ids[i];
                         const char* nextsequenceptr = threadOpts.readStorage->fetchSequenceData_ptr(next_candidate_read_id);
                         __builtin_prefetch(nextsequenceptr, 0, 0);
                     }
 
                     for(int i = 0; i < myNumCandidates; i++){
                         if(i + prefetch_distance_sequences < myNumCandidates) {
-                            const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
+                            const read_number next_candidate_read_id = correctionTasks[0].candidate_read_ids[i + prefetch_distance_sequences];
                             const char* nextsequenceptr = threadOpts.readStorage->fetchSequenceData_ptr(next_candidate_read_id);
                             __builtin_prefetch(nextsequenceptr, 0, 0);
                         }
 
-                        const read_number candidateId = task.candidate_read_ids[i];
+                        const read_number candidateId = correctionTasks[0].candidate_read_ids[i];
                         const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
                         const int candidateLength = candidateLengths[i];
                         const int bytes = Sequence_t::getNumBytes(candidateLength);
@@ -404,7 +431,7 @@ namespace cpu{
                         const BestAlignment_t flag = alignmentFlags[i];
                         const auto& fwdAlignment = forwardAlignments[i];
                         const auto& revcAlignment = revcAlignments[i];
-                        const read_number candidateId = task.candidate_read_ids[i];
+                        const read_number candidateId = correctionTasks[0].candidate_read_ids[i];
                         const int candidateLength = candidateLengths[i];
 
                         if(flag == BestAlignment_t::Forward){
@@ -607,9 +634,9 @@ namespace cpu{
                                                     bestAlignmentFlags,
                                                     bestAlignments);
 
-                    const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(task.readId) : nullptr;
+                    const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(correctionTasks[0].readId) : nullptr;
 
-                    multipleSequenceAlignment.insertSubject(task.subject_string, [&](int i){
+                    multipleSequenceAlignment.insertSubject(correctionTasks[0].subject_string, [&](int i){
                         return qualityConversion.getWeight((subjectQualityPtr)[i]);
                     });
 
@@ -673,7 +700,7 @@ namespace cpu{
     /*
                     auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject();
 
-                    if(goodregion.first > 0 || goodregion.second < int(task.subject_string.size())){
+                    if(goodregion.first > 0 || goodregion.second < int(correctionTasks[0].subject_string.size())){
                         const int negativeShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),
                                                                 multipleSequenceAlignment.shifts.end(),
                                                                 [](int s){return s < 0;});
@@ -681,7 +708,7 @@ namespace cpu{
                                                                 multipleSequenceAlignment.shifts.end(),
                                                                 [](int s){return s > 0;});
 
-                        std::cout << "ReadId " << task.readId << " : [" << goodregion.first << ", "
+                        std::cout << "ReadId " << correctionTasks[0].readId << " : [" << goodregion.first << ", "
                                     << goodregion.second << "] negativeShifts " << negativeShifts
                                     << ", positiveShifts " << positiveShifts
                                     << ". Subject starts at column "
@@ -690,15 +717,15 @@ namespace cpu{
                                     << multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl
                                     << " / " << multipleSequenceAlignment.nColumns << "\n";
                         for(int k = 0; k < goodregion.first; k++){
-                            std::cout << task.subject_string[k];
+                            std::cout << correctionTasks[0].subject_string[k];
                         }
                         std::cout << "  ";
                         for(int k = goodregion.first; k < goodregion.second; k++){
-                            std::cout << task.subject_string[k];
+                            std::cout << correctionTasks[0].subject_string[k];
                         }
                         std::cout << "  ";
-                        for(int k = goodregion.second; k < int(task.subject_string.size()); k++){
-                            std::cout << task.subject_string[k];
+                        for(int k = goodregion.second; k < int(correctionTasks[0].subject_string.size()); k++){
+                            std::cout << correctionTasks[0].subject_string[k];
                         }
                         std::cout << '\n';
 
@@ -710,7 +737,7 @@ namespace cpu{
                             std::cout << multipleSequenceAlignment.consensus[k + multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl];
                         }
                         std::cout << "  ";
-                        for(int k = goodregion.second; k < int(task.subject_string.size()); k++){
+                        for(int k = goodregion.second; k < int(correctionTasks[0].subject_string.size()); k++){
                             std::cout << multipleSequenceAlignment.consensus[k + multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl];
                         }
                         std::cout << '\n';
@@ -732,7 +759,7 @@ namespace cpu{
                         auto msaproperties = msa.getMSAProperties();
                         const bool isHQ = msaproperties.isHQ;
 
-                        std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns << ", HQ-MSA: " << (isHQ ? "True" : "False")
+                        std::cout << "ReadId " << correctionTasks[0].readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns << ", HQ-MSA: " << (isHQ ? "True" : "False")
                                     << '\n';
 
                         print_multiple_sequence_alignment_sorted_by_shift(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, ncolumns, get_shift_of_row);
@@ -896,7 +923,7 @@ namespace cpu{
                     if(!needsSecondPassAfterClipping){
                         auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject2();
 
-                        if(goodregion.first > 0 || goodregion.second < int(task.subject_string.size())){
+                        if(goodregion.first > 0 || goodregion.second < int(correctionTasks[0].subject_string.size())){
                             /*const int negativeShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),
                                                                     multipleSequenceAlignment.shifts.end(),
                                                                     [](int s){return s < 0;});
@@ -904,7 +931,7 @@ namespace cpu{
                                                                     multipleSequenceAlignment.shifts.end(),
                                                                     [](int s){return s > 0;});
 
-                            std::cout << "ReadId " << task.readId << " : [" << goodregion.first << ", "
+                            std::cout << "ReadId " << correctionTasks[0].readId << " : [" << goodregion.first << ", "
                                         << goodregion.second << "] negativeShifts " << negativeShifts
                                         << ", positiveShifts " << positiveShifts
                                         << ". Subject starts at column "
@@ -915,10 +942,10 @@ namespace cpu{
 
                             needsSecondPassAfterClipping = true;
 
-                            task.clipping_begin = goodregion.first;
-                            task.clipping_end = goodregion.second;
-                            const int clipsize = task.clipping_end - task.clipping_begin;
-                            task.subject_string = task.original_subject_string.substr(task.clipping_begin, clipsize);
+                            correctionTasks[0].clipping_begin = goodregion.first;
+                            correctionTasks[0].clipping_end = goodregion.second;
+                            const int clipsize = correctionTasks[0].clipping_end - correctionTasks[0].clipping_begin;
+                            correctionTasks[0].subject_string = correctionTasks[0].original_subject_string.substr(correctionTasks[0].clipping_begin, clipsize);
                         }
                     }else{
                         //subject has already been clipped in previous iteration, do not clip again
@@ -947,7 +974,7 @@ namespace cpu{
                 std::vector<MSAFeature> MSAFeatures;
 
                 if(correctionOptions.extractFeatures || !correctionOptions.classicMode){
-#if 0
+#if 1
                     MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
                                                     multipleSequenceAlignment.support.data(),
                                                     multipleSequenceAlignment.coverage.data(),
@@ -955,7 +982,7 @@ namespace cpu{
                                                     multipleSequenceAlignment.columnProperties.columnsToCheck,
                                                     multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
                                                     multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
-                                                    task.subject_string,
+                                                    correctionTasks[0].subject_string,
                                                     multipleSequenceAlignment.kmerlength, 0.0f,
                                                     correctionOptions.estimatedCoverage);
 #else
@@ -973,7 +1000,7 @@ namespace cpu{
                                             multipleSequenceAlignment.origCoverages.data(),
                                             multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
                                             multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
-                                            task.subject_string,
+                                            correctionTasks[0].subject_string,
                                             correctionOptions.estimatedCoverage,
                                             false);
 #else
@@ -994,13 +1021,13 @@ namespace cpu{
                                             multipleSequenceAlignment.origCoverages.data(),
                                             multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
                                             multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
-                                            task.subject_string,
+                                            correctionTasks[0].subject_string,
                                             correctionOptions.estimatedCoverage);
 #endif
 
                     if(correctionOptions.extractFeatures){
                         for(const auto& msafeature : MSAFeatures3){
-                            featurestream << task.readId << '\t' << msafeature.position << '\n';
+                            featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\n';
                             featurestream << msafeature << '\n';
                         }
                     }
@@ -1009,7 +1036,7 @@ namespace cpu{
 
                 if(correctionOptions.extractFeatures){
                     for(const auto& msafeature : MSAFeatures){
-                        featurestream << task.readId << '\t' << msafeature.position << '\n';
+                        featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\n';
                         featurestream << msafeature << '\n';
                     }
                 }
@@ -1030,38 +1057,38 @@ namespace cpu{
                     if(correctionResult.isCorrected){
                         //need to replace the bases in the good region by the corrected bases of the clipped read
                         if(clippingIters == 1){
-                            task.corrected_subject = correctionResult.correctedSequence;
+                            correctionTasks[0].corrected_subject = correctionResult.correctedSequence;
                         }else{
-                            task.corrected_subject = task.original_subject_string;
+                            correctionTasks[0].corrected_subject = correctionTasks[0].original_subject_string;
                             std::copy(correctionResult.correctedSequence.begin(),
                                       correctionResult.correctedSequence.end(),
-                                      task.corrected_subject.begin() + task.clipping_begin);
+                                      correctionTasks[0].corrected_subject.begin() + correctionTasks[0].clipping_begin);
                         }
                     }
 
 
 
 
-                    /*if(!correctionResult.isCorrected || correctionResult.correctedSequence == task.original_subject_string){
-                        const std::size_t numCandidates = task.candidate_read_ids.size();
+                    /*if(!correctionResult.isCorrected || correctionResult.correctedSequence == correctionTasks[0].original_subject_string){
+                        const std::size_t numCandidates = correctionTasks[0].candidate_read_ids.size();
                         numCandidatesOfUncorrectedSubjects[numCandidates]++;
                     }*/
 
                     if(correctionResult.isCorrected){
 
-                        write_read(task.readId, task.corrected_subject);
-                        lock(task.readId);
-                        (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
-                        unlock(task.readId);
+                        write_read(correctionTasks[0].readId, correctionTasks[0].corrected_subject);
+                        lock(correctionTasks[0].readId);
+                        (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 1;
+                        unlock(correctionTasks[0].readId);
                     }else{
 
                         //make subject available for correction as a candidate
-                        if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
-                            lock(task.readId);
-                            if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
-                                (*threadOpts.readIsCorrectedVector)[task.readId] = 0;
+                        if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
+                            lock(correctionTasks[0].readId);
+                            if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
+                                (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 0;
                             }
-                            unlock(task.readId);
+                            unlock(correctionTasks[0].readId);
                         }
                     }
 
@@ -1103,7 +1130,7 @@ namespace cpu{
 
                 }else{
 
-                    task.corrected_subject = task.subject_string;
+                    correctionTasks[0].corrected_subject = correctionTasks[0].subject_string;
                     bool isCorrected = false;
 
                     for(const auto& msafeature : MSAFeatures){
@@ -1130,23 +1157,23 @@ namespace cpu{
                             isCorrected = true;
 
                             const int globalIndex = multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
-                            task.corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
+                            correctionTasks[0].corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
                         }
                     }
 
                     if(isCorrected){
-                        write_read(task.readId, task.corrected_subject);
-                        lock(task.readId);
-                        (*threadOpts.readIsCorrectedVector)[task.readId] = 1;
-                        unlock(task.readId);
+                        write_read(correctionTasks[0].readId, correctionTasks[0].corrected_subject);
+                        lock(correctionTasks[0].readId);
+                        (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 1;
+                        unlock(correctionTasks[0].readId);
                     }else{
                         //make subject available for correction as a candidate
-                        if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
-                            lock(task.readId);
-                            if((*threadOpts.readIsCorrectedVector)[task.readId] == 1){
-                                (*threadOpts.readIsCorrectedVector)[task.readId] = 0;
+                        if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
+                            lock(correctionTasks[0].readId);
+                            if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
+                                (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 0;
                             }
-                            unlock(task.readId);
+                            unlock(correctionTasks[0].readId);
                         }
                     }
 
