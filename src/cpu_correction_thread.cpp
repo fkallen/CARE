@@ -24,14 +24,42 @@
 
 #include <vector>
 
+#include <omp.h>
+
 #define MSA_IMPLICIT
+
+//#define USE_MSA_MINIMIZATION
+//#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
 
 namespace care{
 namespace cpu{
 
+        void getCandidates(std::vector<CPUCorrectionThread::CorrectionTask>& tasks,
+                            const Minhasher& minhasher,
+                            int maxNumberOfCandidates,
+                            int requiredHitsPerCandidate
+                            int numThreads = 1){
 
+            omp_set_num_threads(numThreads);
+
+            #pragma omp parallel for schedule(dynamic, 5)
+            for(size_t i = 0; i < tasks.size(); i++){
+                task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                   hits_per_candidate,
+                                                                   maxNumberOfCandidates);
+
+                //remove our own read id from candidate list. candidate_read_ids is sorted.
+                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(),
+                                                    task.candidate_read_ids.end(),
+                                                    task.readId);
+
+                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId){
+                    task.candidate_read_ids.erase(readIdPos);
+                }
+            }
+        }
 
 
         void CPUCorrectionThread::run(){
@@ -180,8 +208,8 @@ namespace cpu{
 #ifdef ENABLE_TIMING
                     auto tpa = std::chrono::system_clock::now();
 #endif
-
                     const int candidate_limit = clippingIters > 1 ? std::numeric_limits<int>::max() : max_candidates;
+
                     task.candidate_read_ids = threadOpts.minhasher->getCandidates(task.subject_string, correctionOptions.hits_per_candidate, candidate_limit);
 
 #ifdef ENABLE_TIMING
@@ -781,10 +809,13 @@ namespace cpu{
                     }
 
     #endif
-    #if 1
+
+#ifdef USE_MSA_MINIMIZATION
+
 #ifdef ENABLE_TIMING
                     tpa = std::chrono::system_clock::now();
 #endif
+
 
                     constexpr int max_num_minimizations = 5;
 
@@ -801,18 +832,7 @@ namespace cpu{
                                                             correctionOptions.estimatedCoverage,
                                                             candidateQualityConversionFunctions);
     #endif
-    /*
-    std::vector<AlignmentResult_t> bestAlignments;
-    std::vector<BestAlignment_t> bestAlignmentFlags;
-    std::vector<read_number> bestCandidateReadIds;
-    std::vector<int> bestCandidateLengths;
-    std::vector<char> bestCandidateData;
-    std::vector<char*> bestCandidatePtrs;
 
-    std::vector<char> bestCandidateQualityData;
-    std::vector<char*> bestCandidateQualityPtrs;
-    std::vector<char> bestCandidateStrings;
-    */
                         auto update_after_successfull_minimization = [&](){
                             if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
                                 assert(std::is_sorted(minimizationResult.remaining_candidates.begin(), minimizationResult.remaining_candidates.end()));
@@ -838,39 +858,6 @@ namespace cpu{
                                         candidateQualityConversionFunctions[i] = std::move(candidateQualityConversionFunctions[remaining_index]);
                                     }
                                 }
-/*
-                                std::vector<AlignmentResult_t> bestAlignments2(minimizationResult.remaining_candidates.size());
-                                std::vector<BestAlignment_t> bestAlignmentFlags2(minimizationResult.remaining_candidates.size());
-                                std::vector<read_number> bestCandidateReadIds2(minimizationResult.remaining_candidates.size());
-                                std::vector<int> bestCandidateLengths2(minimizationResult.remaining_candidates.size());
-                                std::vector<std::unique_ptr<std::uint8_t[]>> bestReverseComplements2(minimizationResult.remaining_candidates.size());
-
-                                std::vector<std::string> candidateStrings2(minimizationResult.remaining_candidates.size());
-                                std::vector<std::function<float(int)>> candidateQualityConversionFunctions2(minimizationResult.remaining_candidates.size());
-
-                                for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
-                                    const int remaining_index = minimizationResult.remaining_candidates[i];
-                                    bestAlignments2[i] = bestAlignments[remaining_index];
-                                    bestAlignmentFlags2[i] = bestAlignmentFlags[remaining_index];
-                                    bestCandidateReadIds2[i] = bestCandidateReadIds[remaining_index];
-                                    bestReverseComplements2[i] = std::move(bestReverseComplements[remaining_index]);
-
-                                    candidateStrings2[i] = std::move(candidateStrings[remaining_index]);
-                                    candidateQualityConversionFunctions2[i] = std::move(candidateQualityConversionFunctions[remaining_index]);
-                                }
-
-                                std::swap(bestAlignments2, bestAlignments);
-                                std::swap(bestAlignmentFlags2, bestAlignmentFlags);
-                                std::swap(bestCandidateReadIds2, bestCandidateReadIds);
-                                std::swap(bestReverseComplements2, bestReverseComplements);
-    #ifdef MSA_IMPLICIT
-                                std::swap(candidateStrings2, candidateStrings);
-                                std::swap(candidateQualityConversionFunctions2, candidateQualityConversionFunctions);
-    #endif
-
-                                //multipleSequenceAlignment.find_consensus();
-*/
-                                //std::cout << "Minimization " << num_minimizations << ", removed " << minimizationResult.num_discarded_candidates << std::endl;
                             }
                         };
 
@@ -899,13 +886,13 @@ namespace cpu{
 #ifdef ENABLE_TIMING
                     msaMinimizationTimeTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
-    #endif
 
+#endif // USE_MSA_MINIMIZATION
 
 
 
                     //minimization is finished here
-#if 1
+#ifdef USE_SUBJECT_CLIPPING
                     if(!needsSecondPassAfterClipping){
                         auto goodregion = multipleSequenceAlignment.findGoodConsensusRegionOfSubject2();
 
