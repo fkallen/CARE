@@ -71,12 +71,12 @@ namespace care{
 
             const int localindex = i - subjectColumnsBegin_incl;
 
-            //if(supportptr[i] >= 0.5 && consensusptr[i] != sequence[localindex]){
+            if(supportptr[i] >= 0.5 && consensusptr[i] != sequence[localindex]){
             //if(supportptr[i] >= support_threshold && consensusptr[i] != sequence[localindex]){
             //if(!almost_equal(supportptr[i], 1.0)){
             //if(true){
             //if(origcoverageptr[i] <= 5 && consensusptr[i] != sequence[localindex]){
-            if(origcoverageptr[i] > 5 && consensusptr[i] != sequence[localindex]){
+            //if(origcoverageptr[i] > 5 && consensusptr[i] != sequence[localindex]){
 
                 int begin = i-k/2;
                 int end = i+k/2;
