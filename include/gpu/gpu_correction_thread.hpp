@@ -132,7 +132,8 @@ struct ErrorCorrectionThreadOnlyGPU {
 	static constexpr int alignment_data_transfer_h2d_finished_event_index = 6;
 	static constexpr int msa_build_finished_event_index = 7;
     static constexpr int num_indices_calculated_event_index = 8;
-	static constexpr int nEventsPerBatch = 9;
+    static constexpr int num_indices_transfered_event_index = 9;
+	static constexpr int nEventsPerBatch = 10;
 
     static constexpr int wait_before_copyqualites_index = 0;
     static constexpr int wait_before_unpackclassicresults_index = 1;
@@ -194,26 +195,34 @@ struct ErrorCorrectionThreadOnlyGPU {
         std::array<std::atomic_int, nBatchStates> waitCounts{};
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
+        
+        int id = -1;
 
 		KernelLaunchHandle kernelLaunchHandle;
 
         bool isWaiting() const{
-            return 0 != waitCounts[activeWaitIndex].load();
+            //return 0 != waitCounts[activeWaitIndex].load();
+            return cudaEventQuery((*events)[activeWaitIndex]) == cudaErrorNotReady;
     	}
 
         void addWaitSignal(BatchState state, cudaStream_t stream){
             const int wait_index = static_cast<int>(state);
             waitCounts[wait_index]++;
+            
+            //std::cout << "batch " << id << ". wait_index " << wait_index << ", count increased to " << waitCounts[wait_index] << std::endl;
 
             #define handlethis(s) {\
                 auto waitsuccessfunc = [](void* batch){ \
                     Batch* b = static_cast<Batch*>(batch); \
-                    b->waitCounts[static_cast<int>((s))]--; \
+                    int old = b->waitCounts[static_cast<int>((s))]--; \
                 }; \
                 cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR; \
             }
 
             #define mycase(s) case (s): handlethis((s)); break;
+            
+            //assert(old > 0); 
+            //std::cout << "batch " << b->id << ". wait_index " << static_cast<int>((s)) << ", count decreased to " << b->waitCounts[static_cast<int>((s))] << std::endl;
 
             switch(state) {
             mycase(BatchState::Unprepared)
@@ -285,8 +294,11 @@ struct ErrorCorrectionThreadOnlyGPU {
 			copiedCandidates = 0;
 			numsortedCandidateIds = 0;
 			numsortedCandidateIdTasks = 0;
+            
+            //assert(std::all_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i == 0;}));
 
             std::fill(waitCounts.begin(), waitCounts.end(), 0);
+            activeWaitIndex = 0;
 		}
 	};
 

@@ -1131,7 +1131,8 @@ namespace gpu{
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
+        //batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
+        cudaEventRecord(events[num_indices_transfered_event_index], streams[secondary_stream_index]); CUERR;
 
 		//update indices_per_subject
 /*
@@ -1192,8 +1193,8 @@ namespace gpu{
 
 		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-        batch.addWaitSignal(BatchState::CopyQualities, streams[secondary_stream_index]);
-        batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
+        //batch.addWaitSignal(BatchState::CopyQualities, streams[secondary_stream_index]);
+        //batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
 
 		if(transFuncData.correctionOptions.useQualityScores) {
 			/*if(transFuncData.readStorageGpuData.isValidQualityData()) {
@@ -1213,12 +1214,20 @@ namespace gpu{
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::CopyQualities;
-        constexpr int wait_index = static_cast<int>(expectedState);
+        //constexpr int wait_index = static_cast<int>(expectedState);
 
 		assert(batch.state == expectedState);
 
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
+        //if(batch.waitCounts[wait_index] != 0){
+        //    batch.activeWaitIndex = wait_index;
+        //    return expectedState;
+        //}
+        
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+        
+        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = indices_transfer_finished_event_index;
             return expectedState;
         }
 
@@ -1231,7 +1240,7 @@ namespace gpu{
 
 
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
 		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
 
 		if(transFuncData.correctionOptions.useQualityScores) {
@@ -1396,12 +1405,21 @@ namespace gpu{
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::BuildMSA;
-        constexpr int wait_index = static_cast<int>(expectedState);
+        //constexpr int wait_index = static_cast<int>(expectedState);
 
         assert(batch.state == expectedState);
 
-        if(batch.waitCounts[wait_index] != 0){
+        /*if(batch.waitCounts[wait_index] != 0){
             batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }*/
+        
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+        
+        cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = num_indices_transfered_event_index;
             return expectedState;
         }
 
@@ -1413,8 +1431,7 @@ namespace gpu{
         }
 
 
-		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+		
 
 		if(!canLaunchKernel) {
 			return BatchState::BuildMSA;
@@ -1655,7 +1672,7 @@ namespace gpu{
 
 				cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-                batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
+                //batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
 			}
 
 			if(transFuncData.correctionOptions.classicMode) {
@@ -1817,7 +1834,7 @@ namespace gpu{
 
 			cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
-            batch.addWaitSignal(BatchState::UnpackClassicResults, streams[primary_stream_index]);
+            //batch.addWaitSignal(BatchState::UnpackClassicResults, streams[primary_stream_index]);
 
             return BatchState::UnpackClassicResults;
 		}
@@ -1832,12 +1849,20 @@ namespace gpu{
 		assert(!transFuncData.correctionOptions.classicMode);
 
         constexpr BatchState expectedState = BatchState::StartForestCorrection;
-        constexpr int wait_index = static_cast<int>(expectedState);
+        //constexpr int wait_index = static_cast<int>(expectedState);
 
         assert(batch.state == expectedState);
 
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
+        //if(batch.waitCounts[wait_index] != 0){
+        //    batch.activeWaitIndex = wait_index;
+        //    return expectedState;
+        //}
+        
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+        
+        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = msadata_transfer_finished_event_index;
             return expectedState;
         }
 
@@ -1906,19 +1931,37 @@ namespace gpu{
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::UnpackClassicResults;
-        constexpr int wait_index = static_cast<int>(expectedState);
+        //constexpr int wait_index = static_cast<int>(expectedState);
 
 		assert(batch.state == expectedState);
 
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
+        //if(batch.waitCounts[wait_index] != 0){
+        //    batch.activeWaitIndex = wait_index;
+        //    return expectedState;
+        //}
+        
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+        
+        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = indices_transfer_finished_event_index;
+            return expectedState;
+        }
+        
+        status = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = result_transfer_finished_event_index;
             return expectedState;
         }
 
 		DataArrays& dataArrays = *batch.dataArrays;
 		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
+        cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
+        if(errort != cudaSuccess){
+            std::cout << "error cudaEventQuery\n";
+            std::exit(0);
+        }
 		assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
 
 	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
@@ -2682,6 +2725,7 @@ namespace gpu{
         std::array<Batch*, nParallelBatches> batchPointers;
 
 		for(int i = 0; i < nParallelBatches; ++i) {
+            batches[i].id = i;
 			batches[i].dataArrays = &dataArrays[i];
 			batches[i].streams = &streams[i];
 			batches[i].events = &cudaevents[i];
