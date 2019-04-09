@@ -35,10 +35,10 @@
 #include <thrust/iterator/counting_iterator.h>
 #endif
 
-#define CARE_GPU_DEBUG
-#define CARE_GPU_DEBUG_MEMCOPY
+//#define CARE_GPU_DEBUG
+//#define CARE_GPU_DEBUG_MEMCOPY
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
-#define CARE_GPU_DEBUG_PRINT_MSA
+//#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
 #define MSA_IMPLICIT
@@ -48,7 +48,7 @@
 #define shd_tilesize 32
 
 
-constexpr int nParallelBatches = 1;
+constexpr int nParallelBatches = 4;
 constexpr int sideBatchStepsPerWaitIter = 1;
 
 namespace care{
@@ -2334,7 +2334,7 @@ namespace gpu{
 			auto& task = batch.tasks[subject_index];
 			auto& arrays = dataArrays;
 
-            if(task.readId == 141){
+            if(task.readId == 52){
 
 			const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
 

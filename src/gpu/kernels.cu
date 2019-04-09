@@ -654,8 +654,8 @@ namespace gpu{
             return result;
         };
 
-        auto getCandidateQualityPtr = [&] (int localCandidateIndex){
-            const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
+        auto getCandidateQualityPtr = [&] (int candidateIndex){
+            const char* result = d_candidate_qualities + std::size_t(candidateIndex) * quality_pitch;
             return result;
         };
 
@@ -664,8 +664,7 @@ namespace gpu{
             return length;
         };
 
-        auto getCandidateLength = [&] __device__ (int localCandidateIndex){
-            const int candidateIndex = d_indices[localCandidateIndex];
+        auto getCandidateLength = [&] __device__ (int candidateIndex){
             const int length = d_candidate_sequences_lengths[candidateIndex];
             return length;
         };
@@ -727,7 +726,7 @@ namespace gpu{
             float* const multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
             const char* const query = getCandidatePtr(queryIndex);
-            const int queryLength = getCandidateLength(index);
+            const int queryLength = getCandidateLength(queryIndex);
             const char* const queryQualityScore = getCandidateQualityPtr(index);
 
             const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
@@ -828,8 +827,8 @@ namespace gpu{
 			return result;
 		};
 
-		auto getCandidateQualityPtr = [&] (int localCandidateIndex){
-			const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
+		auto getCandidateQualityPtr = [&] (int candidateIndex){
+			const char* result = d_candidate_qualities + std::size_t(candidateIndex) * quality_pitch;
 			return result;
 		};
 
@@ -838,8 +837,7 @@ namespace gpu{
 			return length;
 		};
 
-		auto getCandidateLength = [&] __device__ (int localCandidateIndex){
-			const int candidateIndex = d_indices[localCandidateIndex];
+		auto getCandidateLength = [&] __device__ (int candidateIndex){
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
 		};
@@ -892,7 +890,7 @@ namespace gpu{
             int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
             const char* const query = getCandidatePtr(queryIndex);
-    		const int queryLength = getCandidateLength(index);
+    		const int queryLength = getCandidateLength(queryIndex);
     		const char* const queryQualityScore = getCandidateQualityPtr(index);
 
     		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
@@ -1051,6 +1049,7 @@ namespace gpu{
             //const int indicesBeforeThisSubject = d_indices_per_subject_prefixsum[subjectIndex];
             const int id = blockForThisSubject * blockDim.x + threadIdx.x;
             const int maxid_excl = d_indices_per_subject[subjectIndex];
+            const int globalIndexlistIndex = d_indices_per_subject_prefixsum[subjectIndex] + id;
 
 
     		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
@@ -1091,8 +1090,8 @@ namespace gpu{
                 const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
                 const char* const query = getCandidatePtr(queryIndex);
-        		const int queryLength = getCandidateLength(id);
-        		const char* const queryQualityScore = getCandidateQualityPtr(id);
+        		const int queryLength = getCandidateLength(queryIndex);
+        		const char* const queryQualityScore = getCandidateQualityPtr(globalIndexlistIndex);
 
         		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
         		const int query_alignment_nops = d_alignment_nOps[queryIndex];
@@ -1774,8 +1773,8 @@ namespace gpu{
                 //decode orignal sequence and copy to corrected sequence
                 const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const char* const subject = getSubjectPtr(subjectIndex);
-                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    my_corrected_subject[i - subjectColumnsBegin_incl] = to_nuc(get(subject, subjectLength, i));
+                for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+                    my_corrected_subject[i] = to_nuc(get(subject, subjectLength, i));
                 }
 
                 bool foundAColumn = false;
@@ -2768,7 +2767,7 @@ namespace gpu{
                                                             desiredAlignmentMaxErrorRate,
                                                             maximum_sequence_length,
                                                             max_sequence_bytes,
-                                                            encoded_sequence_pitch
+                                                            encoded_sequence_pitch,
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,

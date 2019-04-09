@@ -56,8 +56,8 @@ fileformat=fastq
 useQualityScores=true
 
 
-batchsize=1
-showProgress=false
+batchsize=50000
+showProgress=true
 
 #minhashing parameters
 #kmer length
