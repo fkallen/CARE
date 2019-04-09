@@ -195,111 +195,18 @@ struct ErrorCorrectionThreadOnlyGPU {
         std::array<std::atomic_int, nBatchStates> waitCounts{};
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
-        
+
         int id = -1;
 
 		KernelLaunchHandle kernelLaunchHandle;
 
-        bool isWaiting() const{
-            //return 0 != waitCounts[activeWaitIndex].load();
-            return cudaEventQuery((*events)[activeWaitIndex]) == cudaErrorNotReady;
-    	}
+        bool isWaiting() const;
 
-        void addWaitSignal(BatchState state, cudaStream_t stream){
-            const int wait_index = static_cast<int>(state);
-            waitCounts[wait_index]++;
-            
-            //std::cout << "batch " << id << ". wait_index " << wait_index << ", count increased to " << waitCounts[wait_index] << std::endl;
+        void addWaitSignal(BatchState state, cudaStream_t stream);
 
-            #define handlethis(s) {\
-                auto waitsuccessfunc = [](void* batch){ \
-                    Batch* b = static_cast<Batch*>(batch); \
-                    int old = b->waitCounts[static_cast<int>((s))]--; \
-                }; \
-                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR; \
-            }
+		void reset();
 
-            #define mycase(s) case (s): handlethis((s)); break;
-            
-            //assert(old > 0); 
-            //std::cout << "batch " << b->id << ". wait_index " << static_cast<int>((s)) << ", count decreased to " << b->waitCounts[static_cast<int>((s))] << std::endl;
-
-            switch(state) {
-            mycase(BatchState::Unprepared)
-            mycase(BatchState::CopyReads)
-            mycase(BatchState::StartAlignment)
-            mycase(BatchState::CopyQualities)
-            mycase(BatchState::BuildMSA)
-            mycase(BatchState::StartClassicCorrection)
-            mycase(BatchState::StartForestCorrection)
-            mycase(BatchState::UnpackClassicResults)
-            mycase(BatchState::WriteResults)
-            mycase(BatchState::WriteFeatures)
-            mycase(BatchState::Finished)
-            mycase(BatchState::Aborted)
-            default: assert(false);
-            }
-
-            #undef mycase
-            #undef handlethis
-
-            /*auto dataptr = std::make_unique<WaitCallbackData>(this, wait_index);
-
-            auto waitsuccessfunc = [](void* d){
-                const WaitCallbackData* const data = static_cast<const WaitCallbackData*>(d);
-                Batch* const b = data->b;
-                b->waitCounts[data->index]--;
-            };
-
-            cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)dataptr.get()); CUERR;
-            callbackDataList.emplace_back(dataptr);*/
-
-            /*if(wait_index == wait_before_copyqualites_index){
-                auto waitsuccessfunc = [](void* batch){
-                    Batch* b = static_cast<Batch*>(batch);
-                    b->waitCounts[wait_before_copyqualites_index]--;
-                };
-
-                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
-            }else if(wait_index == wait_before_unpackclassicresults_index){
-                auto waitsuccessfunc = [](void* batch){
-                    Batch* b = static_cast<Batch*>(batch);
-                    b->waitCounts[wait_before_unpackclassicresults_index]--;
-                };
-
-                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
-            }else if(wait_index == wait_before_startforestcorrection_index){
-                auto waitsuccessfunc = [](void* batch){
-                    Batch* b = static_cast<Batch*>(batch);
-                    b->waitCounts[wait_before_startforestcorrection_index]--;
-                };
-
-                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
-            }else{
-                assert(false); //every case should be handled above
-            }*/
-
-
-        }
-
-		void reset(){
-			tasks.clear();
-			allReadIdsOfTasks.clear();
-			allReadIdsOfTasks_tmp.clear();
-			collectedCandidateReads.clear();
-
-			initialNumberOfCandidates = 0;
-			state = BatchState::Unprepared;
-			copiedTasks = 0;
-			copiedCandidates = 0;
-			numsortedCandidateIds = 0;
-			numsortedCandidateIdTasks = 0;
-            
-            //assert(std::all_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i == 0;}));
-
-            std::fill(waitCounts.begin(), waitCounts.end(), 0);
-            activeWaitIndex = 0;
-		}
+        void waitUntilAllCallbacksFinished() const;
 	};
 
 	struct AdvanceResult {
