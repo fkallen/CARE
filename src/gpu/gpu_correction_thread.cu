@@ -35,20 +35,20 @@
 #include <thrust/iterator/counting_iterator.h>
 #endif
 
-//#define CARE_GPU_DEBUG
-//#define CARE_GPU_DEBUG_MEMCOPY
+#define CARE_GPU_DEBUG
+#define CARE_GPU_DEBUG_MEMCOPY
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
-//#define CARE_GPU_DEBUG_PRINT_MSA
+#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-//#define MSA_IMPLICIT
+#define MSA_IMPLICIT
 
 //#define USE_WAIT_FLAGS
 
 #define shd_tilesize 32
 
 
-constexpr int nParallelBatches = 4;
+constexpr int nParallelBatches = 1;
 constexpr int sideBatchStepsPerWaitIter = 1;
 
 namespace care{
@@ -2334,6 +2334,8 @@ namespace gpu{
 			auto& task = batch.tasks[subject_index];
 			auto& arrays = dataArrays;
 
+            if(task.readId == 141){
+
 			const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
 
 			const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
@@ -2350,6 +2352,11 @@ namespace gpu{
             const int* my_countsC = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
             const int* my_countsG = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
             const int* my_countsT = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
+
+            const float* my_weightsA = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
+            const float* my_weightsC = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
+            const float* my_weightsG = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
+            const float* my_weightsT = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
 
 			float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
 			int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
@@ -2418,6 +2425,38 @@ namespace gpu{
 			}
 			std::cout << std::endl;
 
+            std::cout << "weightsA: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_weightsA[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
+            std::cout << "weightsC: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_weightsC[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
+            std::cout << "weightsG: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_weightsG[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
+            std::cout << "weightsT: "<< std::endl;
+			for(int col = 0; col < columnsToCheck; col++) {
+				std::cout << my_weightsT[col] << " ";
+				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
+					std::cout << " ";
+			}
+			std::cout << std::endl;
+
 			std::cout << "Consensus: "<< std::endl;
 			for(int col = 0; col < columnsToCheck; col++) {
 				char c = my_consensus[col];
@@ -2463,7 +2502,8 @@ namespace gpu{
 			}
 			std::cout << std::endl;
 
-            //std::exit(0);
+            std::exit(0);
+            }
 		}
 #endif
 	    #endif
