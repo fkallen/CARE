@@ -48,7 +48,7 @@
 #define shd_tilesize 32
 
 
-constexpr int nParallelBatches = 4;
+constexpr int nParallelBatches = 1;
 constexpr int sideBatchStepsPerWaitIter = 1;
 
 namespace care{
@@ -1042,6 +1042,18 @@ namespace gpu{
 				   }else{
 				    std::cerr << "not ok\n";
 				   }*/
+                
+                cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                                dataArrays.h_subject_read_ids,
+                                dataArrays.memSubjectIds,
+                                H2D,
+                                streams[primary_stream_index]); CUERR;
+                                
+                cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
+                                dataArrays.h_candidate_read_ids,
+                                dataArrays.memCandidateIds,
+                                H2D,
+                                streams[primary_stream_index]); CUERR;
 
 #if 1
 				cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
@@ -1141,33 +1153,37 @@ namespace gpu{
                             task.candidate_read_ids.end(),
                             dataArrays.h_candidate_read_ids + offset);
             }
+            
+            cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                            dataArrays.h_subject_read_ids,
+                            dataArrays.memSubjectIds,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+                            
+            cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
+                            dataArrays.h_candidate_read_ids,
+                            dataArrays.memCandidateIds,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+                            
+            cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
+                            dataArrays.h_candidates_per_subject_prefixsum,
+                            dataArrays.memNqueriesPrefixSum,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+                            
+            cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
+                            dataArrays.h_tiles_per_subject_prefixsum,
+                            dataArrays.memTilesPrefixSum,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
 
             batch.handledReadIds = true;
         }
 
         if(transFuncData.readStorageGpuData.isValidSequenceData()) {
 
-            cudaMemcpyAsync(dataArrays.d_subject_read_ids,
-                        dataArrays.h_subject_read_ids,
-                        dataArrays.memSubjectIds,
-                        H2D,
-                        streams[primary_stream_index]); CUERR;
-
-            cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
-                        dataArrays.h_candidate_read_ids,
-                        dataArrays.memCandidateIds,
-                        H2D,
-                        streams[primary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
-                        dataArrays.h_candidates_per_subject_prefixsum,
-                        dataArrays.memNqueriesPrefixSum,
-                        H2D,
-                        streams[primary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
-                        dataArrays.h_tiles_per_subject_prefixsum,
-                        dataArrays.memTilesPrefixSum,
-                        H2D,
-                        streams[primary_stream_index]); CUERR;
+            
 
             transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
                                                                          dataArrays.d_subject_read_ids,
@@ -1569,7 +1585,6 @@ namespace gpu{
             return BatchState::WriteResults;
         }
 
-
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 
 		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
@@ -1597,7 +1612,12 @@ namespace gpu{
                 dim3 grid(std::min(num_indices, (1<<16)),1,1);
                 dim3 block(64,1,1);
                 cudaStream_t stream = streams[primary_stream_index];
-
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS               
+                bool debug = false;
+                if(batch.tasks[0].readId == 436){
+                    debug = true;
+                }
+#endif
                 generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
 
 
@@ -1614,6 +1634,11 @@ namespace gpu{
                         const int index = indices[i];
                         const read_number readId = candidate_read_ids[index];
                         const int length = candidate_sequences_lengths[index];
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
+                        if(debug && threadIdx.x == 0){
+                            printf("in kernel: %d %d %d %d %d\n", i, num_indices, index, readId, length);
+                        }
+#endif
                         for(int k = threadIdx.x; k < length; k += blockDim.x){
                             candidate_qualities[i * qualitypitch + k]
                             = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
@@ -1675,7 +1700,7 @@ namespace gpu{
 						__builtin_prefetch(next_qual, 0, 0);
 					}
 
-
+                    #pragma omp parallel for num_threads(2)
 					for(int i = 0; i < my_num_indices; ++i) {
 						if(i+prefetch_distance < my_num_indices) {
 							const int next_candidate_index = my_indices[i+prefetch_distance];
@@ -1690,13 +1715,16 @@ namespace gpu{
 
 						const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.candidate_read_ids_begin[local_candidate_index]);
 						const char* candidate_quality = gpuReadStorage->fetchQuality_ptr(task.candidate_read_ids_begin[local_candidate_index]);
-						assert(batch.copiedCandidates * arrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
-						std::memcpy(arrays.h_candidate_qualities + batch.copiedCandidates * arrays.quality_pitch,
+                        const int global_i = batch.copiedCandidates + i;
+						assert(global_i * arrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
+						std::memcpy(arrays.h_candidate_qualities + global_i * arrays.quality_pitch,
 									candidate_quality,
 									sequencelength);
 
-						++batch.copiedCandidates;
+
 					}
+
+                    batch.copiedCandidates += my_num_indices;
 
 					++batch.copiedTasks;
 
@@ -1727,6 +1755,211 @@ namespace gpu{
 		}else{
 			return BatchState::BuildMSA;
 		}
+	}
+
+
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_copyqualities_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+        constexpr BatchState expectedState = BatchState::CopyQualities;
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+		assert(batch.state == expectedState);
+
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = indices_transfer_finished_event_index;
+            return expectedState;
+        }
+#endif
+
+
+
+
+        DataArrays& dataArrays = *batch.dataArrays;
+
+        //if there are no good candidates, clean up batch and discard reads
+        if(*dataArrays.h_num_indices == 0){
+            return BatchState::WriteResults;
+        }
+
+
+		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+
+		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
+
+		if(transFuncData.correctionOptions.useQualityScores) {
+
+			//if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
+			if(transFuncData.readStorageGpuData.isValidQualityData()) {
+#if 0
+                const char* const rs_quality_data = transFuncData.readStorageGpuData.d_quality_data;
+                const size_t readstorage_quality_pitch = std::size_t(gpuReadStorage->getQualityPitch());
+                const size_t qualitypitch = dataArrays.quality_pitch;
+
+                char* const subject_qualities = dataArrays.d_subject_qualities;
+                char* const candidate_qualities = dataArrays.d_candidate_qualities;
+                const read_number* const subject_read_ids = dataArrays.d_subject_read_ids;
+                const read_number* const candidate_read_ids = dataArrays.d_candidate_read_ids;
+                const int* const subject_sequences_lengths = dataArrays.d_subject_sequences_lengths;
+                const int* const candidate_sequences_lengths = dataArrays.d_candidate_sequences_lengths;
+                const int* const indices = dataArrays.d_indices;
+
+                const int nSubjects = dataArrays.n_subjects;
+                const int num_indices = *dataArrays.h_num_indices;
+
+                dim3 grid(std::min(num_indices, (1<<16)),1,1);
+                dim3 block(64,1,1);
+                cudaStream_t stream = streams[primary_stream_index];
+
+                generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+
+
+                    for(int index = blockIdx.x; index < nSubjects; index += gridDim.x){
+                        const read_number readId = subject_read_ids[index];
+                        const int length = subject_sequences_lengths[index];
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            subject_qualities[index * qualitypitch + k]
+                            = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
+                        }
+                    }
+
+                    for(int i = blockIdx.x; i < num_indices; i += gridDim.x){
+                        const int index = indices[i];
+                        const read_number readId = candidate_read_ids[index];
+                        const int length = candidate_sequences_lengths[index];
+                        for(int k = threadIdx.x; k < length; k += blockDim.x){
+                            candidate_qualities[i * qualitypitch + k]
+                            = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
+                        }
+                    }
+                });
+#else
+                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
+                                                                   dataArrays.quality_pitch,
+                                                                   dataArrays.d_subject_read_ids,
+                                                                   dataArrays.n_subjects,
+                                                                   transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+
+                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
+                                                                   dataArrays.quality_pitch,
+                                                                   dataArrays.d_candidate_read_ids,
+                                                                   *dataArrays.h_num_indices,
+                                                                   transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+#endif
+                assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+
+                cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+
+                return BatchState::BuildMSA;
+			}else{
+
+                constexpr int subjectschunksize = 1000;
+                constexpr int candidateschunksize = 1000;
+                constexpr int prefetch_distance = 4;
+
+                const int firstSubjectIndex = batch.copiedSubjects;
+                const int lastSubjectIndexExcl = dataArrays.n_subjects;
+                const int subjectChunks = SDIV((lastSubjectIndexExcl - firstSubjectIndex), subjectschunksize);
+
+                for(int chunkId = 0; chunkId < subjectChunks; chunkId++){
+                    const int chunkoffset = chunkId * subjectschunksize;
+                    const int loop_begin = firstSubjectIndex + chunkoffset;
+                    const int loop_end_excl = std::min(loop_begin + subjectschunksize, lastSubjectIndexExcl);
+
+                    //std::cout << batch.id << " subject chunk [" << loop_begin << ", " << loop_end_excl << "]" << std::endl;
+
+                    #pragma omp parallel for num_threads(4)
+                    for(int subjectIndex = loop_begin; subjectIndex < loop_end_excl; subjectIndex++){
+
+                        if(subjectIndex + prefetch_distance < loop_end_excl) {
+                            const read_number next_subject_read_id = dataArrays.h_subject_read_ids[subjectIndex + prefetch_distance];
+                            const char* nextqualityptr = transFuncData.gpuReadStorage->fetchQuality_ptr(next_subject_read_id);
+                            __builtin_prefetch(nextqualityptr, 0, 0);
+                        }
+
+                        const read_number readId = dataArrays.h_subject_read_ids[subjectIndex];
+                        const char* qualityptr = gpuReadStorage->fetchQuality_ptr(readId);
+                        const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(readId);
+
+    					//assert(subjectIndex * dataArrays.quality_pitch + sequencelength <= maxsubjectqualitychars);
+    					std::memcpy(dataArrays.h_subject_qualities + subjectIndex * dataArrays.quality_pitch,
+    								qualityptr,
+    								sequencelength);
+                    }
+
+                    batch.copiedSubjects = loop_end_excl;
+
+                    if(isPausable){
+                        return expectedState;
+                    }
+                }
+
+                const int firstCandidateIndex = batch.copiedCandidates;
+                const int lastCandidateIndexExcl = *dataArrays.h_num_indices;
+                const int candidateChunks = SDIV((lastCandidateIndexExcl - firstCandidateIndex), candidateschunksize);
+
+                for(int chunkId = 0; chunkId < candidateChunks; chunkId++){
+                    const int chunkoffset = chunkId * candidateschunksize;
+                    const int loop_begin = firstCandidateIndex + chunkoffset;
+                    const int loop_end_excl = std::min(loop_begin + candidateschunksize, lastCandidateIndexExcl);
+
+                    #pragma omp parallel for num_threads(4)
+                    for(int index = loop_begin; index < loop_end_excl; index++){
+                        const int candidateIndex = dataArrays.h_indices[index];
+
+                        if(index + prefetch_distance < loop_end_excl) {
+                            const int nextIndex = dataArrays.h_indices[index + prefetch_distance];
+                            const read_number next_candidate_read_id = dataArrays.h_candidate_read_ids[nextIndex];
+                            const char* nextqualityptr = transFuncData.gpuReadStorage->fetchQuality_ptr(next_candidate_read_id);
+                            __builtin_prefetch(nextqualityptr, 0, 0);
+                        }
+
+                        const read_number candidate_read_id = dataArrays.h_candidate_read_ids[candidateIndex];
+                        const char* qualityptr = gpuReadStorage->fetchQuality_ptr(candidate_read_id);
+                        const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+
+    					//assert(candidateIndex * arrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
+    					std::memcpy(dataArrays.h_candidate_qualities + candidateIndex * dataArrays.quality_pitch,
+    								qualityptr,
+    								sequencelength);
+                    }
+
+                    batch.copiedCandidates = loop_end_excl;
+
+                    if(isPausable && (loop_end_excl != lastCandidateIndexExcl)){
+                        return expectedState;
+                    }
+                }
+
+                cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
+                            dataArrays.qualities_transfer_data_host,
+                            dataArrays.qualities_transfer_data_usable_size,
+                            H2D,
+                            streams[secondary_stream_index]); CUERR;
+            }
+            assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+
+            cudaEventRecord(events[quality_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+            batch.copiedTasks = 0;
+            batch.copiedCandidates = 0;
+            return BatchState::BuildMSA;
+        }else{
+            return BatchState::BuildMSA;
+        }
+
 	}
 
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_buildmsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
@@ -2343,11 +2576,44 @@ namespace gpu{
 					D2H,
 					streams[primary_stream_index]); CUERR;
 		cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
+        
+        cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
+                        dataArrays.qualities_transfer_data_device,
+                        dataArrays.qualities_transfer_data_usable_size,
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
 	    #endif
 
 	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
+    if(batch.tasks[0].readId == 436){
+        std::cout << "subject read ids" << std::endl;
+        for(int i = 0; i< dataArrays.n_subjects; i++) {
+            std::cout << dataArrays.h_subject_read_ids[i]<< std::endl;
+        }
+        
+        std::cout << "candidate read ids" << std::endl;
+        for(int i = 0; i< dataArrays.n_queries; i++) {
+            std::cout << dataArrays.h_candidate_read_ids[i]<< std::endl;
+        }
+        
+        std::cout << "subject quality scores" << std::endl;
+        for(int i = 0; i< dataArrays.n_subjects; i++) {
+            for(size_t k = 0; k < dataArrays.quality_pitch; k++){
+                std::cout << dataArrays.h_subject_qualities[i * dataArrays.quality_pitch + k];
+            }
+            std::cout << std::endl;
+        }
+        
+        std::cout << "candidate quality scores" << std::endl;
+        for(int i = 0; i< *dataArrays.h_num_indices; i++) {
+            for(size_t k = 0; k < dataArrays.quality_pitch; k++){
+                std::cout << dataArrays.h_candidate_qualities[i * dataArrays.quality_pitch + k];
+            }
+            std::cout << std::endl;
+        }
+        
 		//DEBUGGING
 		std::cout << "alignment scores" << std::endl;
 		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
@@ -2461,6 +2727,7 @@ namespace gpu{
 			std::cout << dataArrays.h_indices_of_corrected_candidates[i] << "\t";
 		}
 		std::cout << std::endl;
+    }
 	    #endif
 
 	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_MSA
@@ -2543,7 +2810,7 @@ namespace gpu{
 			auto& task = batch.tasks[subject_index];
 			auto& arrays = dataArrays;
 
-            if(task.readId == 52){
+            if(task.readId == 436){
 
 			const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
 
