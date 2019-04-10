@@ -427,7 +427,8 @@ namespace gpu {
         }
 
         void ContiguousReadStorage::copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
-            assert(size_t(cpuReadStorage->maximum_allowed_sequence_length) <= out_quality_pitch);
+            //std::cout << size_t(cpuReadStorage->maximum_allowed_sequence_length) <<  " "  << out_quality_pitch << std::endl;
+            //assert(size_t(cpuReadStorage->maximum_allowed_sequence_length) <= out_quality_pitch);
 
             auto gpuData = getGPUData(deviceId);
 

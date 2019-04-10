@@ -531,7 +531,14 @@ namespace gpu{
                         std::size_t myNumCandidates = std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
 
                         assert(myNumCandidates <= std::size_t(transFuncData.max_candidates));
-
+#ifdef CARE_GPU_DEBUG
+                        
+                        if(task.readId == 999013){
+                            std::cout << myNumCandidates << " candidates" << std::endl;
+                        }
+                            
+#endif                            
+                        
                         if(myNumCandidates == 0) {
                             task.active = false;
                         }
@@ -555,6 +562,19 @@ namespace gpu{
                     && !tmptasksBuffer->empty()){
 
                 auto& task = tmptasksBuffer->back();
+                //std::cout << task.readId << std::endl;
+            
+            #ifdef CARE_GPU_DEBUG
+            
+            
+                if(task.readId == 999013){
+                    std::cout << "active : " << task.active << std::endl;
+                }
+            
+            
+            
+            #endif          
+            
 
                 if(task.active){
 
@@ -573,11 +593,37 @@ namespace gpu{
 
                         batch.tasks.emplace_back(task);
                         batch.initialNumberOfCandidates += int(myNumCandidates);
+                        
+                        #ifdef CARE_GPU_DEBUG
+                        
+                        if(task.readId == 999013){
+                            std::cout << "add task" << std::endl;
+                        }
+                        
+                        #endif  
                     }
                 }
 
                 tmptasksBuffer->pop_back();
             }
+            
+            #ifdef CARE_GPU_DEBUG
+            
+            /*for(int i = 0; i < int(batch.tasks.size()); i++){
+                if(batch.tasks[i].readId == 999013){
+                    std::cout << "indices for task " << dataArrays.h_indices_per_subject[i] << std::endl;
+                }
+            }*/
+            
+            if(std::any_of(tmptasksBuffer->begin(), tmptasksBuffer->end(), [](auto& t){return t.readId == 999013;})){
+                std::cout << "is in buffer" << std::endl;
+            }else{
+                std::cout << "nope" << std::endl;
+            }
+                
+            
+            
+            #endif 
 
             //only perform one iteration if pausable
             if(isPausable)
@@ -586,7 +632,7 @@ namespace gpu{
 
 
         if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
-           && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())) {
+            && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())) {
             //still more read ids to add
 
             return BatchState::Unprepared;
@@ -1579,6 +1625,17 @@ namespace gpu{
 
 
         DataArrays& dataArrays = *batch.dataArrays;
+        
+        #ifdef CARE_GPU_DEBUG
+        
+        for(int i = 0; i < int(batch.tasks.size()); i++){
+            if(batch.tasks[i].readId == 999013){
+                std::cout << "indices for task " << dataArrays.h_indices_per_subject[i] << std::endl;
+            }
+        }
+        
+        
+        #endif          
 
         //if there are no good candidates, clean up batch and discard reads
         if(*dataArrays.h_num_indices == 0){
@@ -2810,7 +2867,7 @@ namespace gpu{
 			auto& task = batch.tasks[subject_index];
 			auto& arrays = dataArrays;
 
-            if(task.readId == 436){
+            if(task.readId == 999013){
 
 			const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
 
@@ -3556,7 +3613,7 @@ namespace gpu{
 
 			assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
-			if(!(threadOpts.readIdGenerator->empty() && readIdBuffer.empty())) {
+            if(!(threadOpts.readIdGenerator->empty() && readIdBuffer.empty() && tmptasksBuffer.empty())) {
 				//there are reads left to correct, so this batch can be reused again
 				mainBatch.reset();
 			}else{
@@ -3587,6 +3644,8 @@ namespace gpu{
         for(const auto& batch : batches){
             batch.waitUntilAllCallbacksFinished();
         }
+        
+        assert(tmptasksBuffer.empty());
 
 		std::cout << "GPU worker (device " << threadOpts.deviceId << ") finished" << std::endl;
 
