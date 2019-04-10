@@ -177,6 +177,9 @@ struct ErrorCorrectionThreadOnlyGPU {
 		int copiedTasks = 0;         // used if state == CandidatesPresent
 		int copiedCandidates = 0;         // used if state == CandidatesPresent
 
+        int copiedSubjects = 0;
+        bool handledReadIds = false;
+
 
 		std::vector<read_number> allReadIdsOfTasks;
 		std::vector<read_number> allReadIdsOfTasks_tmp;
@@ -348,6 +351,12 @@ public:
 				const TransitionFunctionData& transFuncData);
 
 	static BatchState state_copyreads_func(Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const TransitionFunctionData& transFuncData);
+
+    static BatchState state_copyreads_func2(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
