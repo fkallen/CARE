@@ -37,8 +37,8 @@ namespace gpu {
     	}
     }
 
-    
-        ContiguousReadStorage::ContiguousReadStorage(const cpu::ContiguousReadStorage* readStorage, const std::vector<int>& deviceIds) 
+
+        ContiguousReadStorage::ContiguousReadStorage(const cpu::ContiguousReadStorage* readStorage, const std::vector<int>& deviceIds)
                         : cpuReadStorage(readStorage), deviceIds(deviceIds){
             const std::size_t requiredSequenceMem = cpuReadStorage->sequence_data_bytes + cpuReadStorage->sequence_lengths_bytes; //sequences and sequence lengths
             const std::size_t requiredQualityMem = cpuReadStorage->useQualityScores ? cpuReadStorage->quality_data_bytes : 0;
@@ -69,7 +69,7 @@ namespace gpu {
     	bool ContiguousReadStorage::operator==(const ContiguousReadStorage& other) const{
             if(*cpuReadStorage != *(other.cpuReadStorage))
                 return false;
-            
+
     		if(deviceIds != other.deviceIds)
     			return false;
     		if(dataProperties != other.dataProperties)
@@ -94,9 +94,9 @@ namespace gpu {
 
     		if(!hasMoved) {
                 int oldId;
-                
+
                 cudaGetDevice(&oldId); CUERR;
-                
+
                 for(auto& p : gpuData) {
                     auto& data = p.second;
                     cudaSetDevice(data.id); CUERR;
@@ -104,7 +104,7 @@ namespace gpu {
                     cudaFree(data.d_sequence_lengths); CUERR;
                     cudaFree(data.d_quality_data); CUERR;
                 }
-                
+
                 cudaSetDevice(oldId); CUERR;
     		}
 
@@ -352,6 +352,9 @@ namespace gpu {
     			}
     		}
 
+            //result.sequenceType = ContiguousReadStorage::Type::None;
+            //result.qualityType = ContiguousReadStorage::Type::None;
+
     		return result;
     	}
 
@@ -379,40 +382,40 @@ namespace gpu {
     	int ContiguousReadStorage::getQualityPitch() const {
             return cpuReadStorage->maximum_allowed_sequence_length;
     	}
-    	
+
     	void ContiguousReadStorage::copyGpuLengthsToGpuBufferAsync(Length_t* d_lengths, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             auto gpuData = getGPUData(deviceId);
-            
+
             const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
-            
+
             dim3 grid(SDIV(nReadIds, 128),1,1);
             dim3 block(128,1,1);
-            
-            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){                
+
+            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
                 for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
                     const read_number readId = d_readIds[index];
                     d_lengths[index] = rs_sequence_lengths[readId];
                 }
-            });            
+            });
         }
-        
+
         void ContiguousReadStorage::copyGpuSequenceDataToGpuBufferAsync(char* d_sequence_data, size_t out_sequence_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             assert(size_t(cpuReadStorage->maximum_allowed_sequence_bytes) <= out_sequence_pitch);
-            
+
             auto gpuData = getGPUData(deviceId);
-            
+
             const char* const rs_sequence_data = gpuData.d_sequence_data;
             const size_t rs_sequence_pitch = std::size_t(getSequencePitch());
-            
+
             dim3 grid(SDIV(nReadIds, 128),1,1);
             dim3 block(128,1,1);
-            
-            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){ 
+
+            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
                 const int intiters = out_sequence_pitch / sizeof(int);
 
                 for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
                     const read_number readId = d_readIds[index];
-                    
+
                     for(int k = 0; k < intiters; k++){
                         ((int*)&d_sequence_data[index * out_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * rs_sequence_pitch])[k];
                     }
@@ -420,23 +423,23 @@ namespace gpu {
                         d_sequence_data[index * out_sequence_pitch + k] = rs_sequence_data[size_t(readId) * rs_sequence_pitch + k];
                     }
                 }
-            });            
+            });
         }
-        
+
         void ContiguousReadStorage::copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             assert(size_t(cpuReadStorage->maximum_allowed_sequence_length) <= out_quality_pitch);
-            
+
             auto gpuData = getGPUData(deviceId);
-            
+
             const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
             const char* const rs_quality_data = gpuData.d_quality_data;
             const size_t rs_quality_pitch = std::size_t(getQualityPitch());
-            
+
             dim3 grid(std::min(nReadIds, (1<<16)),1,1);
             dim3 block(64,1,1);
-            
-            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){ 
-                
+
+            generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+
                 for(int index = blockIdx.x; index < nReadIds; index += gridDim.x){
                     const read_number readId = d_readIds[index];
                     const int length = rs_sequence_lengths[index];
@@ -445,7 +448,7 @@ namespace gpu {
                                 = rs_quality_data[size_t(readId) * rs_quality_pitch + k];
                     }
                 }
-            });            
+            });
         }
 
 

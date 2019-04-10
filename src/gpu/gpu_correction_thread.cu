@@ -41,7 +41,7 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-#define MSA_IMPLICIT
+//#define MSA_IMPLICIT
 
 //#define USE_WAIT_FLAGS
 
@@ -195,7 +195,7 @@ namespace gpu{
 	}
 
 	void ErrorCorrectionThreadOnlyGPU::makeTransitionFunctionTable(){
-		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
+		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func2;
 		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
 		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
@@ -804,9 +804,11 @@ namespace gpu{
 			const auto& task = batch.tasks[batch.copiedTasks];
 			auto& arrays = dataArrays;
 
+            arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
+
 			if(transFuncData.readStorageGpuData.isValidSequenceData()) {
 				//copy read Ids
-				arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
+
 #if 0
 				std::copy(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), arrays.h_candidate_read_ids + batch.copiedCandidates);
 
@@ -873,6 +875,7 @@ namespace gpu{
 
 				const std::size_t candidatesequencedatabytes = arrays.memQueries / sizeof(char);
 
+                #pragma omp parallel for num_threads(2)
 				for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i) {
 					if(i + prefetch_distance < task.candidate_read_ids.size()) {
 						const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
@@ -886,15 +889,17 @@ namespace gpu{
 
 					assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
 
+                    const int global_i = batch.copiedCandidates + i;
+
 					std::memcpy(arrays.h_candidate_sequences_data
-								+ batch.copiedCandidates * arrays.encoded_sequence_pitch,
+								+ global_i * arrays.encoded_sequence_pitch,
 								sequenceptr,
 								Sequence_t::getNumBytes(sequencelength));
 
-					arrays.h_candidate_sequences_lengths[batch.copiedCandidates] = sequencelength;
-
-					++batch.copiedCandidates;
+					arrays.h_candidate_sequences_lengths[global_i] = sequencelength;
 				}
+
+                batch.copiedCandidates += task.candidate_read_ids.size();
 #else
 
 				constexpr std::size_t prefetch_distance = 4;
@@ -1089,6 +1094,212 @@ namespace gpu{
 			return BatchState::CopyReads;
 		}
 	}
+
+
+
+#if 0
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_copyreads_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+                bool canBlock,
+                bool canLaunchKernel,
+                bool isPausable,
+                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+        assert(batch.state == BatchState::CopyReads);
+        assert(batch.copiedTasks <= int(batch.tasks.size()));
+
+        DataArrays& dataArrays = *batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+
+
+        bool calculatedPrefixsums = false;
+
+        if(!calculatedPrefixsums){
+
+            dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
+            for(size_t i = 0; i < batch.tasks.size(); i++){
+                const size_t num = batch.tasks[i].candidate_read_ids.size();
+                candidatesPerSubject[i+1] = candidatesPerSubject[i] + num;
+            }
+
+            dataArrays.h_tiles_per_subject_prefixsum[0] = 0;
+            for(size_t i = 0; i < batch.tasks.size(); i++){
+                const size_t num = batch.tasks[i].candidate_read_ids.size();
+                candidatesPerSubject[i+1] = candidatesPerSubject[i] + SDIV(num, shd_tilesize);
+            }
+        }
+
+        //copy one task
+        while(batch.copiedTasks < int(batch.tasks.size())) {
+            const auto& task = batch.tasks[batch.copiedTasks];
+            auto& arrays = dataArrays;
+
+            arrays.h_subject_read_ids[batch.copiedTasks] = task.readId;
+
+            if(transFuncData.readStorageGpuData.isValidSequenceData()) {
+
+                const std::size_t h_candidate_read_ids_size = arrays.memCandidateIds / sizeof(read_number);
+
+                assert(std::size_t(batch.copiedCandidates) + std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end) <= h_candidate_read_ids_size);
+
+                std::copy(task.candidate_read_ids_begin, task.candidate_read_ids_end, arrays.h_candidate_read_ids + batch.copiedCandidates);
+
+                batch.copiedCandidates += std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
+
+                //update prefix sum
+                const int numcandidates = int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+                arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
+                          + numcandidates;
+                arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks]
+                            + SDIV(numcandidates, shd_tilesize);
+
+            }else{
+                //copy subject data
+                const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(task.readId);
+                const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.readId);
+
+                const std::size_t maxbytes = arrays.memSubjects / sizeof(char);
+                assert(batch.copiedTasks * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= maxbytes);
+
+                std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
+                            sequenceptr,
+                            Sequence_t::getNumBytes(sequencelength));
+
+                //copy subject length
+                arrays.h_subject_sequences_lengths[batch.copiedTasks] = task.subject_string.length();
+
+                constexpr std::size_t prefetch_distance = 4;
+
+                for(std::size_t i = 0; i < task.candidate_read_ids.size() && i < prefetch_distance; ++i) {
+                    const read_number next_candidate_read_id = task.candidate_read_ids[i];
+                    const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                    __builtin_prefetch(nextsequenceptr, 0, 0);
+                }
+
+                const std::size_t candidatesequencedatabytes = arrays.memQueries / sizeof(char);
+
+                #pragma omp parallel for num_threads(2)
+                for(std::size_t i = 0; i < task.candidate_read_ids.size(); ++i) {
+                    if(i + prefetch_distance < task.candidate_read_ids.size()) {
+                        const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance];
+                        const char* nextsequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(next_candidate_read_id);
+                        __builtin_prefetch(nextsequenceptr, 0, 0);
+                    }
+
+                    const read_number candidate_read_id = task.candidate_read_ids[i];
+                    const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
+                    const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+
+                    assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+
+                    const int global_i = batch.copiedCandidates + i;
+
+                    std::memcpy(arrays.h_candidate_sequences_data
+                                + global_i * arrays.encoded_sequence_pitch,
+                                sequenceptr,
+                                Sequence_t::getNumBytes(sequencelength));
+
+                    arrays.h_candidate_sequences_lengths[global_i] = sequencelength;
+                }
+
+                batch.copiedCandidates += task.candidate_read_ids.size();
+
+                //update prefix sum
+
+                const int numcandidates = int(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+                arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_candidates_per_subject_prefixsum[batch.copiedTasks]
+                            + numcandidates;
+
+                arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks+1]
+                        = arrays.h_tiles_per_subject_prefixsum[batch.copiedTasks]
+                            + SDIV(numcandidates, shd_tilesize);
+
+            }
+
+            ++batch.copiedTasks;
+
+            if(isPausable)
+                break;
+        }
+
+        //if batch is fully copied, transfer to gpu
+        if(batch.copiedTasks == int(batch.tasks.size())) {
+            assert(batch.copiedTasks == int(batch.tasks.size()));
+
+            if(transFuncData.readStorageGpuData.isValidSequenceData()) {
+                dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
+
+                cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                            dataArrays.h_subject_read_ids,
+                            dataArrays.memSubjectIds,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
+                            dataArrays.h_candidate_read_ids,
+                            dataArrays.memCandidateIds,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
+                            dataArrays.h_candidates_per_subject_prefixsum,
+                            dataArrays.memNqueriesPrefixSum,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
+                            dataArrays.h_tiles_per_subject_prefixsum,
+                            dataArrays.memTilesPrefixSum,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
+                                                                             dataArrays.d_subject_read_ids,
+                                                                             dataArrays.n_subjects,
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+
+                transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_candidate_sequences_lengths,
+                                                                             dataArrays.d_candidate_read_ids,
+                                                                             dataArrays.n_queries,
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+
+                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data,
+                                                                             dataArrays.encoded_sequence_pitch,
+                                                                             dataArrays.d_subject_read_ids,
+                                                                             dataArrays.n_subjects,
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+
+                transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_candidate_sequences_data,
+                                                                             dataArrays.encoded_sequence_pitch,
+                                                                             dataArrays.d_candidate_read_ids,
+                                                                             dataArrays.n_queries,
+                                                                             transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+
+            }else{
+
+
+                cudaMemcpyAsync(dataArrays.alignment_transfer_data_device,
+                            dataArrays.alignment_transfer_data_host,
+                            dataArrays.alignment_transfer_data_usable_size,
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+            }
+
+            cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;
+
+            batch.copiedTasks = 0;
+            batch.copiedCandidates = 0;
+            return BatchState::StartAlignment;
+        }else{
+            return BatchState::CopyReads;
+        }
+    }
+#endif
+
+
 
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startalignment_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,
