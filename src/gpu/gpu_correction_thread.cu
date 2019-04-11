@@ -41,7 +41,7 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 //MSA_IMPLICIT does not work yet
-//#define MSA_IMPLICIT
+#define MSA_IMPLICIT
 
 //#define USE_WAIT_FLAGS
 
@@ -3730,7 +3730,7 @@ namespace gpu{
             batch.batchDataHost.destroy();
         }
 
-        assert(tmptasksBuffer.empty());
+        assert(stopAndAbort || tmptasksBuffer.empty());
 
 		std::cout << "GPU worker (device " << threadOpts.deviceId << ") finished" << std::endl;
 
