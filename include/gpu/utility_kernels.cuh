@@ -44,6 +44,24 @@ void generic_kernel(Func f){
     f();
 }
 
+template<class T>
+__global__
+void compact_kernel(T* out, const T* in, const int* indices, int n){
+
+    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < n; i += blockDim.x * gridDim.x){
+        const int srcindex = indices[i];
+        out[i] = in[srcindex];
+    }
+}
+
+template<class T>
+void call_compact_kernel_async(T* out, const T* in, const int* indices, int n, cudaStream_t stream){
+    dim3 block(128,1,1);
+    dim3 grid(SDIV(n, block.x),1,1);
+
+    compact_kernel<<<grid, block, 0, stream>>>(out, in, indices, n); CUERR;
+}
+
 #endif
 
 #endif

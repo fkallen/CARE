@@ -48,7 +48,7 @@
 #define shd_tilesize 32
 
 
-constexpr int nParallelBatches = 1;
+constexpr int nParallelBatches = 4;
 constexpr int sideBatchStepsPerWaitIter = 1;
 
 namespace care{
@@ -201,7 +201,7 @@ namespace gpu{
 		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func2;
 		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func2;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
-		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
+		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func2;
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
 		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
@@ -532,13 +532,13 @@ namespace gpu{
 
                         assert(myNumCandidates <= std::size_t(transFuncData.max_candidates));
 #ifdef CARE_GPU_DEBUG
-                        
+
                         if(task.readId == 999013){
                             std::cout << myNumCandidates << " candidates" << std::endl;
                         }
-                            
-#endif                            
-                        
+
+#endif
+
                         if(myNumCandidates == 0) {
                             task.active = false;
                         }
@@ -563,18 +563,18 @@ namespace gpu{
 
                 auto& task = tmptasksBuffer->back();
                 //std::cout << task.readId << std::endl;
-            
+
             #ifdef CARE_GPU_DEBUG
-            
-            
+
+
                 if(task.readId == 999013){
                     std::cout << "active : " << task.active << std::endl;
                 }
-            
-            
-            
-            #endif          
-            
+
+
+
+            #endif
+
 
                 if(task.active){
 
@@ -593,37 +593,37 @@ namespace gpu{
 
                         batch.tasks.emplace_back(task);
                         batch.initialNumberOfCandidates += int(myNumCandidates);
-                        
+
                         #ifdef CARE_GPU_DEBUG
-                        
+
                         if(task.readId == 999013){
                             std::cout << "add task" << std::endl;
                         }
-                        
-                        #endif  
+
+                        #endif
                     }
                 }
 
                 tmptasksBuffer->pop_back();
             }
-            
+
             #ifdef CARE_GPU_DEBUG
-            
+
             /*for(int i = 0; i < int(batch.tasks.size()); i++){
                 if(batch.tasks[i].readId == 999013){
                     std::cout << "indices for task " << dataArrays.h_indices_per_subject[i] << std::endl;
                 }
             }*/
-            
+
             if(std::any_of(tmptasksBuffer->begin(), tmptasksBuffer->end(), [](auto& t){return t.readId == 999013;})){
                 std::cout << "is in buffer" << std::endl;
             }else{
                 std::cout << "nope" << std::endl;
             }
-                
-            
-            
-            #endif 
+
+
+
+            #endif
 
             //only perform one iteration if pausable
             if(isPausable)
@@ -1088,13 +1088,13 @@ namespace gpu{
 				   }else{
 				    std::cerr << "not ok\n";
 				   }*/
-                
+
                 cudaMemcpyAsync(dataArrays.d_subject_read_ids,
                                 dataArrays.h_subject_read_ids,
                                 dataArrays.memSubjectIds,
                                 H2D,
                                 streams[primary_stream_index]); CUERR;
-                                
+
                 cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
                                 dataArrays.h_candidate_read_ids,
                                 dataArrays.memCandidateIds,
@@ -1199,25 +1199,25 @@ namespace gpu{
                             task.candidate_read_ids.end(),
                             dataArrays.h_candidate_read_ids + offset);
             }
-            
+
             cudaMemcpyAsync(dataArrays.d_subject_read_ids,
                             dataArrays.h_subject_read_ids,
                             dataArrays.memSubjectIds,
                             H2D,
                             streams[primary_stream_index]); CUERR;
-                            
+
             cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
                             dataArrays.h_candidate_read_ids,
                             dataArrays.memCandidateIds,
                             H2D,
                             streams[primary_stream_index]); CUERR;
-                            
+
             cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
                             dataArrays.h_candidates_per_subject_prefixsum,
                             dataArrays.memNqueriesPrefixSum,
                             H2D,
                             streams[primary_stream_index]); CUERR;
-                            
+
             cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
                             dataArrays.h_tiles_per_subject_prefixsum,
                             dataArrays.memTilesPrefixSum,
@@ -1229,7 +1229,7 @@ namespace gpu{
 
         if(transFuncData.readStorageGpuData.isValidSequenceData()) {
 
-            
+
 
             transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
                                                                          dataArrays.d_subject_read_ids,
@@ -1625,17 +1625,17 @@ namespace gpu{
 
 
         DataArrays& dataArrays = *batch.dataArrays;
-        
+
         #ifdef CARE_GPU_DEBUG
-        
+
         for(int i = 0; i < int(batch.tasks.size()); i++){
             if(batch.tasks[i].readId == 999013){
                 std::cout << "indices for task " << dataArrays.h_indices_per_subject[i] << std::endl;
             }
         }
-        
-        
-        #endif          
+
+
+        #endif
 
         //if there are no good candidates, clean up batch and discard reads
         if(*dataArrays.h_num_indices == 0){
@@ -1669,7 +1669,7 @@ namespace gpu{
                 dim3 grid(std::min(num_indices, (1<<16)),1,1);
                 dim3 block(64,1,1);
                 cudaStream_t stream = streams[primary_stream_index];
-#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS               
+#if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
                 bool debug = false;
                 if(batch.tasks[0].readId == 436){
                     debug = true;
@@ -1861,67 +1861,38 @@ namespace gpu{
 
 			//if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
-#if 0
-                const char* const rs_quality_data = transFuncData.readStorageGpuData.d_quality_data;
-                const size_t readstorage_quality_pitch = std::size_t(gpuReadStorage->getQualityPitch());
-                const size_t qualitypitch = dataArrays.quality_pitch;
 
-                char* const subject_qualities = dataArrays.d_subject_qualities;
-                char* const candidate_qualities = dataArrays.d_candidate_qualities;
-                const read_number* const subject_read_ids = dataArrays.d_subject_read_ids;
-                const read_number* const candidate_read_ids = dataArrays.d_candidate_read_ids;
-                const int* const subject_sequences_lengths = dataArrays.d_subject_sequences_lengths;
-                const int* const candidate_sequences_lengths = dataArrays.d_candidate_sequences_lengths;
-                const int* const indices = dataArrays.d_indices;
-
-                const int nSubjects = dataArrays.n_subjects;
-                const int num_indices = *dataArrays.h_num_indices;
-
-                dim3 grid(std::min(num_indices, (1<<16)),1,1);
-                dim3 block(64,1,1);
-                cudaStream_t stream = streams[primary_stream_index];
-
-                generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
-
-
-                    for(int index = blockIdx.x; index < nSubjects; index += gridDim.x){
-                        const read_number readId = subject_read_ids[index];
-                        const int length = subject_sequences_lengths[index];
-                        for(int k = threadIdx.x; k < length; k += blockDim.x){
-                            subject_qualities[index * qualitypitch + k]
-                            = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
-                        }
-                    }
-
-                    for(int i = blockIdx.x; i < num_indices; i += gridDim.x){
-                        const int index = indices[i];
-                        const read_number readId = candidate_read_ids[index];
-                        const int length = candidate_sequences_lengths[index];
-                        for(int k = threadIdx.x; k < length; k += blockDim.x){
-                            candidate_qualities[i * qualitypitch + k]
-                            = rs_quality_data[size_t(readId) * readstorage_quality_pitch + k];
-                        }
-                    }
-                });
-#else
                 gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
                                                                    dataArrays.quality_pitch,
                                                                    dataArrays.d_subject_read_ids,
                                                                    dataArrays.n_subjects,
-                                                                   transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
+                                                                   transFuncData.threadOpts.deviceId,
+                                                                   streams[primary_stream_index]);
+
+                batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * *dataArrays.h_num_indices);
+                read_number* d_tmp_read_ids = (read_number*)batch.batchDataDevice.tmpStorage[0].get();
+                call_compact_kernel_async(d_tmp_read_ids,
+                                            dataArrays.d_candidate_read_ids,
+                                            dataArrays.d_indices,
+                                            *dataArrays.h_num_indices,
+                                            streams[primary_stream_index]);
 
                 gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
                                                                    dataArrays.quality_pitch,
-                                                                   dataArrays.d_candidate_read_ids,
+                                                                   d_tmp_read_ids,
                                                                    *dataArrays.h_num_indices,
-                                                                   transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
-#endif
+                                                                   transFuncData.threadOpts.deviceId,
+                                                                   streams[primary_stream_index]);
+
                 assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
                 cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
                 return BatchState::BuildMSA;
 			}else{
+
+                const std::size_t maxsubjectqualitychars = dataArrays.n_subjects * dataArrays.quality_pitch;
+				const std::size_t maxcandidatequalitychars = dataArrays.n_queries * dataArrays.quality_pitch;
 
                 constexpr int subjectschunksize = 1000;
                 constexpr int candidateschunksize = 1000;
@@ -1951,7 +1922,7 @@ namespace gpu{
                         const char* qualityptr = gpuReadStorage->fetchQuality_ptr(readId);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(readId);
 
-    					//assert(subjectIndex * dataArrays.quality_pitch + sequencelength <= maxsubjectqualitychars);
+    					assert(subjectIndex * dataArrays.quality_pitch + sequencelength <= maxsubjectqualitychars);
     					std::memcpy(dataArrays.h_subject_qualities + subjectIndex * dataArrays.quality_pitch,
     								qualityptr,
     								sequencelength);
@@ -1988,8 +1959,8 @@ namespace gpu{
                         const char* qualityptr = gpuReadStorage->fetchQuality_ptr(candidate_read_id);
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-    					//assert(candidateIndex * arrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
-    					std::memcpy(dataArrays.h_candidate_qualities + candidateIndex * dataArrays.quality_pitch,
+    				    assert(index * dataArrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
+    					std::memcpy(dataArrays.h_candidate_qualities + index * dataArrays.quality_pitch,
     								qualityptr,
     								sequencelength);
                     }
@@ -2633,7 +2604,7 @@ namespace gpu{
 					D2H,
 					streams[primary_stream_index]); CUERR;
 		cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-        
+
         cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
                         dataArrays.qualities_transfer_data_device,
                         dataArrays.qualities_transfer_data_usable_size,
@@ -2649,12 +2620,12 @@ namespace gpu{
         for(int i = 0; i< dataArrays.n_subjects; i++) {
             std::cout << dataArrays.h_subject_read_ids[i]<< std::endl;
         }
-        
+
         std::cout << "candidate read ids" << std::endl;
         for(int i = 0; i< dataArrays.n_queries; i++) {
             std::cout << dataArrays.h_candidate_read_ids[i]<< std::endl;
         }
-        
+
         std::cout << "subject quality scores" << std::endl;
         for(int i = 0; i< dataArrays.n_subjects; i++) {
             for(size_t k = 0; k < dataArrays.quality_pitch; k++){
@@ -2662,7 +2633,7 @@ namespace gpu{
             }
             std::cout << std::endl;
         }
-        
+
         std::cout << "candidate quality scores" << std::endl;
         for(int i = 0; i< *dataArrays.h_num_indices; i++) {
             for(size_t k = 0; k < dataArrays.quality_pitch; k++){
@@ -2670,7 +2641,7 @@ namespace gpu{
             }
             std::cout << std::endl;
         }
-        
+
 		//DEBUGGING
 		std::cout << "alignment scores" << std::endl;
 		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
@@ -3641,10 +3612,13 @@ namespace gpu{
 		outputstream.flush();
 		featurestream.flush();
 
-        for(const auto& batch : batches){
+        for(auto& batch : batches){
             batch.waitUntilAllCallbacksFinished();
+
+            batch.batchDataDevice.destroy();
+            batch.batchDataHost.destroy();
         }
-        
+
         assert(tmptasksBuffer.empty());
 
 		std::cout << "GPU worker (device " << threadOpts.deviceId << ") finished" << std::endl;

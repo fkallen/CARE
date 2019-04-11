@@ -106,6 +106,28 @@ namespace detail{
 			resize(size);
 		}
 
+        SimpleAllocation(const SimpleAllocation&) = delete;
+        SimpleAllocation& operator=(const SimpleAllocation&) = delete;
+
+        SimpleAllocation(SimpleAllocation&& rhs) noexcept{
+            *this = std::move(rhs);
+        }
+
+        SimpleAllocation& operator=(SimpleAllocation&& rhs) noexcept{
+            Allocator alloc;
+            alloc.deallocate(data_);
+
+            data_ = rhs.data_;
+            size_ = rhs.size_;
+            capacity_ = rhs.capacity_;
+
+            rhs.data_ = nullptr;
+            rhs.size_ = 0;
+            rhs.capacity_ = 0;
+
+            return *this;
+        }
+
 		void resize(size_t newsize){
 			if(capacity_ < newsize){
 				Allocator alloc;
@@ -646,6 +668,24 @@ struct BatchData{
         for(auto& x : tmpStorage){
             x.resize(n_cand);
         }
+    }
+
+    void destroy(){
+        sequenceData = std::move(BatchSequenceData<location>{});
+        qualityData = std::move(BatchSequenceQualityData<location>{});
+        alignmentResults = std::move(BatchAlignmentResults<location>{});
+        msaData = std::move(BatchMSAData<location>{});
+        correctionResults = std::move(BatchCorrectionResults<location>{});
+        cubTemp = std::move(detail::SimpleAllocation<location, char>{});
+
+        for(auto& s : tmpStorage){
+            s = std::move(detail::SimpleAllocation<location, char>{});
+        }
+
+        n_subjects = 0;
+        n_candidates = 0;
+        maximum_sequence_length = 0;
+        maximum_sequence_bytes = 0;
     }
 };
 
