@@ -205,7 +205,7 @@ namespace gpu{
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
 		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
-		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func;
+		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func2;
 		transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
 		transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
 		transitionFunctionTable[BatchState::Finished] = state_finished_func;
@@ -1349,6 +1349,14 @@ namespace gpu{
         }
 
         cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;
+
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0) ;
+
+        cudaMemcpyAsync(dataArrays.alignment_transfer_data_host,
+                    dataArrays.alignment_transfer_data_device,
+                    dataArrays.alignment_transfer_data_usable_size,
+                    H2D,
+                    streams[secondary_stream_index]); CUERR;
 
         batch.copiedTasks = 0;
         batch.copiedCandidates = 0;
@@ -3045,7 +3053,7 @@ namespace gpu{
 					//const read_number candidate_read_id = task.candidate_read_ids[local_candidate_index];
 					const read_number candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
 					const int candidate_length = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
-					//const int candidate_length = task.candidate_sequences[local_candidate_index]->length();
+
 					const char* const candidate_data = my_corrected_candidates_data + i * arrays.sequence_pitch;
 
 					//task.corrected_candidates_read_ids.emplace_back(task.candidate_read_ids[local_candidate_index]);
@@ -3058,6 +3066,109 @@ namespace gpu{
         //std::exit(0);
 		return BatchState::WriteResults;
 	}
+
+
+
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_unpackclassicresults_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+                bool canBlock,
+                bool canLaunchKernel,
+                bool isPausable,
+                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+        constexpr BatchState expectedState = BatchState::UnpackClassicResults;
+    #ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+    #endif
+
+        assert(batch.state == expectedState);
+
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+    #ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+    #else
+        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = indices_transfer_finished_event_index;
+            return expectedState;
+        }
+
+        status = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = result_transfer_finished_event_index;
+            return expectedState;
+        }
+    #endif
+
+
+
+        DataArrays& dataArrays = *batch.dataArrays;
+        //std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+
+        cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
+        if(errort != cudaSuccess){
+            std::cout << "error cudaEventQuery\n";
+            std::exit(0);
+        }
+        assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
+
+        assert(transFuncData.correctionOptions.classicMode);
+
+        #pragma omp parallel for num_threads(4)
+        for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+            auto& task = batch.tasks[subject_index];
+            const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * dataArrays.sequence_pitch;
+            task.corrected = dataArrays.h_subject_is_corrected[subject_index];
+            if(task.corrected) {
+
+                const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];//task.subject_string.length();//dataArrays.h_subject_sequences_lengths[subject_index];
+                task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+            }
+        }
+
+        if(transFuncData.correctCandidates) {
+
+            #pragma omp parallel for num_threads(4) schedule(dynamic, 4)
+            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+                auto& task = batch.tasks[subject_index];
+                const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
+                const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
+                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index] * dataArrays.sequence_pitch;
+                const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
+                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index];
+
+
+                task.corrected_candidates_read_ids.resize(n_corrected_candidates);
+                task.corrected_candidates.resize(n_corrected_candidates);
+
+                for(int i = 0; i < n_corrected_candidates; ++i) {
+                    const int global_candidate_index = my_indices_of_corrected_candidates[i];
+                    //const int local_candidate_index = global_candidate_index - dataArrays.h_candidates_per_subject_prefixsum[subject_index];
+
+					//const read_number candidate_read_id = task.candidate_read_ids[local_candidate_index];
+					//const read_number candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
+
+                    const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
+                    const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];//transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+
+                    const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
+
+                    task.corrected_candidates_read_ids[i] = candidate_read_id;
+                    task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
+
+                    //task.corrected_candidates_read_ids.emplace_back(candidate_read_id);
+                    //task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
+                }
+            }
+        }
+
+        return BatchState::WriteResults;
+    }
+
+
 
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_writeresults_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,

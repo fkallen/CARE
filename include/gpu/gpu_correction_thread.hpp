@@ -404,6 +404,12 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData);
 
+    static BatchState state_unpackclassicresults_func2(Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const TransitionFunctionData& transFuncData);
+
 	static BatchState state_writeresults_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
