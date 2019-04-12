@@ -88,7 +88,7 @@ bin_tables=${array[8]}${array[10]}
 errorrate=0.03
 m=0.6
 
-outdir=$datapath/correcteddatasets/
+outdir=$datapath/care_results_candidatecorrection/
 
 #output file
 #outputfile="readscorrectednew.fq"
