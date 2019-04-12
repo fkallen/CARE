@@ -131,7 +131,11 @@ namespace gpu{
     int nGpuThreads = std::min(nCorrectorThreads, runtimeOptions.threadsForGPUs);
     int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
+#ifdef DO_PROFILE
+    cpu::RangeGenerator<read_number> readIdGenerator(1000);
+#else
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+#endif
 
     std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
     std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
@@ -201,10 +205,10 @@ namespace gpu{
     gpucorrectorThreads[threadId].run();
     }
 
+
+
+#ifndef DO_PROFILE
     std::cout << "Correcting..." << std::endl;
-
-
-    #ifndef DO_PROFILE
 
     bool showProgress = runtimeOptions.showProgress;
 
@@ -246,48 +250,9 @@ namespace gpu{
         }
     });
 
-    #else
-
-    constexpr int sleepiterbegin = 1;
-    constexpr int sleepiterend = 2;
-
-    int sleepiter = 0;
-
-    std::chrono::duration<double> runtime = std::chrono::seconds(0);
-    std::chrono::duration<int> sleepinterval = std::chrono::seconds(1);
-
-    while(true) {
-
-    std::this_thread::sleep_for(sleepinterval);
-
-    sleepiter++;
-
-    #ifdef __NVCC__
-    if(sleepiter == sleepiterbegin)
-    cudaProfilerStart(); CUERR;
-    #endif
-
-
-    #ifdef __NVCC__
-    if(sleepiter == sleepiterend) {
-    cudaProfilerStop(); CUERR;
-
-    for(int i = 0; i < nCpuThreads; i++) {
-        cpucorrectorThreads[i].stopAndAbort = true;
-        cpucorrectorThreads[i].join();
-    }
-
-    for(int i = 0; i < nGpuThreads; i++) {
-        gpucorrectorThreads[i].stopAndAbort = true;
-        gpucorrectorThreads[i].join();
-    }
-
-    std::exit(0);
-    }
-    #endif
-
-    }
-    #endif
+#else
+    std::cout << "Profiling..." << std::endl;
+#endif
 
     TIMERSTARTCPU(correction);
 
@@ -298,13 +263,17 @@ namespace gpu{
     thread.join();
 
     #ifndef DO_PROFILE
-    showProgress = false;
-    progressThread.join();
-    if(runtimeOptions.showProgress)
-    printf("Progress: %3.2f %%\n", 100.00);
+        showProgress = false;
+        progressThread.join();
+        if(runtimeOptions.showProgress)
+            printf("Progress: %3.2f %%\n", 100.00);
     #endif
 
     TIMERSTOPCPU(correction);
+
+#ifdef DO_PROFILE
+    std::exit(0);
+#endif
 
     //std::cout << "threads done" << std::endl;
 
