@@ -481,9 +481,30 @@ namespace cpu{
 #endif
 
                     if(goodIndices.size() == 0){
-                        discardThisTask = true; //no good mismatch ratio
-                        break;
+                        //discardThisTask = true; //no good mismatch ratio
+                        //break;
+
+                        if(!needsSecondPassAfterClipping){
+                            //std::cout << "A" << correctionTasks[0].readId << std::endl;
+                            needsSecondPassAfterClipping = true;
+
+                            correctionTasks[0].clipping_begin = 0;
+                            correctionTasks[0].clipping_end = std::max(0, int(correctionTasks[0].original_subject_string.length()-10));
+                            const int clipsize = correctionTasks[0].clipping_end - correctionTasks[0].clipping_begin;
+                            correctionTasks[0].subject_string = correctionTasks[0].original_subject_string.substr(correctionTasks[0].clipping_begin, clipsize);
+
+                            continue;
+                        }else{
+                            //std::cout << "B" << correctionTasks[0].readId << std::endl;
+                            needsSecondPassAfterClipping = false;
+                            discardThisTask = true;
+                            break;
+                        }
+                    }else{
+                        needsSecondPassAfterClipping = false;
                     }
+
+                    //std::cout << correctionTasks[0].readId << std::endl;
 
 
 #ifdef ENABLE_TIMING
