@@ -88,15 +88,15 @@ bin_tables=${array[8]}${array[10]}
 errorrate=0.03
 m=0.6
 
-outdir=$datapath/care_results_candidatecorrection/
+inputfilename=$(basename -- "$inputfile")
+inputfileextension="${inputfilename##*.}"
+outputfilename="${inputfilename%.*}_"$nowstring"."$inputfileextension
 
-#output file
-#outputfile="readscorrectednew.fq"
-outputfile=$nowstring"_"${array[1]}
+outdir=$datapath/care_results_minimized/
 
 
 echo $inputfile
-echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfile --threads=$threads\
+echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
                  --threadsForGPUs=$threadsgpu --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
@@ -104,7 +104,7 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
                  --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables
 
-$executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfile --threads=$threads\
+$executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
                  --threadsForGPUs=$threadsgpu --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
