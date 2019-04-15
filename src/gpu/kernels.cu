@@ -3379,6 +3379,192 @@ namespace gpu{
 
 
 
+    template<int blocksize>
+    __global__
+    void minimize_kernel_explicit(){
+
+        using BlockReduceBool = cub::BlockReduce<bool, blocksize>;
+        using BlockReduceInt = cub::BlockReduce<int, blocksize>;
+
+        __shared__ union {
+            typename BlockReduceBool::TempStorage boolreduce;
+            typename BlockReduceInt::TempStorage intreduce;
+        } temp_storage;
+
+        __shared__ int broadcastbuffer[5];
+
+        auto is_significant_count = [](int count, int dataset_coverage)->bool{
+            if(int(dataset_coverage * 0.3f) <= count)
+                return true;
+            return false;
+        };
+
+        auto get = [] (const char* data, int length, int index){
+            return care::Sequence2BitHiLo::get(data, length, index);
+        };
+
+        //find column with a non-consensus base with significant coverage
+        int col = std::numeric_limits<int>::max();
+        bool foundColumn = false;
+        char foundBase = 'F';
+        int foundBaseIndex = 0;
+        int consindex = 0;
+
+        const int dataset_coverage = 0;
+
+        const char* const subject = nullptr;
+        const int subjectLength = 0;
+        const char* const consensus = nullptr;
+
+        const int* const countsA = nullptr;
+        const int* const countsC = nullptr;
+        const int* const countsG = nullptr;
+        const int* const countsT = nullptr;
+
+        const int subjectColumnsBegin_incl = 0;
+        const int subjectColumnsEnd_excl = 0;
+
+        bool identical = true;
+        for(int i = threadIdx.x; i < subjectLength; i += blocksize){
+            identical &= get(subject, subjectLength, i) == consensus[subjectColumnsBegin_incl + i];
+        }
+
+        identical = BlockReduceBool(temp_storage.boolreduce).Reduce(identical, [](bool l, bool r){return l && r;});
+        __syncthreads();
+
+        if(identical){
+            //nothing to do
+        }else{
+            bool foundColumn = false;
+
+            const int loopend = SDIV(subjectColumnsEnd_excl, blocksize) * blocksize;
+
+            /*
+                Determine column in multiple sequence alignment which could contain reads of multiple genomic regions
+            */
+
+            for(int columnIndex = threadIdx.x + subjectColumnsBegin_incl; columnIndex < loopend && !foundColumn; columnIndex += blocksize){
+
+                if(columnIndex < subjectColumnsEnd_excl){
+                    const char indexToBase[4] = {'A', 'C', 'G', 'T'};
+                    int counts[4];
+
+                    counts[0] = countsA[columnIndex];
+                    counts[1] = countsC[columnIndex];
+                    counts[2] = countsG[columnIndex];
+                    counts[3] = countsT[columnIndex];
+
+                    char cons = consensus[columnIndex];
+                    int consensuscount = 0;
+                    consindex = -1;
+
+                    #pragma unroll
+                    for(int i = 0; i < 4; i++){
+                        if(cons == indexToBase[i]){
+                            consensuscount = counts[i];
+                            consindex = i;
+                        }
+                    }
+
+                    const char originalbase = subject[columnIndex - subjectColumnsBegin_incl];
+
+                    //find out if there is a non-consensus base with significant coverage
+                    int significantBaseIndex = -1;
+
+                    #pragma unroll
+                    for(int i = 0; i < 4; i++){
+                        if(i != consindex){
+                            bool significant = is_significant_count(counts[i], dataset_coverage);
+
+                            bool process = significant;
+
+                            significantBaseIndex = process ? i : significantBaseIndex;
+                        }
+                    }
+
+                    if(significantBaseIndex != -1){
+                        foundColumn = true;
+                        col = columnIndex;
+                        foundBase = indexToBase[significantBaseIndex];
+                        foundBaseIndex = significantBaseIndex;
+                    }
+                }
+
+                //if there is a column with significantBaseIndex != -1
+                //broadcast the values of the smallest column which satisfies this condition
+
+                int targetcol = BlockReduceInt(temp_storage.intreduce).Reduce(col, cub::Min{});
+
+                if(threadIdx.x == 0){
+                    broadcastbuffer[0] = targetcol;
+                }
+                __syncthreads();
+
+                targetcol = broadcastbuffer[0];
+
+                if(targetcol != std::numeric_limits<int>::max()){
+                    if(targetcol == col){
+                        broadcastbuffer[1] = foundColumn;
+                        broadcastbuffer[2] = col;
+                        broadcastbuffer[3] = foundBase;
+                        broadcastbuffer[4] = foundBaseIndex;
+                    }
+
+                    __syncthreads();
+
+                    foundColumn = broadcastbuffer[1];
+                    col = broadcastbuffer[2];
+                    foundBase = broadcastbuffer[3];
+                    foundBaseIndex = broadcastbuffer[4];
+                }
+
+
+            }
+        }
+
+
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
