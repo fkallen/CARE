@@ -829,7 +829,7 @@ namespace cpu{
 
                                     }else{
                                         multipleSequenceAlignment.removeSequence(correctionOptions.useQualityScores,
-                                                                                bestCandidateData.data() + i * max_sequence_bytes,
+                                                                                bestCandidateStrings.data() + i * max_candidate_length,
                                                                                 bestCandidateQualityData.data() + i * max_candidate_length,
                                                                                 bestCandidateLengths[i],
                                                                                 bestAlignmentShifts[i], bestAlignmentWeights[i]);
