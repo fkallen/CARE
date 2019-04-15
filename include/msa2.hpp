@@ -61,7 +61,7 @@ public:
 
     void fillzero();
 
-    void find_consensus();
+    void findConsensus();
 
     void findOrigWeightAndCoverage(const char* subject);
 
@@ -115,7 +115,7 @@ MSAProperties getMSAProperties(const float* support,
                             float m_coverage);
 
 CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const int* support,
+                                    const float* support,
                                     const int* coverage,
                                     const int* originalCoverage,
                                     int nColumns,
@@ -123,10 +123,11 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                                     bool isHQ,
                                     float estimatedErrorrate,
                                     float estimatedCoverage,
-                                    float m_coverage);
+                                    float m_coverage,
+                                    int neighborRegionSize);
 
 std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
-                                    const int* support,
+                                    const float* support,
                                     const int* coverage,
                                     int nColumns,
                                     int subjectColumnsBegin_incl,

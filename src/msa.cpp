@@ -184,7 +184,7 @@ void MultipleSequenceAlignment::build(const char* subject,
         addSequence(useQualityScores, ptr, qptr, candidateLength, shift, defaultWeightFactor);
     }
 
-    find_consensus();
+    findConsensus();
 
     findOrigWeightAndCoverage(subject);
 }
@@ -264,7 +264,7 @@ void MultipleSequenceAlignment::removeSequence(bool useQualityScores, const char
     }
 }
 
-void MultipleSequenceAlignment::find_consensus(){
+void MultipleSequenceAlignment::findConsensus(){
     for(int column = 0; column < nColumns; ++column){
         char cons = 'A';
         float consWeight = weightsA[column];
@@ -351,7 +351,7 @@ MSAProperties getMSAProperties(const float* support,
 
 
 CorrectionResult getCorrectedSubject(const char* consensus,
-                                    const int* support,
+                                    const float* support,
                                     const int* coverage,
                                     const int* originalCoverage,
                                     int nColumns,
@@ -417,7 +417,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
 
 
 std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
-                                    const int* support,
+                                    const float* support,
                                     const int* coverage,
                                     int nColumns,
                                     int subjectColumnsBegin_incl,
