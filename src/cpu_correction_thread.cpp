@@ -28,7 +28,7 @@
 
 #define MSA_IMPLICIT
 
-//#define USE_MSA_MINIMIZATION
+#define USE_MSA_MINIMIZATION
 //#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
@@ -484,7 +484,7 @@ namespace cpu{
                         //discardThisTask = true; //no good mismatch ratio
                         //break;
 
-                        if(!needsSecondPassAfterClipping){
+                        /*if(!needsSecondPassAfterClipping){
                             //std::cout << "A" << correctionTasks[0].readId << std::endl;
                             needsSecondPassAfterClipping = true;
 
@@ -499,9 +499,9 @@ namespace cpu{
                             needsSecondPassAfterClipping = false;
                             discardThisTask = true;
                             break;
-                        }
+                        }*/
                     }else{
-                        needsSecondPassAfterClipping = false;
+                        //needsSecondPassAfterClipping = false;
                     }
 
                     //std::cout << correctionTasks[0].readId << std::endl;
@@ -685,7 +685,8 @@ namespace cpu{
 
                         if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
                             auto conversionFunction = [&, candidateQualityPtr, defaultweight, length](int i){
-                                return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
+                                //return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
+                                return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
                             };
 
                             multipleSequenceAlignment.insertCandidate(candidateSequence, length, shift, conversionFunction);
