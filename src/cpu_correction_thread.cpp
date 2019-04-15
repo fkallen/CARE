@@ -112,6 +112,11 @@ namespace cpu{
     		auto write_read = [&](const read_number readId, const auto& sequence){
                 //std::cout << readId << " " << sequence << std::endl;
     			auto& stream = outputstream;
+			assert(sequence.size() > 0);
+
+			for(const auto& c : sequence){
+				assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
+			}
 
     			stream << readId << ' ' << sequence << '\n';
     		};
@@ -1013,7 +1018,7 @@ namespace cpu{
                                                                 multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
                                                                 multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
                                                                 multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
-                                                                multipleSequenceAlignment.nColumns,
+                                                                int(correctionTasks[0].subject_string.size()),
                                                                 correctionTasks[0].subject_string.c_str(),
                                                                 msaProperties.isHQ,
                                                                 correctionOptions.estimatedErrorrate,
