@@ -1623,6 +1623,8 @@ public:
     const int* candidateLengths{};
 
     const int* candidateShifts{};
+    const int* candidateMismatches{};
+    const int* candidateOverlaps;
 
     int nCandidates;
 
@@ -1650,39 +1652,7 @@ public:
                 const int* candidateLengths_,
                 int nCandidates_,
                 const int* candidateShifts_,
-                size_t candidatesPitch_){
-
-        assert(subjectLength_ > 0);
-        assert(subject_ != nullptr);
-
-        subject = subject_;
-        subjectLength = subjectLength_;
-        candidates = candidates_;
-        candidateLengths = candidateLengths_;
-        candidateShifts = candidateShifts_;
-        candidatesPitch = candidatesPitch_;
-        nCandidates = nCandidates_;
-        canUseWeights = false;
-
-        //determine number of columns in pileup image
-        columnProperties.startindex = 0;
-        columnProperties.endindex = subjectLength;
-
-        for(int i = 0; i < nCandidates; ++i){
-            const int shift = candidateShifts[i];
-            const int candidateEndsAt = candidateLengths[i] + shift;
-            columnProperties.startindex = std::min(shift, columnProperties.startindex);
-            columnProperties.endindex = std::max(candidateEndsAt, columnProperties.endindex);
-        }
-
-        columnProperties.columnsToCheck = columnProperties.endindex - columnProperties.startindex;
-        columnProperties.subjectColumnsBegin_incl = std::max(-columnProperties.startindex,0);
-        columnProperties.subjectColumnsEnd_excl = columnProperties.subjectColumnsBegin_incl + subjectLength;
-
-        resize(columnProperties.columnsToCheck);
-
-        fillzero();
-    }
+                size_t candidatesPitch_);
 
     void init(const char* subject_,
                 int subjectLength_,
@@ -1693,332 +1663,36 @@ public:
                 const char* subjectQualities_,
                 const char* candidateQualities_,
                 size_t candidatesPitch_,
-                size_t candidateQualitiesPitch_){
-
-        init(subject_,
-            subjectLength_,
-            candidates_,
-            candidateLengths_,
-            nCandidates,
-            candidateShifts_,
-            candidatesPitch_);
-
-        setQualityData(subjectQualities_,
-                        candidateQualities_,
-                        candidateQualitiesPitch_);
-    }
+                size_t candidateQualitiesPitch_);
 
     void setQualityData(const char* subjectQualities_,
                         const char* candidateQualities_,
-                        size_t candidateQualitiesPitch_){
-        assert(subjectQualities_ != nullptr);
-        assert(candidateQualities_ != nullptr);
+                        size_t candidateQualitiesPitch_);
 
-        subjectQualities = subjectQualities_;
-        candidateQualities = candidateQualities_;
-        candidateQualitiesPitch = candidateQualitiesPitch_;
-        canUseWeights = true;
-    }
+    void build();
 
-    void build(){
-        auto addSequence = [&](const char* ptr, const char* qptr, int length, int shift){
-            for(int i = 0; i < length; i++){
-                const int globalIndex = columnProperties.subjectColumnsBegin_incl + shift + i;
-                const char base = ptr[i];
-                const float weight = canUseWeights ? qualityConversion.getWeight(qptr[i]) : 1.0f;
-                switch(base){
-                    case 'A': countsA[globalIndex]++; weightsA[globalIndex] += weight;break;
-                    case 'C': countsC[globalIndex]++; weightsC[globalIndex] += weight;break;
-                    case 'G': countsG[globalIndex]++; weightsG[globalIndex] += weight;break;
-                    case 'T': countsT[globalIndex]++; weightsT[globalIndex] += weight;break;
-                    default: assert(false); break;
-                }
-                coverage[globalIndex]++;
-            }
-        };
+    MultipleSequenceAlignmentImplicit2(bool canUseWeights, float m_coverage, int kmerlength, float estimatedCoverage, float estimatedErrorrate);
 
-        addSequence(subject, subjectQualities, subjectLength, 0);
+    MultipleSequenceAlignmentImplicit2(bool canUseWeights, float m_coverage, int kmerlength, float estimatedCoverage, float estimatedErrorrate, int rows, int cols);
 
-        for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
-            const char* ptr = candidates + candidateIndex * candidatesPitch;
-            const char* qptr = candidateQualities + candidateIndex * candidateQualitiesPitch;
-            const int candidateLength = candidateLengths[candidateIndex];
-            const int shift = candidateShifts[candidateIndex];
+    void resize(int cols);
 
-            addSequence(ptr, qptr, candidateLength, shift);
-        }
+    void fillzero();
 
-        find_consensus();
-    }
-
-    MultipleSequenceAlignmentImplicit2(bool canUseWeights, float m_coverage, int kmerlength, float estimatedCoverage, float estimatedErrorrate)
-        : MultipleSequenceAlignmentImplicit2(canUseWeights, m_coverage, kmerlength, estimatedCoverage, estimatedErrorrate, 0, 0){}
-
-    MultipleSequenceAlignmentImplicit2(bool canUseWeights, float m_coverage, int kmerlength, float estimatedCoverage, float estimatedErrorrate, int rows, int cols)
-        : insertedCandidates(0), canUseWeights(canUseWeights), m_coverage(m_coverage),
-            kmerlength(kmerlength), estimatedCoverage(estimatedCoverage), estimatedErrorrate(estimatedErrorrate){
-
-        resize(cols);
-    }
-
-    void resize(int cols){
-
-        consensus.resize(cols);
-        support.resize(cols);
-        coverage.resize(cols);
-        origWeights.resize(cols);
-        origCoverages.resize(cols);
-        countsA.resize(cols);
-        countsC.resize(cols);
-        countsG.resize(cols);
-        countsT.resize(cols);
-        weightsA.resize(cols);
-        weightsC.resize(cols);
-        weightsG.resize(cols);
-        weightsT.resize(cols);
-
-        nColumns = cols;
-        insertedCandidates = 0;
-    }
-
-    void fillzero(){
-        auto zero = [](auto& vec){
-            std::fill(vec.begin(), vec.end(), 0);
-        };
-
-        zero(consensus);
-        zero(support);
-        zero(coverage);
-        zero(origWeights);
-        zero(origCoverages);
-        zero(countsA);
-        zero(countsC);
-        zero(countsG);
-        zero(countsT);
-        zero(weightsA);
-        zero(weightsC);
-        zero(weightsG);
-        zero(weightsT);
-
-        insertedCandidates = 0;
-    }
-
-    void find_consensus(){
-        for(int column = 0; column < nColumns; ++column){
-            char cons = 'A';
-            float consWeight = weightsA[column];
-            if(weightsC[column] > consWeight){
-                cons = 'C';
-                consWeight = weightsC[column];
-            }
-            if(weightsG[column] > consWeight){
-                cons = 'G';
-                consWeight = weightsG[column];
-            }
-            if(weightsT[column] > consWeight){
-                cons = 'T';
-                consWeight = weightsT[column];
-            }
-            consensus[column] = cons;
-
-            const float columnWeight = weightsA[column] + weightsC[column] + weightsG[column] + weightsT[column];
-            support[column] = consWeight / columnWeight;
-
-            if(columnProperties.subjectColumnsBegin_incl <= column && column < columnProperties.subjectColumnsEnd_excl){
-                const int localIndex = column - columnProperties.subjectColumnsBegin_incl;
-                const char subjectBase = subject[localIndex];
-                switch(subjectBase){
-                    case 'A':origWeights[column] = weightsA[column]; origCoverages[column] = countsA[column]; break;
-                    case 'C':origWeights[column] = weightsG[column]; origCoverages[column] = countsC[column]; break;
-                    case 'G':origWeights[column] = weightsC[column]; origCoverages[column] = countsG[column]; break;
-                    case 'T':origWeights[column] = weightsT[column]; origCoverages[column] = countsT[column]; break;
-                    default: assert(false); break;
-                }
-            }
-        }
-    }
+    void find_consensus();
 
 
-    CorrectionResult getCorrectedSubject(){
+    CorrectionResult getCorrectedSubject();
 
-        //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-        const MSAProperties msaProperties = getMSAProperties();
-
-        const int subjectlength = columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl;
-
-        CorrectionResult result;
-        result.isCorrected = false;
-        result.correctedSequence.resize(subjectlength);
-        result.msaProperties = msaProperties;
-
-        if(msaProperties.isHQ){
-            //corrected sequence = consensus;
-
-            std::copy(consensus.begin() + columnProperties.subjectColumnsBegin_incl,
-                      consensus.begin() + columnProperties.subjectColumnsEnd_excl,
-                      result.correctedSequence.begin());
-            result.isCorrected = true;
-        }else{
-            //set corrected sequence to original subject. then search for positions with good properties. correct these positions
-            std::copy(subject,
-                      subject + subjectLength,
-                      result.correctedSequence.begin());
-
-            bool foundAColumn = false;
-            for(int i = 0; i < subjectlength; i++){
-                const int globalIndex = columnProperties.subjectColumnsBegin_incl + i;
-
-                if(support[globalIndex] > 0.5f && origCoverages[globalIndex] < min_coverage_threshold){
-                    float avgsupportkregion = 0;
-                    int c = 0;
-                    bool kregioncoverageisgood = true;
-
-                    for(int j = i - kmerlength/2; j <= i + kmerlength/2 && kregioncoverageisgood; j++){
-                        if(j != i && j >= 0 && j < subjectlength){
-                            avgsupportkregion += support[columnProperties.subjectColumnsBegin_incl + j];
-                            kregioncoverageisgood &= (coverage[columnProperties.subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                            c++;
-                        }
-                    }
-
-                    avgsupportkregion /= c;
-                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
-                        result.correctedSequence[i] = consensus[globalIndex];
-                        foundAColumn = true;
-                    }
-                }
-            }
-
-            result.isCorrected = foundAColumn;
-        }
-
-        return result;
-    }
-
-    MSAProperties getMSAProperties() const{
-        const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-        const int subjectlength = columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl;
-
-        MSAProperties msaProperties;
-
-        msaProperties.min_support = *std::min_element(support.begin() + columnProperties.subjectColumnsBegin_incl,
-                                                    support.begin() + columnProperties.subjectColumnsEnd_excl);
-
-        const float supportsum = std::accumulate(support.begin() + columnProperties.subjectColumnsBegin_incl,
-                                                support.begin() + columnProperties.subjectColumnsEnd_excl,
-                                                0.0f);
-        msaProperties.avg_support = supportsum / subjectlength;
-
-        auto minmax = std::minmax_element(coverage.begin() + columnProperties.subjectColumnsBegin_incl,
-                                                    coverage.begin() + columnProperties.subjectColumnsEnd_excl);
-
-        msaProperties.min_coverage = *minmax.second;
-        msaProperties.max_coverage = *minmax.first;
-
-        auto isGoodAvgSupport = [=](float avgsupport){
-            return avgsupport >= avg_support_threshold;
-        };
-        auto isGoodMinSupport = [=](float minsupport){
-            return minsupport >= min_support_threshold;
-        };
-        auto isGoodMinCoverage = [=](float mincoverage){
-            return mincoverage >= min_coverage_threshold;
-        };
-
-        msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
-                            && isGoodMinSupport(msaProperties.min_support)
-                            && isGoodMinCoverage(msaProperties.min_coverage);
-
-        msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
-        msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
-        msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
-
-        return msaProperties;
-    }
+    MSAProperties getMSAProperties() const;
 
 
 
-    std::vector<CorrectedCandidate> getCorrectedCandidates(int new_columns_to_correct) const{
+    std::vector<CorrectedCandidate> getCorrectedCandidates(int new_columns_to_correct) const;
 
-        //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-        const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-        const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+    void addSequence(const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
-        std::vector<CorrectedCandidate> result;
-        result.reserve(nCandidates);
-
-        for(int row = 1; row < nRows; ++row){
-            const int candidate_index = row - 1;
-            const int queryColumnsBegin_incl = candidateShifts[candidate_index] - columnProperties.startindex;
-            const int queryLength = candidateLengths[candidate_index];
-            const int queryColumnsEnd_excl = queryColumnsBegin_incl + queryLength;
-
-            //check range condition and length condition
-            if(columnProperties.subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
-                && queryColumnsBegin_incl <= columnProperties.subjectColumnsBegin_incl + new_columns_to_correct
-                && queryColumnsEnd_excl <= columnProperties.subjectColumnsEnd_excl + new_columns_to_correct){
-
-                float newColMinSupport = 1.0f;
-                int newColMinCov = std::numeric_limits<int>::max();
-
-                //check new columns left of subject
-                for(int columnindex = columnProperties.subjectColumnsBegin_incl - new_columns_to_correct;
-                    columnindex < columnProperties.subjectColumnsBegin_incl;
-                    columnindex++){
-
-                    assert(columnindex < columnProperties.columnsToCheck);
-                    if(queryColumnsBegin_incl <= columnindex){
-                        newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-                        newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-                    }
-                }
-                //check new columns right of subject
-                for(int columnindex = columnProperties.subjectColumnsEnd_excl;
-                    columnindex < columnProperties.subjectColumnsEnd_excl + new_columns_to_correct
-                    && columnindex < columnProperties.columnsToCheck;
-                    columnindex++){
-
-                    newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-                    newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-                }
-
-                if(newColMinSupport >= min_support_threshold
-                    && newColMinCov >= min_coverage_threshold){
-
-                    std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
-
-                    result.emplace_back(candidate_index, std::move(correctedString));
-                }
-            }
-        }
-
-        return result;
-    }
-
-    void removeSequence(const char* sequence, const char* quality, int length, int shift){
-        assert(sequence != nullptr);
-        assert(!canUseWeights || quality != nullptr);
-
-        for(int i = 0; i < length; i++){
-            const int globalIndex = columnProperties.subjectColumnsBegin_incl + shift + i;
-            const char base = sequence[i];
-            const float weight = canUseWeights ? qualityConversion.getWeight(quality[i]) : 1.0f;
-            switch(base){
-                case 'A': countsA[globalIndex]--; weightsA[globalIndex] -= weight;break;
-                case 'C': countsC[globalIndex]--; weightsC[globalIndex] -= weight;break;
-                case 'G': countsG[globalIndex]--; weightsG[globalIndex] -= weight;break;
-                case 'T': countsT[globalIndex]--; weightsT[globalIndex] -= weight;break;
-                default: assert(false); break;
-            }
-            coverage[globalIndex]--;
-        }
-    }
+    void removeSequence(const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
 
 
@@ -2026,194 +1700,98 @@ public:
     //the indices of remaining candidates are returned in MinimizationResult::remaining_candidates
     //candidates in vector must be in the same order as they were inserted into the msa!!!
 
-    template<class T>
-    MinimizationResult minimize(int dataset_coverage){
-        auto is_significant_count = [&](int count, int consensuscount, int columncoverage, int dataset_coverage)->bool{
-            if(int(dataset_coverage * 0.3f) <= count)
-                return true;
-            return false;
-        };
+    MinimizationResult minimize(int dataset_coverage);
 
-        constexpr std::array<char, 4> index_to_base{'A','C','G','T'};
+    std::pair<int,int> findGoodConsensusRegionOfSubject() const;
 
-        //find column with a non-consensus base with significant coverage
-        int col = 0;
-        bool foundColumn = false;
-        char foundBase = 'F';
-        int foundBaseIndex = 0;
-        int consindex = 0;
-
-        //if anchor has no mismatch to consensus, don't minimize
-        auto pair = std::mismatch(subject,
-                                    subject + subjectLength,
-                                    &consensus[columnProperties.subjectColumnsBegin_incl]);
-
-        if(pair.first == subject + subjectLength){
-            MinimizationResult result;
-            result.performedMinimization = false;
-            return result;
-        }
-
-        for(int columnindex = columnProperties.subjectColumnsBegin_incl; columnindex < columnProperties.subjectColumnsEnd_excl && !foundColumn; columnindex++){
-            std::array<int,4> counts;
-            //std::array<float,4> weights;
-
-            counts[0] = countsA[columnindex];
-            counts[1] = countsC[columnindex];
-            counts[2] = countsG[columnindex];
-            counts[3] = countsT[columnindex];
-
-            /*weights[0] = weightsA[columnindex];
-            weights[1] = weightsC[columnindex];
-            weights[2] = weightsG[columnindex];
-            weights[3] = weightsT[columnindex];*/
-
-            char cons = consensus[columnindex];
-            int consensuscount = 0;
-            consindex = -1;
-
-            switch(cons){
-                case 'A': consensuscount = counts[0]; consindex = 0;break;
-                case 'C': consensuscount = counts[1]; consindex = 1;break;
-                case 'G': consensuscount = counts[2]; consindex = 2;break;
-                case 'T': consensuscount = counts[3]; consindex = 3;break;
-            }
-
-            //const char originalbase = subject[columnindex - columnProperties.subjectColumnsBegin_incl];
-
-            //find out if there is a non-consensus base with significant coverage
-            int significantBaseIndex = -1;
-            //int maxcount = 0;
-            for(int i = 0; i < 4; i++){
-                if(i != consindex){
-                    bool significant = is_significant_count(counts[i], consensuscount, coverage[columnindex], dataset_coverage);
-
-                    bool process = significant; //maxcount < counts[i] && significant && (cons == originalbase || index_to_base[i] == originalbase);
-
-                    significantBaseIndex = process ? i : significantBaseIndex;
-
-                    //maxcount = process ? std::max(maxcount, counts[i]) : maxcount;
-                }
-            }
-
-            if(significantBaseIndex != -1){
-                foundColumn = true;
-                col = columnindex;
-                foundBase = index_to_base[significantBaseIndex];
-                foundBaseIndex = significantBaseIndex;
-            }
-        }
-
-
-
-        MinimizationResult result;
-        result.performedMinimization = foundColumn;
-        result.column = col;
-
-        if(foundColumn){
-
-            result.remaining_candidates.reserve(nRows-1);
-
-            auto discard_rows = [&](bool keepMatching){
-                int insertionrow = 1;
-
-                for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
-                    //check if row is affected by column col
-                    const int row_begin_incl = columnProperties.subjectColumnsBegin_incl + candidateShifts[candidateIndex];
-                    const int row_end_excl = row_begin_incl + candidateLengths[candidateIndex];
-                    const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
-                    const char base = notAffected ? 'F' : candidates[candidateIndex * candidatesPitch + (col - row_begin_incl)];
-
-                    if(notAffected || (!(keepMatching ^ (base == foundBase)))){
-
-                        result.remaining_candidates.emplace_back(candidateIndex);
-                    }else{
-                        /*for(int i = 0; i < candidateLengths[row]; i++){
-                            const int globalIndex = columnProperties.subjectColumnsBegin_incl + candidateShifts[candidateIndex] + i;
-                            const char base = candidates[candidateIndex * candidatesPitch + (i)];
-                            const float weight = canUseWeights ? getQualityWeightFunctions[row-1](i) : 1.0f;
-                            switch(base){
-                                case 'A': countsA[globalIndex]--; weightsA[globalIndex] -= weight;break;
-                                case 'C': countsC[globalIndex]--; weightsC[globalIndex] -= weight;break;
-                                case 'G': countsG[globalIndex]--; weightsG[globalIndex] -= weight;break;
-                                case 'T': countsT[globalIndex]--; weightsT[globalIndex] -= weight;break;
-                                default: assert(false); break;
-                            }
-                            coverage[globalIndex]--;
-                        }*/
-
-                        result.num_discarded_candidates++;
-                    }
-                }
-                nRows = insertionrow;
-            };
-
-            //compare found base to original base
-            const char originalbase = subject[col - columnProperties.subjectColumnsBegin_incl];
-
-            result.significantBase = foundBase;
-            result.originalBase = originalbase;
-            result.consensusBase = consensus[col];
-
-            std::array<int,4> counts;
-
-            counts[0] = countsA[col];
-            counts[1] = countsC[col];
-            counts[2] = countsG[col];
-            counts[3] = countsT[col];
-
-            result.significantCount = counts[foundBaseIndex];
-            result.consensuscount = counts[consindex];
-
-            if(originalbase == foundBase){
-                //discard all candidates whose base in column col differs from foundBase
-                discard_rows(true);
-            }else{
-                //discard all candidates whose base in column col matches foundBase
-                discard_rows(false);
-            }
-
-            if(result.num_discarded_candidates > 0){
-                find_consensus();
-            }
-
-            return result;
-        }else{
-
-            return result;
-        }
-    }
-
-    std::pair<int,int> findGoodConsensusRegionOfSubject() const{
-        View<char> subjectview{&subject[0], subjectLength};
-        View<char> consensusview{&consensus[columnProperties.subjectColumnsBegin_incl],
-                                    columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
-        View<int> shiftview{candidateShifts, nCandidates}; //starting at index 1 because index 0 is subject
-        const View<int> lengthview{candidateLengths, nCandidates}; //starting at index 1 because index 0 is subject
-
-        auto result = find_good_consensus_region_of_subject(subjectview, consensusview, shiftview, lengthview);
-
-        return result;
-    }
-
-    std::pair<int,int> findGoodConsensusRegionOfSubject2() const{
-
-        if(columnProperties.columnsToCheck - columnProperties.subjectColumnsEnd_excl <= 3){
-            View<char> subjectview{&subject[0], subjectLength};
-
-            const View<int> coverageview{&coverage[columnProperties.subjectColumnsBegin_incl],
-                                        columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl};
-
-            auto result = find_good_consensus_region_of_subject2(subjectview, coverageview);
-
-            return result;
-        }else{
-            return std::make_pair(0, columnProperties.subjectColumnsEnd_excl - columnProperties.subjectColumnsBegin_incl);
-        }
-    }
+    std::pair<int,int> findGoodConsensusRegionOfSubject2() const;
 };
 
+
+
 #endif
+
+
+
+
+struct MultipleSequenceAlignmentImplicit3{
+
+public:
+
+    std::vector<char> consensus;
+    std::vector<float> support;
+    std::vector<int> coverage;
+    std::vector<float> origWeights;
+    std::vector<int> origCoverages;
+
+    std::vector<int> countsA;
+    std::vector<int> countsC;
+    std::vector<int> countsG;
+    std::vector<int> countsT;
+
+    std::vector<float> weightsA;
+    std::vector<float> weightsC;
+    std::vector<float> weightsG;
+    std::vector<float> weightsT;
+
+    int nCandidates;
+    int nColumns;
+
+    int subjectColumnsBegin_incl;
+    int subjectColumnsEnd_excl;
+
+    void init(const char* subject_,
+                int subjectLength_,
+                const char* candidates_,
+                const int* candidateLengths_,
+                int nCandidates,
+                const int* candidateShifts_,
+                const char* subjectQualities_,
+                const char* candidateQualities_,
+                size_t candidatesPitch_,
+                size_t candidateQualitiesPitch_);
+
+    void setQualityData(const char* subjectQualities_,
+                        const char* candidateQualities_,
+                        size_t candidateQualitiesPitch_);
+
+    void build();
+
+    MultipleSequenceAlignmentImplicit2(bool canUseWeights, float m_coverage, int kmerlength, float estimatedCoverage, float estimatedErrorrate);
+
+    MultipleSequenceAlignmentImplicit2(bool canUseWeights, float m_coverage, int kmerlength, float estimatedCoverage, float estimatedErrorrate, int rows, int cols);
+
+    void resize(int cols);
+
+    void fillzero();
+
+    void find_consensus();
+
+
+    CorrectionResult getCorrectedSubject();
+
+    MSAProperties getMSAProperties() const;
+
+
+
+    std::vector<CorrectedCandidate> getCorrectedCandidates(int new_columns_to_correct) const;
+
+    void addSequence(const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
+
+    void removeSequence(const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
+
+
+
+    //remove all candidate reads from alignment which are assumed to originate from a different genomic region
+    //the indices of remaining candidates are returned in MinimizationResult::remaining_candidates
+    //candidates in vector must be in the same order as they were inserted into the msa!!!
+
+    MinimizationResult minimize(int dataset_coverage);
+
+    std::pair<int,int> findGoodConsensusRegionOfSubject() const;
+
+    std::pair<int,int> findGoodConsensusRegionOfSubject2() const;
+};
 
 
 
