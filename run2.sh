@@ -92,7 +92,7 @@ inputfilename=$(basename -- "$inputfile")
 inputfileextension="${inputfilename##*.}"
 outputfilename="${inputfilename%.*}_"$nowstring"."$inputfileextension
 
-outdir=$datapath/care_results_minimized/
+outdir=$datapath/correcteddatasets/
 
 
 echo $inputfile

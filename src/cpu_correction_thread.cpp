@@ -26,11 +26,6 @@
 
 #include <omp.h>
 
-<<<<<<< HEAD
-#define MSA_IMPLICIT
-
-=======
->>>>>>> newimplicitmsa
 #define USE_MSA_MINIMIZATION
 //#define USE_SUBJECT_CLIPPING
 
@@ -681,73 +676,6 @@ namespace cpu{
                                                 max_candidate_length,
                                                 correctionOptions.useQualityScores);
 
-<<<<<<< HEAD
-                    multipleSequenceAlignment.init(subjectLength,
-                                                    bestCandidateLengths,
-                                                    bestAlignmentFlags,
-                                                    bestAlignments);
-
-                    const char* subjectQualityPtr = correctionOptions.useQualityScores ? threadOpts.readStorage->fetchQuality_ptr(correctionTasks[0].readId) : nullptr;
-
-                    multipleSequenceAlignment.insertSubject(correctionTasks[0].subject_string, [&](int i){
-                        return qualityConversion.getWeight((subjectQualityPtr)[i]);
-                    });
-
-                    const float desiredAlignmentMaxErrorRate = goodAlignmentProperties.maxErrorRate;
-
-                    //add candidates to multiple sequence alignment
-
-                    std::vector<std::function<float(int)>> candidateQualityConversionFunctions;
-                    candidateQualityConversionFunctions.reserve(bestAlignments.size());
-
-
-                    for(std::size_t i = 0; i < bestAlignments.size(); i++){
-
-                        const int length = bestCandidateLengths[i];
-                        //const std::string& candidateSequence = bestCandidateStrings[i];
-                        const char* candidateSequence = &bestCandidateStrings[i * fileProperties.maxSequenceLength];
-                        const char* candidateQualityPtr = correctionOptions.useQualityScores ?
-                                                                bestCandidateQualityPtrs[i]
-                                                                : nullptr;
-
-                        const int shift = bestAlignments[i].shift;
-                        const float defaultweight = 1.0f - std::sqrt(bestAlignments[i].nOps
-                                                                    / (bestAlignments[i].overlap
-                                                                        * desiredAlignmentMaxErrorRate));
-
-                        if(bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
-                            auto conversionFunction = [&, candidateQualityPtr, defaultweight, length](int i){
-                                //return qualityConversion.getWeight((candidateQualityPtr)[length - 1 - i]) * defaultweight;
-                                return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
-                            };
-
-                            multipleSequenceAlignment.insertCandidate(candidateSequence, length, shift, conversionFunction);
-
-                            candidateQualityConversionFunctions.emplace_back(std::move(conversionFunction));
-                        }else if(bestAlignmentFlags[i] == BestAlignment_t::Forward){
-                            auto conversionFunction = [&, candidateQualityPtr, defaultweight](int i){
-                                return qualityConversion.getWeight((candidateQualityPtr)[i]) * defaultweight;
-                            };
-                            multipleSequenceAlignment.insertCandidate(candidateSequence, length, shift, conversionFunction);
-
-                            candidateQualityConversionFunctions.emplace_back(std::move(conversionFunction));
-                        }else{
-                            assert(false);
-                        }
-
-                    }
-
-#ifdef ENABLE_TIMING
-                    msaAddSequencesTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    multipleSequenceAlignment.find_consensus();
-=======
->>>>>>> newimplicitmsa
 
 #ifdef ENABLE_TIMING
                     msaFindConsensusTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -881,35 +809,6 @@ namespace cpu{
                                                                             correctionOptions.estimatedCoverage);
 
                         auto update_after_successfull_minimization = [&](){
-<<<<<<< HEAD
-                            if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
-                                std::cout << "num_minimizations: " << num_minimizations << std::endl;
-                                assert(std::is_sorted(minimizationResult.remaining_candidates.begin(), minimizationResult.remaining_candidates.end()));
-
-                                for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
-                                    const int remaining_index = minimizationResult.remaining_candidates[i];
-                                    std::cout << remaining_index << " ";
-                                    bestAlignments[i] = bestAlignments[remaining_index];
-                                    bestAlignmentFlags[i] = bestAlignmentFlags[remaining_index];
-                                    bestCandidateReadIds[i] = bestCandidateReadIds[remaining_index];
-                                    bestCandidateLengths[i] = bestCandidateLengths[remaining_index];
-
-                                    std::copy(bestCandidateData.begin() + remaining_index * max_sequence_bytes,
-                                            bestCandidateData.begin() + (remaining_index+1) * max_sequence_bytes,
-                                            bestCandidateData.begin() + i * max_sequence_bytes);
-                                    std::copy(bestCandidateQualityData.begin() + remaining_index * max_candidate_length,
-                                            bestCandidateQualityData.begin() + (remaining_index+1) * max_candidate_length,
-                                            bestCandidateQualityData.begin() + i * max_candidate_length);
-                                    std::copy(bestCandidateStrings.begin() + remaining_index * max_candidate_length,
-                                            bestCandidateStrings.begin() + (remaining_index+1) * max_candidate_length,
-                                            bestCandidateStrings.begin() + i * max_candidate_length);
-
-                                    if(i != remaining_index){
-                                        candidateQualityConversionFunctions[i] = std::move(candidateQualityConversionFunctions[remaining_index]);
-                                    }
-                                }
-                                std::cout << std::endl;
-=======
                             if(minimizationResult.performedMinimization){
                                 assert(minimizationResult.differentRegionCandidate.size() == bestAlignments.size());
 
@@ -965,7 +864,6 @@ namespace cpu{
                                     multipleSequenceAlignment.findConsensus();
                                     multipleSequenceAlignment.findOrigWeightAndCoverage(correctionTasks[0].subject_string.c_str());
                                 }
->>>>>>> newimplicitmsa
                             }
                         };
 
