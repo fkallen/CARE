@@ -185,6 +185,8 @@ void performCorrection(MinhashOptions minhashOptions,
 
         readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
 
+        std::cerr << "readIsCorrectedVector bytes: " << readIsCorrectedVector.size() / 1024. / 1024. << " MB\n";
+
         printDataStructureMemoryUsage(minhasher, readStorage);
 
         dispatch_correction(minhashOptions, alignmentOptions,

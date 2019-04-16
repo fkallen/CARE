@@ -131,7 +131,6 @@ namespace cpu{
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 
         std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCorrectorThreads);
-        std::vector<char> readIsProcessedVector(readIsCorrectedVector);
         std::mutex writelock;
 
     	for(int threadId = 0; threadId < nCorrectorThreads; threadId++){
@@ -145,7 +144,6 @@ namespace cpu{
             threadOpts.minhasher = &minhasher;
             threadOpts.readStorage = &readStorage;
             threadOpts.coutLock = &writelock;
-            threadOpts.readIsProcessedVector = &readIsProcessedVector;
             threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
             threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
             threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
@@ -296,9 +294,6 @@ namespace cpu{
 
         minhasher.destroy();
     	readStorage.destroy();
-
-        readIsProcessedVector.clear();
-        readIsProcessedVector.shrink_to_fit();
 
         std::cout << "begin merge" << std::endl;
         TIMERSTARTCPU(merge);

@@ -229,7 +229,6 @@ struct ErrorCorrectionThreadOnlyGPU {
         const Minhasher_t* minhasher;
         GPUReadStorage_t* gpuReadStorage;
         std::mutex* coutLock;
-        std::vector<char>* readIsProcessedVector;
         std::vector<char>* readIsCorrectedVector;
         std::mutex* locksForProcessedFlags;
         std::size_t nLocksForProcessedFlags;

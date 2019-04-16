@@ -132,7 +132,6 @@ namespace cpu{
     		const Minhasher_t* minhasher;
     		const ReadStorage_t* readStorage;
     		std::mutex* coutLock;
-    		std::vector<char>* readIsProcessedVector;
     		std::vector<char>* readIsCorrectedVector;
     		std::mutex* locksForProcessedFlags;
     		std::size_t nLocksForProcessedFlags;

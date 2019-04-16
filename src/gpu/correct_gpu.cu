@@ -139,7 +139,6 @@ namespace gpu{
 
     std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
     std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
-    std::vector<char> readIsProcessedVector(readIsCorrectedVector);
     std::mutex writelock;
 
     for(int threadId = 0; threadId < nCpuThreads; threadId++) {
@@ -153,7 +152,6 @@ namespace gpu{
     threadOpts.minhasher = &minhasher;
     threadOpts.readStorage = &cpuReadStorage;
     threadOpts.coutLock = &writelock;
-    threadOpts.readIsProcessedVector = &readIsProcessedVector;
     threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
     threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
     threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
@@ -189,7 +187,6 @@ namespace gpu{
     threadOpts.minhasher = &minhasher;
     threadOpts.gpuReadStorage = &gpuReadStorage;
     threadOpts.coutLock = &writelock;
-    threadOpts.readIsProcessedVector = &readIsProcessedVector;
     threadOpts.readIsCorrectedVector = &readIsCorrectedVector;
     threadOpts.locksForProcessedFlags = locksForProcessedFlags.get();
     threadOpts.nLocksForProcessedFlags = nLocksForProcessedFlags;
@@ -281,11 +278,6 @@ namespace gpu{
     minhasher.destroy();
     cpuReadStorage.destroy();
     gpuReadStorage.destroy();
-
-    // generators.clear();
-    // ecthreads.clear();
-    readIsProcessedVector.clear();
-    readIsProcessedVector.shrink_to_fit();
 
     std::cout << "begin merge" << std::endl;
     TIMERSTARTCPU(merge);
