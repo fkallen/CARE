@@ -2534,6 +2534,93 @@ namespace gpu{
 		return BatchState::WriteResults;
 	}
 
+
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startforestcorrection_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+		assert(!transFuncData.correctionOptions.classicMode);
+
+        constexpr BatchState expectedState = BatchState::StartForestCorrection;
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+        assert(batch.state == expectedState);
+
+
+
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = msadata_transfer_finished_event_index;
+            return expectedState;
+        }
+#endif
+
+		DataArrays& dataArrays = *batch.dataArrays;
+
+		for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+			auto& task = batch.tasks[subject_index];
+			const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+			const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+
+			task.corrected_subject = task.subject_string;
+
+			const char* cons = dataArrays.h_consensus + subject_index * dataArrays.msa_pitch;
+
+			std::vector<MSAFeature> MSAFeatures = extractFeatures(cons,
+						dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+						columnProperties.columnsToCheck,
+						columnProperties.subjectColumnsBegin_incl,
+						columnProperties.subjectColumnsEnd_excl,
+						task.subject_string,
+						transFuncData.minhasher->minparams.k, 0.0f,
+						transFuncData.estimatedCoverage);
+
+			for(const auto& msafeature : MSAFeatures) {
+				constexpr float maxgini = 0.05f;
+				constexpr float forest_correction_fraction = 0.5f;
+
+                const bool doCorrect = transFuncData.fc.shouldCorrect(msafeature.position_support,
+                                            msafeature.position_coverage,
+                                            msafeature.alignment_coverage,
+                                            msafeature.dataset_coverage,
+                                            msafeature.min_support,
+                                            msafeature.min_coverage,
+                                            msafeature.max_support,
+                                            msafeature.max_coverage,
+                                            msafeature.mean_support,
+                                            msafeature.mean_coverage,
+                                            msafeature.median_support,
+                                            msafeature.median_coverage,
+                                            maxgini,
+                                            forest_correction_fraction);
+
+				if(doCorrect) {
+					task.corrected = true;
+
+					const int globalIndex = columnProperties.subjectColumnsBegin_incl + msafeature.position;
+					task.corrected_subject[msafeature.position] = cons[globalIndex];
+				}
+			}
+        }
+
+		return BatchState::WriteResults;
+	}
+
+
+
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_unpackclassicresults_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,

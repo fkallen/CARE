@@ -26,7 +26,7 @@
 
 #include <omp.h>
 
-#define USE_MSA_MINIMIZATION
+//#define USE_MSA_MINIMIZATION
 //#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
