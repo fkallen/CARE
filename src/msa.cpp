@@ -1,4 +1,4 @@
-#include <msa2.hpp>
+#include <msa.hpp>
 
 #include <qualityscoreweights.hpp>
 

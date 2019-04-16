@@ -6,7 +6,7 @@
 #include "tasktiming.hpp"
 #include "cpu_alignment.hpp"
 #include "bestalignment.hpp"
-#include <msa2.hpp>
+#include <msa.hpp>
 #include "qualityscoreweights.hpp"
 #include "rangegenerator.hpp"
 #include "featureextractor.hpp"
@@ -811,13 +811,12 @@ namespace cpu{
                         auto update_after_successfull_minimization = [&](){
                             if(minimizationResult.performedMinimization){
                                 assert(minimizationResult.differentRegionCandidate.size() == bestAlignments.size());
-                                std::cout << "num_minimizations: " << num_minimizations << std::endl;
 
                                 bool anyRemoved = false;
                                 size_t cur = 0;
                                 for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
                                     if(!minimizationResult.differentRegionCandidate[i]){
-                                        std::cout << i << " ";
+                                        //std::cout << i << " ";
 
                                         bestAlignments[cur] = bestAlignments[i];
                                         bestAlignmentShifts[cur] = bestAlignmentShifts[i];
@@ -836,6 +835,8 @@ namespace cpu{
                                                 bestCandidateStrings.begin() + (i+1) * max_candidate_length,
                                                 bestCandidateStrings.begin() + cur * max_candidate_length);
 
+                                        cur++;
+
                                     }else{
                                         multipleSequenceAlignment.removeSequence(correctionOptions.useQualityScores,
                                                                                 bestCandidateStrings.data() + i * max_candidate_length,
@@ -845,8 +846,19 @@ namespace cpu{
                                         anyRemoved = true;
                                     }
                                 }
-                                std::cout << std::endl;
+
                                 assert(anyRemoved);
+
+                                bestAlignments.erase(bestAlignments.begin() + cur, bestAlignments.end());
+                                bestAlignmentShifts.erase(bestAlignmentShifts.begin() + cur, bestAlignmentShifts.end());
+                                bestAlignmentWeights.erase(bestAlignmentWeights.begin() + cur, bestAlignmentWeights.end());
+                                bestAlignmentFlags.erase(bestAlignmentFlags.begin() + cur, bestAlignmentFlags.end());
+                                bestCandidateReadIds.erase(bestCandidateReadIds.begin() + cur, bestCandidateReadIds.end());
+                                bestCandidateLengths.erase(bestCandidateLengths.begin() + cur, bestCandidateLengths.end());
+
+                                bestCandidateData.erase(bestCandidateData.begin() + cur * max_sequence_bytes, bestCandidateData.end());
+                                bestCandidateQualityData.erase(bestCandidateQualityData.begin() + cur * max_candidate_length, bestCandidateQualityData.end());
+                                bestCandidateStrings.erase(bestCandidateStrings.begin() + cur * max_candidate_length, bestCandidateStrings.end());
 
                                 if(anyRemoved){
                                     multipleSequenceAlignment.findConsensus();

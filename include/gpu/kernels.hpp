@@ -3,7 +3,7 @@
 
 #include "../hpc_helpers.cuh"
 #include "bestalignment.hpp"
-#include "../msa.hpp"
+#include <msa.hpp>
 
 #include <config.hpp>
 
@@ -15,7 +15,14 @@ namespace gpu {
 
 
 #ifdef __NVCC__
-using MSAColumnProperties = care::cpu::MultipleSequenceAlignment::ColumnProperties;
+struct MSAColumnProperties{
+    int startindex;
+    int endindex;
+    int columnsToCheck;
+    int subjectColumnsBegin_incl;
+    int subjectColumnsEnd_excl;
+};
+
 
 enum class KernelId {
     PopcountSHDTiled,
