@@ -884,10 +884,12 @@ namespace cpu{
 
                         auto update_after_successfull_minimization = [&](){
                             if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
+                                std::cout << "num_minimizations: " << num_minimizations << std::endl;
                                 assert(std::is_sorted(minimizationResult.remaining_candidates.begin(), minimizationResult.remaining_candidates.end()));
 
                                 for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
                                     const int remaining_index = minimizationResult.remaining_candidates[i];
+                                    std::cout << remaining_index << " ";
                                     bestAlignments[i] = bestAlignments[remaining_index];
                                     bestAlignmentFlags[i] = bestAlignmentFlags[remaining_index];
                                     bestCandidateReadIds[i] = bestCandidateReadIds[remaining_index];
@@ -907,6 +909,7 @@ namespace cpu{
                                         candidateQualityConversionFunctions[i] = std::move(candidateQualityConversionFunctions[remaining_index]);
                                     }
                                 }
+                                std::cout << std::endl;
                             }
                         };
 
