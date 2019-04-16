@@ -811,10 +811,14 @@ namespace cpu{
                         auto update_after_successfull_minimization = [&](){
                             if(minimizationResult.performedMinimization){
                                 assert(minimizationResult.differentRegionCandidate.size() == bestAlignments.size());
+                                std::cout << "num_minimizations: " << num_minimizations << std::endl;
+
                                 bool anyRemoved = false;
                                 size_t cur = 0;
                                 for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
                                     if(!minimizationResult.differentRegionCandidate[i]){
+                                        std::cout << i << " ";
+
                                         bestAlignments[cur] = bestAlignments[i];
                                         bestAlignmentShifts[cur] = bestAlignmentShifts[i];
                                         bestAlignmentWeights[cur] = bestAlignmentWeights[i];
@@ -840,8 +844,9 @@ namespace cpu{
                                                                                 bestAlignmentShifts[i], bestAlignmentWeights[i]);
                                         anyRemoved = true;
                                     }
-
                                 }
+                                std::cout << std::endl;
+                                assert(anyRemoved);
 
                                 if(anyRemoved){
                                     multipleSequenceAlignment.findConsensus();
