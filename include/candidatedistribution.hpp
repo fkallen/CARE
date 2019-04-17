@@ -118,22 +118,23 @@ namespace cpu{
                                                                     int num_hits,
                                                                     int threads){
 
-        using ReadStorage_t = readStorage_t;
-        using Sequence_t = typename ReadStorage_t::Sequence_t;
+        auto identity = [](auto i){return i;};
 
         std::vector<std::future<std::map<std::int64_t, std::int64_t>>> candidateCounterFutures;
         const read_number sampleCount = candidatesToCheck;
         for(int i = 0; i < threads; i++){
             candidateCounterFutures.push_back(std::async(std::launch::async, [&,i]{
                 std::map<std::int64_t, std::int64_t> candidateMap;
-                std::vector<std::pair<read_number, const Sequence_t*>> numseqpairs;
+
                 typename minhasher_t::Handle handle;
 
                 for(read_number readId = i; readId < sampleCount; readId += threads){
                     //std::string sequencestring = readStorage.fetchSequence_ptr(readId)->toString();
 					const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
 					const int sequencelength = readStorage.fetchSequenceLength(readId);
-					const std::string sequencestring = Sequence_t::Impl_t::toString(sequenceptr, sequencelength);
+                    std::string sequencestring;
+                    sequencestring.resize(sequencelength);
+                    decode2BitHiLoSequence(&sequencestring[0], (const unsigned int*)sequenceptr, sequencelength, identity);
 					//if(sequencestring != sequencestring2){
 					//	std::cout << sequencestring << '\n' << sequencestring2 << std::endl;
 					//	assert(false);

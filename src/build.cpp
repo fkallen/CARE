@@ -959,10 +959,10 @@ namespace care{
                                                const MinhashOptions& minhashOptions,
                                 			   cpu::ContiguousReadStorage& readStorage){
 
-		using Sequence_t = typename cpu::ContiguousReadStorage::Sequence_t;
-
         BuiltDataStructure<Minhasher> result;
         auto& minhasher = result.data;
+
+        auto identity = [](auto i){return i;};
 
         minhasher = std::move(Minhasher{minhashOptions});
 
@@ -985,7 +985,9 @@ namespace care{
                 //const auto& seq = readStorage.sequences[readId];
 				const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
 				const int sequencelength = readStorage.fetchSequenceLength(readId);
-				const std::string sequencestring = Sequence_t::Impl_t::toString(sequenceptr, sequencelength);
+				std::string sequencestring;
+                sequencestring.resize(sequencelength);
+                decode2BitHiLoSequence(&sequencestring[0], (const unsigned int*)sequenceptr, sequencelength, identity);
                 minhasher.insertSequence(sequencestring, readId);
             }
 

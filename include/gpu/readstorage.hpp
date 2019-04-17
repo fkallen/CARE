@@ -27,8 +27,7 @@ namespace gpu {
 struct ContiguousReadStorage {
 
     using Length_t = cpu::ContiguousReadStorage::Length_t;
-    using Sequence_t = cpu::ContiguousReadStorage::Sequence_t;
-    
+
 	using SequenceStatistics = cpu::SequenceStatistics;
 
 	static constexpr bool has_reverse_complement = false;
@@ -71,7 +70,7 @@ struct ContiguousReadStorage {
 			return !(*this == rhs);
 		}
 	};
-    
+
     const cpu::ContiguousReadStorage* cpuReadStorage;
 
 
@@ -141,11 +140,11 @@ struct ContiguousReadStorage {
 	SequenceStatistics getSequenceStatistics() const;
 
 	SequenceStatistics getSequenceStatistics(int numThreads) const;
-    
+
     void copyGpuLengthsToGpuBufferAsync(Length_t* d_lengths, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const;
-    
+
     void copyGpuSequenceDataToGpuBufferAsync(char* d_sequence_data, size_t out_sequence_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const;
-    
+
     void copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const;
 
 };

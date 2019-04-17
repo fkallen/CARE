@@ -14,55 +14,6 @@
 namespace care{
 namespace cpu{
 
-
-/*
-    subjectptr / candidateptrs point to (possibly encoded) sequences with a
-    (decoded) length of subjectLength / candidateLengths nucleotides
-
-    Returns the alignments of each candidate to the subject.
-*/
-template<class Sequence_t>
-std::vector<SHDResult>
-calculate_shd_alignments(const char* subjectptr,
-                    const int subjectLength,
-                    const std::vector<char*>& candidateptrs,
-                    const std::vector<int>& candidateLengths,
-                    const int min_overlap,
-                    const float maxErrorRate,
-                    const float min_overlap_ratio){
-
-    std::vector<SHDResult> results;
-    results.reserve(candidateptrs.size());
-
-    for(size_t i = 0; i < candidateptrs.size(); i++){
-        const char* candidateptr = candidateptrs[i];
-        const int candidateLength = candidateLengths[i];
-
-        const SHDResult alignmentresult = CPUShiftedHammingDistanceChooser<Sequence_t>
-                                                        ::cpu_shifted_hamming_distance(
-                                                            subjectptr,
-                                                            subjectLength,
-                                                            candidateptr,
-                                                            candidateLength,
-                                                            min_overlap,
-                                                            maxErrorRate,
-                                                            min_overlap_ratio);
-
-        results.emplace_back(alignmentresult);
-    }
-
-    return results;
-
-}
-
-
-
-
-
-
-
-
-
 /*
     alignmentresults contains alignments results of candidates aligned to the subject
     The first half of alignmentresults contains the forward candidate alignments.

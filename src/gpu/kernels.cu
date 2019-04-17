@@ -60,7 +60,7 @@ namespace gpu{
                 float min_overlap_ratio){
 
         auto getNumBytes = [] (int sequencelength){
-            return Sequence2BitHiLo::getNumBytes(sequencelength);
+            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -84,7 +84,7 @@ namespace gpu{
         };
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            Sequence2BitHiLo::Impl_t::make_reverse_complement_inplace((std::uint8_t*)sequence, sequencelength, indextrafo);
+            reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
         };
 
         auto no_bank_conflict_index_tile = [&](int logical_index) -> int {

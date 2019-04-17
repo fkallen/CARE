@@ -118,7 +118,6 @@ namespace cpu{
 
         using Minhasher_t = Minhasher;
         using ReadStorage_t = cpu::ContiguousReadStorage;
-    	using Sequence_t = typename ReadStorage_t::Sequence_t;
         using AlignmentResult_t = SHDResult;//typename alignment_result_type<indels>::type;
 
         using CorrectionTask_t = CorrectionTask;

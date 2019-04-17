@@ -31,8 +31,6 @@ namespace cpu{
 
     struct ContiguousReadStorage{
 
-        using Sequence_t = care::Sequence2BitHiLo;
-
         static constexpr bool has_reverse_complement = false;
         static constexpr int serialization_id = 1;
 
@@ -58,7 +56,7 @@ namespace cpu{
 
         ContiguousReadStorage(read_number nSequences, bool b, int maximum_sequence_length)
             : maximum_allowed_sequence_length(maximum_sequence_length),
-                maximum_allowed_sequence_bytes(Sequence_t::getNumBytes(maximum_sequence_length)),
+                maximum_allowed_sequence_bytes(getEncodedNumInts2BitHiLo(maximum_sequence_length) * sizeof(unsigned int)),
                 useQualityScores(b),
                 num_sequences(nSequences){
 
@@ -173,10 +171,13 @@ namespace cpu{
 
 private:
         void insertSequence(read_number readNumber, const std::string& sequence){
-            Sequence_t seq(sequence);
-            std::memcpy(&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)],
-                        seq.begin(),
-                        seq.getNumBytes());
+            auto identity = [](auto i){return i;};
+
+            unsigned int* dest = (unsigned int*)&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
+            encodeSequence2BitHiLo(dest,
+                                    sequence.c_str(),
+                                    sequence.length(),
+                                    identity);
 
             h_sequence_lengths[readNumber] = Length_t(sequence.length());
         }

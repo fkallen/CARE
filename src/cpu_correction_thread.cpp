@@ -40,7 +40,7 @@ namespace cpu{
                              const std::vector<read_number>& readIds,
                              int numThreads = 1){
 
-            using Sequence_t = cpu::ContiguousReadStorage::Sequence_t;
+            auto identity = [](auto i){return i;};
 
             omp_set_num_threads(numThreads);
 
@@ -54,7 +54,9 @@ namespace cpu{
 
                 task = std::move(CPUCorrectionThread::CorrectionTask{readId});
 
-                task.original_subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)originalsubjectptr, originalsubjectLength);
+                task.original_subject_string.resize(originalsubjectLength);
+                decode2BitHiLoSequence(&task.original_subject_string[0],
+                                        (const unsigned int*) originalsubjectptr, originalsubjectLength, identity);
             }
         }
 
@@ -102,7 +104,7 @@ namespace cpu{
 
     		isRunning = true;
 
-            const int max_sequence_bytes = Sequence_t::getNumBytes(fileOptions.maximum_sequence_length);
+            const int max_sequence_bytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(fileOptions.maximum_sequence_length);
 
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
@@ -130,6 +132,8 @@ namespace cpu{
     			read_number index = readId % threadOpts.nLocksForProcessedFlags;
     			threadOpts.locksForProcessedFlags[index].unlock();
     		};
+
+            auto identity = [](auto i){return i;};
 
             MSA_t multipleSequenceAlignment;
 
@@ -172,7 +176,9 @@ namespace cpu{
                 const char* originalsubjectptr = threadOpts.readStorage->fetchSequenceData_ptr(correctionTasks[0].readId);
                 const int originalsubjectLength = threadOpts.readStorage->fetchSequenceLength(correctionTasks[0].readId);
 
-                correctionTasks[0].original_subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)originalsubjectptr, originalsubjectLength);
+                correctionTasks[0].original_subject_string.resize(originalsubjectLength);
+                decode2BitHiLoSequence(&correctionTasks[0].original_subject_string[0],
+                                        (const unsigned int*) originalsubjectptr, originalsubjectLength, identity);
                 correctionTasks[0].subject_string = correctionTasks[0].original_subject_string;
                 correctionTasks[0].clipping_begin = 0;
                 correctionTasks[0].clipping_end = originalsubjectLength;
@@ -183,7 +189,7 @@ namespace cpu{
 
                 bool needsSecondPassAfterClipping = false;
                 bool discardThisTask = false;
-                Sequence_t subjectsequence;
+                std::vector<unsigned int> subjectsequence;
 
 
                 std::vector<char> candidateData;
@@ -220,9 +226,12 @@ namespace cpu{
                     const char* subjectptr = originalsubjectptr;
                     int subjectLength = originalsubjectLength;
                     if(needsSecondPassAfterClipping){
-                        subjectsequence = std::move(Sequence_t{correctionTasks[0].subject_string});
-                        subjectptr = (const char*)subjectsequence.begin();
-                        subjectLength = subjectsequence.length();
+                        const int length = correctionTasks[0].subject_string.length();
+                        subjectsequence.resize(getEncodedNumInts2BitHiLo(length));
+                        encodeSequence2BitHiLo(subjectsequence.data(), correctionTasks[0].subject_string.c_str(), length, identity);
+
+                        subjectptr = (const char*)subjectsequence.data();
+                        subjectLength = length;
                     }
 
                     if(clippingIters > 1){
@@ -304,15 +313,17 @@ namespace cpu{
                         const read_number candidateId = correctionTasks[0].candidate_read_ids[i];
                         const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
                         const int candidateLength = candidateLengths[i];
-                        const int bytes = Sequence_t::getNumBytes(candidateLength);
+                        const int bytes = getEncodedNumInts2BitHiLo(candidateLength) * sizeof(unsigned int);
 
                         char* const candidateDataBegin = candidateData.data() + i * max_sequence_bytes;
                         char* const candidateRevcDataBegin = candidateRevcData.data() + i * max_sequence_bytes;
 
                         std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
-                        Sequence_t::make_reverse_complement(reinterpret_cast<std::uint8_t*>(candidateRevcDataBegin),
-                                                            reinterpret_cast<const std::uint8_t*>(candidateptr),
-                                                            candidateLength);
+                        reverseComplement2BitHiLo((unsigned int*)(candidateRevcDataBegin),
+                                                  (const unsigned int*)(candidateptr),
+                                                  candidateLength,
+                                                  identity,
+                                                  identity);
 
                         candidateDataPtrs[i] = candidateDataBegin;
                         candidateRevcDataPtrs[i] = candidateRevcDataBegin;
@@ -478,8 +489,8 @@ namespace cpu{
 #endif
 
                     if(goodIndices.size() == 0){
-                        //discardThisTask = true; //no good mismatch ratio
-                        //break;
+                        discardThisTask = true; //no good mismatch ratio
+                        break;
 
                         /*if(!needsSecondPassAfterClipping){
                             //std::cout << "A" << correctionTasks[0].readId << std::endl;
@@ -601,37 +612,6 @@ namespace cpu{
                     tpa = std::chrono::system_clock::now();
 #endif
 
-                    //decode sequences of best alignments
-                    auto decode_Sequence2BitHiLo = [](char* dest, const char* src, int nBases){
-                        //return decode_2bit_hilo(data, nBases);
-
-                        constexpr char BASE_A = 0x00;
-                        constexpr char BASE_C = 0x01;
-                        constexpr char BASE_G = 0x02;
-                        constexpr char BASE_T = 0x03;
-
-                        const int bytes = Sequence2BitHiLo::getNumBytes(nBases);
-
-                        const unsigned int* const hi = (const unsigned int*)src;
-                        const unsigned int* const lo = (const unsigned int*)(src + bytes/2);
-
-                        for(int i = 0; i < nBases; i++){
-                            const int intIndex = i / (8 * sizeof(unsigned int));
-                            const int pos = i % (8 * sizeof(unsigned int));
-
-                            const unsigned char hibit = (hi[intIndex] >> pos) & 1u;
-                            const unsigned char lobit = (lo[intIndex] >> pos) & 1u;
-                            const unsigned char base = (hibit << 1) | lobit;
-
-                            switch(base){
-                                case BASE_A: dest[i] = 'A'; break;
-                                case BASE_C: dest[i] = 'C'; break;
-                                case BASE_G: dest[i] = 'G'; break;
-                                case BASE_T: dest[i] = 'T'; break;
-                                default: dest[i] = '_'; break; // cannot happen
-                            }
-                        }
-                    };
 
                     bestCandidateStrings.clear();
                     //bestCandidateStrings.reserve(bestAlignments.size());
@@ -640,10 +620,10 @@ namespace cpu{
                     for(int i = 0; i < int(bestAlignments.size()); i++){
                         const char* ptr = bestCandidatePtrs[i];
                         const int length = bestCandidateLengths[i];
-                        //bestCandidateStrings.emplace_back(Sequence_t::Impl_t::toString((const std::uint8_t*)ptr, length));
-                        decode_Sequence2BitHiLo(&bestCandidateStrings[i * fileProperties.maxSequenceLength],
-                                                ptr,
-                                                length);
+                        decode2BitHiLoSequence(&bestCandidateStrings[i * fileProperties.maxSequenceLength],
+                                                (const unsigned int*)ptr,
+                                                length,
+                                                identity);
                     }
 
 #ifdef ENABLE_TIMING
@@ -847,6 +827,23 @@ namespace cpu{
                                     }
                                 }
 
+
+                                /*if(!anyRemoved){
+                                    std::cout << correctionTasks[0].readId << std::endl;
+                                    std::cout << num_minimizations << std::endl;
+                                    for(const auto b : minimizationResult.differentRegionCandidate){
+                                        std::cout << b << " ";
+                                    }
+                                    std::cout << std::endl;
+                                    std::cout << minimizationResult.performedMinimization << std::endl;
+                                    std::cout << minimizationResult.column << std::endl;
+                                    std::cout << minimizationResult.significantBase << std::endl;
+                                    std::cout << minimizationResult.consensusBase << std::endl;
+                                    std::cout << minimizationResult.originalBase << std::endl;
+                                    std::cout << minimizationResult.significantCount << std::endl;
+                                    std::cout << minimizationResult.consensuscount << std::endl;
+
+                                }*/
                                 assert(anyRemoved);
 
                                 bestAlignments.erase(bestAlignments.begin() + cur, bestAlignments.end());
@@ -1124,7 +1121,9 @@ namespace cpu{
                                 if(bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
                                     write_read(candidateId, correctedCandidate.sequence);
                                 }else{
-                                    const std::string fwd = SequenceString(correctedCandidate.sequence).reverseComplement().toString();
+                                    std::string fwd;
+                                    fwd.resize(correctedCandidate.sequence.length());
+                                    reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
                                     write_read(candidateId, fwd);
                                 }
                             }

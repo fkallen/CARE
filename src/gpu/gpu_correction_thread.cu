@@ -221,6 +221,8 @@ namespace gpu{
 		assert(batch.state == BatchState::Unprepared);
 		assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
 
+        auto identity = [](auto i){return i;};
+
 		const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
 		DataArrays& dataArrays = *batch.dataArrays;
@@ -274,7 +276,9 @@ namespace gpu{
 
 				//auto& task = batch.tasks.back();
 
-				task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
+                task.subject_string.resize(sequencelength);
+                decode2BitHiLoSequence(&task.subject_string[0], (const unsigned int*)sequenceptr, sequencelength, identity);
+
 				task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.max_candidates);
 
 				//task.candidate_read_ids.resize(transFuncData.max_candidates);
@@ -369,7 +373,7 @@ namespace gpu{
 				dataArrays.set_problem_dimensions(int(batch.tasks.size()),
 							batch.initialNumberOfCandidates,
 							transFuncData.maxSequenceLength,
-                            Sequence_t::getNumBytes(transFuncData.maxSequenceLength),
+                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength),
 							transFuncData.min_overlap,
 							transFuncData.min_overlap_ratio,
 							transFuncData.correctionOptions.useQualityScores); CUERR;
@@ -424,16 +428,16 @@ namespace gpu{
 				batch.batchDataDevice.resize(int(batch.tasks.size()),
 											batch.initialNumberOfCandidates,
 											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
-											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
+											roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
 											transFuncData.maxSequenceLength,
-											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
+											sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);
 
 				batch.batchDataHost.resize(int(batch.tasks.size()),
 											batch.initialNumberOfCandidates,
 											roundToNextMultiple(transFuncData.maxSequenceLength, 4),
-											roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
+											roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
 											transFuncData.maxSequenceLength,
-											Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
+											sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);
 
 				batch.initialNumberOfCandidates = 0;
 
@@ -453,6 +457,8 @@ namespace gpu{
 
         assert(batch.state == BatchState::Unprepared);
         assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
+
+        auto identity = [](auto i){return i;};
 
         const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
@@ -514,7 +520,8 @@ namespace gpu{
                         const char* sequenceptr = gpuReadStorage->fetchSequenceData_ptr(readId);
                         const int sequencelength = gpuReadStorage->fetchSequenceLength(readId);
 
-                        task.subject_string = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
+                        task.subject_string.resize(sequencelength);
+                        decode2BitHiLoSequence(&task.subject_string[0], (const unsigned int*)sequenceptr, sequencelength, identity);
                         task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.max_candidates);
 
                         task.candidate_read_ids_begin = &(task.candidate_read_ids[0]);
@@ -649,7 +656,7 @@ namespace gpu{
                 dataArrays.set_problem_dimensions(int(batch.tasks.size()),
                             batch.initialNumberOfCandidates,
                             transFuncData.maxSequenceLength,
-                            Sequence_t::getNumBytes(transFuncData.maxSequenceLength),
+                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength),
                             transFuncData.min_overlap,
                             transFuncData.min_overlap_ratio,
                             transFuncData.correctionOptions.useQualityScores); CUERR;
@@ -704,16 +711,16 @@ namespace gpu{
                 batch.batchDataDevice.resize(int(batch.tasks.size()),
                                             batch.initialNumberOfCandidates,
                                             roundToNextMultiple(transFuncData.maxSequenceLength, 4),
-                                            roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
+                                            roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
                                             transFuncData.maxSequenceLength,
-                                            Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
+                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);
 
                 batch.batchDataHost.resize(int(batch.tasks.size()),
                                             batch.initialNumberOfCandidates,
                                             roundToNextMultiple(transFuncData.maxSequenceLength, 4),
-                                            roundToNextMultiple(Sequence_t::getNumBytes(transFuncData.maxSequenceLength), 4),
+                                            roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
                                             transFuncData.maxSequenceLength,
-                                            Sequence_t::getNumBytes(transFuncData.maxSequenceLength), msa_max_column_count);
+                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);
 
                 batch.initialNumberOfCandidates = 0;
 
@@ -810,12 +817,12 @@ namespace gpu{
 				const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
 				const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-				assert(i * dataArrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+				assert(i * dataArrays.encoded_sequence_pitch + sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength) <= candidatesequencedatabytes);
 
 				std::memcpy(readsSortedById.data()
 							+ i * dataArrays.encoded_sequence_pitch,
 							sequenceptr,
-							Sequence_t::getNumBytes(sequencelength));
+							sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength));
 			}
 
 			batch.collectedCandidateReads.resize(dataArrays.encoded_sequence_pitch * batch.numsortedCandidateIds);
@@ -896,16 +903,16 @@ namespace gpu{
 				const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(task.readId);
 
 				const std::size_t maxbytes = arrays.memSubjects / sizeof(char);
-				assert(batch.copiedTasks * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= maxbytes);
+				assert(batch.copiedTasks * arrays.encoded_sequence_pitch + sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength) <= maxbytes);
 #if 1
 				std::memcpy(arrays.h_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
 							sequenceptr,
-							Sequence_t::getNumBytes(sequencelength));
+							sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength));
 #else
 
 				cudaMemcpyAsync(arrays.d_subject_sequences_data + batch.copiedTasks * arrays.encoded_sequence_pitch,
 							sequenceptr,
-							Sequence_t::getNumBytes(sequencelength),
+							sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength),
 							H2D,
 							streams[primary_stream_index]);
 #endif
@@ -936,14 +943,14 @@ namespace gpu{
 					const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
 					const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-					assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+					assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength) <= candidatesequencedatabytes);
 
                     const int global_i = batch.copiedCandidates + i;
 
 					std::memcpy(arrays.h_candidate_sequences_data
 								+ global_i * arrays.encoded_sequence_pitch,
 								sequenceptr,
-								Sequence_t::getNumBytes(sequencelength));
+								sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength));
 
 					arrays.h_candidate_sequences_lengths[global_i] = sequencelength;
 				}
@@ -972,12 +979,12 @@ namespace gpu{
 					const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
 					const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-					assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+					assert(batch.copiedCandidates * arrays.encoded_sequence_pitch + sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength) <= candidatesequencedatabytes);
 
 					cudaMemcpyAsync(arrays.d_candidate_sequences_data
 								+ batch.copiedCandidates * arrays.encoded_sequence_pitch,
 								sequenceptr,
-								Sequence_t::getNumBytes(sequencelength),
+								sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength),
 								H2D,
 								streams[primary_stream_index]);
 
@@ -1285,11 +1292,11 @@ namespace gpu{
                     const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(readId);
                     const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(readId);
 
-                    assert(subjectIndex * dataArrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= subjectsequencedatabytes);
+                    assert(subjectIndex * dataArrays.encoded_sequence_pitch + sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength) <= subjectsequencedatabytes);
 
                     std::memcpy(dataArrays.h_subject_sequences_data + subjectIndex * dataArrays.encoded_sequence_pitch,
                                 sequenceptr,
-                                Sequence_t::getNumBytes(sequencelength));
+                                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength));
 
                     //copy subject length
                     dataArrays.h_subject_sequences_lengths[subjectIndex] = sequencelength;
@@ -1324,12 +1331,12 @@ namespace gpu{
                     const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidate_read_id);
                     const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
-                    assert(candidateIndex * dataArrays.encoded_sequence_pitch + Sequence_t::getNumBytes(sequencelength) <= candidatesequencedatabytes);
+                    assert(candidateIndex * dataArrays.encoded_sequence_pitch + sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength) <= candidatesequencedatabytes);
 
                     std::memcpy(dataArrays.h_candidate_sequences_data
                                 + candidateIndex * dataArrays.encoded_sequence_pitch,
                                 sequenceptr,
-                                Sequence_t::getNumBytes(sequencelength));
+                                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength));
 
                     dataArrays.h_candidate_sequences_lengths[candidateIndex] = sequencelength;
                 }
@@ -1442,7 +1449,7 @@ namespace gpu{
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.encoded_sequence_pitch,
-                    Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
                     transFuncData.min_overlap,
                     transFuncData.maxErrorRate,
                     transFuncData.min_overlap_ratio,
@@ -2126,7 +2133,7 @@ namespace gpu{
                     transFuncData.correctionOptions.useQualityScores,
                     desiredAlignmentMaxErrorRate,
                     dataArrays.maximum_sequence_length,
-                    Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
                     dataArrays.encoded_sequence_pitch,
                     dataArrays.quality_pitch,
                     dataArrays.msa_pitch,
@@ -2165,7 +2172,7 @@ namespace gpu{
                         transFuncData.correctionOptions.useQualityScores,
                         desiredAlignmentMaxErrorRate,
                         dataArrays.maximum_sequence_length,
-                        Sequence_t::getNumBytes(dataArrays.maximum_sequence_length),
+                        sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
                         dataArrays.encoded_sequence_pitch,
                         dataArrays.quality_pitch,
                         dataArrays.msa_pitch,
@@ -2614,7 +2621,6 @@ namespace gpu{
             const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
 
             for(int index = offset; index < end_index; index++){
-                constexpr float threshold = 0.95;
                 const auto& msafeature = MSAFeatures[index];
 
                 const bool doCorrect = transFuncData.fc.shouldCorrect(msafeature.position_support,
