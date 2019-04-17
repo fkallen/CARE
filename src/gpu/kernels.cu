@@ -632,11 +632,11 @@ namespace gpu{
                 size_t msa_weights_row_pitch){
 
         auto get = [] (const char* data, int length, int index){
-            return care::Sequence2BitHiLo::get(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
-            return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+            return reverseComplementStringInplace((char*)sequence, sequencelength);
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -805,11 +805,11 @@ namespace gpu{
     			size_t msa_weights_row_pitch){
 
         auto get = [] (const char* data, int length, int index){
-            return care::Sequence2BitHiLo::get(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
-			return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+			return reverseComplementStringInplace((char*)sequence, sequencelength);
 		};
 
 		auto getSubjectPtr = [&] (int subjectIndex){
@@ -980,11 +980,11 @@ namespace gpu{
     	extern __shared__ float sharedmem[];
 
         auto get = [] (const char* data, int length, int index){
-            return care::Sequence2BitHiLo::get(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
-			return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+			return reverseComplementStringInplace((char*)sequence, sequencelength);
 		};
 
 		auto getSubjectPtr = [&] (int subjectIndex){
@@ -1372,7 +1372,7 @@ namespace gpu{
         constexpr char T_enc = 0x03;
 
         auto get = [] (const char* data, int length, int index){
-            return care::Sequence2BitHiLo::get(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -1679,7 +1679,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
 			//return Sequence_t::get_as_nucleotide(data, length, index);
-            return care::Sequence2BitHiLo::get(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
 		};
 
 		auto getSubjectPtr = [&] (int subjectIndex){
@@ -1848,7 +1848,7 @@ namespace gpu{
                 int new_columns_to_correct){
 
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
-            return care::SequenceString::make_reverse_complement_inplace(sequence, sequencelength);
+            return reverseComplementStringInplace((char*)sequence, sequencelength);
         };
 
         auto getCandidateLength = [&] (int subjectIndex, int localCandidateIndex){
@@ -3400,7 +3400,7 @@ namespace gpu{
         };
 
         auto get = [] (const char* data, int length, int index){
-            return care::Sequence2BitHiLo::get(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         //find column with a non-consensus base with significant coverage

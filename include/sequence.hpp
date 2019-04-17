@@ -34,6 +34,34 @@ namespace care{
         }
     }
 
+    HD_WARNING_DISABLE
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void reverseComplementStringInplace(char* sequence, int sequencelength){
+
+        auto make_reverse_complement_nuc = [](char in){
+            switch(in){
+                case 'A': return 'T';
+                case 'C': return 'G';
+                case 'G': return 'C';
+                case 'T': return 'A';
+                default :return 'F';
+            }
+        };
+
+        for(int i = 0; i < sequencelength/2; i++){
+            const std::uint8_t front = make_reverse_complement_nuc(sequence[i]);
+            const std::uint8_t back = make_reverse_complement_nuc(sequence[sequencelength - 1 - i]);
+            sequence[i] = back;
+            sequence[sequencelength - 1 - i] = front;
+        }
+
+        if(sequencelength % 2 == 1){
+            const int middleindex = sequencelength/2;
+            sequence[middleindex] = make_reverse_complement_nuc(sequence[middleindex]);
+        }
+    }
+
 
     //###########################
 
