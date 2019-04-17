@@ -478,8 +478,8 @@ namespace cpu{
 #endif
 
                     if(goodIndices.size() == 0){
-                        //discardThisTask = true; //no good mismatch ratio
-                        //break;
+                        discardThisTask = true; //no good mismatch ratio
+                        break;
 
                         /*if(!needsSecondPassAfterClipping){
                             //std::cout << "A" << correctionTasks[0].readId << std::endl;
@@ -847,6 +847,23 @@ namespace cpu{
                                     }
                                 }
 
+
+                                /*if(!anyRemoved){
+                                    std::cout << correctionTasks[0].readId << std::endl;
+                                    std::cout << num_minimizations << std::endl;
+                                    for(const auto b : minimizationResult.differentRegionCandidate){
+                                        std::cout << b << " ";
+                                    }
+                                    std::cout << std::endl;
+                                    std::cout << minimizationResult.performedMinimization << std::endl;
+                                    std::cout << minimizationResult.column << std::endl;
+                                    std::cout << minimizationResult.significantBase << std::endl;
+                                    std::cout << minimizationResult.consensusBase << std::endl;
+                                    std::cout << minimizationResult.originalBase << std::endl;
+                                    std::cout << minimizationResult.significantCount << std::endl;
+                                    std::cout << minimizationResult.consensuscount << std::endl;
+
+                                }*/
                                 assert(anyRemoved);
 
                                 bestAlignments.erase(bestAlignments.begin() + cur, bestAlignments.end());
