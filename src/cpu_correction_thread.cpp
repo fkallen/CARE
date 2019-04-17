@@ -26,8 +26,8 @@
 
 #include <omp.h>
 
-//#define USE_MSA_MINIMIZATION
-//#define USE_SUBJECT_CLIPPING
+#define USE_MSA_MINIMIZATION
+#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
 
@@ -970,7 +970,7 @@ namespace cpu{
                                                     multipleSequenceAlignment.support.data(),
                                                     multipleSequenceAlignment.coverage.data(),
                                                     multipleSequenceAlignment.origCoverages.data(),
-                                                    multipleSequenceAlignment.nCandidates,
+                                                    multipleSequenceAlignment.nColumns,
                                                     multipleSequenceAlignment.subjectColumnsBegin_incl,
                                                     multipleSequenceAlignment.subjectColumnsEnd_excl,
                                                     correctionTasks[0].subject_string,
