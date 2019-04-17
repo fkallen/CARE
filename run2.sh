@@ -50,7 +50,7 @@ fi
 deviceIds="--deviceIds=0"
 datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
-classicMode=false
+classicMode=true
 forest="./forests/combinedforestaligncov.so"
 fileformat=fastq
 useQualityScores=true
@@ -92,7 +92,7 @@ inputfilename=$(basename -- "$inputfile")
 inputfileextension="${inputfilename##*.}"
 outputfilename="${inputfilename%.*}_"$nowstring"."$inputfileextension
 
-outdir=$datapath/care_results_forest/
+outdir=$datapath/care_results_clippedminimized/
 
 
 echo $inputfile

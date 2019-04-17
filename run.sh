@@ -86,7 +86,7 @@ outputfile="readscorrectednew.fq"
 outfile="--outfile=$outputfile"
 #outfile=
 
-classicMode=--classicMode=false
+classicMode=--classicMode=true
 forest=--forest="./forests/humanerx069715.so"
 
 #fastq
