@@ -110,6 +110,11 @@ namespace care{
 
                 std::copy(coverageptr + begin, coverageptr + end, arr.begin());
                 f.median_coverage = median(arr.begin(), arr.begin() + (end-begin));
+                
+                f.min_coverage /= (f.alignment_coverage);
+                f.max_coverage /= (f.alignment_coverage);
+                f.mean_coverage /= (f.alignment_coverage);
+                f.median_coverage /= (f.alignment_coverage);
 
                 result.emplace_back(f);
             }

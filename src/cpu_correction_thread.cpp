@@ -991,7 +991,7 @@ namespace cpu{
                                                     multipleSequenceAlignment.subjectColumnsBegin_incl,
                                                     multipleSequenceAlignment.subjectColumnsEnd_excl,
                                                     correctionTasks[0].subject_string,
-                                                    correctionOptions.kmerlength, 0.0f,
+                                                    correctionOptions.kmerlength, 0.5f,
                                                     correctionOptions.estimatedCoverage);
 #else
 
