@@ -3,14 +3,17 @@
 
 
 
-if [ $# -lt 2 ]
+if [ $# -lt 3 ]
 then
-	echo "Usage: ./run2.sh exetype datainfofile [num_threads num_threads_for_gpus]"
+	echo "Usage: ./run2.sh exetype datainfofile outputfolder [num_threads num_threads_for_gpus candidatecorrection extracfeatures]"
 	exit
 fi
 
 executable=./errorcorrector_$1
 datainfofile=$2
+outdir=$3
+
+#outdir=$datapath/correctedcandidates/
 
 #max number of threads to use
 threads=16
@@ -21,24 +24,24 @@ threadsgpu=0
 candidateCorrection=true
 extractFeatures=false
 
-if [ $# -gt 2 ]
-then
-	threads=$3
-fi
-
 if [ $# -gt 3 ]
 then
-	threadsgpu=$4
+	threads=$4
 fi
 
 if [ $# -gt 4 ]
 then
-	candidateCorrection=$5
+	threadsgpu=$5
 fi
 
 if [ $# -gt 5 ]
 then
-	extractFeatures=$6
+	candidateCorrection=$6
+fi
+
+if [ $# -gt 6 ]
+then
+	extractFeatures=$7
 fi
 
 
@@ -50,7 +53,7 @@ fi
 deviceIds="--deviceIds=0"
 datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
-classicMode=true
+classicMode=false
 forest="./forests/combinedforestaligncov.so"
 fileformat=fastq
 useQualityScores=true
@@ -91,8 +94,6 @@ m=0.6
 inputfilename=$(basename -- "$inputfile")
 inputfileextension="${inputfilename##*.}"
 outputfilename="${inputfilename%.*}_"$nowstring"."$inputfileextension
-
-outdir=$datapath/care_results_clippedminimized/
 
 
 echo $inputfile
