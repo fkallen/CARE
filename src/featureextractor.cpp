@@ -5,6 +5,8 @@
 #include <limits>
 #include <algorithm>
 #include <numeric>
+#include <cassert>
+#include <cmath>
 
 namespace care{
 
@@ -102,6 +104,9 @@ namespace care{
                 f.max_coverage = *std::max_element(coverageptr + begin, coverageptr + end);
                 f.mean_support = std::accumulate(supportptr + begin, supportptr + end, 0.0) / (end - begin);
                 f.mean_coverage = std::accumulate(coverageptr + begin, coverageptr + end, 0.0) / (end - begin);
+                
+                //assert(f.min_coverage > 0);
+                assert(end - begin > 0);
 
                 std::array<double, 33> arr;
 
@@ -115,6 +120,20 @@ namespace care{
                 f.max_coverage /= (f.alignment_coverage);
                 f.mean_coverage /= (f.alignment_coverage);
                 f.median_coverage /= (f.alignment_coverage);
+                
+                assert(!std::isnan(f.position));
+                assert(!std::isnan(f.position_support));
+                assert(!std::isnan(f.position_coverage));
+                assert(!std::isnan(f.alignment_coverage));
+                assert(!std::isnan(f.dataset_coverage));
+                assert(!std::isnan(f.min_support));
+                assert(!std::isnan(f.min_coverage));
+                assert(!std::isnan(f.max_support));
+                assert(!std::isnan(f.max_coverage));
+                assert(!std::isnan(f.mean_support));
+                assert(!std::isnan(f.mean_coverage));
+                assert(!std::isnan(f.median_support));
+                assert(!std::isnan(f.median_coverage));
 
                 result.emplace_back(f);
             }
