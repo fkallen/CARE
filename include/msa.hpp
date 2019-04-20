@@ -16,6 +16,8 @@
 #include <iostream>
 
 namespace care{
+    
+
 
 
 struct MultipleSequenceAlignment{
@@ -67,7 +69,7 @@ public:
 
     void addSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
-    void removeSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
+    //void removeSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor);
 
 };
 
@@ -177,6 +179,19 @@ std::pair<int,int> findGoodConsensusRegionOfSubject2(const char* subject,
 
 
 extern cpu::QualityScoreConversion qualityConversion;
+
+
+void printSequencesInMSA(std::ostream& out,
+                         const char* subject,
+                         int subjectLength,
+                         const char* candidates,
+                         const int* candidateLengths,
+                         int nCandidates,
+                         const int* candidateShifts,
+                         int subjectColumnsBegin_incl,
+                         int subjectColumnsEnd_excl,
+                         int nColumns,
+                         size_t candidatesPitch);
 
 
 }

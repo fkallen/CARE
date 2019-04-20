@@ -245,6 +245,7 @@ void MultipleSequenceAlignment::addSequence(bool useQualityScores, const char* s
     }
 }
 
+/*
 void MultipleSequenceAlignment::removeSequence(bool useQualityScores, const char* sequence, const char* quality, int length, int shift, float defaultWeightFactor){
     assert(sequence != nullptr);
     assert(!useQualityScores || quality != nullptr);
@@ -263,6 +264,7 @@ void MultipleSequenceAlignment::removeSequence(bool useQualityScores, const char
         coverage[globalIndex]--;
     }
 }
+*/
 
 void MultipleSequenceAlignment::findConsensus(){
     for(int column = 0; column < nColumns; ++column){
@@ -284,6 +286,7 @@ void MultipleSequenceAlignment::findConsensus(){
 
         const float columnWeight = weightsA[column] + weightsC[column] + weightsG[column] + weightsT[column];
         support[column] = consWeight / columnWeight;
+        assert(!std::isnan(support[column]));
     }
 }
 
@@ -598,8 +601,27 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
     if(foundColumn){
 
         result.differentRegionCandidate.resize(nCandidates);
+        
+        //compare found base to original base
+        const char originalbase = subject[col - subjectColumnsBegin_incl];
+        
+        result.significantBase = foundBase;
+        result.originalBase = originalbase;
+        result.consensusBase = consensus[col];
+        
+        std::array<int,4> counts;
+        
+        counts[0] = countsA[col];
+        counts[1] = countsC[col];
+        counts[2] = countsG[col];
+        counts[3] = countsT[col];
+        
+        result.significantCount = counts[foundBaseIndex];
+        result.consensuscount = counts[consindex];
 
         auto discard_rows = [&](bool keepMatching){
+            
+            std::array<int, 4> seenCounts{0,0,0,0};
 
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
                 //check if row is affected by column col
@@ -608,30 +630,30 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                 const char base = notAffected ? 'F' : candidates[candidateIndex * candidatesPitch + (col - row_begin_incl)];
 
+                if(base == 'A') seenCounts[0]++;
+                if(base == 'C') seenCounts[1]++;
+                if(base == 'G') seenCounts[2]++;
+                if(base == 'T') seenCounts[3]++;
+                
                 if(notAffected || (!(keepMatching ^ (base == foundBase)))){
                     result.differentRegionCandidate[candidateIndex] = false;
                 }else{
                     result.differentRegionCandidate[candidateIndex] = true;
                 }
             }
+            
+            if(originalbase == 'A') seenCounts[0]++;
+            if(originalbase == 'C') seenCounts[1]++;
+            if(originalbase == 'G') seenCounts[2]++;
+            if(originalbase == 'T') seenCounts[3]++;
+            
+            assert(seenCounts[0] == countsA[col]);
+            assert(seenCounts[1] == countsC[col]);
+            assert(seenCounts[2] == countsG[col]);
+            assert(seenCounts[3] == countsT[col]);
         };
 
-        //compare found base to original base
-        const char originalbase = subject[col - subjectColumnsBegin_incl];
 
-        result.significantBase = foundBase;
-        result.originalBase = originalbase;
-        result.consensusBase = consensus[col];
-
-        std::array<int,4> counts;
-
-        counts[0] = countsA[col];
-        counts[1] = countsC[col];
-        counts[2] = countsG[col];
-        counts[3] = countsT[col];
-
-        result.significantCount = counts[foundBaseIndex];
-        result.consensuscount = counts[consindex];
 
         if(originalbase == foundBase){
             //discard all candidates whose base in column col differs from foundBase
@@ -686,6 +708,73 @@ std::pair<int,int> findGoodConsensusRegionOfSubject2(const char* subject,
         return result;
     }else{
         return std::make_pair(0, subjectLength);
+    }
+}
+
+
+
+
+void printSequencesInMSA(std::ostream& out,
+                         const char* subject,
+                         int subjectLength,
+                         const char* candidates,
+                         const int* candidateLengths,
+                         int nCandidates,
+                         const int* candidateShifts,
+                         int subjectColumnsBegin_incl,
+                         int subjectColumnsEnd_excl,
+                         int nColumns,
+                         size_t candidatesPitch){
+    
+    std::vector<int> indices(nCandidates+1);
+    std::iota(indices.begin(), indices.end(), 0);
+    
+    auto get_shift_of_row = [&](int k){
+        if(k == 0) return 0;
+        else return candidateShifts[k-1];
+    };
+    
+    std::sort(indices.begin(), indices.end(),
+              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+        
+    for(int row = 0; row < nCandidates+1; row++) {
+        int sortedrow = indices[row];
+        
+        if(sortedrow == 0){
+            out << ">> ";
+            
+            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+                std::cout << "0";
+            }
+            
+            for(int i = 0; i < subjectLength; i++){
+                std::cout << subject[i];
+            }
+            
+            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+                std::cout << "0";
+            }
+            
+            out << " <<";
+        }else{
+            out << "   ";
+            
+            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+                std::cout << "0";
+            }
+            
+            for(int i = 0; i < candidateLengths[sortedrow-1]; i++){
+                std::cout << candidates[(sortedrow-1) * candidatesPitch + i];
+            }
+            
+            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + candidateLengths[sortedrow-1]; i < nColumns; i++){
+                std::cout << "0";
+            }
+            
+            out << "   ";
+        }
+        
+        out << '\n';
     }
 }
 
