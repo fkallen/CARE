@@ -31,6 +31,8 @@
 
 #define ENABLE_TIMING
 
+//#define PRINT_MSA
+
 namespace care{
 namespace cpu{
 
@@ -782,11 +784,26 @@ namespace cpu{
                     tpa = std::chrono::system_clock::now();
 #endif
 
+                    
+#ifdef PRINT_MSA                        
+                    std::cout << correctionTasks[0].readId << " MSA: rows = " << (int(bestAlignments.size()) + 1) << " columns = " << multipleSequenceAlignment.nColumns << "\n";
+                    printSequencesInMSA(std::cout,
+                                        correctionTasks[0].subject_string.c_str(),
+                                        subjectLength,
+                                        bestCandidateStrings.data(),
+                                        bestCandidateLengths.data(),
+                                        int(bestAlignments.size()),
+                                        bestAlignmentShifts.data(),
+                                        multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                        multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                        multipleSequenceAlignment.nColumns,
+                                        fileProperties.maxSequenceLength);
+#endif
 
                     constexpr int max_num_minimizations = 5;
 
                     if(max_num_minimizations > 0){
-                        int num_minimizations = 1;
+                        int num_minimizations = 0;
 
                         auto minimizationResult = findCandidatesOfDifferentRegion(correctionTasks[0].subject_string.c_str(),
                                                                             subjectLength,
@@ -838,11 +855,11 @@ namespace cpu{
                                         cur++;
 
                                     }else{
-                                        multipleSequenceAlignment.removeSequence(correctionOptions.useQualityScores,
+                                        /*multipleSequenceAlignment.removeSequence(correctionOptions.useQualityScores,
                                                                                 bestCandidateStrings.data() + i * max_candidate_length,
                                                                                 bestCandidateQualityData.data() + i * max_candidate_length,
                                                                                 bestCandidateLengths[i],
-                                                                                bestAlignmentShifts[i], bestAlignmentWeights[i]);
+                                                                                bestAlignmentShifts[i], bestAlignmentWeights[i]);*/
                                         anyRemoved = true;
                                     }
                                 }
@@ -877,18 +894,50 @@ namespace cpu{
                                 bestCandidateQualityData.erase(bestCandidateQualityData.begin() + cur * max_candidate_length, bestCandidateQualityData.end());
                                 bestCandidateStrings.erase(bestCandidateStrings.begin() + cur * max_candidate_length, bestCandidateStrings.end());
 
-                                if(anyRemoved){
+                                /*if(anyRemoved){
                                     multipleSequenceAlignment.findConsensus();
                                     multipleSequenceAlignment.findOrigWeightAndCoverage(correctionTasks[0].subject_string.c_str());
-                                }
+                                }*/
+                                
+                                //build minimized multiple sequence alignment
+                                multipleSequenceAlignment.build(correctionTasks[0].subject_string.c_str(),
+                                                                subjectLength,
+                                                                bestCandidateStrings.data(),
+                                                                bestCandidateLengths.data(),
+                                                                int(bestAlignments.size()),
+                                                                bestAlignmentShifts.data(),
+                                                                bestAlignmentWeights.data(),
+                                                                subjectQualityPtr,
+                                                                candidateQualityPtr,
+                                                                fileProperties.maxSequenceLength,
+                                                                max_candidate_length,
+                                                                correctionOptions.useQualityScores);
+
+#ifdef PRINT_MSA                                
+                                std::cout << correctionTasks[0].readId << " MSA after minimization " << (num_minimizations+1) << ": rows = " << (int(bestAlignments.size()) + 1) << " columns = " << multipleSequenceAlignment.nColumns << "\n";
+                                printSequencesInMSA(std::cout,
+                                                    correctionTasks[0].subject_string.c_str(),
+                                                    subjectLength,
+                                                    bestCandidateStrings.data(),
+                                                    bestCandidateLengths.data(),
+                                                    int(bestAlignments.size()),
+                                                    bestAlignmentShifts.data(),
+                                                    multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                    multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                    multipleSequenceAlignment.nColumns,
+                                                    fileProperties.maxSequenceLength);
+#endif                                
                             }
                         };
 
                         update_after_successfull_minimization();
 
+                        
+                        num_minimizations++;
+
                         while(num_minimizations <= max_num_minimizations
                                 && minimizationResult.performedMinimization){
-
+                            
                             minimizationResult = findCandidatesOfDifferentRegion(correctionTasks[0].subject_string.c_str(),
                                                                                 subjectLength,
                                                                                 bestCandidateStrings.data(),
@@ -908,9 +957,10 @@ namespace cpu{
                                                                                 multipleSequenceAlignment.subjectColumnsEnd_excl,
                                                                                 bestAlignmentShifts.data(),
                                                                                 correctionOptions.estimatedCoverage);
-                            num_minimizations++;
 
                             update_after_successfull_minimization();
+                            
+                            num_minimizations++;                            
                         }
                     }
 
