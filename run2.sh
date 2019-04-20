@@ -54,7 +54,8 @@ deviceIds="--deviceIds=0"
 datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
 classicMode=false
-forest="./forests/combinedforestaligncov.so"
+#forest="./forests/combinedforestaligncov.so"
+forest="./forests/combinedecolielegansmelanogaster_clipmin_forest.so"
 fileformat=fastq
 useQualityScores=true
 
