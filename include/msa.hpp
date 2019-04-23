@@ -16,7 +16,7 @@
 #include <iostream>
 
 namespace care{
-    
+
 
 
 
@@ -192,6 +192,19 @@ void printSequencesInMSA(std::ostream& out,
                          int subjectColumnsEnd_excl,
                          int nColumns,
                          size_t candidatesPitch);
+
+void printSequencesInMSAConsEq(std::ostream& out,
+                      const char* subject,
+                      int subjectLength,
+                      const char* candidates,
+                      const int* candidateLengths,
+                      int nCandidates,
+                      const int* candidateShifts,
+                      const char* consensus,
+                      int subjectColumnsBegin_incl,
+                      int subjectColumnsEnd_excl,
+                      int nColumns,
+                      size_t candidatesPitch);
 
 
 }

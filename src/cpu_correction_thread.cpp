@@ -26,8 +26,8 @@
 
 #include <omp.h>
 
-#define USE_MSA_MINIMIZATION
-#define USE_SUBJECT_CLIPPING
+//#define USE_MSA_MINIMIZATION
+//#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
 
@@ -784,16 +784,35 @@ namespace cpu{
                     tpa = std::chrono::system_clock::now();
 #endif
 
-                    
-#ifdef PRINT_MSA                        
+
+#ifdef PRINT_MSA
                     std::cout << correctionTasks[0].readId << " MSA: rows = " << (int(bestAlignments.size()) + 1) << " columns = " << multipleSequenceAlignment.nColumns << "\n";
-                    printSequencesInMSA(std::cout,
+                    std::cout << "Consensus:\n   ";
+                    for(int i = 0; i < multipleSequenceAlignment.nColumns; i++){
+                        std::cout << multipleSequenceAlignment.consensus[i];
+                    }
+                    std::cout << '\n';
+
+                    /*printSequencesInMSA(std::cout,
                                         correctionTasks[0].subject_string.c_str(),
                                         subjectLength,
                                         bestCandidateStrings.data(),
                                         bestCandidateLengths.data(),
                                         int(bestAlignments.size()),
                                         bestAlignmentShifts.data(),
+                                        multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                        multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                        multipleSequenceAlignment.nColumns,
+                                        fileProperties.maxSequenceLength);*/
+
+                    printSequencesInMSAConsEq(std::cout,
+                                        correctionTasks[0].subject_string.c_str(),
+                                        subjectLength,
+                                        bestCandidateStrings.data(),
+                                        bestCandidateLengths.data(),
+                                        int(bestAlignments.size()),
+                                        bestAlignmentShifts.data(),
+                                        multipleSequenceAlignment.consensus.data(),
                                         multipleSequenceAlignment.subjectColumnsBegin_incl,
                                         multipleSequenceAlignment.subjectColumnsEnd_excl,
                                         multipleSequenceAlignment.nColumns,
@@ -898,7 +917,7 @@ namespace cpu{
                                     multipleSequenceAlignment.findConsensus();
                                     multipleSequenceAlignment.findOrigWeightAndCoverage(correctionTasks[0].subject_string.c_str());
                                 }*/
-                                
+
                                 //build minimized multiple sequence alignment
                                 multipleSequenceAlignment.build(correctionTasks[0].subject_string.c_str(),
                                                                 subjectLength,
@@ -913,9 +932,15 @@ namespace cpu{
                                                                 max_candidate_length,
                                                                 correctionOptions.useQualityScores);
 
-#ifdef PRINT_MSA                                
+#ifdef PRINT_MSA
                                 std::cout << correctionTasks[0].readId << " MSA after minimization " << (num_minimizations+1) << ": rows = " << (int(bestAlignments.size()) + 1) << " columns = " << multipleSequenceAlignment.nColumns << "\n";
-                                printSequencesInMSA(std::cout,
+                                std::cout << "Consensus:\n   ";
+                                for(int i = 0; i < multipleSequenceAlignment.nColumns; i++){
+                                    std::cout << multipleSequenceAlignment.consensus[i];
+                                }
+                                std::cout << '\n';
+
+                                /*printSequencesInMSA(std::cout,
                                                     correctionTasks[0].subject_string.c_str(),
                                                     subjectLength,
                                                     bestCandidateStrings.data(),
@@ -925,19 +950,34 @@ namespace cpu{
                                                     multipleSequenceAlignment.subjectColumnsBegin_incl,
                                                     multipleSequenceAlignment.subjectColumnsEnd_excl,
                                                     multipleSequenceAlignment.nColumns,
+                                                    fileProperties.maxSequenceLength);*/
+
+
+
+                                printSequencesInMSAConsEq(std::cout,
+                                                    correctionTasks[0].subject_string.c_str(),
+                                                    subjectLength,
+                                                    bestCandidateStrings.data(),
+                                                    bestCandidateLengths.data(),
+                                                    int(bestAlignments.size()),
+                                                    bestAlignmentShifts.data(),
+                                                    multipleSequenceAlignment.consensus.data(),
+                                                    multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                    multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                    multipleSequenceAlignment.nColumns,
                                                     fileProperties.maxSequenceLength);
-#endif                                
+#endif
                             }
                         };
 
                         update_after_successfull_minimization();
 
-                        
+
                         num_minimizations++;
 
                         while(num_minimizations <= max_num_minimizations
                                 && minimizationResult.performedMinimization){
-                            
+
                             minimizationResult = findCandidatesOfDifferentRegion(correctionTasks[0].subject_string.c_str(),
                                                                                 subjectLength,
                                                                                 bestCandidateStrings.data(),
@@ -959,8 +999,8 @@ namespace cpu{
                                                                                 correctionOptions.estimatedCoverage);
 
                             update_after_successfull_minimization();
-                            
-                            num_minimizations++;                            
+
+                            num_minimizations++;
                         }
                     }
 

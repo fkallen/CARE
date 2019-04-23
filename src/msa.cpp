@@ -352,6 +352,54 @@ MSAProperties getMSAProperties(const float* support,
     return msaProperties;
 }
 
+MSAProperties getMSAProperties2(const float* support,
+                            const int* coverage,
+                            int nColumns,
+                            float estimatedErrorrate,
+                            float estimatedCoverage,
+                            float m_coverage){
+
+    const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+
+    const int firstCol = 0;
+    const int lastCol = nColumns; //exclusive
+    const int distance = lastCol - firstCol;
+
+    MSAProperties msaProperties;
+
+    msaProperties.min_support = *std::min_element(support + firstCol, support + lastCol);
+
+    const float supportsum = std::accumulate(support + firstCol, support + lastCol, 0.0f);
+    msaProperties.avg_support = supportsum / distance;
+
+    auto minmax = std::minmax_element(coverage + firstCol, coverage + lastCol);
+
+    msaProperties.min_coverage = *minmax.second;
+    msaProperties.max_coverage = *minmax.first;
+
+    auto isGoodAvgSupport = [=](float avgsupport){
+        return avgsupport >= avg_support_threshold;
+    };
+    auto isGoodMinSupport = [=](float minsupport){
+        return minsupport >= min_support_threshold;
+    };
+    auto isGoodMinCoverage = [=](float mincoverage){
+        return mincoverage >= min_coverage_threshold;
+    };
+
+    msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
+                        && isGoodMinSupport(msaProperties.min_support)
+                        && isGoodMinCoverage(msaProperties.min_coverage);
+
+    msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
+    msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
+    msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
+
+    return msaProperties;
+}
+
 
 CorrectionResult getCorrectedSubject(const char* consensus,
                                     const float* support,
@@ -601,26 +649,26 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
     if(foundColumn){
 
         result.differentRegionCandidate.resize(nCandidates);
-        
+
         //compare found base to original base
         const char originalbase = subject[col - subjectColumnsBegin_incl];
-        
+
         result.significantBase = foundBase;
         result.originalBase = originalbase;
         result.consensusBase = consensus[col];
-        
+
         std::array<int,4> counts;
-        
+
         counts[0] = countsA[col];
         counts[1] = countsC[col];
         counts[2] = countsG[col];
         counts[3] = countsT[col];
-        
+
         result.significantCount = counts[foundBaseIndex];
         result.consensuscount = counts[consindex];
 
         auto discard_rows = [&](bool keepMatching){
-            
+
             std::array<int, 4> seenCounts{0,0,0,0};
 
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
@@ -634,19 +682,19 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                 if(base == 'C') seenCounts[1]++;
                 if(base == 'G') seenCounts[2]++;
                 if(base == 'T') seenCounts[3]++;
-                
+
                 if(notAffected || (!(keepMatching ^ (base == foundBase)))){
                     result.differentRegionCandidate[candidateIndex] = false;
                 }else{
                     result.differentRegionCandidate[candidateIndex] = true;
                 }
             }
-            
+
             if(originalbase == 'A') seenCounts[0]++;
             if(originalbase == 'C') seenCounts[1]++;
             if(originalbase == 'G') seenCounts[2]++;
             if(originalbase == 'T') seenCounts[3]++;
-            
+
             assert(seenCounts[0] == countsA[col]);
             assert(seenCounts[1] == countsC[col]);
             assert(seenCounts[2] == countsG[col]);
@@ -725,55 +773,125 @@ void printSequencesInMSA(std::ostream& out,
                          int subjectColumnsEnd_excl,
                          int nColumns,
                          size_t candidatesPitch){
-    
+
     std::vector<int> indices(nCandidates+1);
     std::iota(indices.begin(), indices.end(), 0);
-    
+
     auto get_shift_of_row = [&](int k){
         if(k == 0) return 0;
         else return candidateShifts[k-1];
     };
-    
+
     std::sort(indices.begin(), indices.end(),
               [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
-        
+
     for(int row = 0; row < nCandidates+1; row++) {
         int sortedrow = indices[row];
-        
+
         if(sortedrow == 0){
             out << ">> ";
-            
+
             for(int i = 0; i < subjectColumnsBegin_incl; i++){
                 std::cout << "0";
             }
-            
+
             for(int i = 0; i < subjectLength; i++){
                 std::cout << subject[i];
             }
-            
+
             for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
                 std::cout << "0";
             }
-            
+
             out << " <<";
         }else{
             out << "   ";
-            
+
             for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
                 std::cout << "0";
             }
-            
+
             for(int i = 0; i < candidateLengths[sortedrow-1]; i++){
                 std::cout << candidates[(sortedrow-1) * candidatesPitch + i];
             }
-            
+
             for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + candidateLengths[sortedrow-1]; i < nColumns; i++){
                 std::cout << "0";
             }
-            
+
             out << "   ";
         }
-        
+
+        out << '\n';
+    }
+}
+
+void printSequencesInMSAConsEq(std::ostream& out,
+                         const char* subject,
+                         int subjectLength,
+                         const char* candidates,
+                         const int* candidateLengths,
+                         int nCandidates,
+                         const int* candidateShifts,
+                         const char* consensus,
+                         int subjectColumnsBegin_incl,
+                         int subjectColumnsEnd_excl,
+                         int nColumns,
+                         size_t candidatesPitch){
+
+    std::vector<int> indices(nCandidates+1);
+    std::iota(indices.begin(), indices.end(), 0);
+
+    auto get_shift_of_row = [&](int k){
+        if(k == 0) return 0;
+        else return candidateShifts[k-1];
+    };
+
+    std::sort(indices.begin(), indices.end(),
+              [&](int l, int r){return get_shift_of_row(l) < get_shift_of_row(r);});
+
+    for(int row = 0; row < nCandidates+1; row++) {
+        int sortedrow = indices[row];
+
+        if(sortedrow == 0){
+            out << ">> ";
+
+            for(int i = 0; i < subjectColumnsBegin_incl; i++){
+                std::cout << "0";
+            }
+
+            for(int i = 0; i < subjectLength; i++){
+                const int globalIndex = subjectColumnsBegin_incl + i;
+                const char c = consensus[globalIndex] == subject[i] ? '=' : subject[i];
+                std::cout << c;
+            }
+
+            for(int i = subjectColumnsEnd_excl; i < nColumns; i++){
+                std::cout << "0";
+            }
+
+            out << " <<";
+        }else{
+            out << "   ";
+
+            for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
+                std::cout << "0";
+            }
+
+            for(int i = 0; i < candidateLengths[sortedrow-1]; i++){
+                const int globalIndex = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + i;
+                const char base = candidates[(sortedrow-1) * candidatesPitch + i];
+                const char c = consensus[globalIndex] == base ? '=' : base;
+                std::cout << c;
+            }
+
+            for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + candidateLengths[sortedrow-1]; i < nColumns; i++){
+                std::cout << "0";
+            }
+
+            out << "   ";
+        }
+
         out << '\n';
     }
 }
