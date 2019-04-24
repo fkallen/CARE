@@ -3404,7 +3404,7 @@ namespace gpu{
             const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
             const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
 
-#if 1
+#if 0
 
             std::vector<MSAFeature3> MSAFeatures = extractFeatures3(
                                         my_multiple_sequence_alignment,
@@ -3460,7 +3460,7 @@ namespace gpu{
 
 #endif
 			for(const auto& msafeature : MSAFeatures) {
-				featurestream << task.readId << '\t' << msafeature.position << '\n';
+				featurestream << task.readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
 				featurestream << msafeature << '\n';
 			}
 		}

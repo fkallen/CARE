@@ -116,6 +116,14 @@ MSAProperties getMSAProperties(const float* support,
                             float estimatedCoverage,
                             float m_coverage);
 
+MSAProperties getMSAProperties2(const float* support,
+                            const int* coverage,
+                            int firstCol,
+                            int lastCol, //exclusive
+                            float estimatedErrorrate,
+                            float estimatedCoverage,
+                            float m_coverage);
+
 CorrectionResult getCorrectedSubject(const char* consensus,
                                     const float* support,
                                     const int* coverage,

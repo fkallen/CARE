@@ -27,7 +27,7 @@
 #include <omp.h>
 
 //#define USE_MSA_MINIMIZATION
-//#define USE_SUBJECT_CLIPPING
+#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
 
@@ -1117,7 +1117,7 @@ namespace cpu{
 
                 if(correctionOptions.extractFeatures){
                     for(const auto& msafeature : MSAFeatures){
-                        featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\n';
+                        featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
                         featurestream << msafeature << '\n';
                     }
                 }
@@ -1130,10 +1130,13 @@ namespace cpu{
                     //get corrected subject and write it to file
 
                     const int subjectColumnsBegin_incl = multipleSequenceAlignment.subjectColumnsBegin_incl;
+                    const int subjectColumnsEnd_excl = multipleSequenceAlignment.subjectColumnsEnd_excl;
 
-                    MSAProperties msaProperties = getMSAProperties(multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
-                                                                    multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
-                                                                    int(correctionTasks[0].subject_string.size()),
+                    MSAProperties msaProperties = getMSAProperties2(multipleSequenceAlignment.support.data(),
+                                                                    multipleSequenceAlignment.coverage.data(),
+                                                                    //int(correctionTasks[0].subject_string.size()),
+                                                                    subjectColumnsBegin_incl,
+                                                                    subjectColumnsEnd_excl,
                                                                     correctionOptions.estimatedErrorrate,
                                                                     correctionOptions.estimatedCoverage,
                                                                     correctionOptions.m_coverage);

@@ -11,7 +11,8 @@ namespace care{
 
     struct MSAFeature{
         int position = -1;
-
+        char consensus = 'F';
+        
         double position_support = 0.0; // support of the center of k-region (at read position "position")
         int position_coverage = 0; // coverage of the base in read at center of k-region (at read position "position")
         int alignment_coverage = 0; // number of sequences in MSA. equivalent to the max possible value of coverage.
@@ -47,6 +48,7 @@ namespace care{
 
         int position = -1;
         char base = 'N';
+        char consensus = 'F';
         int alignment_coverage = 0;
         int dataset_coverage = 0;
         std::array<char, 17> partialsequence;
@@ -75,9 +77,10 @@ namespace care{
         using WeightColumn = std::array<float, 4>;
         using CountColumn = std::array<float, 4>;
 
-        static constexpr int ncolumns = 33;
+        static constexpr int ncolumns = 17;
 
         int position = -1; //required for labeling, not included in data
+        char consensus = 'F'; //required for labeling, not included in data
         std::array<CountColumn, ncolumns> counts; //normalized by alignment_coverage
         std::array<WeightColumn, ncolumns> weights; //normalized by alignment_coverage
     };

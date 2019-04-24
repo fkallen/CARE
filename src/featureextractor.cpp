@@ -97,6 +97,7 @@ namespace care{
                 f.position_coverage = origcoverageptr[i]; // coverage of the center of k-region (at read position "position")
                 f.alignment_coverage = alignment_coverage; // number of sequences in MSA. equivalent to the max possible value of coverage.
                 f.dataset_coverage = dataset_coverage;
+                f.consensus = consensusptr[i];
 
                 f.min_support = *std::min_element(supportptr + begin, supportptr + end);
                 f.min_coverage = *std::min_element(coverageptr + begin, coverageptr + end);
@@ -104,7 +105,7 @@ namespace care{
                 f.max_coverage = *std::max_element(coverageptr + begin, coverageptr + end);
                 f.mean_support = std::accumulate(supportptr + begin, supportptr + end, 0.0) / (end - begin);
                 f.mean_coverage = std::accumulate(coverageptr + begin, coverageptr + end, 0.0) / (end - begin);
-                
+
                 //assert(f.min_coverage > 0);
                 assert(end - begin > 0);
 
@@ -115,12 +116,12 @@ namespace care{
 
                 std::copy(coverageptr + begin, coverageptr + end, arr.begin());
                 f.median_coverage = median(arr.begin(), arr.begin() + (end-begin));
-                
+
                 f.min_coverage /= (f.alignment_coverage);
                 f.max_coverage /= (f.alignment_coverage);
                 f.mean_coverage /= (f.alignment_coverage);
                 f.median_coverage /= (f.alignment_coverage);
-                
+
                 assert(!std::isnan(f.position));
                 assert(!std::isnan(f.position_support));
                 assert(!std::isnan(f.position_coverage));
@@ -203,6 +204,7 @@ namespace care{
                 f.base = sequence[localindex];
                 f.alignment_coverage = alignment_coverage;
                 f.dataset_coverage = dataset_coverage;
+                f.consensus = consensusptr[i];
 
                 for(int column = i-k/2, columncount = 0; column <= i+k/2; ++column, ++columncount){
                     auto& weights = f.weights[columncount];
@@ -317,6 +319,7 @@ namespace care{
 
                 MSAFeature3 f;
                 f.position = localindex;
+                f.consensus = consensusptr[i];
 
                 for(int column = i-k/2, columncount = 0; column <= i+k/2; ++column, ++columncount){
                     auto& counts = f.counts[columncount];
@@ -389,6 +392,7 @@ namespace care{
 
                 MSAFeature3 f;
                 f.position = localindex;
+                f.consensus = consensusptr[i];
 
                 for(int column = i-k/2, columncount = 0; column <= i+k/2; ++column, ++columncount){
                     auto& counts = f.counts[columncount];

@@ -315,56 +315,31 @@ MSAProperties getMSAProperties(const float* support,
                             float estimatedCoverage,
                             float m_coverage){
 
-    const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
-    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
-    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
-
-    MSAProperties msaProperties;
-
-    msaProperties.min_support = *std::min_element(support, support + nColumns);
-
-    const float supportsum = std::accumulate(support, support + nColumns, 0.0f);
-    msaProperties.avg_support = supportsum / nColumns;
-
-    auto minmax = std::minmax_element(coverage, coverage + nColumns);
-
-    msaProperties.min_coverage = *minmax.second;
-    msaProperties.max_coverage = *minmax.first;
-
-    auto isGoodAvgSupport = [=](float avgsupport){
-        return avgsupport >= avg_support_threshold;
-    };
-    auto isGoodMinSupport = [=](float minsupport){
-        return minsupport >= min_support_threshold;
-    };
-    auto isGoodMinCoverage = [=](float mincoverage){
-        return mincoverage >= min_coverage_threshold;
-    };
-
-    msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
-                        && isGoodMinSupport(msaProperties.min_support)
-                        && isGoodMinCoverage(msaProperties.min_coverage);
-
-    msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
-    msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
-    msaProperties.failedMinCoverage = !isGoodMinCoverage(msaProperties.min_coverage);
-
-    return msaProperties;
+    return getMSAProperties2(support,
+                            coverage,
+                            0,
+                            nColumns,
+                            estimatedErrorrate,
+                            estimatedCoverage,
+                            m_coverage);
 }
 
 MSAProperties getMSAProperties2(const float* support,
                             const int* coverage,
-                            int nColumns,
+                            int firstCol,
+                            int lastCol, //exclusive
                             float estimatedErrorrate,
                             float estimatedCoverage,
                             float m_coverage){
+
+    assert(firstCol <= lastCol);
 
     const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
     const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
     const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
 
-    const int firstCol = 0;
-    const int lastCol = nColumns; //exclusive
+    //const int firstCol = subjectColumnsBegin_incl; //0;
+    //const int lastCol = subjectColumnsEnd_excl; //nColumns; //exclusive
     const int distance = lastCol - firstCol;
 
     MSAProperties msaProperties;
