@@ -5,12 +5,13 @@
 
 if [ $# -lt 2 ]
 then
-	echo "Usage: ./run2.sh exetype datainfofile [num_threads num_threads_for_gpus]"
+	echo "Usage: ./run2.sh exetype datainfofile outputfolder [num_threads num_threads_for_gpus candidatecorrection extracfeatures]"
 	exit
 fi
 
 executable=./errorcorrector_$1
 datainfofile=$2
+outdir=$3
 
 #max number of threads to use
 threads=16
@@ -21,24 +22,24 @@ threadsgpu=0
 candidateCorrection=true
 extractFeatures=false
 
-if [ $# -gt 2 ]
-then
-	threads=$3
-fi
-
 if [ $# -gt 3 ]
 then
-	threadsgpu=$4
+	threads=$4
 fi
 
 if [ $# -gt 4 ]
 then
-	candidateCorrection=$5
+	threadsgpu=$5
 fi
 
 if [ $# -gt 5 ]
 then
-	extractFeatures=$6
+	candidateCorrection=$6
+fi
+
+if [ $# -gt 6 ]
+then
+	extractFeatures=$7
 fi
 
 
@@ -50,7 +51,7 @@ fi
 deviceIds="--deviceIds=0"
 datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
-classicMode=false
+classicMode=true
 forest="./forests/combinedforestaligncov.so"
 #nnmodel="./nn_models/model_conv_04-01_0006.ckpt"
 nnmodel="./nn_models/conv_ele736/model_conv_03-27_0006.ckpt"
@@ -90,15 +91,19 @@ bin_tables=${array[8]}${array[10]}
 errorrate=0.03
 m=0.6
 
-outdir=$datapath/correcteddatasets/
+#outdir=$datapath/correcteddatasets/
 
 #output file
 #outputfile="readscorrectednew.fq"
-outputfile=$nowstring"_"${array[1]}
+#outputfile=$nowstring"_"${array[1]}
+
+inputfilename=$(basename -- "$inputfile")
+inputfileextension="${inputfilename##*.}"
+outputfilename="${inputfilename%.*}_"$nowstring"."$inputfileextension
 
 
 echo $inputfile
-echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfile --threads=$threads\
+echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
                  --threadsForGPUs=$threadsgpu --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
@@ -107,7 +112,7 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
 		 --nnmodel=$nnmodel\
                  --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables
 
-$executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfile --threads=$threads\
+$executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
                  --threadsForGPUs=$threadsgpu --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
