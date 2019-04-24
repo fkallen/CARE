@@ -40,7 +40,6 @@
 //#define CARE_GPU_DEBUG_PRINT_ARRAYS
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
-//MSA_IMPLICIT does not work yet
 #define MSA_IMPLICIT
 
 //#define USE_WAIT_FLAGS
