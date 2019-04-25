@@ -280,52 +280,62 @@ namespace gpu{
     gpuReadStorage.destroy();
 
     std::cout << "begin merge" << std::endl;
-    TIMERSTARTCPU(merge);
 
-    mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+    if(!correctionOptions.extractFeatures){
 
-    TIMERSTOPCPU(merge);
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
+
+    }
 
     deleteFiles(tmpfiles);
 
     std::vector<std::string> featureFiles(tmpfiles);
     for(auto& s : featureFiles)
-    s = s + "_features";
+        s = s + "_features";
 
     //concatenate feature files of each thread into one file
 
     if(correctionOptions.extractFeatures){
-    std::stringstream commandbuilder;
+        std::cout << "begin merging features" << std::endl;
 
-    commandbuilder << "cat";
+        std::stringstream commandbuilder;
 
-    for(const auto& featureFile : featureFiles){
-    commandbuilder << " \"" << featureFile << "\"";
-    }
+        commandbuilder << "cat";
 
-    commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
+        for(const auto& featureFile : featureFiles){
+            commandbuilder << " \"" << featureFile << "\"";
+        }
 
-    const std::string command = commandbuilder.str();
-    TIMERSTARTCPU(concat_feature_files);
-    int r1 = std::system(command.c_str());
-    TIMERSTOPCPU(concat_feature_files);
+        commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
 
-    if(r1 != 0){
-    std::cerr << "Warning. Feature files could not be concatenated!\n";
-    std::cerr << "This command returned a non-zero error value: \n";
-    std::cerr << command +  '\n';
-    std::cerr << "Please concatenate the following files manually\n";
-    for(const auto& s : featureFiles)
-        std::cerr << s << '\n';
+        const std::string command = commandbuilder.str();
+        TIMERSTARTCPU(concat_feature_files);
+        int r1 = std::system(command.c_str());
+        TIMERSTOPCPU(concat_feature_files);
+
+        if(r1 != 0){
+            std::cerr << "Warning. Feature files could not be concatenated!\n";
+            std::cerr << "This command returned a non-zero error value: \n";
+            std::cerr << command +  '\n';
+            std::cerr << "Please concatenate the following files manually\n";
+            for(const auto& s : featureFiles)
+                std::cerr << s << '\n';
+        }else{
+            deleteFiles(featureFiles);
+        }
+
+        std::cout << "end merging features" << std::endl;
     }else{
-    deleteFiles(featureFiles);
+        deleteFiles(featureFiles);
     }
-    }else{
-    deleteFiles(featureFiles);
-    }
-
-
-
 
     std::cout << "end merge" << std::endl;
     }

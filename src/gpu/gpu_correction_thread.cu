@@ -2278,15 +2278,22 @@ namespace gpu{
 
 #ifdef USE_WAIT_FLAGS
                 batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
+                batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
 #endif
 
 			}
 
-			if(transFuncData.correctionOptions.classicMode) {
-				return BatchState::StartClassicCorrection;
-			}else{
-				return BatchState::StartForestCorrection;
-			}
+            if(transFuncData.correctionOptions.extractFeatures){
+                return BatchState::WriteFeatures;
+            }else{
+                if(transFuncData.correctionOptions.classicMode) {
+    				return BatchState::StartClassicCorrection;
+    			}else{
+    				return BatchState::StartForestCorrection;
+    			}
+            }
+
+
 		}
 	}
 
@@ -3353,10 +3360,7 @@ namespace gpu{
 			pop_range();
 		}
 
-		if(transFuncData.correctionOptions.extractFeatures)
-			return BatchState::WriteFeatures;
-		else
-			return BatchState::Finished;
+		return BatchState::Finished;
 	}
 
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_writefeatures_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
@@ -3365,13 +3369,30 @@ namespace gpu{
 				bool isPausable,
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
-		assert(batch.state == BatchState::WriteFeatures);
+        constexpr BatchState expectedState = BatchState::WriteFeatures;
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+        assert(batch.state == expectedState);
+
+
+
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = msadata_transfer_finished_event_index;
+            return expectedState;
+        }
+#endif
 
 		DataArrays& dataArrays = *batch.dataArrays;
-		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-		cudaEventSynchronize(events[msadata_transfer_finished_event_index]); CUERR;
 
 		auto& featurestream = *transFuncData.featurestream;
 
