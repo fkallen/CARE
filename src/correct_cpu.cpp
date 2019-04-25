@@ -301,11 +301,20 @@ namespace cpu{
     	readStorage.destroy();
 
         std::cout << "begin merge" << std::endl;
-        TIMERSTARTCPU(merge);
 
-        mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+        if(!correctionOptions.extractFeatures){
 
-        TIMERSTOPCPU(merge);
+            std::cout << "begin merging reads" << std::endl;
+
+            TIMERSTARTCPU(merge);
+
+            mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+
+            TIMERSTOPCPU(merge);
+
+            std::cout << "end merging reads" << std::endl;
+
+        }
 
         deleteFiles(tmpfiles);
 
@@ -316,6 +325,8 @@ namespace cpu{
         //concatenate feature files of each thread into one file
 
         if(correctionOptions.extractFeatures){
+            std::cout << "begin merging features" << std::endl;
+
             std::stringstream commandbuilder;
 
             commandbuilder << "cat";
@@ -341,6 +352,8 @@ namespace cpu{
             }else{
                 deleteFiles(featureFiles);
             }
+
+            std::cout << "end merging features" << std::endl;
         }else{
             deleteFiles(featureFiles);
         }
