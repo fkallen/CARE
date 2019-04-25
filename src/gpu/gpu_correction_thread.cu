@@ -2246,16 +2246,16 @@ namespace gpu{
 							dataArrays.n_subjects * dataArrays.msa_weights_pitch,
 							D2H,
 							streams[secondary_stream_index]); CUERR;
-                cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignment_weights,
+                /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignment_weights,
 							dataArrays.d_multiple_sequence_alignment_weights,
 							(dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_weights_pitch,
 							D2H,
-							streams[secondary_stream_index]); CUERR;
-                cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignments,
+							streams[secondary_stream_index]); CUERR;*/
+                /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignments,
 							dataArrays.d_multiple_sequence_alignments,
 							(dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_pitch,
 							D2H,
-							streams[secondary_stream_index]); CUERR;
+							streams[secondary_stream_index]); CUERR;*/
 				cudaMemcpyAsync(dataArrays.h_msa_column_properties,
 							dataArrays.d_msa_column_properties,
 							dataArrays.n_subjects * sizeof(MSAColumnProperties),
@@ -2407,7 +2407,6 @@ namespace gpu{
                             dataArrays.d_support,
                             dataArrays.d_coverage,
                             dataArrays.d_origCoverages,
-                            dataArrays.d_multiple_sequence_alignments,
                             dataArrays.d_msa_column_properties,
                             dataArrays.d_candidate_sequences_lengths,
                             dataArrays.d_indices,
@@ -3417,34 +3416,12 @@ namespace gpu{
 						transFuncData.estimatedCoverage);
 #else
             //const size_t msa_weights_pitch_floats = dataarrays.msa_weights_pitch / sizeof(float);
-            const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
-            const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+            //const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+            //const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
 
-            const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
-            const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
+            //const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
+            //const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
             const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
-
-#if 0
-
-            std::vector<MSAFeature3> MSAFeatures = extractFeatures3(
-                                        my_multiple_sequence_alignment,
-                                        my_multiple_sequence_alignment_weight,
-                                        msa_rows,
-                                        columnProperties.columnsToCheck,
-                                        transFuncData.correctionOptions.useQualityScores,
-                                        dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
-                                        dataArrays.h_support + subject_index * msa_weights_pitch_floats,
-                						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
-                						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
-                                        columnProperties.subjectColumnsBegin_incl,
-                						columnProperties.subjectColumnsEnd_excl,
-                                        task.subject_string,
-                                        transFuncData.estimatedCoverage,
-                                        true,
-                                        dataArrays.msa_pitch,
-                                        msa_weights_pitch_floats);
-
-#else
 
             const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
             const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
@@ -3476,7 +3453,6 @@ namespace gpu{
                 						columnProperties.subjectColumnsEnd_excl,
                                         task.subject_string,
                                         transFuncData.estimatedCoverage);
-#endif
 
 #endif
 			for(const auto& msafeature : MSAFeatures) {

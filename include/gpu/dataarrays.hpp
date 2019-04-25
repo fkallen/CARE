@@ -972,8 +972,8 @@ struct DataArrays {
 
 		//multiple sequence alignment
 
-		std::size_t memMultipleSequenceAlignment = (n_sub + n_quer) * msa_pitch;
-		std::size_t memMultipleSequenceAlignmentWeights = (n_sub + n_quer) * msa_weights_pitch;
+		//std::size_t memMultipleSequenceAlignment = (n_sub + n_quer) * msa_pitch;
+		//std::size_t memMultipleSequenceAlignmentWeights = (n_sub + n_quer) * msa_weights_pitch;
 		std::size_t memConsensus = n_sub * msa_pitch;
 		std::size_t memSupport = n_sub * msa_weights_pitch;
 		std::size_t memCoverage = n_sub * msa_weights_pitch;
@@ -985,9 +985,9 @@ struct DataArrays {
         std::size_t memWeights = n_sub * msa_weights_pitch;
         std::size_t memAllCounts = n_sub * msa_weights_pitch * 4;
         std::size_t memAllWeights = n_sub * msa_weights_pitch * 4;
-		std::size_t required_msa_data_allocation_size = memMultipleSequenceAlignment
-		                                                + memMultipleSequenceAlignmentWeights
-		                                                + memConsensus
+		std::size_t required_msa_data_allocation_size = //memMultipleSequenceAlignment
+		                                                //+ memMultipleSequenceAlignmentWeights
+		                                                memConsensus
 		                                                + memSupport
 		                                                + memCoverage
 		                                                + memOrigWeights
@@ -1011,9 +1011,10 @@ struct DataArrays {
 
 		msa_data_usable_size = required_msa_data_allocation_size;
 
-		h_multiple_sequence_alignments = (char*)msa_data_host;
-		h_multiple_sequence_alignment_weights = (float*)(((char*)h_multiple_sequence_alignments) + memMultipleSequenceAlignment);
-		h_consensus = (char*)(((char*)h_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
+		//h_multiple_sequence_alignments = (char*)msa_data_host;
+		//h_multiple_sequence_alignment_weights = (float*)(((char*)h_multiple_sequence_alignments) + memMultipleSequenceAlignment);
+		//h_consensus = (char*)(((char*)h_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
+        h_consensus = (char*)msa_data_host;
 		h_support = (float*)(((char*)h_consensus) + memConsensus);
 		h_coverage = (int*)(((char*)h_support) + memSupport);
 		h_origWeights = (float*)(((char*)h_coverage) + memCoverage);
@@ -1022,9 +1023,10 @@ struct DataArrays {
         h_counts = (int*)(((char*)h_msa_column_properties) + memMSAColumnProperties);
         h_weights = (float*)(((char*)h_counts) + memAllCounts);
 
-		d_multiple_sequence_alignments = (char*)msa_data_device;
-		d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignments) + memMultipleSequenceAlignment);
-		d_consensus = (char*)(((char*)d_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
+		//d_multiple_sequence_alignments = (char*)msa_data_device;
+		//d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignments) + memMultipleSequenceAlignment);
+		//d_consensus = (char*)(((char*)d_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
+        d_consensus = (char*)msa_data_device;
 		d_support = (float*)(((char*)d_consensus) + memConsensus);
 		d_coverage = (int*)(((char*)d_support) + memSupport);
 		d_origWeights = (float*)(((char*)d_coverage) + memCoverage);
@@ -1064,7 +1066,7 @@ struct DataArrays {
 	void zero_gpu(cudaStream_t stream){
 		cudaMemsetAsync(msa_data_device, 0, msa_data_usable_size, stream); CUERR;
 
-        cudaMemsetAsync(d_multiple_sequence_alignments, char(0xFC), (n_subjects + n_queries) * msa_pitch, stream);
+        //cudaMemsetAsync(d_multiple_sequence_alignments, char(0xFC), (n_subjects + n_queries) * msa_pitch, stream);
 
 		cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
 		cudaMemsetAsync(qualities_transfer_data_device, 0, qualities_transfer_data_usable_size, stream); CUERR;
@@ -1193,16 +1195,16 @@ struct DataArrays {
 		a.d_temp_storage = nullptr;
 		a.msa_data_device = nullptr;
 		a.msa_data_host = nullptr;
-		a.d_multiple_sequence_alignments = nullptr;
-		a.d_multiple_sequence_alignment_weights = nullptr;
+		//a.d_multiple_sequence_alignments = nullptr;
+		//a.d_multiple_sequence_alignment_weights = nullptr;
 		a.d_consensus = nullptr;
 		a.d_support = nullptr;
 		a.d_coverage = nullptr;
 		a.d_origWeights = nullptr;
 		a.d_origCoverages = nullptr;
 		a.d_msa_column_properties = nullptr;
-		a.h_multiple_sequence_alignments = nullptr;
-		a.h_multiple_sequence_alignment_weights = nullptr;
+		//a.h_multiple_sequence_alignments = nullptr;
+		//a.h_multiple_sequence_alignment_weights = nullptr;
 		a.h_consensus = nullptr;
 		a.h_support = nullptr;
 		a.h_coverage = nullptr;
@@ -1395,8 +1397,8 @@ struct DataArrays {
 	std::size_t msa_weights_pitch = 0;
 
 	//need host msa for debuging mostly
-	char* h_multiple_sequence_alignments = nullptr;
-	float* h_multiple_sequence_alignment_weights = nullptr;
+	//char* h_multiple_sequence_alignments = nullptr;
+	//float* h_multiple_sequence_alignment_weights = nullptr;
 	char* h_consensus = nullptr;
 	float* h_support = nullptr;
 	int* h_coverage = nullptr;
@@ -1406,8 +1408,8 @@ struct DataArrays {
     int* h_counts = nullptr;
     float* h_weights = nullptr;
 
-	char* d_multiple_sequence_alignments = nullptr;
-	float* d_multiple_sequence_alignment_weights = nullptr;
+	//char* d_multiple_sequence_alignments = nullptr;
+	//float* d_multiple_sequence_alignment_weights = nullptr;
 	char* d_consensus = nullptr;
 	float* d_support = nullptr;
 	int* d_coverage = nullptr;

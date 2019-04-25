@@ -1824,7 +1824,6 @@ namespace gpu{
                 const float* __restrict__ d_support,
                 const int* __restrict__ d_coverage,
                 const int* __restrict__ d_origCoverages,
-                const char* __restrict__ d_multiple_sequence_alignments,
                 const MSAColumnProperties* __restrict__ d_msa_column_properties,
                 const int* __restrict__ d_candidate_sequences_lengths,
                 const int* __restrict__ d_indices,
@@ -3251,7 +3250,6 @@ namespace gpu{
     			const float* d_support,
     			const int* d_coverage,
     			const int* d_origCoverages,
-    			const char* d_multiple_sequence_alignments,
     			const MSAColumnProperties* d_msa_column_properties,
                 const int* d_candidate_sequences_lengths,
     			const int* d_indices,
@@ -3334,7 +3332,6 @@ namespace gpu{
     		d_support, \
     		d_coverage, \
     		d_origCoverages, \
-    		d_multiple_sequence_alignments, \
     		d_msa_column_properties, \
             d_candidate_sequences_lengths, \
     		d_indices, \

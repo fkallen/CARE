@@ -398,7 +398,6 @@ void call_msa_correct_candidates_kernel_async_exp(
             const float* d_support,
             const int* d_coverage,
             const int* d_origCoverages,
-            const char* d_multiple_sequence_alignments,
             const MSAColumnProperties* d_msa_column_properties,
             const int* d_candidate_sequences_lengths,
             const int* d_indices,
