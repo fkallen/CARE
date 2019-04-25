@@ -174,9 +174,10 @@ namespace cpu{
         std::chrono::duration<double> makeCandidateStringsTimeTotal;
         std::chrono::duration<double> msaAddSequencesTimeTotal;
         std::chrono::duration<double> msaFindConsensusTimeTotal;
-        std::chrono::duration<double> msaMinimizationTimeTimeTotal;
-        std::chrono::duration<double> msaCorrectSubjectTimeTimeTotal;
-        std::chrono::duration<double> msaCorrectCandidatesTimeTimeTotal;
+        std::chrono::duration<double> msaMinimizationTimeTotal;
+        std::chrono::duration<double> msaCorrectSubjectTimeTotal;
+        std::chrono::duration<double> msaCorrectCandidatesTimeTotal;
+        std::chrono::duration<double> correctWithFeaturesTimeTotal;
 
 
 

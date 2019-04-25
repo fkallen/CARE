@@ -1005,7 +1005,7 @@ namespace cpu{
                     }
 
 #ifdef ENABLE_TIMING
-                    msaMinimizationTimeTimeTotal += std::chrono::system_clock::now() - tpa;
+                    msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
 #endif // USE_MSA_MINIMIZATION
@@ -1154,7 +1154,7 @@ namespace cpu{
                                                                 correctionOptions.kmerlength);
 
 #ifdef ENABLE_TIMING
-                    msaCorrectSubjectTimeTimeTotal += std::chrono::system_clock::now() - tpa;
+                    msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
                     if(correctionResult.isCorrected){
@@ -1216,7 +1216,7 @@ namespace cpu{
                                                                         correctionOptions.new_columns_to_correct);
 
 #ifdef ENABLE_TIMING
-                        msaCorrectCandidatesTimeTimeTotal += std::chrono::system_clock::now() - tpa;
+                        msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
                         for(const auto& correctedCandidate : correctedCandidates){
@@ -1243,6 +1243,9 @@ namespace cpu{
 
                 }else{
 
+#ifdef ENABLE_TIMING
+                    auto tpa = std::chrono::system_clock::now();
+#endif
                     correctionTasks[0].corrected_subject = correctionTasks[0].subject_string;
                     bool isCorrected = false;
 
@@ -1273,6 +1276,10 @@ namespace cpu{
                             correctionTasks[0].corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
                         }
                     }
+
+#ifdef ENABLE_TIMING
+                    correctWithFeaturesTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
 
                     if(isCorrected){
                         write_read(correctionTasks[0].readId, correctionTasks[0].corrected_subject);

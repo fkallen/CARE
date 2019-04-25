@@ -212,9 +212,10 @@ namespace cpu{
     std::chrono::duration<double> makeCandidateStringsTimeTotal{0};
     std::chrono::duration<double> msaAddSequencesTimeTotal{0};
     std::chrono::duration<double> msaFindConsensusTimeTotal{0};
-    std::chrono::duration<double> msaMinimizationTimeTimeTotal{0};
-    std::chrono::duration<double> msaCorrectSubjectTimeTimeTotal{0};
-    std::chrono::duration<double> msaCorrectCandidatesTimeTimeTotal{0};
+    std::chrono::duration<double> msaMinimizationTimeTotal{0};
+    std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
+    std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
+    std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
 
     for(const auto& cput : cpucorrectorThreads){
         getCandidatesTimeTotal += cput.getCandidatesTimeTotal;
@@ -228,9 +229,10 @@ namespace cpu{
         makeCandidateStringsTimeTotal += cput.makeCandidateStringsTimeTotal;
         msaAddSequencesTimeTotal += cput.msaAddSequencesTimeTotal;
         msaFindConsensusTimeTotal += cput.msaFindConsensusTimeTotal;
-        msaMinimizationTimeTimeTotal += cput.msaMinimizationTimeTimeTotal;
-        msaCorrectSubjectTimeTimeTotal += cput.msaCorrectSubjectTimeTimeTotal;
-        msaCorrectCandidatesTimeTimeTotal += cput.msaCorrectCandidatesTimeTimeTotal;
+        msaMinimizationTimeTotal += cput.msaMinimizationTimeTotal;
+        msaCorrectSubjectTimeTotal += cput.msaCorrectSubjectTimeTotal;
+        msaCorrectCandidatesTimeTotal += cput.msaCorrectCandidatesTimeTotal;
+        correctWithFeaturesTimeTotal += cput.correctWithFeaturesTimeTotal;
     }
 
     getCandidatesTimeTotal /= cpucorrectorThreads.size();
@@ -244,9 +246,10 @@ namespace cpu{
     makeCandidateStringsTimeTotal /= cpucorrectorThreads.size();
     msaAddSequencesTimeTotal /= cpucorrectorThreads.size();
     msaFindConsensusTimeTotal /= cpucorrectorThreads.size();
-    msaMinimizationTimeTimeTotal /= cpucorrectorThreads.size();
-    msaCorrectSubjectTimeTimeTotal /= cpucorrectorThreads.size();
-    msaCorrectCandidatesTimeTimeTotal /= cpucorrectorThreads.size();
+    msaMinimizationTimeTotal /= cpucorrectorThreads.size();
+    msaCorrectSubjectTimeTotal /= cpucorrectorThreads.size();
+    msaCorrectCandidatesTimeTotal /= cpucorrectorThreads.size();
+    correctWithFeaturesTimeTotal /= cpucorrectorThreads.size();
 
     std::chrono::duration<double> totalDuration = getCandidatesTimeTotal
                                                 + copyCandidateDataToBufferTimeTotal
@@ -259,9 +262,10 @@ namespace cpu{
                                                 + makeCandidateStringsTimeTotal
                                                 + msaAddSequencesTimeTotal
                                                 + msaFindConsensusTimeTotal
-                                                + msaMinimizationTimeTimeTotal
-                                                + msaCorrectSubjectTimeTimeTotal
-                                                + msaCorrectCandidatesTimeTimeTotal;
+                                                + msaMinimizationTimeTotal
+                                                + msaCorrectSubjectTimeTotal
+                                                + msaCorrectCandidatesTimeTotal
+                                                + correctWithFeaturesTimeTotal;
 
     auto printDuration = [&](const auto& name, const auto& duration){
         std::cout << "# elapsed time ("<< name << "): "
@@ -282,9 +286,10 @@ namespace cpu{
     printme(makeCandidateStringsTimeTotal);
     printme(msaAddSequencesTimeTotal);
     printme(msaFindConsensusTimeTotal);
-    printme(msaMinimizationTimeTimeTotal);
-    printme(msaCorrectSubjectTimeTimeTotal);
-    printme(msaCorrectCandidatesTimeTimeTotal);
+    printme(msaMinimizationTimeTotal);
+    printme(msaCorrectSubjectTimeTotal);
+    printme(msaCorrectCandidatesTimeTotal);
+    printme(correctWithFeaturesTimeTotal);
 
     #undef printme
 
