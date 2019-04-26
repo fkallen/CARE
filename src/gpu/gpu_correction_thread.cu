@@ -3403,7 +3403,7 @@ namespace gpu{
 			//std::cout << task.readId << "feature" << std::endl;
 
 			const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-#if 0
+#if 1
 			std::vector<MSAFeature> MSAFeatures = extractFeatures(dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
 						dataArrays.h_support + subject_index * msa_weights_pitch_floats,
 						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
@@ -3412,7 +3412,7 @@ namespace gpu{
 						columnProperties.subjectColumnsBegin_incl,
 						columnProperties.subjectColumnsEnd_excl,
 						task.subject_string,
-						transFuncData.minhasher->minparams.k, 0.0f,
+						transFuncData.kmerlength, 0.0f,
 						transFuncData.estimatedCoverage);
 #else
             //const size_t msa_weights_pitch_floats = dataarrays.msa_weights_pitch / sizeof(float);
