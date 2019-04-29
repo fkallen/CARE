@@ -2619,7 +2619,6 @@ namespace gpu{
             const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
 
             for(int index = offset; index < end_index; index++){
-                constexpr float threshold = 0.95;
                 const auto& msafeature = MSAFeatures[index];
 
                 const bool doCorrect = transFuncData.fc.shouldCorrect(msafeature.position_support,
