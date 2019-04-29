@@ -20,7 +20,7 @@ namespace shd{
                                 float min_overlap_ratio) noexcept{
 
         auto getNumBytes = [] (int sequencelength){
-            return Sequence2BitHiLo::getNumBytes(sequencelength);
+            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
         };
 
         auto popcount = [](auto i){return __builtin_popcount(i);};
@@ -153,14 +153,14 @@ namespace shd{
         if(queryLengths.size() == 0) return {};
 
         std::vector<AlignmentResult> results(queryLengths.size());
-        
+
         auto enditer = cpu_multi_shifted_hamming_distance_popcount(results.begin(), subject_charptr, subjectLength, querydata, queryLengths, max_sequence_bytes, min_overlap,maxErrorRate, min_overlap_ratio);
         assert(enditer == results.end());
 
         return results;
     }
-    
-    
+
+
 
 
 }

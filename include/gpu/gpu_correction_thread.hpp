@@ -111,7 +111,6 @@ struct ErrorCorrectionThreadOnlyGPU {
     using Minhasher_t = Minhasher;
     using GPUReadStorage_t = gpu::ContiguousReadStorage;
 
-	using Sequence_t = GPUReadStorage_t::Sequence_t;
 	using CorrectionTask_t = CorrectionTask;
 	//using ReadIdGenerator_t = readIdGenerator_t;
     using ReadIdGenerator_t = cpu::RangeGenerator<read_number>;
