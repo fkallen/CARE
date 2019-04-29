@@ -88,6 +88,7 @@ namespace gpu{
         mycase(BatchState::BuildMSA)
         mycase(BatchState::StartClassicCorrection)
         mycase(BatchState::StartForestCorrection)
+        mycase(BatchState::StartConvnetCorrection)
         mycase(BatchState::UnpackClassicResults)
         mycase(BatchState::WriteResults)
         mycase(BatchState::WriteFeatures)
@@ -187,6 +188,7 @@ namespace gpu{
 		case BatchState::BuildMSA: return "BuildMSA";
 		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
 		case BatchState::StartForestCorrection: return "StartForestCorrection";
+        case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
 		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
 		case BatchState::WriteResults: return "WriteResults";
 		case BatchState::WriteFeatures: return "WriteFeatures";
@@ -204,6 +206,7 @@ namespace gpu{
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
 		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func2;
+        transitionFunctionTable[BatchState::StartConvnetCorrection] = state_startconvnetcorrection_func;
 		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func2;
 		transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
 		transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
@@ -2462,6 +2465,149 @@ namespace gpu{
 		}
 	}
 
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startconvnetcorrection_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+                bool canBlock,
+                bool canLaunchKernel,
+                bool isPausable,
+                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+        assert(!transFuncData.correctionOptions.classicMode);
+
+        constexpr BatchState expectedState = BatchState::StartConvnetCorrection;
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+        assert(batch.state == expectedState);
+
+
+
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = msadata_transfer_finished_event_index;
+            return expectedState;
+        }
+#endif
+
+        DataArrays& dataArrays = *batch.dataArrays;
+
+        std::vector<MSAFeature3> MSAFeatures;
+        std::vector<int> MSAFeaturesPerSubject(batch.tasks.size());
+        std::vector<int> MSAFeaturesPerSubjectPrefixSum(batch.tasks.size()+1);
+        MSAFeaturesPerSubjectPrefixSum[0] = 0;
+
+        for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+
+            auto& task = batch.tasks[subject_index];
+
+            const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+
+            //std::cout << task.readId << "feature" << std::endl;
+
+            const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+
+            const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
+#if 1
+            const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
+            const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
+            const int* const countsA = &dataArrays.h_counts[countsOffset + 0 * msa_weights_pitch_floats];
+            const int* const countsC = &dataArrays.h_counts[countsOffset + 1 * msa_weights_pitch_floats];
+            const int* const countsG = &dataArrays.h_counts[countsOffset + 2 * msa_weights_pitch_floats];
+            const int* const countsT = &dataArrays.h_counts[countsOffset + 3 * msa_weights_pitch_floats];
+            const float* const weightsA = &dataArrays.h_weights[weightsOffset + 0 * msa_weights_pitch_floats];
+            const float* const weightsC = &dataArrays.h_weights[weightsOffset + 1 * msa_weights_pitch_floats];
+            const float* const weightsG = &dataArrays.h_weights[weightsOffset + 2 * msa_weights_pitch_floats];
+            const float* const weightsT = &dataArrays.h_weights[weightsOffset + 3 * msa_weights_pitch_floats];
+
+            std::vector<MSAFeature3> tmpfeatures
+                    = extractFeatures3_2(
+                                        countsA,
+                                        countsC,
+                                        countsG,
+                                        countsT,
+                                        weightsA,
+                                        weightsC,
+                                        weightsG,
+                                        weightsT,
+                                        msa_rows,
+                                        columnProperties.columnsToCheck,
+                                        dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                        dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                                        dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                                        dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                        columnProperties.subjectColumnsBegin_incl,
+                                        columnProperties.subjectColumnsEnd_excl,
+                                        task.subject_string,
+                                        transFuncData.estimatedCoverage);
+#else
+            const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+            const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
+
+            const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
+            const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
+
+            std::vector<MSAFeature3> tmpfeatures = extractFeatures3(
+                                        my_multiple_sequence_alignment,
+                                        my_multiple_sequence_alignment_weight,
+                                        msa_rows,
+                                        columnProperties.columnsToCheck,
+                                        transFuncData.correctionOptions.useQualityScores,
+                                        dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
+                                        dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                                        dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                                        dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                        columnProperties.subjectColumnsBegin_incl,
+                                        columnProperties.subjectColumnsEnd_excl,
+                                        task.subject_string,
+                                        transFuncData.estimatedCoverage,
+                                        true,
+                                        dataArrays.msa_pitch,
+                                        msa_weights_pitch_floats);
+#endif
+            MSAFeatures.insert(MSAFeatures.end(), tmpfeatures.begin(), tmpfeatures.end());
+            MSAFeaturesPerSubject[subject_index] = tmpfeatures.size();
+        }
+
+        std::partial_sum(MSAFeaturesPerSubject.begin(), MSAFeaturesPerSubject.end(),MSAFeaturesPerSubjectPrefixSum.begin()+1);
+
+        std::vector<float> predictions = transFuncData.nnClassifier.infer(MSAFeatures);
+        assert(predictions.size() == MSAFeatures.size());
+
+        for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+            auto& task = batch.tasks[subject_index];
+            task.corrected_subject = task.subject_string;
+
+            const int offset = MSAFeaturesPerSubjectPrefixSum[subject_index];
+            const int end_index = offset + MSAFeaturesPerSubject[subject_index];
+
+            const char* const consensus = &dataArrays.h_consensus[subject_index * dataArrays.msa_pitch];
+            const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
+
+            for(int index = offset; index < end_index; index++){
+                constexpr float threshold = 0.95;
+                const auto& msafeature = MSAFeatures[index];
+
+                if(predictions[index] >= threshold){
+                    task.corrected = true;
+
+                    const int globalIndex = columnProperties.subjectColumnsBegin_incl + msafeature.position;
+                    task.corrected_subject[msafeature.position] = consensus[globalIndex];
+                }
+            }
+
+        }
+
+
+        return BatchState::WriteResults;
+    }
+
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startforestcorrection_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
@@ -2542,113 +2688,7 @@ namespace gpu{
 				}
 
 			}
-#endif
-            std::vector<MSAFeature3> MSAFeatures;
-            std::vector<int> MSAFeaturesPerSubject(batch.tasks.size());
-            std::vector<int> MSAFeaturesPerSubjectPrefixSum(batch.tasks.size()+1);
-            MSAFeaturesPerSubjectPrefixSum[0] = 0;
-
-            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
-
-                auto& task = batch.tasks[subject_index];
-
-                const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
-
-                //std::cout << task.readId << "feature" << std::endl;
-
-                const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-
-                const int msa_rows = 1 + dataArrays.h_indices_per_subject[subject_index];
-#if 0
-                const std::size_t countsOffset = subject_index * msa_weights_pitch_floats * 4;
-                const std::size_t weightsOffset = subject_index * msa_weights_pitch_floats * 4;
-                const int* const countsA = &dataArrays.h_counts[countsOffset + 0 * msa_weights_pitch_floats];
-                const int* const countsC = &dataArrays.h_counts[countsOffset + 1 * msa_weights_pitch_floats];
-                const int* const countsG = &dataArrays.h_counts[countsOffset + 2 * msa_weights_pitch_floats];
-                const int* const countsT = &dataArrays.h_counts[countsOffset + 3 * msa_weights_pitch_floats];
-                const float* const weightsA = &dataArrays.h_weights[weightsOffset + 0 * msa_weights_pitch_floats];
-                const float* const weightsC = &dataArrays.h_weights[weightsOffset + 1 * msa_weights_pitch_floats];
-                const float* const weightsG = &dataArrays.h_weights[weightsOffset + 2 * msa_weights_pitch_floats];
-                const float* const weightsT = &dataArrays.h_weights[weightsOffset + 3 * msa_weights_pitch_floats];
-
-                std::vector<MSAFeature3> tmpfeatures
-                        = extractFeatures3_2(
-                                            countsA,
-                                            countsC,
-                                            countsG,
-                                            countsT,
-                                            weightsA,
-                                            weightsC,
-                                            weightsG,
-                                            weightsT,
-                                            msa_rows,
-                                            columnProperties.columnsToCheck,
-                                            dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
-                                            dataArrays.h_support + subject_index * msa_weights_pitch_floats,
-                                            dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
-                                            dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
-                                            columnProperties.subjectColumnsBegin_incl,
-                                            columnProperties.subjectColumnsEnd_excl,
-                                            task.subject_string,
-                                            transFuncData.estimatedCoverage);
-#else
-                const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
-                const unsigned offset2 = msa_weights_pitch_floats * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
-
-                const char* const my_multiple_sequence_alignment = dataArrays.h_multiple_sequence_alignments + offset1;
-                const float* const my_multiple_sequence_alignment_weight = dataArrays.h_multiple_sequence_alignment_weights + offset2;
-
-                std::vector<MSAFeature3> tmpfeatures = extractFeatures3(
-                                            my_multiple_sequence_alignment,
-                                            my_multiple_sequence_alignment_weight,
-                                            msa_rows,
-                                            columnProperties.columnsToCheck,
-                                            transFuncData.correctionOptions.useQualityScores,
-                                            dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
-                                            dataArrays.h_support + subject_index * msa_weights_pitch_floats,
-                    						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
-                    						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
-                                            columnProperties.subjectColumnsBegin_incl,
-                    						columnProperties.subjectColumnsEnd_excl,
-                                            task.subject_string,
-                                            transFuncData.estimatedCoverage,
-                                            true,
-                                            dataArrays.msa_pitch,
-                                            msa_weights_pitch_floats);
-#endif
-                MSAFeatures.insert(MSAFeatures.end(), tmpfeatures.begin(), tmpfeatures.end());
-                MSAFeaturesPerSubject[subject_index] = tmpfeatures.size();
-            }
-
-            std::partial_sum(MSAFeaturesPerSubject.begin(), MSAFeaturesPerSubject.end(),MSAFeaturesPerSubjectPrefixSum.begin()+1);
-
-            std::vector<float> predictions = transFuncData.nnClassifier.infer(MSAFeatures);
-            assert(predictions.size() == MSAFeatures.size());
-
-            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
-                auto& task = batch.tasks[subject_index];
-                task.corrected_subject = task.subject_string;
-
-                const int offset = MSAFeaturesPerSubjectPrefixSum[subject_index];
-                const int end_index = offset + MSAFeaturesPerSubject[subject_index];
-
-                const char* const consensus = &dataArrays.h_consensus[subject_index * dataArrays.msa_pitch];
-                const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
-
-                for(int index = offset; index < end_index; index++){
-                    constexpr float threshold = 0.95;
-                    const auto& msafeature = MSAFeatures[index];
-
-                    if(predictions[index] >= threshold){
-                        task.corrected = true;
-
-						const int globalIndex = columnProperties.subjectColumnsBegin_incl + msafeature.position;
-						task.corrected_subject[msafeature.position] = consensus[globalIndex];
-                    }
-                }
-
-            }
-
+        }
 
 		return BatchState::WriteResults;
 	}

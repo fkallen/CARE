@@ -9,6 +9,7 @@
 #include <cpu_alignment.hpp>
 #include <bestalignment.hpp>
 #include <rangegenerator.hpp>
+#include "nn_classifier.hpp"
 
 #include <cpu_correction_core.hpp>
 
