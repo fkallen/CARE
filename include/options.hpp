@@ -81,6 +81,7 @@ namespace care{
         std::string save_hashtables_to;
         std::string load_hashtables_from;
         std::string forestfilename;
+        std::string nnmodelfilename;
 	};
 }
 

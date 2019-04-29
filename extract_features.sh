@@ -17,7 +17,7 @@ for indexfile in ~/storage/evaluationtool/index/*; do
 		inputfilename=${array[1]}
 	
 		rm $outdir$outputfile
-		mv $outdir$outputfile"_features" $outdir/newfeatures/$inputfilename"_features"
+		mv $outdir$outputfile"_features" $outdir/newfeatures/$inputfilename"_features.txt"
 
 	fi
 

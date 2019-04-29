@@ -144,6 +144,8 @@ namespace cpu{
 
         SequenceFileProperties fileProperties;
 
+        NN_Correction_Classifier_Base* classifierBase;
+
         std::uint64_t max_candidates;
 
 

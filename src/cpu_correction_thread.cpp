@@ -11,6 +11,7 @@
 #include "rangegenerator.hpp"
 #include "featureextractor.hpp"
 #include "forestclassifier.hpp"
+#include "nn_classifier.hpp"
 
 #include "cpu_correction_core.hpp"
 
@@ -1263,6 +1264,44 @@ namespace cpu{
 
     #ifdef ENABLE_TIMING
                         correctWithFeaturesTimeTotal += std::chrono::system_clock::now() - tpa;
+    #endif
+
+    #if 0
+    MSAFeatures3 = extractFeatures3_2(
+                                multipleSequenceAlignment.countsA.data(),
+                                multipleSequenceAlignment.countsC.data(),
+                                multipleSequenceAlignment.countsG.data(),
+                                multipleSequenceAlignment.countsT.data(),
+                                multipleSequenceAlignment.weightsA.data(),
+                                multipleSequenceAlignment.weightsC.data(),
+                                multipleSequenceAlignment.weightsG.data(),
+                                multipleSequenceAlignment.weightsT.data(),
+                                multipleSequenceAlignment.nRows,
+                                multipleSequenceAlignment.columnProperties.columnsToCheck,
+                                multipleSequenceAlignment.consensus.data(),
+                                multipleSequenceAlignment.support.data(),
+                                multipleSequenceAlignment.coverage.data(),
+                                multipleSequenceAlignment.origCoverages.data(),
+                                multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
+                                multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
+                                task.subject_string,
+                                correctionOptions.estimatedCoverage);
+
+                        std::vector<float> predictions = nnClassifier.infer(MSAFeatures3);
+                        assert(predictions.size() == MSAFeatures3.size());
+
+                        for(size_t index = 0; index < predictions.size(); index++){
+                            constexpr float threshold = 0.8;
+                            const auto& msafeature = MSAFeatures3[index];
+
+                            if(predictions[index] >= threshold){
+                                isCorrected = true;
+
+                                const int globalIndex = multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
+                                task.corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
+                            }
+                        }
+
     #endif
 
                         if(isCorrected){

@@ -130,6 +130,8 @@ namespace cpu{
 
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 
+        NN_Correction_Classifier_Base nnClassifierBase{"./nn_sources", fileOptions.nnmodelfilename};
+
         std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCorrectorThreads);
         std::mutex writelock;
 
@@ -155,6 +157,8 @@ namespace cpu{
             cpucorrectorThreads[threadId].threadOpts = threadOpts;
             cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
             cpucorrectorThreads[threadId].max_candidates = max_candidates;
+
+            cpucorrectorThreads[threadId].classifierBase = &nnClassifierBase;
 
             cpucorrectorThreads[threadId].run();
         }
