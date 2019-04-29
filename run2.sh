@@ -53,9 +53,12 @@ fi
 deviceIds="--deviceIds=0"
 datapath=/home/fekallen/storage/evaluationtool
 nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
-classicMode=false
+classicMode=true
 #forest="./forests/combinedforestaligncov.so"
-forest="./forests/combinedecolielegansmelanogaster_clipmin_forest.so"
+#forest="./forests/combinedecolielegansmelanogaster_clipmin_forest.so"
+#forest="./forests/combinedforestwithconsensus.so"
+forest="./forests/C.elegans_SRX218989_with_consforest.so"
+#forest="./forests/eleganstestforest.so"
 fileformat=fastq
 useQualityScores=true
 
