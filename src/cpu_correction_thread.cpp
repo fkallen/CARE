@@ -1211,15 +1211,16 @@ namespace cpu{
                                     unlock(candidateId);
                                 }
                                 unlock(candidateId);
-                            }
-                            if (savingIsOk) {
-                                if(bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                                    write_read(candidateId, correctedCandidate.sequence);
-                                }else{
-                                    std::string fwd;
-                                    fwd.resize(correctedCandidate.sequence.length());
-                                    reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
-                                    write_read(candidateId, fwd);
+
+                                if (savingIsOk) {
+                                    if(bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                                        write_read(candidateId, correctedCandidate.sequence);
+                                    }else{
+                                        std::string fwd;
+                                        fwd.resize(correctedCandidate.sequence.length());
+                                        reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
+                                        write_read(candidateId, fwd);
+                                    }
                                 }
                             }
                         }
