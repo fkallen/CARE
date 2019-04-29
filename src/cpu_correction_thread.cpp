@@ -143,7 +143,7 @@ namespace cpu{
             std::vector<read_number> readIds;
 
             ForestClassifier forestClassifier;
-            if(!correctionOptions.classicMode){
+            if(correctionOptions.correctionType == CorrectionType::Forest){
                 forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
             }
 
@@ -1042,19 +1042,9 @@ namespace cpu{
 
 
 
-
-
-
-
-
-
-
-
-                std::vector<MSAFeature> MSAFeatures;
-
-                if(correctionOptions.extractFeatures || !correctionOptions.classicMode){
+                if(correctionOptions.extractFeatures){
 #if 1
-                    MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
+                    auto MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
                                                     multipleSequenceAlignment.support.data(),
                                                     multipleSequenceAlignment.coverage.data(),
                                                     multipleSequenceAlignment.origCoverages.data(),
@@ -1067,7 +1057,7 @@ namespace cpu{
 #else
 
 
-                std::vector<MSAFeature3> MSAFeatures3 = extractFeatures3_2(
+                auto MSAFeatures = extractFeatures3_2(
                                             multipleSequenceAlignment.countsA.data(),
                                             multipleSequenceAlignment.countsC.data(),
                                             multipleSequenceAlignment.countsG.data(),
@@ -1087,23 +1077,16 @@ namespace cpu{
                                             correctionTasks[0].subject_string,
                                             correctionOptions.estimatedCoverage);
 
-                    if(correctionOptions.extractFeatures){
-                        for(const auto& msafeature : MSAFeatures3){
-                            featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\n';
-                            featurestream << msafeature << '\n';
-                        }
-                    }
-#endif
-                }
 
-                if(correctionOptions.extractFeatures){
+#endif
+
                     for(const auto& msafeature : MSAFeatures){
                         featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
                         featurestream << msafeature << '\n';
                     }
                 }else{ //correction is not performed when extracting features
 
-                    if(correctionOptions.classicMode){
+                    if(correctionOptions.correctionType == CorrectionType::Classic){
 
     #ifdef ENABLE_TIMING
                         auto tpa = std::chrono::system_clock::now();
@@ -1231,6 +1214,17 @@ namespace cpu{
     #ifdef ENABLE_TIMING
                         auto tpa = std::chrono::system_clock::now();
     #endif
+                        auto MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
+                                                        multipleSequenceAlignment.support.data(),
+                                                        multipleSequenceAlignment.coverage.data(),
+                                                        multipleSequenceAlignment.origCoverages.data(),
+                                                        multipleSequenceAlignment.nColumns,
+                                                        multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                        multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                        correctionTasks[0].subject_string,
+                                                        correctionOptions.kmerlength, 0.5f,
+                                                        correctionOptions.estimatedCoverage);
+
                         correctionTasks[0].corrected_subject = correctionTasks[0].subject_string;
                         bool isCorrected = false;
 

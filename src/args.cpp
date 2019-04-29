@@ -73,8 +73,19 @@ namespace args{
         if(pr["indels"].as<bool>()){
             correctionMode = CorrectionMode::Graph;
         }
+
+        CorrectionType correctionType = CorrectionType::Classic;
+
+        switch(pr["correctionType"].as<int>()){
+        case 0: correctionType = CorrectionType::Classic; break;
+        case 1: correctionType = CorrectionType::Forest; break;
+        case 2: correctionType = CorrectionType::Convnet; break;
+        default: correctionType = CorrectionType::Classic;
+        }
+
         CorrectionOptions result{
             correctionMode,
+            correctionType,
             pr["candidateCorrection"].as<bool>(),
 			pr["useQualityScores"].as<bool>(),
             pr["coverage"].as<float>(),
@@ -86,7 +97,6 @@ namespace args{
             pr["batchsize"].as<int>(),
             3, //new_columns_to_correct
             pr["extractFeatures"].as<bool>(),
-            pr["classicMode"].as<bool>(),
             pr["hits_per_candidate"].as<int>()
         };
 

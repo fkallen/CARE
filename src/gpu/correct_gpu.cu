@@ -137,6 +137,11 @@ namespace gpu{
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #endif
 
+    NN_Correction_Classifier_Base nnClassifierBase;
+    if(correctionOptions.correctionType == CorrectionType::Convnet){
+        nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
+    }
+
     std::vector<CPUErrorCorrectionThread_t> cpucorrectorThreads(nCpuThreads);
     std::vector<GPUErrorCorrectionThread_t> gpucorrectorThreads(nGpuThreads);
     std::mutex writelock;
@@ -198,6 +203,7 @@ namespace gpu{
     gpucorrectorThreads[threadId].threadOpts = threadOpts;
     gpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
     gpucorrectorThreads[threadId].max_candidates = max_candidates;
+    gpucorrectorThreads[threadId].classifierBase = &nnClassifierBase;
 
     gpucorrectorThreads[threadId].run();
     }

@@ -2232,7 +2232,7 @@ namespace gpu{
 
 			cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
-			if(transFuncData.correctionOptions.extractFeatures || !transFuncData.correctionOptions.classicMode) {
+			if(transFuncData.correctionOptions.extractFeatures || transFuncData.correctionOptions.correctionType != CorrectionType::Classic) {
 
 				cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
@@ -2288,6 +2288,7 @@ namespace gpu{
 
 #ifdef USE_WAIT_FLAGS
                 batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
+                batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
                 batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
 #endif
 
@@ -2296,10 +2297,15 @@ namespace gpu{
             if(transFuncData.correctionOptions.extractFeatures){
                 return BatchState::WriteFeatures;
             }else{
-                if(transFuncData.correctionOptions.classicMode) {
-    				return BatchState::StartClassicCorrection;
-    			}else{
+                switch(transFuncData.correctionOptions.correctionType){
+                case CorrectionType::Classic:
+                    return BatchState::StartClassicCorrection;
+    			case CorrectionType::Forest:
     				return BatchState::StartForestCorrection;
+                case CorrectionType::Convnet:
+                    return BatchState::StartConvnetCorrection;
+                default:
+                    return BatchState::StartClassicCorrection;
     			}
             }
 
@@ -2314,7 +2320,7 @@ namespace gpu{
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
 		assert(batch.state == BatchState::StartClassicCorrection);
-		assert(transFuncData.correctionOptions.classicMode);
+		assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
 		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -2331,118 +2337,117 @@ namespace gpu{
 						transFuncData.m_coverage / 6.0f * transFuncData.estimatedCoverage);
 			const int new_columns_to_correct = transFuncData.new_columns_to_correct;
 
-			// Step 14. Correction
-			if(transFuncData.correctionOptions.classicMode) {
-				// correct subjects
+			// correct subjects
+
 #ifndef MSA_IMPLICIT
-				call_msa_correct_subject_kernel_async(
-							dataArrays.d_consensus,
-							dataArrays.d_support,
-							dataArrays.d_coverage,
-							dataArrays.d_origCoverages,
-							dataArrays.d_multiple_sequence_alignments,
-							dataArrays.d_msa_column_properties,
-							dataArrays.d_indices_per_subject_prefixsum,
-							dataArrays.d_is_high_quality_subject,
-							dataArrays.d_corrected_subjects,
-							dataArrays.d_subject_is_corrected,
-							dataArrays.n_subjects,
-							dataArrays.n_queries,
-							dataArrays.d_num_indices,
-							dataArrays.sequence_pitch,
-							dataArrays.msa_pitch,
-							dataArrays.msa_weights_pitch,
-							transFuncData.estimatedErrorrate,
-							avg_support_threshold,
-							min_support_threshold,
-							min_coverage_threshold,
-							transFuncData.kmerlength,
-							dataArrays.maximum_sequence_length,
-							streams[primary_stream_index],
-							batch.kernelLaunchHandle);
+			call_msa_correct_subject_kernel_async(
+						dataArrays.d_consensus,
+						dataArrays.d_support,
+						dataArrays.d_coverage,
+						dataArrays.d_origCoverages,
+						dataArrays.d_multiple_sequence_alignments,
+						dataArrays.d_msa_column_properties,
+						dataArrays.d_indices_per_subject_prefixsum,
+						dataArrays.d_is_high_quality_subject,
+						dataArrays.d_corrected_subjects,
+						dataArrays.d_subject_is_corrected,
+						dataArrays.n_subjects,
+						dataArrays.n_queries,
+						dataArrays.d_num_indices,
+						dataArrays.sequence_pitch,
+						dataArrays.msa_pitch,
+						dataArrays.msa_weights_pitch,
+						transFuncData.estimatedErrorrate,
+						avg_support_threshold,
+						min_support_threshold,
+						min_coverage_threshold,
+						transFuncData.kmerlength,
+						dataArrays.maximum_sequence_length,
+						streams[primary_stream_index],
+						batch.kernelLaunchHandle);
 #else
 
-                call_msa_correct_subject_implicit_kernel_async(
-                            dataArrays.d_consensus,
-                            dataArrays.d_support,
-                            dataArrays.d_coverage,
-                            dataArrays.d_origCoverages,
-                            dataArrays.d_msa_column_properties,
-                            dataArrays.d_subject_sequences_data,
-                            dataArrays.d_is_high_quality_subject,
-                            dataArrays.d_corrected_subjects,
-                            dataArrays.d_subject_is_corrected,
-                            dataArrays.n_subjects,
-                            dataArrays.encoded_sequence_pitch,
-                            dataArrays.sequence_pitch,
-                            dataArrays.msa_pitch,
-                            dataArrays.msa_weights_pitch,
-                            transFuncData.estimatedErrorrate,
-                            avg_support_threshold,
-                            min_support_threshold,
-                            min_coverage_threshold,
-                            transFuncData.kmerlength,
-                            dataArrays.maximum_sequence_length,
-                            streams[primary_stream_index],
-                            batch.kernelLaunchHandle);
+            call_msa_correct_subject_implicit_kernel_async(
+                        dataArrays.d_consensus,
+                        dataArrays.d_support,
+                        dataArrays.d_coverage,
+                        dataArrays.d_origCoverages,
+                        dataArrays.d_msa_column_properties,
+                        dataArrays.d_subject_sequences_data,
+                        dataArrays.d_is_high_quality_subject,
+                        dataArrays.d_corrected_subjects,
+                        dataArrays.d_subject_is_corrected,
+                        dataArrays.n_subjects,
+                        dataArrays.encoded_sequence_pitch,
+                        dataArrays.sequence_pitch,
+                        dataArrays.msa_pitch,
+                        dataArrays.msa_weights_pitch,
+                        transFuncData.estimatedErrorrate,
+                        avg_support_threshold,
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        transFuncData.kmerlength,
+                        dataArrays.maximum_sequence_length,
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
 
 #endif
-				if(transFuncData.correctionOptions.correctCandidates) {
+			if(transFuncData.correctionOptions.correctCandidates) {
 
 
-					// find subject ids of subjects with high quality multiple sequence alignment
+				// find subject ids of subjects with high quality multiple sequence alignment
 
-					/*
-                    cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
-								dataArrays.tmp_storage_allocation_size,
-								cub::CountingInputIterator<int>(0),
-								dataArrays.d_is_high_quality_subject,
-								dataArrays.d_high_quality_subject_indices,
-								dataArrays.d_num_high_quality_subject_indices,
-								dataArrays.n_subjects,
-								streams[primary_stream_index]); CUERR;
+				/*
+                cub::DeviceSelect::Flagged(dataArrays.d_temp_storage,
+							dataArrays.tmp_storage_allocation_size,
+							cub::CountingInputIterator<int>(0),
+							dataArrays.d_is_high_quality_subject,
+							dataArrays.d_high_quality_subject_indices,
+							dataArrays.d_num_high_quality_subject_indices,
+							dataArrays.n_subjects,
+							streams[primary_stream_index]); CUERR;
 */
-                    cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
-                                batch.batchDataDevice.cubTemp.sizeRef(),
-                                cub::CountingInputIterator<int>(0),
-                                dataArrays.d_is_high_quality_subject,
-                                dataArrays.d_high_quality_subject_indices,
-                                dataArrays.d_num_high_quality_subject_indices,
-                                dataArrays.n_subjects,
-                                streams[primary_stream_index]); CUERR;
-
-					// correct candidates
-                    call_msa_correct_candidates_kernel_async_exp(
-                            dataArrays.d_consensus,
-                            dataArrays.d_support,
-                            dataArrays.d_coverage,
-                            dataArrays.d_origCoverages,
-                            dataArrays.d_msa_column_properties,
-                            dataArrays.d_candidate_sequences_lengths,
-                            dataArrays.d_indices,
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.d_indices_per_subject_prefixsum,
+                cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
+                            batch.batchDataDevice.cubTemp.sizeRef(),
+                            cub::CountingInputIterator<int>(0),
+                            dataArrays.d_is_high_quality_subject,
                             dataArrays.d_high_quality_subject_indices,
                             dataArrays.d_num_high_quality_subject_indices,
-                            dataArrays.d_alignment_shifts,
-                            dataArrays.d_alignment_best_alignment_flags,
-                            dataArrays.d_num_corrected_candidates,
-                            dataArrays.d_corrected_candidates,
-                            dataArrays.d_indices_of_corrected_candidates,
                             dataArrays.n_subjects,
-                            dataArrays.n_queries,
-                            dataArrays.d_num_indices,
-                            dataArrays.sequence_pitch,
-                            dataArrays.msa_pitch,
-                            dataArrays.msa_weights_pitch,
-                            min_support_threshold,
-                            min_coverage_threshold,
-                            new_columns_to_correct,
-                            dataArrays.maximum_sequence_length,
-                            streams[primary_stream_index],
-                            batch.kernelLaunchHandle);
-				}
+                            streams[primary_stream_index]); CUERR;
+
+				// correct candidates
+                call_msa_correct_candidates_kernel_async_exp(
+                        dataArrays.d_consensus,
+                        dataArrays.d_support,
+                        dataArrays.d_coverage,
+                        dataArrays.d_origCoverages,
+                        dataArrays.d_msa_column_properties,
+                        dataArrays.d_candidate_sequences_lengths,
+                        dataArrays.d_indices,
+                        dataArrays.d_indices_per_subject,
+                        dataArrays.d_indices_per_subject_prefixsum,
+                        dataArrays.d_high_quality_subject_indices,
+                        dataArrays.d_num_high_quality_subject_indices,
+                        dataArrays.d_alignment_shifts,
+                        dataArrays.d_alignment_best_alignment_flags,
+                        dataArrays.d_num_corrected_candidates,
+                        dataArrays.d_corrected_candidates,
+                        dataArrays.d_indices_of_corrected_candidates,
+                        dataArrays.n_subjects,
+                        dataArrays.n_queries,
+                        dataArrays.d_num_indices,
+                        dataArrays.sequence_pitch,
+                        dataArrays.msa_pitch,
+                        dataArrays.msa_weights_pitch,
+                        min_support_threshold,
+                        min_coverage_threshold,
+                        new_columns_to_correct,
+                        dataArrays.maximum_sequence_length,
+                        streams[primary_stream_index],
+                        batch.kernelLaunchHandle);
 			}
+
 			assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
 
 			cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
@@ -2471,8 +2476,6 @@ namespace gpu{
                 bool isPausable,
                 const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
-        assert(!transFuncData.correctionOptions.classicMode);
-
         constexpr BatchState expectedState = BatchState::StartConvnetCorrection;
 #ifdef USE_WAIT_FLAGS
         constexpr int wait_index = static_cast<int>(expectedState);
@@ -2495,6 +2498,8 @@ namespace gpu{
             return expectedState;
         }
 #endif
+
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Convnet);
 
         DataArrays& dataArrays = *batch.dataArrays;
 
@@ -2614,8 +2619,6 @@ namespace gpu{
 				bool isPausable,
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
-		assert(!transFuncData.correctionOptions.classicMode);
-
         constexpr BatchState expectedState = BatchState::StartForestCorrection;
 #ifdef USE_WAIT_FLAGS
         constexpr int wait_index = static_cast<int>(expectedState);
@@ -2638,6 +2641,8 @@ namespace gpu{
             return expectedState;
         }
 #endif
+
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Forest);
 
 		DataArrays& dataArrays = *batch.dataArrays;
 
@@ -2700,8 +2705,6 @@ namespace gpu{
 				bool isPausable,
 				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
-		assert(!transFuncData.correctionOptions.classicMode);
-
         constexpr BatchState expectedState = BatchState::StartForestCorrection;
 #ifdef USE_WAIT_FLAGS
         constexpr int wait_index = static_cast<int>(expectedState);
@@ -2724,6 +2727,8 @@ namespace gpu{
             return expectedState;
         }
 #endif
+
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Forest);
 
 		DataArrays& dataArrays = *batch.dataArrays;
 
@@ -3291,7 +3296,7 @@ namespace gpu{
 #endif
 	    #endif
 
-		assert(transFuncData.correctionOptions.classicMode);
+		assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
 		for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
 			auto& task = batch.tasks[subject_index];
@@ -3386,7 +3391,7 @@ namespace gpu{
         }
         assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
 
-        assert(transFuncData.correctionOptions.classicMode);
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
         #pragma omp parallel for num_threads(4)
         for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
@@ -3779,13 +3784,13 @@ namespace gpu{
 					       transFuncData.locksForProcessedFlags[index].unlock();
 				       };
 
-        if(!correctionOptions.classicMode){
+        if(transFuncData.correctionOptions.correctionType == CorrectionType::Forest){
            transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
         }
 
         NN_Correction_Classifier nnClassifier;
 
-        if(!correctionOptions.classicMode){
+        if(correctionOptions.correctionType == CorrectionType::Convnet){
             transFuncData.nnClassifier = std::move(NN_Correction_Classifier{classifierBase});
         }
 

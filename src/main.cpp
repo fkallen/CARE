@@ -61,8 +61,10 @@ int main(int argc, const char** argv){
 		("extractFeatures", "If set, extract MSA features",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 		("deviceIds", "Space separated GPU device ids to be used for correction", cxxopts::value<std::vector<std::string> >()->default_value({}))
-		("classicMode", "If set, MSA correction does not use decision trees",
-		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+		//("classicMode", "If set, MSA correction does not use decision trees",
+		//cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+        ("correctionType", "0: Classic, 1: Forest, 2: Convnet",
+		cxxopts::value<int>()->default_value("0")->implicit_value("0"))
 		("maxCandidates", "Upper limit for number of candidates per read. Reads with more than max_candidates candidates will not be corrected. The program will guess the limit if max_candidates == 0",
 		cxxopts::value<int>()->default_value("0")->implicit_value("0"))
 		("nReads", "Upper limit for number of reads in the inputfile. The program will determine the exact number of reads before building the datastructures if nReads == 0",
@@ -117,14 +119,20 @@ int main(int argc, const char** argv){
 		correctionOptions.correctCandidates = false;
 	}
 
-    if(!correctionOptions.classicMode){
+    if(correctionOptions.correctionType == CorrectionType::Forest){
         if(fileOptions.forestfilename == ""){
-            throw std::runtime_error("Must specify shared object file for forest when classicMode = false.");
+            throw std::runtime_error("Must specify shared object file for forest if forest correction is selected");
         }else{
             std::ifstream is(fileOptions.forestfilename);
             if(!is){
                 throw std::runtime_error("Cannot open shared object file for forest.");
             }
+        }
+    }
+
+    if(correctionOptions.correctionType == CorrectionType::Convnet){
+        if(fileOptions.nnmodelfilename == ""){
+            throw std::runtime_error("Must specify convnet model if convnet correction is selected.");
         }
     }
 

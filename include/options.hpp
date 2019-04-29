@@ -10,6 +10,7 @@
 
 namespace care{
     enum class CorrectionMode {Hamming, Graph};
+    enum class CorrectionType {Classic, Forest, Convnet};
 
 	//Options which can be parsed from command-line arguments
 
@@ -41,6 +42,7 @@ namespace care{
 
     struct CorrectionOptions{
         CorrectionMode correctionMode = CorrectionMode::Hamming;
+        CorrectionType correctionType = CorrectionType::Classic;
         bool correctCandidates = false;
         bool useQualityScores = true;
         float estimatedCoverage = 1.0f;
@@ -52,7 +54,6 @@ namespace care{
 		int batchsize = 5;
         int new_columns_to_correct = 0;
         bool extractFeatures = false;
-        bool classicMode = false;
         int hits_per_candidate = 1;
     };
 
