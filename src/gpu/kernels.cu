@@ -559,43 +559,60 @@ namespace gpu{
 
             // We only want to consider the candidates with good alignments. the indices of those were determined in a previous step
             const int num_indices_for_this_subject = indices_per_subject[subjectIndex];
-            const int* const indices_for_this_subject = indices + indices_per_subject_prefixsum[subjectIndex];
 
-            const int subjectLength = getSubjectLength(subjectIndex);
-            int startindex = 0;
-            int endindex = getSubjectLength(subjectIndex);
+            if(num_indices_for_this_subject > 0){
+                const int* const indices_for_this_subject = indices + indices_per_subject_prefixsum[subjectIndex];
 
-            for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x) {
-                const int queryIndex = indices_for_this_subject[index];
+                const int subjectLength = getSubjectLength(subjectIndex);
+                int startindex = 0;
+                int endindex = getSubjectLength(subjectIndex);
 
-                const int shift = alignment_shifts[queryIndex];
-                const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
-                const int queryLength = getCandidateLength(subjectIndex, index);
-                if(flag != BestAlignment_t::None) {
+                for(int index = threadIdx.x; index < num_indices_for_this_subject; index += blockDim.x) {
+                    const int queryIndex = indices_for_this_subject[index];
+
+                    const int shift = alignment_shifts[queryIndex];
+                    const BestAlignment_t flag = alignment_best_alignment_flags[queryIndex];
+                    const int queryLength = getCandidateLength(subjectIndex, index);
+
+                    assert(flag != BestAlignment_t::None);
+
                     const int queryEndsAt = queryLength + shift;
+                    //printf("s %d QL %d: %d\n", subjectIndex, queryIndex, queryLength);
                     startindex = min(startindex, shift);
                     endindex = max(endindex, queryEndsAt);
                 }
+
+                startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
+                __syncthreads();
+
+                endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());
+                __syncthreads();
+
+                if(threadIdx.x == 0) {
+                    MSAColumnProperties my_columnproperties;
+
+                    my_columnproperties.startindex = startindex;
+                    my_columnproperties.endindex = endindex;
+                    my_columnproperties.columnsToCheck = my_columnproperties.endindex - my_columnproperties.startindex;
+                    my_columnproperties.subjectColumnsBegin_incl = max(-my_columnproperties.startindex, 0);
+                    my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+
+                    *properties_ptr = my_columnproperties;
+                }
+            }else{
+                //empty MSA
+                if(threadIdx.x == 0) {
+                    MSAColumnProperties my_columnproperties;
+
+                    my_columnproperties.startindex = 0;
+                    my_columnproperties.endindex = 0;
+                    my_columnproperties.columnsToCheck = 0;
+                    my_columnproperties.subjectColumnsBegin_incl = 0;
+                    my_columnproperties.subjectColumnsEnd_excl = 0;
+
+                    *properties_ptr = my_columnproperties;
+                }
             }
-
-            startindex = BlockReduceInt(temp_storage.reduce).Reduce(startindex, cub::Min());
-            __syncthreads();
-
-            endindex = BlockReduceInt(temp_storage.reduce).Reduce(endindex, cub::Max());
-            __syncthreads();
-
-            if(threadIdx.x == 0) {
-                MSAColumnProperties my_columnproperties;
-
-                my_columnproperties.startindex = startindex;
-                my_columnproperties.endindex = endindex;
-                my_columnproperties.columnsToCheck = my_columnproperties.endindex - my_columnproperties.startindex;
-                my_columnproperties.subjectColumnsBegin_incl = max(-my_columnproperties.startindex, 0);
-                my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
-
-                *properties_ptr = my_columnproperties;
-            }
-
         }
     }
 
