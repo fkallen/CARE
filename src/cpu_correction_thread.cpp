@@ -618,7 +618,7 @@ namespace cpu{
 
                     bestCandidateStrings.clear();
                     //bestCandidateStrings.reserve(bestAlignments.size());
-                    bestCandidateStrings.reserve(bestAlignments.size() * fileProperties.maxSequenceLength);
+                    bestCandidateStrings.resize(bestAlignments.size() * fileProperties.maxSequenceLength);
 
                     for(int i = 0; i < int(bestAlignments.size()); i++){
                         const char* ptr = bestCandidatePtrs[i];
