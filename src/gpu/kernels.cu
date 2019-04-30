@@ -1012,8 +1012,8 @@ namespace gpu{
 			return length;
 		};
 
-		auto getCandidateLength = [&] __device__ (int localCandidateIndex){
-			const int candidateIndex = d_indices[localCandidateIndex];
+		auto getCandidateLength = [&] __device__ (int candidateIndex){
+			//const int candidateIndex = d_indices[localCandidateIndex];
 			const int length = d_candidate_sequences_lengths[candidateIndex];
 			return length;
 		};
@@ -1072,6 +1072,10 @@ namespace gpu{
                     const int globalIndex = subjectColumnsBegin_incl + shift + i;
                     const char base = get(subject, subjectLength, i);
                     //printf("%d ", int(base));
+                    //if(subjectQualityScore[i] == '\0'){
+                        assert(subjectQualityScore[i] != '\0');
+                    //}
+
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
                     const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                     atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
@@ -1108,7 +1112,12 @@ namespace gpu{
                         const int globalIndex = defaultcolumnoffset + i;
                         const char base = get(query, queryLength, i);
                         //printf("%d ", int(base));
+                        //if(queryQualityScore[i] == '\0'){
+                            assert(queryQualityScore[i] != '\0');
+                        //}
+
                         const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
+                        assert(weight != 0);
                         const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
@@ -1126,7 +1135,13 @@ namespace gpu{
                         const char base = get(query, queryLength, reverseIndex);
                         const char revCompl = make_reverse_complement_byte(base);
                         //printf("%d ", int(revCompl));
+
+                        //if(queryQualityScore[reverseIndex] == '\0'){
+                            assert(queryQualityScore[reverseIndex] != '\0');
+                        //}
+
                         const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
+                        assert(weight != 0);
                         const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
@@ -1429,7 +1444,13 @@ namespace gpu{
                 }
                 my_consensus[column] = cons;
                 const float columnWeight = wA + wC + wG + wT;
+                if(columnWeight == 0){
+                    printf("s %d c %d\n", subjectIndex, column);
+                    assert(columnWeight != 0);
+                }
+
                 my_support[column] = consWeight / columnWeight;
+
 
                 if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
                     const int* const my_countsA = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
