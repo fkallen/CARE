@@ -159,6 +159,32 @@ namespace gpu {
                         cudaMemcpy(data.d_quality_data, cpuReadStorage->h_quality_data.get(), cpuReadStorage->quality_data_bytes, H2D); CUERR;
 
     					data.qualityType = ContiguousReadStorage::Type::Full;
+
+                        /*std::cerr << "checking quality nullbytes\n";
+
+                        const int* const rs_sequence_lengths = data.d_sequence_lengths;
+                        const char* const rs_quality_data = data.d_quality_data;
+                        const size_t rs_quality_pitch = std::size_t(getQualityPitch());
+                        const size_t num_seq = cpuReadStorage->getNumberOfSequences();
+
+                        dim3 block(128);
+                        dim3 grid(num_seq);
+
+                        generic_kernel<<<grid, block>>>([=] __device__ (){
+
+                            for(read_number index = threadIdx.x + blockDim.x * blockIdx.x; index < num_seq; index += blockDim.x * gridDim.x){
+                                const read_number readId = index;
+
+                                const int length = rs_sequence_lengths[readId];
+                                for(int k = threadIdx.x; k < length; k += blockDim.x){
+                                    if(rs_quality_data[size_t(readId) * rs_quality_pitch + k] == '\0'){
+                                        assert(rs_quality_data[size_t(readId) * rs_quality_pitch + k] != '\0');
+                                    }
+                                }
+                            }
+                        });*/
+
+                        cudaDeviceSynchronize(); CUERR;
     				}
 
     				cudaSetDevice(oldId); CUERR;
@@ -443,8 +469,12 @@ namespace gpu {
 
                 for(int index = blockIdx.x; index < nReadIds; index += gridDim.x){
                     const read_number readId = d_readIds[index];
-                    const int length = rs_sequence_lengths[index];
+                    const int length = rs_sequence_lengths[readId];
                     for(int k = threadIdx.x; k < length; k += blockDim.x){
+                        //if(rs_quality_data[size_t(readId) * rs_quality_pitch + k] == '\0'){
+                        //    assert(rs_quality_data[size_t(readId) * rs_quality_pitch + k] != '\0');
+                        //}
+
                         d_quality_data[index * out_quality_pitch + k]
                                 = rs_quality_data[size_t(readId) * rs_quality_pitch + k];
                     }
