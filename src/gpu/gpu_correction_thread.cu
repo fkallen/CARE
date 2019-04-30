@@ -1481,31 +1481,6 @@ namespace gpu{
                     streams[primary_stream_index],
 					batch.kernelLaunchHandle);
 
-
-
-
-		//Determine indices where d_alignment_best_alignment_flags[i] != BestAlignment_t::None. this selects all good alignments
-		//select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
-
-		//Get number of indices per subject by creating histrogram.
-		//The elements d_indices[d_num_indices] to d_indices[n_queries - 1] will be -1.
-		//Thus, they will not be accounted for by the histrogram, since the histrogram bins (d_candidates_per_subject_prefixsum) are >= 0.
-		/*cub::DeviceHistogram::HistogramRange(dataArrays.d_temp_storage,
-		                                    dataArrays.tmp_storage_allocation_size,
-		                                    dataArrays.d_indices,
-		                                    dataArrays.d_indices_per_subject,
-		                                    dataArrays.n_subjects+1,
-		                                    dataArrays.d_candidates_per_subject_prefixsum,
-		                                    dataArrays.n_queries,
-		                                    streams[primary_stream_index]); CUERR;
-
-		   cub::DeviceScan::ExclusiveSum(dataArrays.d_temp_storage,
-		                                dataArrays.tmp_storage_allocation_size,
-		                                dataArrays.d_indices_per_subject,
-		                                dataArrays.d_indices_per_subject_prefixsum,
-		                                dataArrays.n_subjects,
-		                                streams[primary_stream_index]); CUERR;*/
-
 		//choose the most appropriate subset of alignments from the good alignments.
 		//This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
 		call_cuda_filter_alignments_by_mismatchratio_kernel_async(
@@ -1549,10 +1524,10 @@ namespace gpu{
 					streams[primary_stream_index]); CUERR;
 
 		//Make indices_per_subject_prefixsum
-		cub::DeviceScan::ExclusiveSum(dataArrays.d_temp_storage,
+		cub::DeviceScan::InclusiveSum(dataArrays.d_temp_storage,
 					dataArrays.tmp_storage_allocation_size,
 					dataArrays.d_indices_per_subject,
-					dataArrays.d_indices_per_subject_prefixsum,
+					dataArrays.d_indices_per_subject_prefixsum+1,
 					dataArrays.n_subjects,
 					streams[primary_stream_index]); CUERR;
 */
@@ -1568,11 +1543,16 @@ namespace gpu{
                     dataArrays.n_queries,
                     streams[primary_stream_index]); CUERR;
 
+        call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
+                                0,
+                                0,
+                                streams[primary_stream_index]);
+
         //Make indices_per_subject_prefixsum
-        cub::DeviceScan::ExclusiveSum(batch.batchDataDevice.cubTemp.get(),
+        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
                     batch.batchDataDevice.cubTemp.sizeRef(),
                     dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.d_indices_per_subject_prefixsum+1,
                     dataArrays.n_subjects,
                     streams[primary_stream_index]); CUERR;
 
@@ -1869,14 +1849,12 @@ namespace gpu{
             return BatchState::WriteResults;
         }
 
-
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
 
 		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
 
 		if(transFuncData.correctionOptions.useQualityScores) {
 
-			//if(transFuncData.useGpuReadStorage && transFuncData.gpuReadStorage->type == GPUReadStorageType::SequencesAndQualities){
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
 
                 gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
@@ -1900,6 +1878,12 @@ namespace gpu{
                                                                    *dataArrays.h_num_indices,
                                                                    transFuncData.threadOpts.deviceId,
                                                                    streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
+                           dataArrays.qualities_transfer_data_device,
+                           dataArrays.qualities_transfer_data_usable_size,
+                           D2H,
+                           streams[primary_stream_index]); CUERR;
 
                 assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
@@ -1998,6 +1982,8 @@ namespace gpu{
             assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
             cudaEventRecord(events[quality_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+            cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+
             batch.copiedTasks = 0;
             batch.copiedCandidates = 0;
             return BatchState::BuildMSA;
@@ -2061,6 +2047,10 @@ namespace gpu{
 
 			//Determine multiple sequence alignment properties
 
+            //cudaDeviceSynchronize(); CUERR;
+
+            //std::cout << "msa_init" << std::endl;
+
             call_msa_init_kernel_async_exp(
                     dataArrays.d_msa_column_properties,
                     dataArrays.d_alignment_shifts,
@@ -2075,6 +2065,98 @@ namespace gpu{
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
+
+
+            /*cudaMemcpyAsync(dataArrays.h_msa_column_properties,
+                        dataArrays.d_msa_column_properties,
+                        dataArrays.n_subjects * sizeof(MSAColumnProperties),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_alignment_shifts,
+                        dataArrays.d_alignment_shifts,
+                        dataArrays.n_queries * sizeof(int),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+            cudaDeviceSynchronize(); CUERR;
+
+            std::cout << "Columns to check" << std::endl;
+            for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
+                std::cout << batch.tasks[subject_index].readId << " " << dataArrays.h_msa_column_properties[subject_index].columnsToCheck << std::endl;
+
+                const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
+
+                for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
+                    const int index = indices[i];
+                    std::cout << index << " " << dataArrays.h_candidate_sequences_lengths[index] << " " << dataArrays.h_alignment_shifts[index] << std::endl;
+                }
+            }
+
+            for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
+                if(batch.tasks[subject_index].readId == 817 || batch.tasks[subject_index].readId == 830){
+
+                    std::cout << "readId == " << batch.tasks[subject_index].readId << std::endl;
+
+                    int num_indices = dataArrays.h_indices_per_subject[subject_index];
+                    const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
+
+                    std::vector<char> bestCandidateStrings;
+                    bestCandidateStrings.resize(num_indices * transFuncData.maxSequenceLength);
+                    std::vector<char> bestCandidateQualityData;
+                    bestCandidateQualityData.resize(num_indices * dataArrays.quality_pitch);
+                    std::vector<int> bestCandidateLengths(num_indices);
+                    std::vector<int> bestAlignmentShifts(num_indices);
+
+                    for(int i = 0; i < num_indices; i++){
+                        const int index = indices[i];
+
+                        const char* ptr = dataArrays.h_candidate_sequences_data + index * dataArrays.encoded_sequence_pitch;
+                        const int length = dataArrays.h_candidate_sequences_lengths[index];
+                        decode2BitHiLoSequence(&bestCandidateStrings[i * transFuncData.maxSequenceLength],
+                                                (const unsigned int*)ptr,
+                                                length,
+                                                [](auto i){return i;});
+                        std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
+                                  dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
+                                  &bestCandidateQualityData[i * dataArrays.quality_pitch]);
+
+                        std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
+                                dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
+                                std::ostream_iterator<char>(std::cout, "")); std::cout << std::endl;
+
+                        bestCandidateLengths[i] = length;
+                        bestAlignmentShifts[i] = dataArrays.h_alignment_shifts[index];
+                    }
+
+                    std::cout << "sequences" << std::endl;
+                    printSequencesInMSA(std::cout,
+                                        batch.tasks[subject_index].subject_string.c_str(),
+                                        batch.tasks[subject_index].subject_string.length(),
+                                        bestCandidateStrings.data(),
+                                        bestCandidateLengths.data(),
+                                        num_indices,
+                                        bestAlignmentShifts.data(),
+                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
+                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
+                                        dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
+                                        transFuncData.maxSequenceLength);
+
+                    std::cout << "qualities" << std::endl;
+                    printSequencesInMSA(std::cout,
+                                        batch.tasks[subject_index].subject_string.c_str(),
+                                        batch.tasks[subject_index].subject_string.length(),
+                                        dataArrays.h_candidate_qualities,
+                                        bestCandidateLengths.data(),
+                                        num_indices,
+                                        bestAlignmentShifts.data(),
+                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
+                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
+                                        dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
+                                        dataArrays.quality_pitch);
+                    std::cout << "ASDAF"<< std::endl;
+                }
+            }*/
 
             //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
 
