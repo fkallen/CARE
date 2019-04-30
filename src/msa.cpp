@@ -781,20 +781,25 @@ void printSequencesInMSA(std::ostream& out,
             out << " <<";
         }else{
             out << "   ";
-
+            int written = 0;
             for(int i = 0; i < subjectColumnsBegin_incl + get_shift_of_row(sortedrow); i++){
                 std::cout << "0";
+                written++;
             }
 
             for(int i = 0; i < candidateLengths[sortedrow-1]; i++){
                 std::cout << candidates[(sortedrow-1) * candidatesPitch + i];
+                written++;
             }
 
             for(int i = subjectColumnsBegin_incl + get_shift_of_row(sortedrow) + candidateLengths[sortedrow-1]; i < nColumns; i++){
                 std::cout << "0";
+                written++;
             }
 
-            out << "   ";
+            assert(written == nColumns);
+
+            out << "   " << candidateLengths[sortedrow-1] << " " << get_shift_of_row(sortedrow);
         }
 
         out << '\n';
