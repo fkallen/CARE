@@ -1987,6 +1987,303 @@ namespace gpu{
     }
 
 
+
+
+    /*
+        This kernel inspects a msa and identifies candidates which could originate
+        from a different genome region than the subject.
+
+        the output element shouldBeRemoved[i] indicates whether
+        the candidate referred to by d_indices[i] should be removed from the msa
+    */
+
+
+    template<int BLOCKSIZE>
+    __global__
+    void msa_findCandidatesOfDifferentRegion_kernel(bool* __restrict__ d_shouldBeRemoved,
+                                                    const char* __restrict__ d_subject_sequences_data,
+                                                    const char* __restrict__ d_candidate_sequences_data,
+                                                    const int* __restrict__ d_subject_sequences_lengths,
+                                                    const int* __restrict__ d_candidate_sequences_lengths,
+                                                    const int* __restrict__ d_candidates_per_subject_prefixsum,
+                                                    const int* __restrict__ d_alignment_shifts,
+                                                    int n_subjects,
+                                                    int n_candidates,
+                                                    int max_sequence_bytes,
+                                                    size_t encodedsequencepitch,
+                                                    const char* __restrict__ d_consensus,
+                                                    const int* __restrict__ d_counts,
+                                                    const float* __restrict__ d_weights,
+                                                    const MSAColumnProperties* __restrict__ d_msa_column_properties,
+                                                    size_t msa_pitch,
+                                                    size_t msa_weights_pitch,
+                                                    const int* __restrict__ d_indices,
+                                                    const int* __restrict__ d_indices_per_subject,
+                                                    const int* __restrict__ d_indices_per_subject_prefixsum,
+                                                    int dataset_coverage){
+
+        auto getNumBytes = [] (int sequencelength){
+            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
+        };
+
+        auto get = [] (const char* data, int length, int index){
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+    	};
+
+        auto getSubjectPtr = [&] (int subjectIndex){
+            const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
+            return result;
+        };
+
+        auto getCandidatePtr = [&] (int candidateIndex){
+            const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
+            return result;
+        };
+
+        auto getSubjectLength = [&] (int subjectIndex){
+            const int length = d_subject_sequences_lengths[subjectIndex];
+            return length;
+        };
+
+        auto getCandidateLength = [&] (int candidateIndex){
+            const int length = d_candidate_sequences_lengths[candidateIndex];
+            return length;
+        };
+
+        auto is_significant_count = [](int count, int dataset_coverage){
+            if(int(dataset_coverage * 0.3f) <= count)
+                return true;
+            return false;
+        };
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+        const char index_to_base[4]{'A','C','G','T'};
+
+        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+        using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
+
+        __shared__ union{
+            typename BlockReduceBool::TempStorage boolreduce;
+            typename BlockReduceInt2::TempStorage int2reduce;
+        } temp_storage;
+
+        __shared__ bool broadcastbufferbool;
+        __shared__ int broadcastbufferint4[4];
+
+        extern __shared__ unsigned int sharedmemory[];
+
+        for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+
+            const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+            const int myNumIndices = d_indices_per_subject[subjectIndex];
+
+            if(myNumIndices > 0){
+
+                const char* subjectptr = getSubjectPtr(subjectIndex);
+                const int subjectLength = getSubjectLength(subjectIndex);
+
+                const char* myConsensus = d_consensus + subjectIndex * msa_pitch;
+
+                const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+
+                //check if subject and consensus differ at at least one position
+
+                bool hasMismatchToConsensus = false;
+
+                for(int pos = threadIdx.x; pos < subjectLength && !hasMismatchToConsensus; pos += blockDim.x){
+                    const int column = subjectColumnsBegin_incl + pos;
+                    const char consbase = myConsensus[column];
+                    const char subjectbase = get(subjectptr, subjectLength, pos);
+
+                    hasMismatchToConsensus |= (consbase != subjectbase);
+                }
+
+                hasMismatchToConsensus = BlockReduceBool(temp_storage.boolreduce).Reduce(hasMismatchToConsensus, [](auto l, auto r){return l || r;});
+
+                if(threadIdx.x == 0){
+                    broadcastbufferbool = hasMismatchToConsensus;
+                }
+                __syncthreads();
+
+                hasMismatchToConsensus = broadcastbufferbool;
+
+                //if subject and consensus differ at at least one position, check columns in msa
+
+                if(hasMismatchToConsensus){
+                    int col = std::numeric_limits<int>::max();
+                    bool foundColumn = false;
+                    char foundBase = 'F';
+                    int foundBaseIndex = std::numeric_limits<int>::max();
+                    int consindex = std::numeric_limits<int>::max();
+
+                    const int* const myCountsA = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                    const int* const myCountsC = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                    const int* const myCountsG = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                    const int* const myCountsT = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+
+                    for(int columnindex = subjectColumnsBegin_incl + threadIdx.x; columnindex < subjectColumnsEnd_excl && !foundColumn; columnindex += blockDim.x){
+                        int counts[4];
+                        counts[0] = myCountsA[columnindex];
+                        counts[1] = myCountsC[columnindex];
+                        counts[2] = myCountsG[columnindex];
+                        counts[3] = myCountsT[columnindex];
+
+                        const char consbase = myConsensus[columnindex];
+                        consindex = -1;
+
+                        switch(consbase){
+                            case 'A': consindex = 0;break;
+                            case 'C': consindex = 1;break;
+                            case 'G': consindex = 2;break;
+                            case 'T': consindex = 3;break;
+                        }
+
+                        //find out if there is a non-consensus base with significant coverage
+                        int significantBaseIndex = -1;
+
+                        #pragma unroll
+                        for(int i = 0; i < 4; i++){
+                            if(i != consindex){
+                                const bool significant = is_significant_count(counts[i], dataset_coverage);
+                                significantBaseIndex = significant ? i : significantBaseIndex;
+                            }
+                        }
+
+                        if(significantBaseIndex != -1){
+                            foundColumn = true;
+                            col = columnindex;
+                            foundBaseIndex = significantBaseIndex;
+                        }
+                    }
+
+                    int2 packed{col, foundBaseIndex};
+                    //find packed value with smallest col
+                    packed = BlockReduceInt2(temp_storage.int2reduce).Reduce(packed, [](auto l, auto r){
+                        if(l.x < r.x){
+                            return l;
+                        }else{
+                            return r;
+                        }
+                    });
+
+                    if(threadIdx.x == 0){
+                        if(packed.x != std::numeric_limits<int>::max()){
+                            broadcastbufferint4[0] = true;
+                            broadcastbufferint4[1] = packed.x;
+                            broadcastbufferint4[2] = index_to_base[packed.y];
+                            broadcastbufferint4[3] = packed.y;
+                        }else{
+                            broadcastbufferint4[0] = false;
+                        }
+                    }
+
+                    __syncthreads();
+
+                    foundColumn = broadcastbufferint4[0];
+                    col = broadcastbufferint4[1];
+                    foundBase = broadcastbufferint4[2];
+                    foundBaseIndex = broadcastbufferint4[3];
+
+                    if(foundColumn){
+
+                        //compare found base to original base
+                        const char originalbase = get(subjectptr, subjectLength, col - subjectColumnsBegin_incl);
+
+                        int counts[4];
+
+                        counts[0] = myCountsA[col];
+                        counts[1] = myCountsC[col];
+                        counts[2] = myCountsG[col];
+                        counts[3] = myCountsT[col];
+
+                        auto discard_rows = [&](bool keepMatching){
+
+                            int seenCounts[4]{0,0,0,0};
+
+                            const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
+
+                            for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                                const int candidateIndex = myIndices[k];
+                                const char* const candidateptr = getCandidatePtr(candidateIndex);
+                                const int candidateLength = getCandidateLength(candidateIndex);
+                                const int shift = d_alignment_shifts[candidateIndex];
+
+                                //check if row is affected by column col
+                                const int row_begin_incl = subjectColumnsBegin_incl + shift;
+                                const int row_end_excl = row_begin_incl + candidateLength;
+                                const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
+                                const char base = notAffected ? 'F' : get(candidateptr, candidateLength, (col - row_begin_incl));
+
+                                if(base == 'A') seenCounts[0]++;
+                                if(base == 'C') seenCounts[1]++;
+                                if(base == 'G') seenCounts[2]++;
+                                if(base == 'T') seenCounts[3]++;
+
+                                if(notAffected || (!(keepMatching ^ (base == foundBase)))){
+                                    d_shouldBeRemoved[indexoffset + k] = false; //same region
+                                }else{
+                                    d_shouldBeRemoved[indexoffset + k] = true; //different region
+                                }
+                            }
+
+                            if(originalbase == 'A') seenCounts[0]++;
+                            if(originalbase == 'C') seenCounts[1]++;
+                            if(originalbase == 'G') seenCounts[2]++;
+                            if(originalbase == 'T') seenCounts[3]++;
+
+                            assert(seenCounts[0] == counts[0]);
+                            assert(seenCounts[1] == counts[1]);
+                            assert(seenCounts[2] == counts[2]);
+                            assert(seenCounts[3] == counts[3]);
+                        };
+
+
+
+                        if(originalbase == foundBase){
+                            //discard all candidates whose base in column col differs from foundBase
+                            discard_rows(true);
+                        }else{
+                            //discard all candidates whose base in column col matches foundBase
+                            discard_rows(false);
+                        }
+
+                    }else{
+                        //did not find a significant columns
+
+                        //remove no candidate
+                        const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
+
+                        for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                            d_shouldBeRemoved[indexoffset + k] = false;
+                        }
+                    }
+
+                }else{
+                    //no mismatch between consensus and subject
+
+                    //remove no candidate
+                    const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
+
+                    for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                        d_shouldBeRemoved[indexoffset + k] = false;
+                    }
+                }
+            }else{
+                ; //nothing to do if there are no candidates in msa
+            }
+        }
+
+    }
+
+
+
+
+
+
+
+
+
     //####################   KERNEL DISPATCH   ####################
 
 
@@ -3410,154 +3707,121 @@ namespace gpu{
     }
 
 
+    void call_msa_findCandidatesOfDifferentRegion_kernel(
+                bool* d_shouldBeRemoved,
+                const char* d_subject_sequences_data,
+                const char* d_candidate_sequences_data,
+                const int* d_subject_sequences_lengths,
+                const int* d_candidate_sequences_lengths,
+                const int* d_candidates_per_subject_prefixsum,
+                const int* d_alignment_shifts,
+                int n_subjects,
+                int n_candidates,
+                int max_sequence_bytes,
+                size_t encodedsequencepitch,
+                const char* d_consensus,
+                const int* d_counts,
+                const float* d_weights,
+                const MSAColumnProperties* d_msa_column_properties,
+                size_t msa_pitch,
+                size_t msa_weights_pitch,
+                const int* d_indices,
+                const int* d_indices_per_subject,
+                const int* d_indices_per_subject_prefixsum,
+                int dataset_coverage,
+    			cudaStream_t stream,
+    			KernelLaunchHandle& handle){
 
 
+    	const int max_block_size = 256;
+    	const int blocksize = 256;
+    	const std::size_t smem = 0;
 
+    	int max_blocks_per_device = 1;
 
-    template<int blocksize>
-    __global__
-    void minimize_kernel_explicit(){
+    	KernelLaunchConfig kernelLaunchConfig;
+    	kernelLaunchConfig.threads_per_block = blocksize;
+    	kernelLaunchConfig.smem = smem;
 
-        using BlockReduceBool = cub::BlockReduce<bool, blocksize>;
-        using BlockReduceInt = cub::BlockReduce<int, blocksize>;
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAFindCandidatesOfDifferentRegion);
+    	if(iter == handle.kernelPropertiesMap.end()) {
 
-        __shared__ union {
-            typename BlockReduceBool::TempStorage boolreduce;
-            typename BlockReduceInt::TempStorage intreduce;
-        } temp_storage;
+    		std::map<KernelLaunchConfig, KernelProperties> mymap;
 
-        __shared__ int broadcastbuffer[5];
-
-        auto is_significant_count = [](int count, int dataset_coverage)->bool{
-            if(int(dataset_coverage * 0.3f) <= count)
-                return true;
-            return false;
-        };
-
-        auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
-        };
-
-        //find column with a non-consensus base with significant coverage
-        int col = std::numeric_limits<int>::max();
-        bool foundColumn = false;
-        char foundBase = 'F';
-        int foundBaseIndex = 0;
-        int consindex = 0;
-
-        const int dataset_coverage = 0;
-
-        const char* const subject = nullptr;
-        const int subjectLength = 0;
-        const char* const consensus = nullptr;
-
-        const int* const countsA = nullptr;
-        const int* const countsC = nullptr;
-        const int* const countsG = nullptr;
-        const int* const countsT = nullptr;
-
-        const int subjectColumnsBegin_incl = 0;
-        const int subjectColumnsEnd_excl = 0;
-
-        bool identical = true;
-        for(int i = threadIdx.x; i < subjectLength; i += blocksize){
-            identical &= get(subject, subjectLength, i) == consensus[subjectColumnsBegin_incl + i];
-        }
-
-        identical = BlockReduceBool(temp_storage.boolreduce).Reduce(identical, [](bool l, bool r){return l && r;});
-        __syncthreads();
-
-        if(identical){
-            //nothing to do
-        }else{
-            bool foundColumn = false;
-
-            const int loopend = SDIV(subjectColumnsEnd_excl, blocksize) * blocksize;
-
-            /*
-                Determine column in multiple sequence alignment which could contain reads of multiple genomic regions
-            */
-
-            for(int columnIndex = threadIdx.x + subjectColumnsBegin_incl; columnIndex < loopend && !foundColumn; columnIndex += blocksize){
-
-                if(columnIndex < subjectColumnsEnd_excl){
-                    const char indexToBase[4] = {'A', 'C', 'G', 'T'};
-                    int counts[4];
-
-                    counts[0] = countsA[columnIndex];
-                    counts[1] = countsC[columnIndex];
-                    counts[2] = countsG[columnIndex];
-                    counts[3] = countsT[columnIndex];
-
-                    char cons = consensus[columnIndex];
-                    int consensuscount = 0;
-                    consindex = -1;
-
-                    #pragma unroll
-                    for(int i = 0; i < 4; i++){
-                        if(cons == indexToBase[i]){
-                            consensuscount = counts[i];
-                            consindex = i;
-                        }
-                    }
-
-                    const char originalbase = subject[columnIndex - subjectColumnsBegin_incl];
-
-                    //find out if there is a non-consensus base with significant coverage
-                    int significantBaseIndex = -1;
-
-                    #pragma unroll
-                    for(int i = 0; i < 4; i++){
-                        if(i != consindex){
-                            bool significant = is_significant_count(counts[i], dataset_coverage);
-
-                            bool process = significant;
-
-                            significantBaseIndex = process ? i : significantBaseIndex;
-                        }
-                    }
-
-                    if(significantBaseIndex != -1){
-                        foundColumn = true;
-                        col = columnIndex;
-                        foundBase = indexToBase[significantBaseIndex];
-                        foundBaseIndex = significantBaseIndex;
-                    }
-                }
-
-                //if there is a column with significantBaseIndex != -1
-                //broadcast the values of the smallest column which satisfies this condition
-
-                int targetcol = BlockReduceInt(temp_storage.intreduce).Reduce(col, cub::Min{});
-
-                if(threadIdx.x == 0){
-                    broadcastbuffer[0] = targetcol;
-                }
-                __syncthreads();
-
-                targetcol = broadcastbuffer[0];
-
-                if(targetcol != std::numeric_limits<int>::max()){
-                    if(targetcol == col){
-                        broadcastbuffer[1] = foundColumn;
-                        broadcastbuffer[2] = col;
-                        broadcastbuffer[3] = foundBase;
-                        broadcastbuffer[4] = foundBaseIndex;
-                    }
-
-                    __syncthreads();
-
-                    foundColumn = broadcastbuffer[1];
-                    col = broadcastbuffer[2];
-                    foundBase = broadcastbuffer[3];
-                    foundBaseIndex = broadcastbuffer[4];
-                }
-
-
+    	    #define getProp(blocksize) { \
+            		KernelLaunchConfig kernelLaunchConfig; \
+            		kernelLaunchConfig.threads_per_block = (blocksize); \
+            		kernelLaunchConfig.smem = 0; \
+            		KernelProperties kernelProperties; \
+            		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+            					msa_findCandidatesOfDifferentRegion_kernel<(blocksize)>, \
+            					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+            		mymap[kernelLaunchConfig] = kernelProperties; \
             }
-        }
 
+    		getProp(32);
+    		getProp(64);
+    		getProp(96);
+    		getProp(128);
+    		getProp(160);
+    		getProp(192);
+    		getProp(224);
+    		getProp(256);
 
+    		const auto& kernelProperties = mymap[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+    		handle.kernelPropertiesMap[KernelId::MSAFindCandidatesOfDifferentRegion] = std::move(mymap);
+
+    	    #undef getProp
+    	}else{
+    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    	}
+
+    	dim3 block(blocksize, 1, 1);
+    	dim3 grid(std::min(max_blocks_per_device, n_subjects));
+
+    		#define mycall(blocksize) msa_findCandidatesOfDifferentRegion_kernel<(blocksize)> \
+    	        <<<grid, block, 0, stream>>>( \
+                    d_shouldBeRemoved, \
+                    d_subject_sequences_data, \
+                    d_candidate_sequences_data, \
+                    d_subject_sequences_lengths, \
+                    d_candidate_sequences_lengths, \
+                    d_candidates_per_subject_prefixsum, \
+                    d_alignment_shifts, \
+                    n_subjects, \
+                    n_candidates, \
+                    max_sequence_bytes, \
+                    encodedsequencepitch, \
+                    d_consensus, \
+                    d_counts, \
+                    d_weights, \
+                    d_msa_column_properties, \
+                    msa_pitch, \
+                    msa_weights_pitch, \
+                    d_indices, \
+                    d_indices_per_subject, \
+                    d_indices_per_subject_prefixsum, \
+                    dataset_coverage); CUERR;
+
+    	assert(blocksize > 0 && blocksize <= max_block_size);
+
+    	switch(blocksize) {
+    	case 32: mycall(32); break;
+    	case 64: mycall(64); break;
+    	case 96: mycall(96); break;
+    	case 128: mycall(128); break;
+    	case 160: mycall(160); break;
+    	case 192: mycall(192); break;
+    	case 224: mycall(224); break;
+    	case 256: mycall(256); break;
+    	default: mycall(256); break;
+    	}
+
+    		#undef mycall
     }
 
 
@@ -3590,178 +3854,6 @@ namespace gpu{
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#if 0
-    __global__
-    void msa_minimize_kernel(
-                            char* __restrict__ d_multiple_sequence_alignments,
-                            float* __restrict__ d_multiple_sequence_alignment_weights,
-                            const char* __restrict__ d_consensus,
-                            const float* __restrict__ d_support,
-                            const int* __restrict__ d_coverage,
-                            const float* __restrict__ d_origWeights,
-                            const int* __restrict__ d_origCoverages,
-                            const int* __restrict__ countsA,
-                            const int* __restrict__ countsC,
-                            const int* __restrict__ countsG,
-                            const int* __restrict__ countsT,
-                            const float* __restrict__ weightsA,
-                            const float* __restrict__ weightsC,
-                            const float* __restrict__ weightsG,
-                            const float* __restrict__ weightsT,
-                            const MSAColumnProperties* __restrict__ d_msa_column_properties,
-                            const int* __restrict__ d_indices_per_subject,
-                            const int* __restrict__ d_indices_per_subject_prefixsum,
-                            int n_subjects,
-                            int n_queries,
-                            const int* __restrict__ d_num_indices,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
-                            int msa_max_column_count,
-                            int blocks_per_msa){
-
-        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-
-        const int localBlockId = blockIdx.x % blocks_per_msa;
-        //const int n_indices = *d_num_indices;
-
-        //process multiple sequence alignment of each subject
-        //for each column in msa, find consensus and support
-        for(unsigned subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
-            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-            const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
-
-            //number of rows in multiple sequence alignment for subject[subjectIndex]
-            const int msa_rows = 1 + d_indices_per_subject[subjectIndex];
-
-            const unsigned offset1 = msa_pitch * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
-            const unsigned offset2 = msa_weights_pitch_floats * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
-
-            const char* const my_multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
-            const float* const my_multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
-
-            const char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
-            const float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
-            const int* const my_coverage = d_coverage + subjectIndex * msa_weights_pitch_floats;
-
-            const float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
-            const int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
-
-            int col = 0;
-            bool foundColumn = false;
-            char foundBase = 'F';
-            int foundBaseIndex = 0;
-            int consindex = 0;
-
-            for(int columnindex = subjectColumnsBegin_incl + blockIdx.x * blockDim.x + threadIdx.x; columnindex < subjectColumnsEnd_excl && !foundColumn; columnindex += blockDim.x){
-
-                int counts[4];
-                int weights[4];
-                counts[0] = countsA[columnindex];
-                counts[1] = countsC[columnindex];
-                counts[2] = countsG[columnindex];
-                counts[3] = countsT[columnindex];
-                weights[0] = weightsA[columnindex];
-                weights[1] = weightsC[columnindex];
-                weights[2] = weightsG[columnindex];
-                weights[3] = weightsT[columnindex];
-
-                int columnCoverage = 0;
-
-                for(int row = 0; row < msa_rows; ++row){
-                    const char base = my_multiple_sequence_alignment[row * msa_pitch + column];
-                    const float weight = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + column];
-
-                    //if(!(base == 'A' || base == 'C' || base == 'G' || base == 'T')){
-                    //	assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
-                    //}
-
-                    Aw += (base == 'A' ? weight : 0);
-                    Cw += (base == 'C' ? weight : 0);
-                    Gw += (base == 'G' ? weight : 0);
-                    Tw += (base == 'T' ? weight : 0);
-
-                    As += (base == 'A');
-                    Cs += (base == 'C');
-                    Gs += (base == 'G');
-                    Ts += (base == 'T');
-
-                    columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
-                }
-
-                if(columnCoverage <= 0){
-                    //assert(columnCoverage > 0);
-                }
-
-                const float columnWeight = Aw + Cw + Gw + Tw;
-                float consWeight = Aw;
-                char cons = 'A';
-
-                cons = Cw > consWeight ? 'C' : cons;
-                consWeight = Cw > consWeight ? Cw : consWeight;
-
-                cons = Gw > consWeight ? 'G' : cons;
-                consWeight = Gw > consWeight ? Gw : consWeight;
-
-                cons = Tw > consWeight ? 'T' : cons;
-                consWeight = Tw > consWeight ? Tw : consWeight;
-
-                char consByCount = 'A';
-                int consByCountCount = As;
-                consByCount = Cs > consByCountCount ? 'C' : cons;
-                consByCountCount = Cs > consByCountCount ? Cs : consWeight;
-
-                consByCount = Gs > consByCountCount ? 'G' : cons;
-                consByCountCount = Gs > consByCountCount ? Gs : consWeight;
-
-                consByCount = Ts > consByCountCount ? 'T' : cons;
-                consByCountCount = Ts > consByCountCount ? Ts : consWeight;
-
-                if(consByCount != cons){
-                    printf("cons differ\n");
-                }
-
-                my_consensus[column] = cons;
-                my_support[column] = consWeight / columnWeight;
-                //printf("subject %d, column %d, support %f\n", subjectIndex, column, my_support[column]);
-                my_coverage[column] = columnCoverage;
-
-                if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                    const char subjectbase = my_multiple_sequence_alignment[column];
-                    if(subjectbase == 'A'){
-                        my_orig_weights[column] = Aw;
-                        my_orig_coverage[column] = As;
-                    }else if(subjectbase == 'C'){
-                        my_orig_weights[column] = Cw;
-                        my_orig_coverage[column] = Cs;
-                    }else if(subjectbase == 'G'){
-                        my_orig_weights[column] = Gw;
-                        my_orig_coverage[column] = Gs;
-                    }else if(subjectbase == 'T'){
-                        my_orig_weights[column] = Tw;
-                        my_orig_coverage[column] = Ts;
-                    }
-                }
-            }
-        }
-    }
-#endif
 
 
 

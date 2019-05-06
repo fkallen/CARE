@@ -37,6 +37,7 @@ enum class KernelId {
     MSAAddSequencesImplicitShared,
     MSAFindConsensusImplicit,
     MSACorrectSubjectImplicit,
+    MSAFindCandidatesOfDifferentRegion,
 };
 
 struct KernelLaunchConfig {
@@ -423,7 +424,30 @@ void call_msa_correct_candidates_kernel_async_exp(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-
+void call_msa_findCandidatesOfDifferentRegion_kernel(
+            bool* d_shouldBeRemoved,
+            const char* d_subject_sequences_data,
+            const char* d_candidate_sequences_data,
+            const int* d_subject_sequences_lengths,
+            const int* d_candidate_sequences_lengths,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_alignment_shifts,
+            int n_subjects,
+            int n_candidates,
+            int max_sequence_bytes,
+            size_t encodedsequencepitch,
+            const char* d_consensus,
+            const int* d_counts,
+            const float* d_weights,
+            const MSAColumnProperties* d_msa_column_properties,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_indices_per_subject_prefixsum,
+            int dataset_coverage,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
 
 #endif //ifdef __NVCC__
 
