@@ -146,6 +146,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 		StartAlignment,
 		CopyQualities,
 		BuildMSA,
+        ImproveMSA,
 		StartClassicCorrection,
 		StartForestCorrection,
         StartConvnetCorrection,
@@ -389,6 +390,12 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData);
 
+    static BatchState state_improvemsa_func(Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const TransitionFunctionData& transFuncData);
+
 	static BatchState state_startclassiccorrection_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
@@ -406,7 +413,7 @@ public:
 				bool canLaunchKernel,
 				bool isPausable,
 				const TransitionFunctionData& transFuncData);
-                
+
     static BatchState state_startconvnetcorrection_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,

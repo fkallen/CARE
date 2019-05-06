@@ -31,6 +31,8 @@
 
 #ifdef __NVCC__
 #include <cub/cub.cuh>
+#include <cub/util_allocator.cuh>
+
 #include <thrust/inner_product.h>
 #include <thrust/iterator/counting_iterator.h>
 #endif
@@ -52,6 +54,12 @@ constexpr int sideBatchStepsPerWaitIter = 1;
 
 namespace care{
 namespace gpu{
+
+
+    cub::CachingDeviceAllocator cubCachingAllocator(true); // Caching allocator for device memory
+
+
+
 
     bool ErrorCorrectionThreadOnlyGPU::Batch::isWaiting() const{
         #ifdef USE_WAIT_FLAGS
@@ -2033,170 +2041,190 @@ namespace gpu{
         }
 
 
+		cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+
+		// coverage is always >= 1
+		const float min_coverage_threshold = std::max(1.0f,
+					transFuncData.m_coverage / 6.0f * transFuncData.estimatedCoverage);
+
+		const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
+
+		//Determine multiple sequence alignment properties
+
+        //std::cout << "msa_init" << std::endl;
+
+        call_msa_init_kernel_async_exp(
+                dataArrays.d_msa_column_properties,
+                dataArrays.d_alignment_shifts,
+                dataArrays.d_alignment_best_alignment_flags,
+                dataArrays.d_subject_sequences_lengths,
+                dataArrays.d_candidate_sequences_lengths,
+                dataArrays.d_indices,
+                dataArrays.d_indices_per_subject,
+                dataArrays.d_indices_per_subject_prefixsum,
+                dataArrays.n_subjects,
+                dataArrays.n_queries,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle);
 
 
-		if(!canLaunchKernel) {
-			return BatchState::BuildMSA;
-		}else{
 
-			cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
-
-			// coverage is always >= 1
-			const float min_coverage_threshold = std::max(1.0f,
-						transFuncData.m_coverage / 6.0f * transFuncData.estimatedCoverage);
-
-			const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
-
-			//Determine multiple sequence alignment properties
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            //std::cout << "msa_init" << std::endl;
-
-            call_msa_init_kernel_async_exp(
+        /*cudaMemcpyAsync(dataArrays.h_msa_column_properties,
                     dataArrays.d_msa_column_properties,
+                    dataArrays.n_subjects * sizeof(MSAColumnProperties),
+                    D2H,
+                    streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_alignment_shifts,
                     dataArrays.d_alignment_shifts,
-                    dataArrays.d_alignment_best_alignment_flags,
-                    dataArrays.d_subject_sequences_lengths,
-                    dataArrays.d_candidate_sequences_lengths,
-                    dataArrays.d_indices,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.n_subjects,
-                    dataArrays.n_queries,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
+                    dataArrays.n_queries * sizeof(int),
+                    D2H,
+                    streams[primary_stream_index]); CUERR;
 
+        cudaDeviceSynchronize(); CUERR;
 
+        std::cout << "Columns to check" << std::endl;
+        for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
+            std::cout << batch.tasks[subject_index].readId << " " << dataArrays.h_msa_column_properties[subject_index].columnsToCheck << std::endl;
 
-            /*cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                        dataArrays.d_msa_column_properties,
-                        dataArrays.n_subjects * sizeof(MSAColumnProperties),
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
+            const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
-            cudaMemcpyAsync(dataArrays.h_alignment_shifts,
-                        dataArrays.d_alignment_shifts,
-                        dataArrays.n_queries * sizeof(int),
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
+            for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
+                const int index = indices[i];
+                std::cout << index << " " << dataArrays.h_candidate_sequences_lengths[index] << " " << dataArrays.h_alignment_shifts[index] << std::endl;
+            }
+        }
 
-            cudaDeviceSynchronize(); CUERR;
+        for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
+            if(batch.tasks[subject_index].readId == 817 || batch.tasks[subject_index].readId == 830){
 
-            std::cout << "Columns to check" << std::endl;
-            for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
-                std::cout << batch.tasks[subject_index].readId << " " << dataArrays.h_msa_column_properties[subject_index].columnsToCheck << std::endl;
+                std::cout << "readId == " << batch.tasks[subject_index].readId << std::endl;
 
+                int num_indices = dataArrays.h_indices_per_subject[subject_index];
                 const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
-                for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
+                std::vector<char> bestCandidateStrings;
+                bestCandidateStrings.resize(num_indices * transFuncData.maxSequenceLength);
+                std::vector<char> bestCandidateQualityData;
+                bestCandidateQualityData.resize(num_indices * dataArrays.quality_pitch);
+                std::vector<int> bestCandidateLengths(num_indices);
+                std::vector<int> bestAlignmentShifts(num_indices);
+
+                for(int i = 0; i < num_indices; i++){
                     const int index = indices[i];
-                    std::cout << index << " " << dataArrays.h_candidate_sequences_lengths[index] << " " << dataArrays.h_alignment_shifts[index] << std::endl;
+
+                    const char* ptr = dataArrays.h_candidate_sequences_data + index * dataArrays.encoded_sequence_pitch;
+                    const int length = dataArrays.h_candidate_sequences_lengths[index];
+                    decode2BitHiLoSequence(&bestCandidateStrings[i * transFuncData.maxSequenceLength],
+                                            (const unsigned int*)ptr,
+                                            length,
+                                            [](auto i){return i;});
+                    std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
+                              dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
+                              &bestCandidateQualityData[i * dataArrays.quality_pitch]);
+
+                    std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
+                            dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
+                            std::ostream_iterator<char>(std::cout, "")); std::cout << std::endl;
+
+                    bestCandidateLengths[i] = length;
+                    bestAlignmentShifts[i] = dataArrays.h_alignment_shifts[index];
                 }
+
+                std::cout << "sequences" << std::endl;
+                printSequencesInMSA(std::cout,
+                                    batch.tasks[subject_index].subject_string.c_str(),
+                                    batch.tasks[subject_index].subject_string.length(),
+                                    bestCandidateStrings.data(),
+                                    bestCandidateLengths.data(),
+                                    num_indices,
+                                    bestAlignmentShifts.data(),
+                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
+                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
+                                    dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
+                                    transFuncData.maxSequenceLength);
+
+                std::cout << "qualities" << std::endl;
+                printSequencesInMSA(std::cout,
+                                    batch.tasks[subject_index].subject_string.c_str(),
+                                    batch.tasks[subject_index].subject_string.length(),
+                                    dataArrays.h_candidate_qualities,
+                                    bestCandidateLengths.data(),
+                                    num_indices,
+                                    bestAlignmentShifts.data(),
+                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
+                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
+                                    dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
+                                    dataArrays.quality_pitch);
+                std::cout << "ASDAF"<< std::endl;
             }
+        }*/
 
-            for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
-                if(batch.tasks[subject_index].readId == 817 || batch.tasks[subject_index].readId == 830){
+        //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
 
-                    std::cout << "readId == " << batch.tasks[subject_index].readId << std::endl;
+        auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
+            return SDIV(indices_for_subject, msa_add_sequences_kernel_implicit_shared_blocksize);
+        };
+        cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
+            d_blocksPerSubject(dataArrays.d_indices_per_subject,
+                          getBlocksPerSubject);
 
-                    int num_indices = dataArrays.h_indices_per_subject[subject_index];
-                    const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
-
-                    std::vector<char> bestCandidateStrings;
-                    bestCandidateStrings.resize(num_indices * transFuncData.maxSequenceLength);
-                    std::vector<char> bestCandidateQualityData;
-                    bestCandidateQualityData.resize(num_indices * dataArrays.quality_pitch);
-                    std::vector<int> bestCandidateLengths(num_indices);
-                    std::vector<int> bestAlignmentShifts(num_indices);
-
-                    for(int i = 0; i < num_indices; i++){
-                        const int index = indices[i];
-
-                        const char* ptr = dataArrays.h_candidate_sequences_data + index * dataArrays.encoded_sequence_pitch;
-                        const int length = dataArrays.h_candidate_sequences_lengths[index];
-                        decode2BitHiLoSequence(&bestCandidateStrings[i * transFuncData.maxSequenceLength],
-                                                (const unsigned int*)ptr,
-                                                length,
-                                                [](auto i){return i;});
-                        std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
-                                  dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
-                                  &bestCandidateQualityData[i * dataArrays.quality_pitch]);
-
-                        std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
-                                dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
-                                std::ostream_iterator<char>(std::cout, "")); std::cout << std::endl;
-
-                        bestCandidateLengths[i] = length;
-                        bestAlignmentShifts[i] = dataArrays.h_alignment_shifts[index];
-                    }
-
-                    std::cout << "sequences" << std::endl;
-                    printSequencesInMSA(std::cout,
-                                        batch.tasks[subject_index].subject_string.c_str(),
-                                        batch.tasks[subject_index].subject_string.length(),
-                                        bestCandidateStrings.data(),
-                                        bestCandidateLengths.data(),
-                                        num_indices,
-                                        bestAlignmentShifts.data(),
-                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
-                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
-                                        dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
-                                        transFuncData.maxSequenceLength);
-
-                    std::cout << "qualities" << std::endl;
-                    printSequencesInMSA(std::cout,
-                                        batch.tasks[subject_index].subject_string.c_str(),
-                                        batch.tasks[subject_index].subject_string.length(),
-                                        dataArrays.h_candidate_qualities,
-                                        bestCandidateLengths.data(),
-                                        num_indices,
-                                        bestAlignmentShifts.data(),
-                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
-                                        dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
-                                        dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
-                                        dataArrays.quality_pitch);
-                    std::cout << "ASDAF"<< std::endl;
-                }
-            }*/
-
-            //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
-
-            auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
-                return SDIV(indices_for_subject, msa_add_sequences_kernel_implicit_shared_blocksize);
-            };
-            cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
-                d_blocksPerSubject(dataArrays.d_indices_per_subject,
-                              getBlocksPerSubject);
+        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    d_blocksPerSubject,
+                    dataArrays.d_tiles_per_subject_prefixsum+1,
+                    dataArrays.n_subjects,
+                    streams[primary_stream_index]); CUERR;
 
 
-            /*
-            cub::DeviceScan::InclusiveSum(dataArrays.d_temp_storage,
-    					dataArrays.tmp_storage_allocation_size,
-    					d_blocksPerSubject,
-    					dataArrays.d_tiles_per_subject_prefixsum+1,
-    					dataArrays.n_subjects,
-    					streams[primary_stream_index]); CUERR;
-*/
-
-            cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                        batch.batchDataDevice.cubTemp.sizeRef(),
-                        d_blocksPerSubject,
-                        dataArrays.d_tiles_per_subject_prefixsum+1,
-                        dataArrays.n_subjects,
-                        streams[primary_stream_index]); CUERR;
-
-
-            call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
-                                    0,
-                                    0,
-                                    streams[primary_stream_index]);
+        call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
+                                0,
+                                0,
+                                streams[primary_stream_index]);
 
 #ifndef MSA_IMPLICIT
 
-            call_msa_add_sequences_kernel_exp_async(
-                    dataArrays.d_multiple_sequence_alignments,
-                    dataArrays.d_multiple_sequence_alignment_weights,
+        call_msa_add_sequences_kernel_exp_async(
+                dataArrays.d_multiple_sequence_alignments,
+                dataArrays.d_multiple_sequence_alignment_weights,
+                dataArrays.d_alignment_shifts,
+                dataArrays.d_alignment_best_alignment_flags,
+                dataArrays.d_alignment_overlaps,
+                dataArrays.d_alignment_nOps,
+                dataArrays.d_subject_sequences_data,
+                dataArrays.d_candidate_sequences_data,
+                dataArrays.d_subject_sequences_lengths,
+                dataArrays.d_candidate_sequences_lengths,
+                dataArrays.d_subject_qualities,
+                dataArrays.d_candidate_qualities,
+                dataArrays.d_msa_column_properties,
+                dataArrays.d_candidates_per_subject_prefixsum,
+                dataArrays.d_indices,
+                dataArrays.d_indices_per_subject,
+                dataArrays.d_indices_per_subject_prefixsum,
+                dataArrays.n_subjects,
+                dataArrays.n_queries,
+                dataArrays.h_num_indices,
+                dataArrays.d_num_indices,
+                transFuncData.correctionOptions.useQualityScores,
+                desiredAlignmentMaxErrorRate,
+                dataArrays.maximum_sequence_length,
+                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                dataArrays.encoded_sequence_pitch,
+                dataArrays.quality_pitch,
+                dataArrays.msa_pitch,
+                dataArrays.msa_weights_pitch,
+                streams[primary_stream_index],
+                batch.kernelLaunchHandle);
+
+#else
+
+        call_msa_add_sequences_kernel_implicit_async(
+                    dataArrays.d_counts,
+                    dataArrays.d_weights,
+                    dataArrays.d_coverage,
+                    dataArrays.d_origWeights,
+                    dataArrays.d_origCoverages,
                     dataArrays.d_alignment_shifts,
                     dataArrays.d_alignment_best_alignment_flags,
                     dataArrays.d_alignment_overlaps,
@@ -2212,6 +2240,7 @@ namespace gpu{
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.d_tiles_per_subject_prefixsum,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.h_num_indices,
@@ -2227,172 +2256,137 @@ namespace gpu{
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
-#else
-
-            call_msa_add_sequences_kernel_implicit_async(
-                        dataArrays.d_counts,
-                        dataArrays.d_weights,
-                        dataArrays.d_coverage,
-                        dataArrays.d_origWeights,
-                        dataArrays.d_origCoverages,
-                        dataArrays.d_alignment_shifts,
-                        dataArrays.d_alignment_best_alignment_flags,
-                        dataArrays.d_alignment_overlaps,
-                        dataArrays.d_alignment_nOps,
-                        dataArrays.d_subject_sequences_data,
-                        dataArrays.d_candidate_sequences_data,
-                        dataArrays.d_subject_sequences_lengths,
-                        dataArrays.d_candidate_sequences_lengths,
-                        dataArrays.d_subject_qualities,
-                        dataArrays.d_candidate_qualities,
-                        dataArrays.d_msa_column_properties,
-                        dataArrays.d_candidates_per_subject_prefixsum,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices_per_subject,
-                        dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.d_tiles_per_subject_prefixsum,
-                        dataArrays.n_subjects,
-                        dataArrays.n_queries,
-                        dataArrays.h_num_indices,
-                        dataArrays.d_num_indices,
-                        transFuncData.correctionOptions.useQualityScores,
-                        desiredAlignmentMaxErrorRate,
-                        dataArrays.maximum_sequence_length,
-                        sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                        dataArrays.encoded_sequence_pitch,
-                        dataArrays.quality_pitch,
-                        dataArrays.msa_pitch,
-                        dataArrays.msa_weights_pitch,
-                        streams[primary_stream_index],
-                        batch.kernelLaunchHandle);
-
 #endif
 
 #ifndef MSA_IMPLICIT
 
-			call_msa_find_consensus_kernel_async(
-						dataArrays.d_consensus,
-						dataArrays.d_support,
-						dataArrays.d_coverage,
-						dataArrays.d_origWeights,
-						dataArrays.d_origCoverages,
-                        dataArrays.d_counts,
-                        dataArrays.d_weights,
-						dataArrays.d_multiple_sequence_alignments,
-						dataArrays.d_multiple_sequence_alignment_weights,
-						dataArrays.d_msa_column_properties,
-						dataArrays.d_candidates_per_subject_prefixsum,
-						dataArrays.d_indices_per_subject,
-						dataArrays.d_indices_per_subject_prefixsum,
-						dataArrays.n_subjects,
-						dataArrays.n_queries,
-						dataArrays.d_num_indices,
-						dataArrays.msa_pitch,
-						dataArrays.msa_weights_pitch,
-						3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,
-						streams[primary_stream_index],
-						batch.kernelLaunchHandle);
+		call_msa_find_consensus_kernel_async(
+					dataArrays.d_consensus,
+					dataArrays.d_support,
+					dataArrays.d_coverage,
+					dataArrays.d_origWeights,
+					dataArrays.d_origCoverages,
+                    dataArrays.d_counts,
+                    dataArrays.d_weights,
+					dataArrays.d_multiple_sequence_alignments,
+					dataArrays.d_multiple_sequence_alignment_weights,
+					dataArrays.d_msa_column_properties,
+					dataArrays.d_candidates_per_subject_prefixsum,
+					dataArrays.d_indices_per_subject,
+					dataArrays.d_indices_per_subject_prefixsum,
+					dataArrays.n_subjects,
+					dataArrays.n_queries,
+					dataArrays.d_num_indices,
+					dataArrays.msa_pitch,
+					dataArrays.msa_weights_pitch,
+					3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,
+					streams[primary_stream_index],
+					batch.kernelLaunchHandle);
 #else
 
-            call_msa_find_consensus_implicit_kernel_async(
-                        dataArrays.d_counts,
-                        dataArrays.d_weights,
+        call_msa_find_consensus_implicit_kernel_async(
+                    dataArrays.d_counts,
+                    dataArrays.d_weights,
+                    dataArrays.d_consensus,
+                    dataArrays.d_support,
+                    dataArrays.d_coverage,
+                    dataArrays.d_origWeights,
+                    dataArrays.d_origCoverages,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_msa_column_properties,
+                    dataArrays.n_subjects,
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.msa_pitch,
+                    dataArrays.msa_weights_pitch,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);
+
+#endif
+
+        assert(cudaSuccess == cudaEventQuery(events[msa_build_finished_event_index])); CUERR;
+
+        cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
+
+        if(transFuncData.correctionOptions.extractFeatures || transFuncData.correctionOptions.correctionType != CorrectionType::Classic) {
+
+            cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_consensus,
                         dataArrays.d_consensus,
+                        dataArrays.n_subjects * dataArrays.msa_pitch,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_support,
                         dataArrays.d_support,
+                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_coverage,
                         dataArrays.d_coverage,
-                        dataArrays.d_origWeights,
+                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_origCoverages,
                         dataArrays.d_origCoverages,
-                        dataArrays.d_subject_sequences_data,
+                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+            /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignment_weights,
+                        dataArrays.d_multiple_sequence_alignment_weights,
+                        (dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_weights_pitch,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;*/
+            /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignments,
+                        dataArrays.d_multiple_sequence_alignments,
+                        (dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_pitch,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;*/
+            cudaMemcpyAsync(dataArrays.h_msa_column_properties,
                         dataArrays.d_msa_column_properties,
-                        dataArrays.n_subjects,
-                        dataArrays.encoded_sequence_pitch,
-                        dataArrays.msa_pitch,
-                        dataArrays.msa_weights_pitch,
-                        streams[primary_stream_index],
-                        batch.kernelLaunchHandle);
+                        dataArrays.n_subjects * sizeof(MSAColumnProperties),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
 
-#endif
-			assert(cudaSuccess == cudaEventQuery(events[msa_build_finished_event_index])); CUERR;
+            cudaMemcpyAsync(dataArrays.h_counts,
+                        dataArrays.d_counts,
+                        dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
 
-			cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_weights,
+                        dataArrays.d_weights,
+                        dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
 
-			if(transFuncData.correctionOptions.extractFeatures || transFuncData.correctionOptions.correctionType != CorrectionType::Classic) {
+            cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-				cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
+        #ifdef USE_WAIT_FLAGS
+            //batch.addWaitSignal(BatchState::ImproveMSA, streams[secondary_stream_index]);
 
-				cudaMemcpyAsync(dataArrays.h_consensus,
-							dataArrays.d_consensus,
-							dataArrays.n_subjects * dataArrays.msa_pitch,
-							D2H,
-							streams[secondary_stream_index]); CUERR;
-				cudaMemcpyAsync(dataArrays.h_support,
-							dataArrays.d_support,
-							dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-							D2H,
-							streams[secondary_stream_index]); CUERR;
-				cudaMemcpyAsync(dataArrays.h_coverage,
-							dataArrays.d_coverage,
-							dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-							D2H,
-							streams[secondary_stream_index]); CUERR;
-				cudaMemcpyAsync(dataArrays.h_origCoverages,
-							dataArrays.d_origCoverages,
-							dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-							D2H,
-							streams[secondary_stream_index]); CUERR;
-                /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignment_weights,
-							dataArrays.d_multiple_sequence_alignment_weights,
-							(dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_weights_pitch,
-							D2H,
-							streams[secondary_stream_index]); CUERR;*/
-                /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignments,
-							dataArrays.d_multiple_sequence_alignments,
-							(dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_pitch,
-							D2H,
-							streams[secondary_stream_index]); CUERR;*/
-				cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-							dataArrays.d_msa_column_properties,
-							dataArrays.n_subjects * sizeof(MSAColumnProperties),
-							D2H,
-							streams[secondary_stream_index]); CUERR;
+            batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
+            batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
+            batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
+        #endif
 
-                cudaMemcpyAsync(dataArrays.h_counts,
-							dataArrays.d_counts,
-							dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
-							D2H,
-							streams[secondary_stream_index]); CUERR;
+        }
 
-                cudaMemcpyAsync(dataArrays.h_weights,
-							dataArrays.d_weights,
-							dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
-							D2H,
-							streams[secondary_stream_index]); CUERR;
-
-				cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-#ifdef USE_WAIT_FLAGS
-                batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
-                batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
-                batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
-#endif
-
-			}
-
-            if(transFuncData.correctionOptions.extractFeatures){
-                return BatchState::WriteFeatures;
-            }else{
-                switch(transFuncData.correctionOptions.correctionType){
-                case CorrectionType::Classic:
-                    return BatchState::StartClassicCorrection;
-    			case CorrectionType::Forest:
-    				return BatchState::StartForestCorrection;
-                case CorrectionType::Convnet:
-                    return BatchState::StartConvnetCorrection;
-                default:
-                    return BatchState::StartClassicCorrection;
-    			}
+        if(transFuncData.correctionOptions.extractFeatures){
+            return BatchState::WriteFeatures;
+        }else{
+            switch(transFuncData.correctionOptions.correctionType){
+            case CorrectionType::Classic:
+                return BatchState::StartClassicCorrection;
+            case CorrectionType::Forest:
+                return BatchState::StartForestCorrection;
+            case CorrectionType::Convnet:
+                return BatchState::StartConvnetCorrection;
+            default:
+                return BatchState::StartClassicCorrection;
             }
-		}
+        }
+
+        //return BatchState::ImproveMSA;
 	}
 
     ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_improvemsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
@@ -2424,6 +2418,97 @@ namespace gpu{
             return expectedState;
         }
 #endif
+
+
+        DataArrays& dataArrays = *batch.dataArrays;
+
+
+        bool* d_shouldBeRemoved;
+        int* d_newIndices;
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_shouldBeRemoved, sizeof(bool) * dataArrays.n_queries, streams[primary_stream_index]);
+        cubCachingAllocator.DeviceAllocate((void**)&d_newIndices, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]);
+
+        call_msa_findCandidatesOfDifferentRegion_kernel(
+                    d_shouldBeRemoved,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_candidate_sequences_data,
+                    dataArrays.d_subject_sequences_lengths,
+                    dataArrays.d_candidate_sequences_lengths,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    dataArrays.d_alignment_shifts,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.d_consensus,
+                    dataArrays.d_counts,
+                    dataArrays.d_weights,
+                    dataArrays.d_msa_column_properties,
+                    dataArrays.msa_pitch,
+                    dataArrays.msa_weights_pitch,
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum,
+                    transFuncData.estimatedCoverage,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);  CUERR;
+
+        call_fill_kernel_async(d_newIndices, dataArrays.n_queries, -1, streams[primary_stream_index]);
+
+        cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices,
+                    d_shouldBeRemoved,
+                    d_newIndices,
+                    dataArrays.d_num_indices,
+                    *dataArrays.h_num_indices,
+                    streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.d_indices, d_newIndices, sizeof(int) * dataArrays.n_queries, D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
+
+        cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.n_subjects+1,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    //*dataArrays.h_num_indices,
+                    dataArrays.n_queries,
+                    streams[primary_stream_index]); CUERR;
+
+        call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
+                                0,
+                                0,
+                                streams[primary_stream_index]);
+
+        //Make indices_per_subject_prefixsum
+        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum+1,
+                    dataArrays.n_subjects,
+                    streams[primary_stream_index]); CUERR;
+
+
+        cubCachingAllocator.DeviceFree(d_shouldBeRemoved);
+        cubCachingAllocator.DeviceFree(d_newIndices);
+
+        if(transFuncData.correctionOptions.extractFeatures){
+            return BatchState::WriteFeatures;
+        }else{
+            switch(transFuncData.correctionOptions.correctionType){
+            case CorrectionType::Classic:
+                return BatchState::StartClassicCorrection;
+            case CorrectionType::Forest:
+                return BatchState::StartForestCorrection;
+            case CorrectionType::Convnet:
+                return BatchState::StartConvnetCorrection;
+            default:
+                return BatchState::StartClassicCorrection;
+            }
+        }
 
     }
 
