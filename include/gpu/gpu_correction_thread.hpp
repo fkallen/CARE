@@ -194,6 +194,9 @@ struct ErrorCorrectionThreadOnlyGPU {
         BatchDataHost batchDataHost;
         BatchDataDevice batchDataDevice;
 
+        bool doImproveMSA = false;
+        int numMinimizations = 0;
+
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
 
@@ -355,12 +358,6 @@ public:
 				const TransitionFunctionData& transFuncData);
 
 	static BatchState state_copyreads_func(Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const TransitionFunctionData& transFuncData);
-
-    static BatchState state_copyreads_func2(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
