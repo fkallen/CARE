@@ -2190,16 +2190,16 @@ namespace gpu{
                         //compare found base to original base
                         const char originalbase = get(subjectptr, subjectLength, col - subjectColumnsBegin_incl);
 
-                        int counts[4];
+                        /*int counts[4];
 
                         counts[0] = myCountsA[col];
                         counts[1] = myCountsC[col];
                         counts[2] = myCountsG[col];
-                        counts[3] = myCountsT[col];
+                        counts[3] = myCountsT[col];*/
 
                         auto discard_rows = [&](bool keepMatching){
 
-                            int seenCounts[4]{0,0,0,0};
+                            //int seenCounts[4]{0,0,0,0};
 
                             const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
 
@@ -2215,10 +2215,10 @@ namespace gpu{
                                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                                 const char base = notAffected ? 'F' : get(candidateptr, candidateLength, (col - row_begin_incl));
 
-                                if(base == 'A') seenCounts[0]++;
+                                /*if(base == 'A') seenCounts[0]++;
                                 if(base == 'C') seenCounts[1]++;
                                 if(base == 'G') seenCounts[2]++;
-                                if(base == 'T') seenCounts[3]++;
+                                if(base == 'T') seenCounts[3]++;*/
 
                                 if(notAffected || (!(keepMatching ^ (base == foundBase)))){
                                     d_shouldBeRemoved[indexoffset + k] = false; //same region
@@ -2227,15 +2227,17 @@ namespace gpu{
                                 }
                             }
 
-                            if(originalbase == 'A') seenCounts[0]++;
+                            /*if(originalbase == 'A') seenCounts[0]++;
                             if(originalbase == 'C') seenCounts[1]++;
                             if(originalbase == 'G') seenCounts[2]++;
                             if(originalbase == 'T') seenCounts[3]++;
 
-                            assert(seenCounts[0] == counts[0]);
-                            assert(seenCounts[1] == counts[1]);
-                            assert(seenCounts[2] == counts[2]);
-                            assert(seenCounts[3] == counts[3]);
+                            #pragma unroll
+                            for(int i = 0; i < 4; i++){
+                                if(seenCounts[i] != counts[i]){
+                                    assert(seenCounts[i] == counts[i]);
+                                }
+                            }*/
                         };
 
 
