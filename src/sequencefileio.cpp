@@ -653,6 +653,59 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     std::string correctionline;
     //loop over correction sequences
     TIMERSTARTCPU(actualmerging);
+#if 0
+
+    std::vector<std::string> correctionLines;
+    constexpr int maxCorrectionLines = 5000;
+    correctionLines.reserve(maxCorrectionLines);
+
+    while(std::getline(correctionsstream, correctionline)){
+        correctionLines.clear();
+
+        correctionLines.emplace_back(correctionline);
+        int lines = 1;
+
+        while(lines < maxCorrectionLines && std::getline(correctionsstream, correctionline)){
+            correctionLines.emplace_back(correctionline);
+            lines++;
+        }
+
+        for(int i = 0; i < lines; i++){
+            std::stringstream ss(correctionLines[i]);
+
+            std::uint64_t correctionReadId;
+            std::string correctedSequence;
+            ss >> correctionReadId >> correctedSequence;
+
+            std::uint64_t originalReadId = reader->getReadnum();
+            Read read;
+            //copy preceding reads from original file
+            while(originalReadId < correctionReadId){
+                bool valid = reader->getNextRead(&read);
+
+                assert(valid);
+
+                outputstream << read.header << '\n' << read.sequence << '\n';
+                if (originalFormat == FileFormat::FASTQ)
+                    outputstream << '+' << '\n' << read.quality << '\n';
+
+                originalReadId = reader->getReadnum();
+            }
+            //replace sequence of next read with corrected sequence
+            bool valid = reader->getNextRead(&read);
+
+            assert(valid);
+
+            outputstream << read.header << '\n' << correctedSequence << '\n';
+            if (originalFormat == FileFormat::FASTQ)
+                outputstream << '+' << '\n' << read.quality << '\n';
+        }
+
+    }
+
+
+
+#else
     while(std::getline(correctionsstream, correctionline)){
         std::stringstream ss(correctionline);
         std::uint64_t correctionReadId;
@@ -682,7 +735,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         if (originalFormat == FileFormat::FASTQ)
             outputstream << '+' << '\n' << read.quality << '\n';
     }
-
+#endif
     //copy remaining reads from original file
     Read read;
 
