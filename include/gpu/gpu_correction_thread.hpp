@@ -196,6 +196,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 
         bool doImproveMSA = false;
         int numMinimizations = 0;
+        int previousNumIndices = 0;
 
 		std::array<cudaStream_t, nStreamsPerBatch>* streams;
 		std::array<cudaEvent_t, nEventsPerBatch>* events;
