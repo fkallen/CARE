@@ -186,6 +186,7 @@ namespace gpu{
 		case BatchState::StartAlignment: return "StartAlignment";
 		case BatchState::CopyQualities: return "CopyQualities";
 		case BatchState::BuildMSA: return "BuildMSA";
+        case BatchState::ImproveMSA: return "ImproveMSA";
 		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
 		case BatchState::StartForestCorrection: return "StartForestCorrection";
         case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
@@ -204,6 +205,7 @@ namespace gpu{
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
 		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func2;
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
+        transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
 		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func2;
         transitionFunctionTable[BatchState::StartConvnetCorrection] = state_startconvnetcorrection_func;
@@ -2390,10 +2392,40 @@ namespace gpu{
                     return BatchState::StartClassicCorrection;
     			}
             }
-
-
 		}
 	}
+
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_improvemsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+        constexpr BatchState expectedState = BatchState::ImproveMSA;
+
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+
+        assert(batch.state == expectedState);
+
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = msadata_transfer_finished_event_index;
+            return expectedState;
+        }
+#endif
+
+    }
 
 	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startclassiccorrection_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,
