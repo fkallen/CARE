@@ -2000,7 +2000,7 @@ namespace gpu{
 
     template<int BLOCKSIZE>
     __global__
-    void msa_findCandidatesOfDifferentRegion_kernel(bool* __restrict__ d_shouldBeRemoved,
+    void msa_findCandidatesOfDifferentRegion_kernel(bool* __restrict__ d_shouldBeKept,
                                                     const char* __restrict__ d_subject_sequences_data,
                                                     const char* __restrict__ d_candidate_sequences_data,
                                                     const int* __restrict__ d_subject_sequences_lengths,
@@ -2057,7 +2057,22 @@ namespace gpu{
         };
 
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-        const char index_to_base[4]{'A','C','G','T'};
+        //const char index_to_base[4]{'A','C','G','T'};
+
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
 
         using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
         using BlockReduceInt2 = cub::BlockReduce<int2, BLOCKSIZE>;
@@ -2094,7 +2109,7 @@ namespace gpu{
                 for(int pos = threadIdx.x; pos < subjectLength && !hasMismatchToConsensus; pos += blockDim.x){
                     const int column = subjectColumnsBegin_incl + pos;
                     const char consbase = myConsensus[column];
-                    const char subjectbase = get(subjectptr, subjectLength, pos);
+                    const char subjectbase = to_nuc(get(subjectptr, subjectLength, pos));
 
                     hasMismatchToConsensus |= (consbase != subjectbase);
                 }
@@ -2171,7 +2186,7 @@ namespace gpu{
                         if(packed.x != std::numeric_limits<int>::max()){
                             broadcastbufferint4[0] = true;
                             broadcastbufferint4[1] = packed.x;
-                            broadcastbufferint4[2] = index_to_base[packed.y];
+                            broadcastbufferint4[2] = to_nuc(packed.y);
                             broadcastbufferint4[3] = packed.y;
                         }else{
                             broadcastbufferint4[0] = false;
@@ -2188,7 +2203,7 @@ namespace gpu{
                     if(foundColumn){
 
                         //compare found base to original base
-                        const char originalbase = get(subjectptr, subjectLength, col - subjectColumnsBegin_incl);
+                        const char originalbase = to_nuc(get(subjectptr, subjectLength, col - subjectColumnsBegin_incl));
 
                         /*int counts[4];
 
@@ -2213,7 +2228,7 @@ namespace gpu{
                                 const int row_begin_incl = subjectColumnsBegin_incl + shift;
                                 const int row_end_excl = row_begin_incl + candidateLength;
                                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
-                                const char base = notAffected ? 'F' : get(candidateptr, candidateLength, (col - row_begin_incl));
+                                const char base = notAffected ? 'F' : to_nuc(get(candidateptr, candidateLength, (col - row_begin_incl)));
 
                                 /*if(base == 'A') seenCounts[0]++;
                                 if(base == 'C') seenCounts[1]++;
@@ -2221,9 +2236,9 @@ namespace gpu{
                                 if(base == 'T') seenCounts[3]++;*/
 
                                 if(notAffected || (!(keepMatching ^ (base == foundBase)))){
-                                    d_shouldBeRemoved[indexoffset + k] = false; //same region
+                                    d_shouldBeKept[indexoffset + k] = true; //same region
                                 }else{
-                                    d_shouldBeRemoved[indexoffset + k] = true; //different region
+                                    d_shouldBeKept[indexoffset + k] = false; //different region
                                 }
                             }
 
@@ -2257,7 +2272,7 @@ namespace gpu{
                         const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
 
                         for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
-                            d_shouldBeRemoved[indexoffset + k] = false;
+                            d_shouldBeKept[indexoffset + k] = true;
                         }
                     }
 
@@ -2268,7 +2283,7 @@ namespace gpu{
                     const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
 
                     for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
-                        d_shouldBeRemoved[indexoffset + k] = false;
+                        d_shouldBeKept[indexoffset + k] = true;
                     }
                 }
             }else{

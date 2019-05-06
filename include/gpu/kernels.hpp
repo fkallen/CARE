@@ -425,7 +425,7 @@ void call_msa_correct_candidates_kernel_async_exp(
             KernelLaunchHandle& handle);
 
 void call_msa_findCandidatesOfDifferentRegion_kernel(
-            bool* d_shouldBeRemoved,
+            bool* d_shouldBeKept,
             const char* d_subject_sequences_data,
             const char* d_candidate_sequences_data,
             const int* d_subject_sequences_lengths,
