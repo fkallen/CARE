@@ -612,6 +612,8 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
             col = columnindex;
             foundBase = index_to_base[significantBaseIndex];
             foundBaseIndex = significantBaseIndex;
+
+            //printf("found col %d, baseIndex %d\n", col, foundBaseIndex);
         }
     }
 
@@ -652,6 +654,17 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                 const int row_end_excl = row_begin_incl + candidateLengths[candidateIndex];
                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
                 const char base = notAffected ? 'F' : candidates[candidateIndex * candidatesPitch + (col - row_begin_incl)];
+
+                /*printf("k %d, candidateIndex %d, row_begin_incl %d, row_end_excl %d, notAffected %d, base %c\n", candidateIndex, candidateIndex,
+                row_begin_incl, row_end_excl, notAffected, base);
+                for(int i = 0; i < row_end_excl - row_begin_incl; i++){
+                    if(i == (col - row_begin_incl))
+                        printf("_");
+                    printf("%c", candidates[candidateIndex * candidatesPitch + i]);
+                    if(i == (col - row_begin_incl))
+                        printf("_");
+                }
+                printf("\n");*/
 
                 if(base == 'A') seenCounts[0]++;
                 if(base == 'C') seenCounts[1]++;

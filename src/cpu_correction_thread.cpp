@@ -27,8 +27,8 @@
 
 #include <omp.h>
 
-//#define USE_MSA_MINIMIZATION
-#define USE_SUBJECT_CLIPPING
+#define USE_MSA_MINIMIZATION
+//#define USE_SUBJECT_CLIPPING
 
 #define ENABLE_TIMING
 
@@ -826,6 +826,78 @@ namespace cpu{
                                                                             correctionOptions.estimatedCoverage);
 
                         auto update_after_successfull_minimization = [&](){
+#if 0
+                            if(correctionTasks[0].readId == 168){
+                            int toKeep = std::count_if(minimizationResult.differentRegionCandidate.begin(),
+                                                    minimizationResult.differentRegionCandidate.end(), [](auto b){return !b;});
+                            int toRemove = std::count_if(minimizationResult.differentRegionCandidate.begin(),
+                                                    minimizationResult.differentRegionCandidate.end(), [](auto b){return b;});
+                            std::cerr << "subjectColumnsBegin_incl: " << multipleSequenceAlignment.subjectColumnsBegin_incl
+                                    << ", subjectColumnsEnd_excl: " << multipleSequenceAlignment.subjectColumnsEnd_excl << '\n';
+                            std::cerr << "numindices: " << minimizationResult.differentRegionCandidate.size() << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';
+                            /*std::cerr << "shifts:\n";
+                            for(auto shift : bestAlignmentShifts){
+                                std::cerr << shift << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "consensus:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.consensus.size(); i++){
+                                std::cerr << multipleSequenceAlignment.consensus[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "countsA:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.countsA.size(); i++){
+                                std::cerr << multipleSequenceAlignment.countsA[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "countsC:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.countsC.size(); i++){
+                                std::cerr << multipleSequenceAlignment.countsC[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "countsG:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.countsG.size(); i++){
+                                std::cerr << multipleSequenceAlignment.countsG[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "countsT:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.countsT.size(); i++){
+                                std::cerr << multipleSequenceAlignment.countsT[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "weightsA:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.weightsA.size(); i++){
+                                std::cerr << multipleSequenceAlignment.weightsA[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "weightsC:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.weightsC.size(); i++){
+                                std::cerr << multipleSequenceAlignment.weightsC[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "weightsG:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.weightsG.size(); i++){
+                                std::cerr << multipleSequenceAlignment.weightsG[i] << ", ";
+                            }
+                            std::cerr << '\n';
+
+                            std::cerr << "weightsT:\n";
+                            for(int i = 0; i < multipleSequenceAlignment.weightsT.size(); i++){
+                                std::cerr << multipleSequenceAlignment.weightsT[i] << ", ";
+                            }
+                            std::cerr << '\n';*/
+
+                            std::exit(0);
+                        }
+#endif
                             if(minimizationResult.performedMinimization){
                                 assert(minimizationResult.differentRegionCandidate.size() == bestAlignments.size());
 
