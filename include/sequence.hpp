@@ -252,8 +252,8 @@ namespace care{
 
         const int intIndex = i / (8 * sizeof(unsigned int));
         const int pos = i % (8 * sizeof(unsigned int));
-        const unsigned int hibit = (hi[intIndex] >> pos) & 1u;
-        const unsigned int lobit = (lo[intIndex] >> pos) & 1u;
+        const unsigned int hibit = (hi[indextrafo(intIndex)] >> pos) & 1u;
+        const unsigned int lobit = (lo[indextrafo(intIndex)] >> pos) & 1u;
         const unsigned int base = (hibit << 1) | lobit;
 
         return base;
