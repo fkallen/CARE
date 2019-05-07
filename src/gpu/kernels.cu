@@ -2007,6 +2007,7 @@ namespace gpu{
                                                     const int* __restrict__ d_candidate_sequences_lengths,
                                                     const int* __restrict__ d_candidates_per_subject_prefixsum,
                                                     const int* __restrict__ d_alignment_shifts,
+                                                    const BestAlignment_t* d_alignment_best_alignment_flags,
                                                     int n_subjects,
                                                     int n_candidates,
                                                     int max_sequence_bytes,
@@ -2020,7 +2021,8 @@ namespace gpu{
                                                     const int* __restrict__ d_indices,
                                                     const int* __restrict__ d_indices_per_subject,
                                                     const int* __restrict__ d_indices_per_subject_prefixsum,
-                                                    int dataset_coverage){
+                                                    int dataset_coverage,
+                                                    bool debug = false){
 
         auto getNumBytes = [] (int sequencelength){
             return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
@@ -2091,6 +2093,10 @@ namespace gpu{
 
             const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
             const int myNumIndices = d_indices_per_subject[subjectIndex];
+
+            if(debug && threadIdx.x == 0){
+                printf("myNumIndices %d\n", myNumIndices);
+            }
 
             if(myNumIndices > 0){
 
@@ -2169,6 +2175,10 @@ namespace gpu{
                             foundColumn = true;
                             col = columnindex;
                             foundBaseIndex = significantBaseIndex;
+
+                            if(debug){
+                                printf("found col %d, baseIndex %d\n", col, foundBaseIndex);
+                            }
                         }
                     }
 
@@ -2200,6 +2210,10 @@ namespace gpu{
                     foundBase = broadcastbufferint4[2];
                     foundBaseIndex = broadcastbufferint4[3];
 
+                    if(debug && threadIdx.x == 0){
+                        printf("reduced: found col %d, baseIndex %d\n", col, foundBaseIndex);
+                    }
+
                     if(foundColumn){
 
                         //compare found base to original base
@@ -2223,12 +2237,49 @@ namespace gpu{
                                 const char* const candidateptr = getCandidatePtr(candidateIndex);
                                 const int candidateLength = getCandidateLength(candidateIndex);
                                 const int shift = d_alignment_shifts[candidateIndex];
+                                const BestAlignment_t alignmentFlag = d_alignment_best_alignment_flags[candidateIndex];
 
                                 //check if row is affected by column col
                                 const int row_begin_incl = subjectColumnsBegin_incl + shift;
                                 const int row_end_excl = row_begin_incl + candidateLength;
                                 const bool notAffected = (col < row_begin_incl || row_end_excl <= col);
-                                const char base = notAffected ? 'F' : to_nuc(get(candidateptr, candidateLength, (col - row_begin_incl)));
+                                char base = 'F';
+                                if(!notAffected){
+                                    if(alignmentFlag == BestAlignment_t::Forward){
+                                        base = to_nuc(get(candidateptr, candidateLength, (col - row_begin_incl)));
+                                    }else{
+                                        assert(alignmentFlag == BestAlignment_t::ReverseComplement); //all candidates of MSA must not have alignmentflag None
+                                        const char forwardbaseEncoded = get(candidateptr, candidateLength, row_end_excl-1 - col);
+                                        base = to_nuc((~forwardbaseEncoded & 0x03));
+                                    }
+                                }
+
+                                if(debug){
+                                    printf("k %d, candidateIndex %d, row_begin_incl %d, row_end_excl %d, notAffected %d, base %c, forward %d\n", k, candidateIndex,
+                                    row_begin_incl, row_end_excl, notAffected, base, alignmentFlag == BestAlignment_t::Forward);
+
+                                    if(alignmentFlag == BestAlignment_t::Forward){
+                                        for(int i = 0; i < row_end_excl - row_begin_incl; i++){
+                                            if(i == (col - row_begin_incl))
+                                                printf("_");
+                                            printf("%c", to_nuc(get(candidateptr, candidateLength, i)));
+                                            if(i == (col - row_begin_incl))
+                                                printf("_");
+                                        }
+                                        printf("\n");
+                                    }else{
+                                        for(int i = 0; i < row_end_excl - row_begin_incl; i++){
+                                            if(i == (col - row_begin_incl))
+                                                printf("_");
+                                            printf("%c", to_nuc(~get(candidateptr, candidateLength, candidateLength-1-i) & 0x03));
+                                            if(i == (col - row_begin_incl))
+                                                printf("_");
+                                        }
+                                        printf("\n");
+                                    }
+
+
+                                }
 
                                 /*if(base == 'A') seenCounts[0]++;
                                 if(base == 'C') seenCounts[1]++;
@@ -3724,7 +3775,7 @@ namespace gpu{
     }
 
 
-    void call_msa_findCandidatesOfDifferentRegion_kernel(
+    void call_msa_findCandidatesOfDifferentRegion_kernel_async(
                 bool* d_shouldBeRemoved,
                 const char* d_subject_sequences_data,
                 const char* d_candidate_sequences_data,
@@ -3732,6 +3783,7 @@ namespace gpu{
                 const int* d_candidate_sequences_lengths,
                 const int* d_candidates_per_subject_prefixsum,
                 const int* d_alignment_shifts,
+                const BestAlignment_t* d_alignment_best_alignment_flags,
                 int n_subjects,
                 int n_candidates,
                 int max_sequence_bytes,
@@ -3747,7 +3799,8 @@ namespace gpu{
                 const int* d_indices_per_subject_prefixsum,
                 int dataset_coverage,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+    			KernelLaunchHandle& handle,
+                bool debug){
 
 
     	const int max_block_size = 256;
@@ -3776,6 +3829,7 @@ namespace gpu{
             		mymap[kernelLaunchConfig] = kernelProperties; \
             }
 
+            getProp(1);
     		getProp(32);
     		getProp(64);
     		getProp(96);
@@ -3809,6 +3863,7 @@ namespace gpu{
                     d_candidate_sequences_lengths, \
                     d_candidates_per_subject_prefixsum, \
                     d_alignment_shifts, \
+                    d_alignment_best_alignment_flags, \
                     n_subjects, \
                     n_candidates, \
                     max_sequence_bytes, \
@@ -3822,11 +3877,13 @@ namespace gpu{
                     d_indices, \
                     d_indices_per_subject, \
                     d_indices_per_subject_prefixsum, \
-                    dataset_coverage); CUERR;
+                    dataset_coverage, \
+                    debug); CUERR;
 
     	assert(blocksize > 0 && blocksize <= max_block_size);
 
     	switch(blocksize) {
+        case 1: mycall(1); break;
     	case 32: mycall(32); break;
     	case 64: mycall(64); break;
     	case 96: mycall(96); break;

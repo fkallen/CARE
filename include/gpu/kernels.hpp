@@ -424,7 +424,7 @@ void call_msa_correct_candidates_kernel_async_exp(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-void call_msa_findCandidatesOfDifferentRegion_kernel(
+void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             bool* d_shouldBeKept,
             const char* d_subject_sequences_data,
             const char* d_candidate_sequences_data,
@@ -432,6 +432,7 @@ void call_msa_findCandidatesOfDifferentRegion_kernel(
             const int* d_candidate_sequences_lengths,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_alignment_shifts,
+            const BestAlignment_t* d_alignment_best_alignment_flags,
             int n_subjects,
             int n_candidates,
             int max_sequence_bytes,
@@ -447,7 +448,8 @@ void call_msa_findCandidatesOfDifferentRegion_kernel(
             const int* d_indices_per_subject_prefixsum,
             int dataset_coverage,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            KernelLaunchHandle& handle,
+            bool debug = false);
 
 #endif //ifdef __NVCC__
 

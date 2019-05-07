@@ -45,7 +45,7 @@
 #define MSA_IMPLICIT
 //#define USE_MSA_MINIMIZATION
 
-//#define USE_WAIT_FLAGS
+#define USE_WAIT_FLAGS
 
 #define shd_tilesize 32
 
@@ -1232,15 +1232,17 @@ namespace gpu{
                                                                    transFuncData.threadOpts.deviceId,
                                                                    streams[primary_stream_index]);
 
+               assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+
+               cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+
+                cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+
                 cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
                            dataArrays.qualities_transfer_data_device,
                            dataArrays.qualities_transfer_data_usable_size,
                            D2H,
-                           streams[primary_stream_index]); CUERR;
-
-                assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
-
-                cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+                           streams[secondary_stream_index]); CUERR;
 
                 return BatchState::BuildMSA;
 			}else{
@@ -1563,12 +1565,17 @@ namespace gpu{
 
         if(max_num_minimizations > 0){
             if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == *dataArrays.h_num_indices)){
-
-                //std::cerr << "starting minimization " << batch.numMinimizations << '\n';
+if(batch.tasks[0].readId == 168){
+                std::cerr << "starting minimization " << batch.numMinimizations << '\n';
+}
                 batch.previousNumIndices = *dataArrays.h_num_indices;
 
                 bool* d_shouldBeKept;
                 int* d_newIndices;
+
+
+
+
 
                 cubCachingAllocator.DeviceAllocate((void**)&d_shouldBeKept, sizeof(bool) * dataArrays.n_queries, streams[primary_stream_index]);
                 cubCachingAllocator.DeviceAllocate((void**)&d_newIndices, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]);
@@ -1577,7 +1584,7 @@ namespace gpu{
                 call_fill_kernel_async(d_shouldBeKept, dataArrays.n_queries, true, streams[primary_stream_index]);
 
                 //select candidates which are to be removed
-                call_msa_findCandidatesOfDifferentRegion_kernel(
+                call_msa_findCandidatesOfDifferentRegion_kernel_async(
                             d_shouldBeKept,
                             dataArrays.d_subject_sequences_data,
                             dataArrays.d_candidate_sequences_data,
@@ -1585,6 +1592,7 @@ namespace gpu{
                             dataArrays.d_candidate_sequences_lengths,
                             dataArrays.d_candidates_per_subject_prefixsum,
                             dataArrays.d_alignment_shifts,
+                            dataArrays.d_alignment_best_alignment_flags,
                             dataArrays.n_subjects,
                             dataArrays.n_queries,
                             sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
@@ -1600,17 +1608,129 @@ namespace gpu{
                             dataArrays.d_indices_per_subject_prefixsum,
                             transFuncData.estimatedCoverage,
                             streams[primary_stream_index],
-                            batch.kernelLaunchHandle);  CUERR;
+                            batch.kernelLaunchHandle,
+                            false);  CUERR;
 
-                /*cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-                std::unique_ptr<bool[]> boolptr = std::make_unique<bool[]>(dataArrays.n_queries);
-                cudaMemcpy(boolptr.get(), d_shouldBeKept, sizeof(bool) * dataArrays.n_queries, D2H);
+#if 0
+                if(batch.tasks[0].readId == 168){
 
-                int toKeep = std::count_if(boolptr.get(), boolptr.get() + *dataArrays.h_num_indices, [](auto b){return b;});
-                int toRemove = std::count_if(boolptr.get(), boolptr.get() + *dataArrays.h_num_indices, [](auto b){return !b;});
-                std::cerr << "numindices: " << *dataArrays.h_num_indices << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';*/
+                    cudaDeviceSynchronize(); CUERR;
 
+                    std::unique_ptr<bool[]> boolptr = std::make_unique<bool[]>(dataArrays.n_queries);
+                    cudaMemcpy(boolptr.get(), d_shouldBeKept, sizeof(bool) * dataArrays.n_queries, D2H);
+
+                    int toKeep = std::count_if(boolptr.get(), boolptr.get() + *dataArrays.h_num_indices, [](auto b){return b;});
+                    int toRemove = std::count_if(boolptr.get(), boolptr.get() + *dataArrays.h_num_indices, [](auto b){return !b;});
+                    std::cerr << "numindices: " << *dataArrays.h_num_indices << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';
+
+                    cudaMemcpyAsync(dataArrays.msa_data_host,
+                                dataArrays.msa_data_device,
+                                dataArrays.msa_data_usable_size,
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    //DEBUGGING
+                    cudaMemcpyAsync(dataArrays.alignment_result_data_host,
+                                dataArrays.alignment_result_data_device,
+                                dataArrays.alignment_result_data_usable_size,
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    //DEBUGGING
+                    cudaMemcpyAsync(dataArrays.subject_indices_data_host,
+                                dataArrays.subject_indices_data_device,
+                                dataArrays.subject_indices_data_usable_size,
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+                                dataArrays.indices_transfer_data_device,
+                                dataArrays.indices_transfer_data_usable_size,
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
+                                    dataArrays.qualities_transfer_data_device,
+                                    dataArrays.qualities_transfer_data_usable_size,
+                                    D2H,
+                                    streams[primary_stream_index]); CUERR;
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    cudaDeviceSynchronize(); CUERR;
+
+                    size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+
+                    std::cerr << "subjectColumnsBegin_incl: " << dataArrays.h_msa_column_properties[0].subjectColumnsBegin_incl
+                            << ", subjectColumnsEnd_excl: " << dataArrays.h_msa_column_properties[0].subjectColumnsEnd_excl << '\n';
+
+                    /*std::cerr << "shifts:\n";
+                    for(int i = 0; i < *dataArrays.h_num_indices; i++){
+                        std::cerr << dataArrays.h_alignment_shifts[dataArrays.h_indices[i]] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "consensus:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_consensus[i] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "countsA:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * 0 + 0*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "countsC:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * 0 + 1*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "countsG:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * 0 + 2*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "countsT:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * 0 + 3*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "weightsA:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * 0 + 0*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "weightsC:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * 0 + 1*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "weightsG:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * 0 + 2*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';
+
+                    std::cerr << "weightsT:\n";
+                    for(int i = 0; i < dataArrays.h_msa_column_properties[0].columnsToCheck; i++){
+                        std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * 0 + 3*msa_weights_pitch_floats] << ", ";
+                    }
+                    std::cerr << '\n';*/
+
+                    std::exit(0);
+                }
+#endif
                 //calculate new index list with selected candidates removed
 
                 cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
@@ -2822,7 +2942,11 @@ namespace gpu{
 						}
 
 						//assert(eventquerystatus == cudaSuccess);
-					}
+					}else{
+
+                    }
+
+
 				}
 #endif
 

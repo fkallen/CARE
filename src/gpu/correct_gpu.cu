@@ -132,7 +132,8 @@ namespace gpu{
     int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
 #ifdef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(1000);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    cudaProfilerStart(); CUERR;
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #endif
@@ -275,6 +276,8 @@ namespace gpu{
     TIMERSTOPCPU(correction);
 
 #ifdef DO_PROFILE
+    cudaProfilerStop(); CUERR;
+
     std::exit(0);
 #endif
 
