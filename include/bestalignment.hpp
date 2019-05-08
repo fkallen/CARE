@@ -6,7 +6,7 @@
 namespace care{
 namespace cpu{
 
-    enum class BestAlignment_t {Forward, ReverseComplement, None};
+    enum class BestAlignment_t : char {Forward, ReverseComplement, None};
 
     template<class Alignment>
     BestAlignment_t choose_best_alignment(const Alignment& fwdAlignment,

@@ -131,7 +131,7 @@ struct ErrorCorrectionThreadOnlyGPU {
 	static constexpr int msadata_transfer_finished_event_index = 5;
 	static constexpr int alignment_data_transfer_h2d_finished_event_index = 6;
 	static constexpr int msa_build_finished_event_index = 7;
-    static constexpr int num_indices_calculated_event_index = 8;
+    static constexpr int indices_calculated_event_index = 8;
     static constexpr int num_indices_transfered_event_index = 9;
 	static constexpr int nEventsPerBatch = 10;
 
@@ -144,9 +144,9 @@ struct ErrorCorrectionThreadOnlyGPU {
 		Unprepared,
 		CopyReads,
 		StartAlignment,
+        RearrangeIndices,
 		CopyQualities,
 		BuildMSA,
-        ImproveMSA,
 		StartClassicCorrection,
 		StartForestCorrection,
         StartConvnetCorrection,
@@ -369,6 +369,12 @@ public:
 				bool canLaunchKernel,
 				bool isPausable,
 				const TransitionFunctionData& transFuncData);
+
+    static BatchState state_rearrangeindices_func(Batch& batch,
+            bool canBlock,
+            bool canLaunchKernel,
+            bool isPausable,
+            const TransitionFunctionData& transFuncData);
 
 	static BatchState state_copyqualities_func(Batch& batch,
 				bool canBlock,

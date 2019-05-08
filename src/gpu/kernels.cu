@@ -1102,6 +1102,9 @@ namespace gpu{
             }
             //printf("\n");
 
+            //if(subjectIndex == 0){
+            //    printf("thread %d id %d, maxid_excl %d\n", threadIdx.x, id, maxid_excl);
+            //}
 
 
             if(id < maxid_excl){
@@ -1123,6 +1126,10 @@ namespace gpu{
                 assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
 
                 //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
+
+                //if(subjectIndex == 0){
+                //    printf("thread %d flag %d\n", threadIdx.x, flag);
+                //}
 
                 if(flag == BestAlignment_t::Forward) {
                     for(int i = 0; i < queryLength; i += 1){

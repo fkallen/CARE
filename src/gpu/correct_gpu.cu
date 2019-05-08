@@ -132,7 +132,7 @@ namespace gpu{
     int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
 #ifdef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(100000);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000);
     cudaProfilerStart(); CUERR;
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);

@@ -43,6 +43,8 @@
 //#define CARE_GPU_DEBUG_PRINT_MSA
 
 #define MSA_IMPLICIT
+
+#define REARRANGE_INDICES
 //#define USE_MSA_MINIMIZATION
 
 #define USE_WAIT_FLAGS
@@ -93,6 +95,7 @@ namespace gpu{
         mycase(BatchState::Unprepared)
         mycase(BatchState::CopyReads)
         mycase(BatchState::StartAlignment)
+        mycase(BatchState::RearrangeIndices)
         mycase(BatchState::CopyQualities)
         mycase(BatchState::BuildMSA)
         mycase(BatchState::StartClassicCorrection)
@@ -197,9 +200,9 @@ namespace gpu{
 		case BatchState::Unprepared: return "Unprepared";
 		case BatchState::CopyReads: return "CopyReads";
 		case BatchState::StartAlignment: return "StartAlignment";
+        case BatchState::RearrangeIndices: return "RearrangeIndices";
 		case BatchState::CopyQualities: return "CopyQualities";
 		case BatchState::BuildMSA: return "BuildMSA";
-        case BatchState::ImproveMSA: return "ImproveMSA";
 		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
 		case BatchState::StartForestCorrection: return "StartForestCorrection";
         case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
@@ -216,6 +219,7 @@ namespace gpu{
 		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func2;
 		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
+        transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
 		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
@@ -707,6 +711,20 @@ namespace gpu{
                             dataArrays.n_subjects,
                             streams[primary_stream_index]); CUERR;
 
+                cub::DeviceSegmentedRadixSort::SortPairs((void*)nullptr,
+                                                        temp_storage_bytes,
+                                                        (const char*) nullptr,
+                                                        (char*)nullptr,
+                                                		(const int*)nullptr,
+                                                		(int*)nullptr,
+                                                		batch.initialNumberOfCandidates,
+                                                		dataArrays.n_subjects,
+                                                		(const int*)nullptr,
+                                                		(const int*)nullptr,
+                                                        0,
+                                                        3,
+                                                        streams[primary_stream_index]);
+
                 max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
 
                 temp_storage_bytes = max_temp_storage_bytes;
@@ -1072,40 +1090,17 @@ namespace gpu{
 		//determine indices of remaining alignments
 		select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
 
-        cudaEventRecord(events[num_indices_calculated_event_index], streams[primary_stream_index]); CUERR;
-        cudaStreamWaitEvent(streams[secondary_stream_index], events[num_indices_calculated_event_index], 0); CUERR;
-
         cudaMemcpyAsync(dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
                         sizeof(int),
                         D2H,
-                        streams[secondary_stream_index]); CUERR;
+                        streams[primary_stream_index]); CUERR;
 #ifdef USE_WAIT_FLAGS
-        batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
+        batch.addWaitSignal(BatchState::RearrangeIndices, streams[primary_stream_index]);
 #endif
-        cudaEventRecord(events[num_indices_transfered_event_index], streams[secondary_stream_index]); CUERR;
+        cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
 		//update indices_per_subject
-/*
-		cub::DeviceHistogram::HistogramRange(dataArrays.d_temp_storage,
-					dataArrays.tmp_storage_allocation_size,
-					dataArrays.d_indices,
-					dataArrays.d_indices_per_subject,
-					dataArrays.n_subjects+1,
-					dataArrays.d_candidates_per_subject_prefixsum,
-					// *dataArrays.h_num_indices,
-					dataArrays.n_queries,
-					streams[primary_stream_index]); CUERR;
-
-		//Make indices_per_subject_prefixsum
-		cub::DeviceScan::InclusiveSum(dataArrays.d_temp_storage,
-					dataArrays.tmp_storage_allocation_size,
-					dataArrays.d_indices_per_subject,
-					dataArrays.d_indices_per_subject_prefixsum+1,
-					dataArrays.n_subjects,
-					streams[primary_stream_index]); CUERR;
-*/
-
 
         cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
                     batch.batchDataDevice.cubTemp.sizeRef(),
@@ -1130,40 +1125,123 @@ namespace gpu{
                     dataArrays.n_subjects,
                     streams[primary_stream_index]); CUERR;
 
-		//cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]); CUERR;
+        return BatchState::RearrangeIndices;
+	}
 
-		assert(cudaSuccess == cudaEventQuery(events[alignments_finished_event_index])); CUERR;
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_rearrangeindices_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+				bool canBlock,
+				bool canLaunchKernel,
+				bool isPausable,
+				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
-		cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
+        DataArrays& dataArrays = *batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-		//copy indices of usable candidates. these are required on the host for coping quality scores, and for creating results.
-		cudaStreamWaitEvent(streams[secondary_stream_index], events[alignments_finished_event_index], 0); CUERR;
+#ifdef REARRANGE_INDICES
 
-		cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
-					dataArrays.indices_transfer_data_device,
-					dataArrays.indices_transfer_data_usable_size,
-					D2H,
-					streams[secondary_stream_index]); CUERR;
+        constexpr BatchState expectedState = BatchState::RearrangeIndices;
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+        assert(batch.state == expectedState);
 
-		assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
 
-		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = num_indices_transfered_event_index;
+            return expectedState;
+        }
+#endif
+
+        int* d_indices_segmented_partitioned;
+        BestAlignment_t* d_alignment_best_alignment_flags_compact;
+        BestAlignment_t* d_alignment_best_alignment_flags_discardedoutput;
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_indices_segmented_partitioned,
+                                            sizeof(int) * dataArrays.n_queries,
+                                            streams[primary_stream_index]);
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_compact,
+                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
+                                            streams[primary_stream_index]);
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_discardedoutput,
+                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
+                                            streams[primary_stream_index]);
+
+        //compact alignment flags according to indices
+        call_compact_kernel_async(d_alignment_best_alignment_flags_compact,
+                                dataArrays.d_alignment_best_alignment_flags,
+                                dataArrays.d_indices,
+                                *dataArrays.h_num_indices,
+                                streams[primary_stream_index]);
+
+        //partition d_indices according to d_alignment_best_alignment_flags
+        //with this partitioning branch divergence in kernels is reduced
+
+        //segmented partitioning of indices is achieved by using segmented radix sort of pairs,
+        //where each pair is composed of (key: d_alignment_best_alignment_flags[d_indices[i]], value: d_indices[i])
+        static_assert(sizeof(char) == sizeof(BestAlignment_t), "");
+
+        cub::DeviceSegmentedRadixSort::SortPairs(batch.batchDataDevice.cubTemp.get(),
+                                                batch.batchDataDevice.cubTemp.sizeRef(),
+                                                (const char*) d_alignment_best_alignment_flags_compact,
+                                                (char*)d_alignment_best_alignment_flags_discardedoutput,
+                                                dataArrays.d_indices,
+                                                d_indices_segmented_partitioned,
+                                                *dataArrays.h_num_indices,
+                                                dataArrays.n_subjects,
+                                                dataArrays.d_indices_per_subject_prefixsum,
+                                                dataArrays.d_indices_per_subject_prefixsum+1,
+                                                0,
+                                                3,
+                                                streams[primary_stream_index]);
+
+        cudaMemcpyAsync(dataArrays.d_indices, d_indices_segmented_partitioned, sizeof(int) * (*dataArrays.h_num_indices), D2D, streams[primary_stream_index]); CUERR;
+
+        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_compact);
+        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_discardedoutput);
+        cubCachingAllocator.DeviceFree(d_indices_segmented_partitioned);
+#endif
+
+        cudaEventRecord(events[indices_calculated_event_index], streams[primary_stream_index]); CUERR;
+
+        //copy indices of usable candidates. these are required on the host for coping quality scores, and for creating results.
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_calculated_event_index], 0); CUERR;
+
+        cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+                    dataArrays.indices_transfer_data_device,
+                    dataArrays.indices_transfer_data_usable_size,
+                    D2H,
+                    streams[secondary_stream_index]); CUERR;
+
+        assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
+
+        cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
 #ifdef USE_WAIT_FLAGS
         batch.addWaitSignal(BatchState::CopyQualities, streams[secondary_stream_index]);
         batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
 #endif
 
-		if(transFuncData.correctionOptions.useQualityScores) {
-			/*if(transFuncData.readStorageGpuData.isValidQualityData()) {
-				return BatchState::BuildMSA;
-			}else{*/
+        if(transFuncData.correctionOptions.useQualityScores) {
+            /*if(transFuncData.readStorageGpuData.isValidQualityData()) {
+                return BatchState::BuildMSA;
+            }else{*/
                 return BatchState::CopyQualities;
-			//}
-		}else{
-			return BatchState::BuildMSA;
-		}
-	}
+            //}
+        }else{
+            return BatchState::BuildMSA;
+        }
+
+    }
 
     ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_copyqualities_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,
@@ -1401,6 +1479,80 @@ namespace gpu{
 
         cudaMemsetAsync(dataArrays.msa_data_device, 0, dataArrays.msa_data_usable_size, streams[primary_stream_index]); CUERR;
 
+#if 0
+        int* d_indices_segmented_partitioned;
+        BestAlignment_t* d_alignment_best_alignment_flags_compact;
+        BestAlignment_t* d_alignment_best_alignment_flags_discardedoutput;
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_indices_segmented_partitioned,
+                                            sizeof(int) * dataArrays.n_queries,
+                                            streams[primary_stream_index]);
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_compact,
+                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
+                                            streams[primary_stream_index]);
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_discardedoutput,
+                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
+                                            streams[primary_stream_index]);
+
+        //compact alignment flags according to indices
+        call_compact_kernel_async(d_alignment_best_alignment_flags_compact,
+                                dataArrays.d_alignment_best_alignment_flags,
+                                dataArrays.d_indices,
+                                *dataArrays.h_num_indices,
+                                streams[primary_stream_index]);
+
+        //partition d_indices according to d_alignment_best_alignment_flags
+        //with this partitioning branch divergence in kernels is reduced
+
+        //segmented partitioning of indices is achieved by using segmented radix sort of pairs,
+        //where each pair is composed of (key: d_alignment_best_alignment_flags[d_indices[i]], value: d_indices[i])
+        static_assert(sizeof(char) == sizeof(BestAlignment_t), "");
+
+        cub::DeviceSegmentedRadixSort::SortPairs(batch.batchDataDevice.cubTemp.get(),
+                                                batch.batchDataDevice.cubTemp.sizeRef(),
+                                                (const char*) d_alignment_best_alignment_flags_compact,
+                                                (char*)d_alignment_best_alignment_flags_discardedoutput,
+                                        		dataArrays.d_indices,
+                                        		d_indices_segmented_partitioned,
+                                        		*dataArrays.h_num_indices,
+                                        		dataArrays.n_subjects,
+                                        		dataArrays.d_indices_per_subject_prefixsum,
+                                        		dataArrays.d_indices_per_subject_prefixsum+1,
+                                                0,
+                                                3,
+                                                streams[primary_stream_index]);
+
+        /*generic_kernel<<<1,1,0, streams[primary_stream_index]>>>([=] __device__ (){
+            for(int subjectIndex = 0; subjectIndex < dataArrays.n_subjects; subjectIndex++){
+                printf("subject %d, before:\n", subjectIndex);
+
+                const int* myIndices = dataArrays.d_indices + dataArrays.d_indices_per_subject_prefixsum[subjectIndex];
+                for(int k = 0; k < dataArrays.d_indices_per_subject[subjectIndex]; k++){
+                    printf("index: %d, flag %d\n", myIndices[k], dataArrays.d_alignment_best_alignment_flags[myIndices[k]]);
+                }
+            }
+
+            for(int subjectIndex = 0; subjectIndex < dataArrays.n_subjects; subjectIndex++){
+                printf("subject %d, after:\n", subjectIndex);
+
+                const int* myIndices = d_indices_segmented_partitioned + dataArrays.d_indices_per_subject_prefixsum[subjectIndex];
+                for(int k = 0; k < dataArrays.d_indices_per_subject[subjectIndex]; k++){
+                    printf("index: %d, flag %d\n", myIndices[k], dataArrays.d_alignment_best_alignment_flags[myIndices[k]]);
+                }
+            }
+
+            for(int i = 0; i < *dataArrays.d_num_indices; i++){
+                assert(d_alignment_best_alignment_flags_compact[i] != BestAlignment_t::None);
+
+            }
+        }); CUERR;*/
+
+
+        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_compact);
+        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_discardedoutput);
+#endif
         call_msa_init_kernel_async_exp(
                 dataArrays.d_msa_column_properties,
                 dataArrays.d_alignment_shifts,
@@ -1437,6 +1589,9 @@ namespace gpu{
                                 0,
                                 0,
                                 streams[primary_stream_index]);
+
+
+
 
 #ifndef MSA_IMPLICIT
 
@@ -1565,9 +1720,9 @@ namespace gpu{
 
         if(max_num_minimizations > 0){
             if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == *dataArrays.h_num_indices)){
-if(batch.tasks[0].readId == 168){
-                std::cerr << "starting minimization " << batch.numMinimizations << '\n';
-}
+//if(batch.tasks[0].readId == 168){
+//                std::cerr << "starting minimization " << batch.numMinimizations << '\n';
+//}
                 batch.previousNumIndices = *dataArrays.h_num_indices;
 
                 bool* d_shouldBeKept;
@@ -1819,6 +1974,8 @@ if(batch.tasks[0].readId == 168){
 
                 batch.numMinimizations++;
 
+                //cubCachingAllocator.DeviceFree(d_indices_segmented_partitioned);
+
                 //repeat state_buildmsa_func to rebuild the msa using the new index list
                 return expectedState;
 
@@ -1840,6 +1997,8 @@ if(batch.tasks[0].readId == 168){
             }
         }
 #endif
+
+        //cubCachingAllocator.DeviceFree(d_indices_segmented_partitioned);
 
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
 
@@ -1902,8 +2061,6 @@ if(batch.tasks[0].readId == 168){
             cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
         #ifdef USE_WAIT_FLAGS
-            //batch.addWaitSignal(BatchState::ImproveMSA, streams[secondary_stream_index]);
-
             batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
             batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
             batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
