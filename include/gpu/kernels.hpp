@@ -91,7 +91,6 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_asyn
             const int* d_candidates_per_subject_prefixsum,
             const int* h_tiles_per_subject_prefixsum,
             const int* d_tiles_per_subject_prefixsum,
-            int tilesize,
             int n_subjects,
             int n_queries,
             size_t encodedsequencepitch,

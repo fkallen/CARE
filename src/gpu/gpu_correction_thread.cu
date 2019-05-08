@@ -49,8 +49,6 @@
 
 #define USE_WAIT_FLAGS
 
-#define shd_tilesize 32
-
 
 constexpr int nParallelBatches = 4;
 constexpr int sideBatchStepsPerWaitIter = 1;
@@ -1039,7 +1037,6 @@ namespace gpu{
                     dataArrays.d_candidates_per_subject_prefixsum,
                     dataArrays.h_tiles_per_subject_prefixsum,
                     dataArrays.d_tiles_per_subject_prefixsum,
-                    shd_tilesize,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.encoded_sequence_pitch,

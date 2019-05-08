@@ -36,6 +36,7 @@ namespace gpu{
     //####################   KERNELS   ####################
 
 
+    template<int tilesize>
     __global__
     void
     cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
@@ -50,7 +51,6 @@ namespace gpu{
                 const int* __restrict__ candidate_sequences_lengths,
                 const int* __restrict__ candidates_per_subject_prefixsum,
                 const int* __restrict__ tiles_per_subject_prefixsum,
-                const int tilesize,
                 int n_subjects,
                 int n_candidates,
                 size_t encodedsequencepitch,
@@ -201,7 +201,7 @@ namespace gpu{
                 subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
             }
 
-            cg::tiled_partition(cg::this_thread_block(), tilesize).sync();
+            cg::tiled_partition<tilesize>(cg::this_thread_block()).sync();
 
 
             if(queryIndex < maxCandidateIndex_excl){
@@ -2375,7 +2375,6 @@ namespace gpu{
     			const int* d_candidates_per_subject_prefixsum,
                 const int* h_tiles_per_subject_prefixsum,
                 const int* d_tiles_per_subject_prefixsum,
-                int tilesize,
     			int n_subjects,
     			int n_queries,
                 size_t encodedsequencepitch,
@@ -2385,6 +2384,8 @@ namespace gpu{
     			float min_overlap_ratio,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
+
+            constexpr int tilesize = shd_tilesize;
 
         	const int blocksize = 128;
             const int tilesPerBlock = blocksize / tilesize;
@@ -2413,7 +2414,7 @@ namespace gpu{
                 		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2); \
                 		KernelProperties kernelProperties; \
                 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                					cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel, \
+                					cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel<tilesize>, \
                 					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 		mymap[kernelLaunchConfig] = kernelProperties; \
                 }
@@ -2439,7 +2440,7 @@ namespace gpu{
         		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         	}
 
-            #define mycall(tilesize) cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel \
+            #define mycall cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel<tilesize> \
                                     	        <<<grid, block, smem, stream>>>( \
                                         		d_alignment_scores, \
                                         		d_alignment_overlaps, \
@@ -2452,7 +2453,6 @@ namespace gpu{
                                                 d_candidate_sequences_lengths, \
                                         		d_candidates_per_subject_prefixsum, \
                                                 d_tiles_per_subject_prefixsum, \
-                                                tilesize, \
                                         		n_subjects, \
                                         		n_queries, \
                                                 encodedsequencepitch, \
@@ -2465,7 +2465,7 @@ namespace gpu{
         	dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
             //dim3 grid(1,1,1);
 
-        	mycall(tilesize);
+        	mycall;
 
     	    #undef mycall
     }

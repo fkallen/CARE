@@ -29,6 +29,8 @@ namespace care{
 
     constexpr int msa_add_sequences_kernel_implicit_shared_blocksize = 128;
 
+    constexpr int shd_tilesize = 32; // power of 2, <= 32
+
 }
 
 #endif
