@@ -1476,80 +1476,6 @@ namespace gpu{
 
         cudaMemsetAsync(dataArrays.msa_data_device, 0, dataArrays.msa_data_usable_size, streams[primary_stream_index]); CUERR;
 
-#if 0
-        int* d_indices_segmented_partitioned;
-        BestAlignment_t* d_alignment_best_alignment_flags_compact;
-        BestAlignment_t* d_alignment_best_alignment_flags_discardedoutput;
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_indices_segmented_partitioned,
-                                            sizeof(int) * dataArrays.n_queries,
-                                            streams[primary_stream_index]);
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_compact,
-                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
-                                            streams[primary_stream_index]);
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_discardedoutput,
-                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
-                                            streams[primary_stream_index]);
-
-        //compact alignment flags according to indices
-        call_compact_kernel_async(d_alignment_best_alignment_flags_compact,
-                                dataArrays.d_alignment_best_alignment_flags,
-                                dataArrays.d_indices,
-                                *dataArrays.h_num_indices,
-                                streams[primary_stream_index]);
-
-        //partition d_indices according to d_alignment_best_alignment_flags
-        //with this partitioning branch divergence in kernels is reduced
-
-        //segmented partitioning of indices is achieved by using segmented radix sort of pairs,
-        //where each pair is composed of (key: d_alignment_best_alignment_flags[d_indices[i]], value: d_indices[i])
-        static_assert(sizeof(char) == sizeof(BestAlignment_t), "");
-
-        cub::DeviceSegmentedRadixSort::SortPairs(batch.batchDataDevice.cubTemp.get(),
-                                                batch.batchDataDevice.cubTemp.sizeRef(),
-                                                (const char*) d_alignment_best_alignment_flags_compact,
-                                                (char*)d_alignment_best_alignment_flags_discardedoutput,
-                                        		dataArrays.d_indices,
-                                        		d_indices_segmented_partitioned,
-                                        		*dataArrays.h_num_indices,
-                                        		dataArrays.n_subjects,
-                                        		dataArrays.d_indices_per_subject_prefixsum,
-                                        		dataArrays.d_indices_per_subject_prefixsum+1,
-                                                0,
-                                                3,
-                                                streams[primary_stream_index]);
-
-        /*generic_kernel<<<1,1,0, streams[primary_stream_index]>>>([=] __device__ (){
-            for(int subjectIndex = 0; subjectIndex < dataArrays.n_subjects; subjectIndex++){
-                printf("subject %d, before:\n", subjectIndex);
-
-                const int* myIndices = dataArrays.d_indices + dataArrays.d_indices_per_subject_prefixsum[subjectIndex];
-                for(int k = 0; k < dataArrays.d_indices_per_subject[subjectIndex]; k++){
-                    printf("index: %d, flag %d\n", myIndices[k], dataArrays.d_alignment_best_alignment_flags[myIndices[k]]);
-                }
-            }
-
-            for(int subjectIndex = 0; subjectIndex < dataArrays.n_subjects; subjectIndex++){
-                printf("subject %d, after:\n", subjectIndex);
-
-                const int* myIndices = d_indices_segmented_partitioned + dataArrays.d_indices_per_subject_prefixsum[subjectIndex];
-                for(int k = 0; k < dataArrays.d_indices_per_subject[subjectIndex]; k++){
-                    printf("index: %d, flag %d\n", myIndices[k], dataArrays.d_alignment_best_alignment_flags[myIndices[k]]);
-                }
-            }
-
-            for(int i = 0; i < *dataArrays.d_num_indices; i++){
-                assert(d_alignment_best_alignment_flags_compact[i] != BestAlignment_t::None);
-
-            }
-        }); CUERR;*/
-
-
-        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_compact);
-        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_discardedoutput);
-#endif
         call_msa_init_kernel_async_exp(
                 dataArrays.d_msa_column_properties,
                 dataArrays.d_alignment_shifts,
@@ -1971,8 +1897,6 @@ namespace gpu{
 
                 batch.numMinimizations++;
 
-                //cubCachingAllocator.DeviceFree(d_indices_segmented_partitioned);
-
                 //repeat state_buildmsa_func to rebuild the msa using the new index list
                 return expectedState;
 
@@ -1994,8 +1918,6 @@ namespace gpu{
             }
         }
 #endif
-
-        //cubCachingAllocator.DeviceFree(d_indices_segmented_partitioned);
 
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
 
