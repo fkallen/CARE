@@ -708,6 +708,87 @@ struct DataArrays {
 		//cudaSetDevice(deviceId);
 	};
 
+    void printActiveDataOfSubject(int subjectIndex, std::ostream& out){
+        assert(subjectIndex < n_subjects);
+
+        size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+        const int numIndices = h_indices_per_subject[subjectIndex];
+        const int* indices = h_indices + h_indices_per_subject_prefixsum[subjectIndex];
+        const int subjectColumnsBegin_incl = h_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+        const int subjectColumnsEnd_excl = h_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+        const int columnsToCheck = h_msa_column_properties[subjectIndex].columnsToCheck;
+
+        const char* consensus = &h_consensus[subjectIndex * msa_pitch];
+        const int* countsA = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats];
+        const int* countsC = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 1*msa_weights_pitch_floats];
+        const int* countsG = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats];
+        const int* countsT = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats];
+        const float* weightsA = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats];
+        const float* weightsC = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 1*msa_weights_pitch_floats];
+        const float* weightsG = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats];
+        const float* weightsT = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats];
+
+        const int numCandidates = h_candidates_per_subject_prefixsum[subjectIndex+1] - h_candidates_per_subject_prefixsum[subjectIndex];
+        //std::ostream_iterator<double>(std::cout, " ")
+        out << "Subject: ";
+        for(int i = 0; i < numCandidates; i++){
+
+        }
+
+        out << "numIndices: " << numIndices << '\n';
+        out << "indices:\n";
+        std::copy(indices, indices + numIndices, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "subjectColumnsBegin_incl: " << subjectColumnsBegin_incl
+                << ", subjectColumnsEnd_excl: " << subjectColumnsEnd_excl
+                << ", columnsToCheck: " << columnsToCheck << '\n';
+
+        out << "shifts:\n";
+        for(int i = 0; i < numIndices; i++){
+            out << h_alignment_shifts[indices[i]] << ", ";
+        }
+        out << '\n';
+
+        out << "consensus:\n";
+        std::copy(consensus, consensus + columnsToCheck, std::ostream_iterator<char>(out, ""));
+        out << '\n';
+
+        out << "countsA:\n";
+        std::copy(countsA, countsA + columnsToCheck, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "countsC:\n";
+        std::copy(countsC, countsC + columnsToCheck, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "countsG:\n";
+        std::copy(countsG, countsG + columnsToCheck, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "countsT:\n";
+        std::copy(countsT, countsT + columnsToCheck, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "weightsA:\n";
+        std::copy(weightsA, weightsA + columnsToCheck, std::ostream_iterator<float>(out, " "));
+        out << '\n';
+
+        out << "weightsC:\n";
+        std::copy(weightsC, weightsC + columnsToCheck, std::ostream_iterator<float>(out, " "));
+        out << '\n';
+
+        out << "weightsG:\n";
+        std::copy(weightsG, weightsG + columnsToCheck, std::ostream_iterator<float>(out, " "));
+        out << '\n';
+
+        out << "weightsT:\n";
+        std::copy(weightsT, weightsT + columnsToCheck, std::ostream_iterator<float>(out, " "));
+        out << '\n';
+
+    }
+
 	void allocCandidateIds(int n_quer){
 		memCandidateIds = SDIV(sizeof(read_number) * n_quer, padding_bytes) * padding_bytes;
 
@@ -919,6 +1000,9 @@ struct DataArrays {
 				cudaMallocHost(&qualities_transfer_data_host, std::size_t(required_qualities_transfer_data_allocation_size * allocfactor)); CUERR;
 
 				qualities_transfer_data_allocation_size = std::size_t(required_qualities_transfer_data_allocation_size * allocfactor);
+
+                cudaFree(d_candidate_qualities_tmp); CUERR;
+                cudaMalloc(&d_candidate_qualities_tmp, memCandidateQualities * allocfactor); CUERR;
 			}
 
 			qualities_transfer_data_usable_size = required_qualities_transfer_data_allocation_size;
@@ -1165,6 +1249,7 @@ struct DataArrays {
 		a.h_candidate_qualities = nullptr;
 		a.h_subject_qualities = nullptr;
 		a.d_candidate_qualities = nullptr;
+        a.d_candidate_qualities_tmp = nullptr;
 		a.d_subject_qualities = nullptr;
 		a.correction_results_transfer_data_host = nullptr;
 		a.correction_results_transfer_data_device = nullptr;
@@ -1338,6 +1423,7 @@ struct DataArrays {
 	char* h_subject_qualities = nullptr;
 
 	char* d_candidate_qualities = nullptr;
+    char* d_candidate_qualities_tmp = nullptr;
 	char* d_subject_qualities = nullptr;
 
 	//correction results output
