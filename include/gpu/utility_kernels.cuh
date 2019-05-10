@@ -55,11 +55,29 @@ void compact_kernel(T* out, const T* in, const int* indices, int n){
 }
 
 template<class T>
+__global__
+void compact_kernel_nptr(T* out, const T* in, const int* indices, const int* n){
+
+    for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < *n; i += blockDim.x * gridDim.x){
+        const int srcindex = indices[i];
+        out[i] = in[srcindex];
+    }
+}
+
+template<class T>
 void call_compact_kernel_async(T* out, const T* in, const int* indices, int n, cudaStream_t stream){
     dim3 block(128,1,1);
     dim3 grid(SDIV(n, block.x),1,1);
 
     compact_kernel<<<grid, block, 0, stream>>>(out, in, indices, n); CUERR;
+}
+
+template<class T>
+void call_compact_kernel_async(T* out, const T* in, const int* indices, const int* n, int maxN, cudaStream_t stream){
+    dim3 block(128,1,1);
+    dim3 grid(SDIV(maxN, block.x),1,1);
+
+    compact_kernel_nptr<<<grid, block, 0, stream>>>(out, in, indices, n); CUERR;
 }
 
 #endif
