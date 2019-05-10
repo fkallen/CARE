@@ -352,12 +352,6 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData);
 
-    static BatchState state_unprepared_func2(Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const TransitionFunctionData& transFuncData);
-
 	static BatchState state_copyreads_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
