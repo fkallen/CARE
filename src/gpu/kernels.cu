@@ -1102,7 +1102,7 @@ namespace gpu{
             }
             //printf("\n");
 
-            //if(subjectIndex == 0){
+            //if(subjectIndex == 1){
             //    printf("thread %d id %d, maxid_excl %d\n", threadIdx.x, id, maxid_excl);
             //}
 
@@ -1127,7 +1127,7 @@ namespace gpu{
 
                 //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
 
-                //if(subjectIndex == 0){
+                //if(subjectIndex == 1){
                 //    printf("thread %d flag %d\n", threadIdx.x, flag);
                 //}
 
@@ -2029,6 +2029,7 @@ namespace gpu{
                                                     const int* __restrict__ d_indices_per_subject,
                                                     const int* __restrict__ d_indices_per_subject_prefixsum,
                                                     int dataset_coverage,
+                                                    const unsigned int* d_readids, 
                                                     bool debug = false){
 
         auto getNumBytes = [] (int sequencelength){
@@ -2102,7 +2103,7 @@ namespace gpu{
             const int myNumIndices = d_indices_per_subject[subjectIndex];
 
             if(debug && threadIdx.x == 0){
-                printf("myNumIndices %d\n", myNumIndices);
+                //printf("myNumIndices %d\n", myNumIndices);
             }
 
             if(myNumIndices > 0){
@@ -2184,7 +2185,7 @@ namespace gpu{
                             foundBaseIndex = significantBaseIndex;
 
                             if(debug){
-                                printf("found col %d, baseIndex %d\n", col, foundBaseIndex);
+                                //printf("found col %d, baseIndex %d\n", col, foundBaseIndex);
                             }
                         }
                     }
@@ -2201,24 +2202,24 @@ namespace gpu{
 
                     if(threadIdx.x == 0){
                         if(packed.x != std::numeric_limits<int>::max()){
-                            broadcastbufferint4[0] = true;
+                            broadcastbufferint4[0] = 1;
                             broadcastbufferint4[1] = packed.x;
                             broadcastbufferint4[2] = to_nuc(packed.y);
                             broadcastbufferint4[3] = packed.y;
                         }else{
-                            broadcastbufferint4[0] = false;
+                            broadcastbufferint4[0] = 0;
                         }
                     }
 
                     __syncthreads();
 
-                    foundColumn = broadcastbufferint4[0];
+                    foundColumn = (1 == broadcastbufferint4[0]);
                     col = broadcastbufferint4[1];
                     foundBase = broadcastbufferint4[2];
                     foundBaseIndex = broadcastbufferint4[3];
 
-                    if(debug && threadIdx.x == 0){
-                        printf("reduced: found col %d, baseIndex %d\n", col, foundBaseIndex);
+                    if(debug && threadIdx.x == 0 && d_readids[subjectIndex] == 207){
+                        printf("reduced: found a column: %d, found col %d, found base %c, baseIndex %d\n", foundColumn, col, foundBase, foundBaseIndex);
                     }
 
                     if(foundColumn){
@@ -2261,7 +2262,7 @@ namespace gpu{
                                     }
                                 }
 
-                                if(debug){
+                                /*if(debug){
                                     printf("k %d, candidateIndex %d, row_begin_incl %d, row_end_excl %d, notAffected %d, base %c, forward %d\n", k, candidateIndex,
                                     row_begin_incl, row_end_excl, notAffected, base, alignmentFlag == BestAlignment_t::Forward);
 
@@ -2286,7 +2287,7 @@ namespace gpu{
                                     }
 
 
-                                }
+                                }*/
 
                                 /*if(base == 'A') seenCounts[0]++;
                                 if(base == 'C') seenCounts[1]++;
@@ -3807,6 +3808,7 @@ namespace gpu{
                 int dataset_coverage,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle,
+                const unsigned int* d_readids,
                 bool debug){
 
 
@@ -3885,6 +3887,7 @@ namespace gpu{
                     d_indices_per_subject, \
                     d_indices_per_subject_prefixsum, \
                     dataset_coverage, \
+                    d_readids, \
                     debug); CUERR;
 
     	assert(blocksize > 0 && blocksize <= max_block_size);

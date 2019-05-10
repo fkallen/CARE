@@ -448,6 +448,7 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             int dataset_coverage,
             cudaStream_t stream,
             KernelLaunchHandle& handle,
+            const unsigned int* d_readids,
             bool debug = false);
 
 #endif //ifdef __NVCC__

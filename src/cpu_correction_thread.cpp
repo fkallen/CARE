@@ -827,14 +827,16 @@ namespace cpu{
 
                         auto update_after_successfull_minimization = [&](){
 #if 0
-                            if(correctionTasks[0].readId == 168){
+                            if(correctionTasks[0].readId == 207){
                             int toKeep = std::count_if(minimizationResult.differentRegionCandidate.begin(),
                                                     minimizationResult.differentRegionCandidate.end(), [](auto b){return !b;});
                             int toRemove = std::count_if(minimizationResult.differentRegionCandidate.begin(),
                                                     minimizationResult.differentRegionCandidate.end(), [](auto b){return b;});
+                            std::cerr << "numindices: " << minimizationResult.differentRegionCandidate.size() << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';
+
                             std::cerr << "subjectColumnsBegin_incl: " << multipleSequenceAlignment.subjectColumnsBegin_incl
                                     << ", subjectColumnsEnd_excl: " << multipleSequenceAlignment.subjectColumnsEnd_excl << '\n';
-                            std::cerr << "numindices: " << minimizationResult.differentRegionCandidate.size() << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';
+
                             /*std::cerr << "shifts:\n";
                             for(auto shift : bestAlignmentShifts){
                                 std::cerr << shift << ", ";
@@ -895,7 +897,7 @@ namespace cpu{
                             }
                             std::cerr << '\n';*/
 
-                            std::exit(0);
+                            //std::exit(0);
                         }
 #endif
                             if(minimizationResult.performedMinimization){
@@ -1168,6 +1170,10 @@ namespace cpu{
                         const int subjectColumnsBegin_incl = multipleSequenceAlignment.subjectColumnsBegin_incl;
                         const int subjectColumnsEnd_excl = multipleSequenceAlignment.subjectColumnsEnd_excl;
 
+                        //if(correctionTasks[0].readId == 207){
+                        //    std::cerr << "debug\n";
+                        //}
+
                         MSAProperties msaProperties = getMSAProperties2(multipleSequenceAlignment.support.data(),
                                                                         multipleSequenceAlignment.coverage.data(),
                                                                         //int(correctionTasks[0].subject_string.size()),
@@ -1192,6 +1198,7 @@ namespace cpu{
     #ifdef ENABLE_TIMING
                         msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
     #endif
+
 
                         if(correctionResult.isCorrected){
                             //need to replace the bases in the good region by the corrected bases of the clipped read
