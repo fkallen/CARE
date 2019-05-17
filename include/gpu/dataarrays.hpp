@@ -729,8 +729,16 @@ struct DataArrays {
         const float* weightsG = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats];
         const float* weightsT = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats];
 
+        const float* support = &h_support[msa_weights_pitch_floats * subjectIndex];
+        const float* origWeights = &h_origWeights[msa_weights_pitch_floats * subjectIndex];
+        const int* origCoverages = &h_origCoverages[msa_weights_pitch_floats * subjectIndex];
+
+        const bool subject_is_corrected = h_subject_is_corrected[subjectIndex];
+        const bool is_high_quality_subject = h_is_high_quality_subject[subjectIndex];
+
         const int numCandidates = h_candidates_per_subject_prefixsum[subjectIndex+1] - h_candidates_per_subject_prefixsum[subjectIndex];
         //std::ostream_iterator<double>(std::cout, " ")
+        out << "subjectIndex: " << subjectIndex << '\n';
         out << "Subject: ";
         for(int i = 0; i < numCandidates; i++){
 
@@ -786,6 +794,21 @@ struct DataArrays {
         out << "weightsT:\n";
         std::copy(weightsT, weightsT + columnsToCheck, std::ostream_iterator<float>(out, " "));
         out << '\n';
+
+        out << "support:\n";
+        std::copy(support, support + columnsToCheck, std::ostream_iterator<float>(out, " "));
+        out << '\n';
+
+        out << "origWeights:\n";
+        std::copy(origWeights, origWeights + columnsToCheck, std::ostream_iterator<float>(out, " "));
+        out << '\n';
+
+        out << "origCoverages:\n";
+        std::copy(origCoverages, origCoverages + columnsToCheck, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "subject_is_corrected: " << subject_is_corrected << '\n';
+        out << "is_high_quality_subject: " << is_high_quality_subject << '\n';
 
     }
 
