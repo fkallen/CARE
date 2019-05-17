@@ -35,6 +35,7 @@ enum class KernelId {
 	MSACorrectCandidates,
     MSAAddSequencesImplicitGlobal,
     MSAAddSequencesImplicitShared,
+    MSAAddSequencesImplicitSinglecol,
     MSAFindConsensusImplicit,
     MSACorrectSubjectImplicit,
     MSAFindCandidatesOfDifferentRegion,
@@ -263,7 +264,42 @@ void call_msa_add_sequences_kernel_implicit_global_async(
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            KernelLaunchHandle& handle,
+            bool debug = false);
+
+void call_msa_add_sequences_implicit_singlecol_kernel_async(
+            int* d_counts,
+            float* d_weights,
+            int* d_coverage,
+            const int* d_alignment_shifts,
+            const BestAlignment_t* d_alignment_best_alignment_flags,
+            const int* d_alignment_overlaps,
+            const int* d_alignment_nOps,
+            const char* d_subject_sequences_data,
+            const char* d_candidate_sequences_data,
+            const int* d_subject_sequences_lengths,
+            const int* d_candidate_sequences_lengths,
+            const char* d_subject_qualities,
+            const char* d_candidate_qualities,
+            const MSAColumnProperties*  d_msa_column_properties,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_indices_per_subject_prefixsum,
+            int n_subjects,
+            int n_queries,
+            const int* d_columns_per_subject_prefixsum,
+            bool canUseQualityScores,
+            float desiredAlignmentMaxErrorRate,
+            int maximum_sequence_length,
+            int max_sequence_bytes,
+            size_t encoded_sequence_pitch,
+            size_t quality_pitch,
+            size_t msa_weights_pitch,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle,
+            const read_number* d_subject_read_ids,
+            bool debug = false);
 
 void call_msa_add_sequences_kernel_implicit_async(
             int* d_counts,
@@ -300,7 +336,8 @@ void call_msa_add_sequences_kernel_implicit_async(
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            KernelLaunchHandle& handle,
+            bool debug = false);
 
 
 void call_msa_find_consensus_kernel_async(

@@ -1,6 +1,7 @@
 #include <gpu/kernels.hpp>
 #include <gpu/bestalignment.hpp>
 #include <gpu/qualityscoreweights.hpp>
+#include <gpu/utility_kernels.cuh>
 
 #include <msa.hpp>
 #include <sequence.hpp>
@@ -15,6 +16,8 @@
 
 #ifdef __NVCC__
 #include <cub/cub.cuh>
+#include <cub/util_allocator.cuh>
+
 #include <cooperative_groups.h>
 
 namespace cg = cooperative_groups;
@@ -24,6 +27,9 @@ namespace care{
 namespace gpu{
 
 #ifdef __NVCC__
+
+    extern cub::CachingDeviceAllocator cubCachingAllocator;
+
 
     KernelLaunchHandle make_kernel_launch_handle(int deviceId){
         KernelLaunchHandle handle;
@@ -819,7 +825,8 @@ namespace gpu{
                 size_t encoded_sequence_pitch,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
-    			size_t msa_weights_row_pitch){
+    			size_t msa_weights_row_pitch,
+                bool debug){
 
         auto get = [] (const char* data, int length, int index){
             return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
@@ -956,7 +963,6 @@ namespace gpu{
 
 
 
-
     __global__
     void msa_add_sequences_kernel_implicit_shared(
                 int* d_counts,
@@ -990,11 +996,14 @@ namespace gpu{
                 size_t encoded_sequence_pitch,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
-    			size_t msa_weights_row_pitch){
+    			size_t msa_weights_row_pitch,
+                bool debug){
 
         // sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
         //+ sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
     	extern __shared__ float sharedmem[];
+
+        if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
 
         auto get = [] (const char* data, int length, int index){
             return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
@@ -1083,14 +1092,16 @@ namespace gpu{
         		const char* const subject = getSubjectPtr(subjectIndex);
         		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
-                //printf("subject: ");
+                //if(debug){
+                //    printf("subject sharedkernel\n");
+                //}
                 for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
                     const int shift = 0;
                     const int globalIndex = subjectColumnsBegin_incl + shift + i;
                     const char base = get(subject, subjectLength, i);
                     //printf("%d ", int(base));
                     //if(subjectQualityScore[i] == '\0'){
-                        assert(subjectQualityScore[i] != '\0');
+                        //assert(subjectQualityScore[i] != '\0');
                     //}
 
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
@@ -1098,7 +1109,14 @@ namespace gpu{
                     atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                     atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                     atomicAdd(my_coverage + globalIndex, 1);
+
+                    //if(debug){
+                    //    printf("%f ", weight);
+                    //}
                 }
+                //if(debug){
+                //    printf("\n");
+                //}
             }
             //printf("\n");
 
@@ -1137,7 +1155,7 @@ namespace gpu{
                         const char base = get(query, queryLength, i);
                         //printf("%d ", int(base));
                         //if(queryQualityScore[i] == '\0'){
-                            assert(queryQualityScore[i] != '\0');
+                            //assert(queryQualityScore[i] != '\0');
                         //}
 
                         const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
@@ -1146,6 +1164,9 @@ namespace gpu{
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                         atomicAdd(my_coverage + globalIndex, 1);
+                        if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
+                            printf("globalIndex %d, index %d, queryIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, base, weight);
+                        }
                     }
         		}else{
                     auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
@@ -1161,7 +1182,7 @@ namespace gpu{
                         //printf("%d ", int(revCompl));
 
                         //if(queryQualityScore[reverseIndex] == '\0'){
-                            assert(queryQualityScore[reverseIndex] != '\0');
+                            //assert(queryQualityScore[reverseIndex] != '\0');
                         //}
 
                         const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
@@ -1170,6 +1191,10 @@ namespace gpu{
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                         atomicAdd(my_coverage + globalIndex, 1);
+
+                        if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
+                            printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, reverseIndex, base, weight);
+                        }
                     }
                 }
                 //printf("\n");
@@ -1185,6 +1210,10 @@ namespace gpu{
                     float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
                     atomicAdd(destCounts ,*srcCounts);
                     atomicAdd(destWeights, *srcWeights);
+
+                    if(debug && (index == 23 || index == 35 || index == 42)){
+                        printf("globalIndex %d, %.10f\n", index, *srcWeights);
+                    }
                 }
             }
 
@@ -1193,6 +1222,220 @@ namespace gpu{
 
     }
 
+
+
+    __global__
+    void msa_add_sequences_implicit_singlecol_kernel(int* __restrict__ d_counts,
+                                    float* __restrict__ d_weights,
+                                    int* __restrict__ d_coverage,
+                                    const int* __restrict__ d_alignment_shifts,
+                                    const BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
+                                    const int* __restrict__ d_alignment_overlaps,
+                                    const int* __restrict__ d_alignment_nOps,
+                                    const char* __restrict__ d_subject_sequences_data,
+                                    const char* __restrict__ d_candidate_sequences_data,
+                                    const int* __restrict__ d_subject_sequences_lengths,
+                                    const int* __restrict__ d_candidate_sequences_lengths,
+                                    const char* __restrict__ d_subject_qualities,
+                                    const char* __restrict__ d_candidate_qualities,
+                                    const MSAColumnProperties*  __restrict__ d_msa_column_properties,
+                                    const int* __restrict__ d_candidates_per_subject_prefixsum,
+                                    const int* __restrict__ d_indices,
+                                    const int* __restrict__ d_indices_per_subject,
+                                    const int* __restrict__ d_indices_per_subject_prefixsum,
+                                    int n_subjects,
+                                    int n_queries,
+                                    const int* __restrict__ d_columns_per_subject_prefixsum,
+                                    bool canUseQualityScores,
+                                    float desiredAlignmentMaxErrorRate,
+                                    int maximum_sequence_length,
+                                    int max_sequence_bytes,
+                                    size_t encoded_sequence_pitch,
+                                    size_t quality_pitch,
+                                    size_t msa_weights_pitch,
+                                    const read_number* d_subject_read_ids,
+                                    bool debug){
+
+        constexpr char baseA_enc = 0x00;
+        constexpr char baseC_enc = 0x01;
+        constexpr char baseG_enc = 0x02;
+        constexpr char baseT_enc = 0x03;
+
+        constexpr read_number debugid = 207;
+
+        if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("singlecol\n");
+
+        auto get = [] (const char* data, int length, int index){
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        };
+
+
+        const int numTotalColumns = d_columns_per_subject_prefixsum[n_subjects];
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+        for(int columnid = blockIdx.x * blockDim.x + threadIdx.x; columnid < numTotalColumns; columnid += blockDim.x * gridDim.x){
+            int subjectIndex = 0;
+
+            for(; subjectIndex < n_subjects; subjectIndex++) {
+                if(columnid < d_columns_per_subject_prefixsum[subjectIndex+1])
+                    break;
+            }
+
+            const read_number subjectReadId = d_subject_read_ids[subjectIndex];
+
+            const int columnsBeforeThisSubject = d_columns_per_subject_prefixsum[subjectIndex];
+            const int columnForThisSubject = columnid - columnsBeforeThisSubject;
+
+            if(debug && subjectReadId == debugid){
+                printf("block %d thread %d : column %d / %d\n", blockIdx.x, threadIdx.x, columnForThisSubject, d_msa_column_properties[subjectIndex].columnsToCheck);
+            }
+
+            int countsMatrix[4];
+            float weightsMatrix[4];
+            int coverage;
+
+            #pragma unroll
+            for(int i = 0; i < 4; i++){
+                countsMatrix[i] = 0;
+                weightsMatrix[i] = 0;
+            }
+
+            coverage = 0;
+
+            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+
+            auto countSequence = [&](const char* sequenceptr, const char* qualptr, int sequenceLength, int shift, float weightFactor, bool forward, bool print, int index, int queryIndex){
+                const int positionInMSABegin = subjectColumnsBegin_incl + shift;
+                const int positionInMSAEnd = subjectColumnsBegin_incl + shift + sequenceLength;
+
+                if(forward){
+
+                    if(positionInMSABegin <= columnForThisSubject && columnForThisSubject < positionInMSAEnd){
+                        const int baseposition = columnForThisSubject - positionInMSABegin;
+                        const char encodedBase = get(sequenceptr, sequenceLength, baseposition);
+
+                        countsMatrix[0] += (encodedBase == baseA_enc);
+                        countsMatrix[1] += (encodedBase == baseC_enc);
+                        countsMatrix[2] += (encodedBase == baseG_enc);
+                        countsMatrix[3] += (encodedBase == baseT_enc);
+
+                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[baseposition]] * weightFactor : 1.0f;
+
+                        //if(debug && print){
+                        //    printf("%f ", weight);
+                        //}
+                        weightsMatrix[0] += (encodedBase == baseA_enc) * weight;
+                        weightsMatrix[1] += (encodedBase == baseC_enc) * weight;
+                        weightsMatrix[2] += (encodedBase == baseG_enc) * weight;
+                        weightsMatrix[3] += (encodedBase == baseT_enc) * weight;
+
+
+                        coverage++;
+
+                        if(debug && subjectReadId == debugid){
+                            //printf("globalIndex %d, index %d, queryIndex %d, encodedBase %d, weight %.10f\n", columnForThisSubject, index, queryIndex, encodedBase, weight);
+                        }
+                    }
+                }else{
+                    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                        constexpr std::uint8_t mask = 0x03;
+                        return (~in & mask);
+                    };
+
+                    if(positionInMSABegin <= columnForThisSubject && columnForThisSubject < positionInMSAEnd){
+                        const int reverseIndex = sequenceLength - 1 - (columnForThisSubject - positionInMSABegin);
+                        const char base = get(sequenceptr, sequenceLength, reverseIndex);
+                        const char revCompl = make_reverse_complement_byte(base);
+
+                        countsMatrix[0] += (revCompl == baseA_enc);
+                        countsMatrix[1] += (revCompl == baseC_enc);
+                        countsMatrix[2] += (revCompl == baseG_enc);
+                        countsMatrix[3] += (revCompl == baseT_enc);
+
+                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[reverseIndex]] * weightFactor : 1.0f;
+
+                        weightsMatrix[0] += (revCompl == baseA_enc) * weight;
+                        weightsMatrix[1] += (revCompl == baseC_enc) * weight;
+                        weightsMatrix[2] += (revCompl == baseG_enc) * weight;
+                        weightsMatrix[3] += (revCompl == baseT_enc) * weight;
+
+
+                        coverage++;
+
+                        if(debug && subjectReadId == debugid){
+                            //printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", columnForThisSubject, index, queryIndex, reverseIndex, base, weight);
+                        }
+                    }
+                }
+
+                assert(countsMatrix[0] + countsMatrix[1] + countsMatrix[2] + countsMatrix[3] == coverage);
+            };
+
+            //count bases of subject in chunk
+            const char* const subjectptr = &d_subject_sequences_data[encoded_sequence_pitch * subjectIndex];
+            const char* const subjectqualptr = &d_subject_qualities[quality_pitch * subjectIndex];
+            const int subjectLength = d_subject_sequences_lengths[subjectIndex];
+            //if(debug && columnForThisSubject == 0){
+            //    printf("subject singlecolkernel\n");
+            //}
+            countSequence(subjectptr, subjectqualptr, subjectLength, 0, 1.0f, true, true,-1,-1);
+
+            //if(debug && columnForThisSubject == columnsBeforeThisSubject-1){
+            //    printf("\n");
+            //}
+
+            //count bases of candidates in chunk
+            const int numIndicesForThisSubject = d_indices_per_subject[subjectIndex];
+            const int* const indicesForThisSubject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+            const char* const qualitiesOfCandidates = d_candidate_qualities + (quality_pitch * d_indices_per_subject_prefixsum[subjectIndex]);
+
+            for(int indexToIndices = 0; indexToIndices < numIndicesForThisSubject; indexToIndices++){
+                const int candidateIndex = indicesForThisSubject[indexToIndices];
+                const char* const candidatePtr = &d_candidate_sequences_data[encoded_sequence_pitch * candidateIndex];
+                const char* const candidatequalPtr = &qualitiesOfCandidates[quality_pitch * indexToIndices];
+                const int candidateLength = d_candidate_sequences_lengths[candidateIndex];
+                const int shift = d_alignment_shifts[candidateIndex];
+                const bool forward = d_alignment_best_alignment_flags[candidateIndex] == gpu::BestAlignment_t::Forward;
+                const int query_alignment_overlap = d_alignment_overlaps[candidateIndex];
+                const int query_alignment_nops = d_alignment_nOps[candidateIndex];
+
+                const float weightFactor = 1.0f - sqrtf(query_alignment_nops
+                            / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+
+                //if(debug) printf("candidate %d\n", candidateIndex);
+                countSequence(candidatePtr, candidatequalPtr, candidateLength, shift, weightFactor, forward, false, indexToIndices, candidateIndex);
+            }
+
+            //save counts to global memory
+            int* const myCountsA = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
+            int* const myCountsC = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
+            int* const myCountsG = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
+            int* const myCountsT = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
+            float* const myWeightsA = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
+            float* const myWeightsC = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
+            float* const myWeightsG = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
+            float* const myWeightsT = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
+            int* const myCoverage = d_coverage + subjectIndex * msa_weights_pitch_floats;
+
+            myCountsA[columnForThisSubject] = countsMatrix[0];
+            myCountsC[columnForThisSubject] = countsMatrix[1];
+            myCountsG[columnForThisSubject] = countsMatrix[2];
+            myCountsT[columnForThisSubject] = countsMatrix[3];
+            myWeightsA[columnForThisSubject] = weightsMatrix[0];
+            myWeightsC[columnForThisSubject] = weightsMatrix[1];
+            myWeightsG[columnForThisSubject] = weightsMatrix[2];
+            myWeightsT[columnForThisSubject] = weightsMatrix[3];
+            myCoverage[columnForThisSubject] = coverage;
+
+            if(debug && subjectReadId == debugid){
+                printf("globalIndex %d A , %.10f\n", columnForThisSubject, weightsMatrix[0]);
+                printf("globalIndex %d C , %.10f\n", columnForThisSubject, weightsMatrix[1]);
+                printf("globalIndex %d G , %.10f\n", columnForThisSubject, weightsMatrix[2]);
+                printf("globalIndex %d T , %.10f\n", columnForThisSubject, weightsMatrix[3]);
+            }
+        }
+    }
 
     __global__
     void msa_find_consensus_kernel(
@@ -2029,7 +2272,7 @@ namespace gpu{
                                                     const int* __restrict__ d_indices_per_subject,
                                                     const int* __restrict__ d_indices_per_subject_prefixsum,
                                                     int dataset_coverage,
-                                                    const unsigned int* d_readids, 
+                                                    const unsigned int* d_readids,
                                                     bool debug = false){
 
         auto getNumBytes = [] (int sequencelength){
@@ -2889,7 +3132,8 @@ namespace gpu{
     			size_t msa_row_pitch,
     			size_t msa_weights_row_pitch,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+    			KernelLaunchHandle& handle,
+                bool debug){
 
     	const int blocksize = 128;
     	const std::size_t smem = 0;
@@ -2973,7 +3217,8 @@ namespace gpu{
                                         encoded_sequence_pitch,
                                         quality_pitch,
                                         msa_row_pitch,
-                                        msa_weights_row_pitch); CUERR;
+                                        msa_weights_row_pitch,
+                                        debug); CUERR;
     }
 
 
@@ -3012,8 +3257,9 @@ namespace gpu{
     			size_t msa_row_pitch,
     			size_t msa_weights_row_pitch,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
-
+    			KernelLaunchHandle& handle,
+                bool debug){
+//std::cerr << "n_subjects: " << n_subjects << ", n_queries: " << n_queries << ", *h_num_indices: " << *h_num_indices << '\n';
     	const int blocksize = msa_add_sequences_kernel_implicit_shared_blocksize;
         const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
@@ -3073,6 +3319,11 @@ namespace gpu{
         const int blocks = SDIV(*h_num_indices, blocksize);
     	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
+        /*if(debug){
+            block.x = 1;
+            grid.x = 1;
+        }*/
+
     	msa_add_sequences_kernel_implicit_shared<<<grid, block, smem, stream>>>(
                                             d_counts,
                                             d_weights,
@@ -3105,7 +3356,175 @@ namespace gpu{
                                             encoded_sequence_pitch,
                                             quality_pitch,
                                             msa_row_pitch,
-                                            msa_weights_row_pitch); CUERR;
+                                            msa_weights_row_pitch,
+                                            debug); CUERR;
+    }
+
+
+
+    void call_msa_add_sequences_implicit_singlecol_kernel_async(
+            int* d_counts,
+            float* d_weights,
+            int* d_coverage,
+            const int* d_alignment_shifts,
+            const BestAlignment_t* d_alignment_best_alignment_flags,
+            const int* d_alignment_overlaps,
+            const int* d_alignment_nOps,
+            const char* d_subject_sequences_data,
+            const char* d_candidate_sequences_data,
+            const int* d_subject_sequences_lengths,
+            const int* d_candidate_sequences_lengths,
+            const char* d_subject_qualities,
+            const char* d_candidate_qualities,
+            const MSAColumnProperties*  d_msa_column_properties,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_indices_per_subject_prefixsum,
+            int n_subjects,
+            int n_queries,
+            const int* d_columns_per_subject_prefixsum,
+            bool canUseQualityScores,
+            float desiredAlignmentMaxErrorRate,
+            int maximum_sequence_length,
+            int max_sequence_bytes,
+            size_t encoded_sequence_pitch,
+            size_t quality_pitch,
+            size_t msa_weights_pitch,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle,
+            const read_number* d_subject_read_ids,
+            bool debug){
+
+        constexpr int blocksize = 128;
+
+        int max_blocks_per_device = 1;
+
+    	KernelLaunchConfig kernelLaunchConfig;
+    	kernelLaunchConfig.threads_per_block = blocksize;
+    	kernelLaunchConfig.smem = 0;
+
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicitSinglecol);
+    	if(iter == handle.kernelPropertiesMap.end()) {
+
+    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+    	    #define getProp(blocksize) { \
+            		KernelLaunchConfig kernelLaunchConfig; \
+            		kernelLaunchConfig.threads_per_block = (blocksize); \
+            		kernelLaunchConfig.smem = 0; \
+            		KernelProperties kernelProperties; \
+            		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+            					msa_add_sequences_implicit_singlecol_kernel, \
+            					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+            		mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+            getProp(1);
+    		getProp(32);
+    		getProp(64);
+    		getProp(96);
+    		getProp(128);
+    		getProp(160);
+    		getProp(192);
+    		getProp(224);
+    		getProp(256);
+
+    		const auto& kernelProperties = mymap[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+
+    		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitSinglecol] = std::move(mymap);
+
+    	    #undef getProp
+    	}else{
+    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+    		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
+    	}
+
+        /*auto getColumnsPerSubject = [] __device__ (const MSAColumnProperties& columnProperties){
+            return columnProperties.columnsToCheck;
+        };
+        cub::TransformInputIterator<int,decltype(getColumnsPerSubject), const MSAColumnProperties*>
+            d_columns_per_subject(d_msa_column_properties, getColumnsPerSubject);
+
+        int* d_columns_per_subject_prefixsum;
+        cubCachingAllocator.DeviceAllocate((void**)&d_columns_per_subject_prefixsum,
+                                            sizeof(int) * (n_subjects + 1),
+                                            stream); CUERR;
+
+        void* tempstorage = nullptr;
+        size_t tempstoragesize = 0;
+        cub::DeviceScan::InclusiveSum(tempstorage,
+                    tempstoragesize,
+                    d_columns_per_subject,
+                    d_columns_per_subject_prefixsum+1,
+                    n_subjects,
+                    stream); CUERR;
+
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage,
+                                            tempstoragesize,
+                                            stream); CUERR;
+
+        cub::DeviceScan::InclusiveSum(tempstorage,
+                    tempstoragesize,
+                    d_columns_per_subject,
+                    d_columns_per_subject_prefixsum+1,
+                    n_subjects,
+                    stream); CUERR;
+
+        call_set_kernel_async(d_columns_per_subject_prefixsum,
+                                0,
+                                0,
+                                stream); CUERR;
+*/
+        const int totalNumColumnsUpperBound = n_subjects * msa_weights_pitch / sizeof(float);
+
+        dim3 block(blocksize,1,1);
+
+        int gridsize = std::min(max_blocks_per_device, SDIV(totalNumColumnsUpperBound, blocksize));
+        dim3 grid(gridsize,1,1);
+
+        /*if(debug){
+            block.x = 1;
+            grid.x = 1;
+        }*/
+
+        msa_add_sequences_implicit_singlecol_kernel<<<grid, block, 0, stream>>>(
+                    d_counts,
+                    d_weights,
+                    d_coverage,
+                    d_alignment_shifts,
+                    d_alignment_best_alignment_flags,
+                    d_alignment_overlaps,
+                    d_alignment_nOps,
+                    d_subject_sequences_data,
+                    d_candidate_sequences_data,
+                    d_subject_sequences_lengths,
+                    d_candidate_sequences_lengths,
+                    d_subject_qualities,
+                    d_candidate_qualities,
+                    d_msa_column_properties,
+                    d_candidates_per_subject_prefixsum,
+                    d_indices,
+                    d_indices_per_subject,
+                    d_indices_per_subject_prefixsum,
+                    n_subjects,
+                    n_queries,
+                    d_columns_per_subject_prefixsum,
+                    canUseQualityScores,
+                    desiredAlignmentMaxErrorRate,
+                    maximum_sequence_length,
+                    max_sequence_bytes,
+                    encoded_sequence_pitch,
+                    quality_pitch,
+                    msa_weights_pitch,
+                    d_subject_read_ids,
+                    debug); CUERR;
+
+        //cubCachingAllocator.DeviceFree(tempstorage); CUERR;
+        //cubCachingAllocator.DeviceFree(d_columns_per_subject_prefixsum); CUERR;
     }
 
 
@@ -3144,7 +3563,8 @@ namespace gpu{
     			size_t msa_row_pitch,
     			size_t msa_weights_row_pitch,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+    			KernelLaunchHandle& handle,
+                bool debug){
 
         //std::cout << n_subjects << " " << *h_num_indices << " " << n_queries << std::endl;
 
@@ -3182,7 +3602,8 @@ namespace gpu{
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
                                                             stream,
-                                                            handle); CUERR;
+                                                            handle,
+                                                            debug); CUERR;
     #else
 
 
@@ -3220,7 +3641,8 @@ namespace gpu{
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
                                                             stream,
-                                                            handle); CUERR;
+                                                            handle,
+                                                            debug); CUERR;
     #endif
     }
 

@@ -1224,8 +1224,9 @@ namespace gpu{
             return BatchState::WriteResults;
         }
 
-
-		cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+        if(transFuncData.correctionOptions.useQualityScores){
+		     cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+        }
 
 		// coverage is always >= 1
 		const float min_coverage_threshold = std::max(1.0f,
@@ -1252,30 +1253,6 @@ namespace gpu{
                 dataArrays.n_queries,
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle);
-
-
-        //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
-
-        auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
-            return SDIV(indices_for_subject, msa_add_sequences_kernel_implicit_shared_blocksize);
-        };
-        cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
-            d_blocksPerSubject(dataArrays.d_indices_per_subject,
-                          getBlocksPerSubject);
-
-        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                    batch.batchDataDevice.cubTemp.sizeRef(),
-                    d_blocksPerSubject,
-                    dataArrays.d_tiles_per_subject_prefixsum+1,
-                    dataArrays.n_subjects,
-                    streams[primary_stream_index]); CUERR;
-
-
-        call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
-                                0,
-                                0,
-                                streams[primary_stream_index]);
-
 
 
 
@@ -1316,6 +1293,88 @@ namespace gpu{
 
 #else
 
+#if 0
+
+        auto getColumnsPerSubject = [] __device__ (const MSAColumnProperties& columnProperties){
+            return columnProperties.columnsToCheck;
+        };
+        cub::TransformInputIterator<int,decltype(getColumnsPerSubject), const MSAColumnProperties*>
+            d_columns_per_subject(dataArrays.d_msa_column_properties, getColumnsPerSubject);
+
+
+        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    d_columns_per_subject,
+                    dataArrays.d_tiles_per_subject_prefixsum+1,
+                    dataArrays.n_subjects,
+                    streams[primary_stream_index]); CUERR;
+
+        call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
+                                0,
+                                0,
+                                streams[primary_stream_index]); CUERR;
+
+        bool singlecoldebug = std::any_of(dataArrays.h_subject_read_ids,
+                                dataArrays.h_subject_read_ids + dataArrays.n_subjects,
+                                [](int id){return id == 207;});
+
+        call_msa_add_sequences_implicit_singlecol_kernel_async(
+                    dataArrays.d_counts,
+                    dataArrays.d_weights,
+                    dataArrays.d_coverage,
+                    dataArrays.d_alignment_shifts,
+                    dataArrays.d_alignment_best_alignment_flags,
+                    dataArrays.d_alignment_overlaps,
+                    dataArrays.d_alignment_nOps,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_candidate_sequences_data,
+                    dataArrays.d_subject_sequences_lengths,
+                    dataArrays.d_candidate_sequences_lengths,
+                    dataArrays.d_subject_qualities,
+                    dataArrays.d_candidate_qualities,
+                    dataArrays.d_msa_column_properties,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    dataArrays.d_tiles_per_subject_prefixsum,
+                    transFuncData.correctionOptions.useQualityScores,
+                    desiredAlignmentMaxErrorRate,
+                    dataArrays.maximum_sequence_length,
+                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.quality_pitch,
+                    dataArrays.msa_weights_pitch,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle,
+                    dataArrays.d_subject_read_ids,
+                    false);
+#else
+
+        //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
+
+        auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
+            return SDIV(indices_for_subject, msa_add_sequences_kernel_implicit_shared_blocksize);
+        };
+        cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
+            d_blocksPerSubject(dataArrays.d_indices_per_subject,
+                          getBlocksPerSubject);
+
+        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    d_blocksPerSubject,
+                    dataArrays.d_tiles_per_subject_prefixsum+1,
+                    dataArrays.n_subjects,
+                    streams[primary_stream_index]); CUERR;
+
+
+        call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
+                                0,
+                                0,
+                                streams[primary_stream_index]);
+
         call_msa_add_sequences_kernel_implicit_async(
                     dataArrays.d_counts,
                     dataArrays.d_weights,
@@ -1351,7 +1410,133 @@ namespace gpu{
                     dataArrays.msa_pitch,
                     dataArrays.msa_weights_pitch,
                     streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
+                    batch.kernelLaunchHandle,
+                    dataArrays.h_subject_read_ids[2] == 207);
+#endif
+
+#if 0
+        int* d_counts_tmp;
+        float* d_weights_tmp;
+        int* d_coverage_tmp;
+
+        char* d_consensus_tmp;
+        float* d_support_tmp;
+        float* d_orig_weights_tmp;
+        int* d_orig_coverages_tmp;
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_counts_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&d_weights_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&d_coverage_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+
+        cubCachingAllocator.DeviceAllocate((void**)&d_consensus_tmp, dataArrays.n_subjects * dataArrays.msa_pitch, streams[primary_stream_index]); CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&d_support_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&d_orig_weights_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&d_orig_coverages_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+
+        cudaMemsetAsync(d_counts_tmp, 0, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cudaMemsetAsync(d_weights_tmp, 0, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cudaMemsetAsync(d_coverage_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+
+        cudaMemsetAsync(d_consensus_tmp, 0, dataArrays.n_subjects * dataArrays.msa_pitch, streams[primary_stream_index]); CUERR;
+        cudaMemsetAsync(d_support_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cudaMemsetAsync(d_orig_weights_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+        cudaMemsetAsync(d_orig_coverages_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
+
+        call_msa_add_sequences_kernel_implicit_async(
+                    d_counts_tmp,
+                    d_weights_tmp,
+                    d_coverage_tmp,
+                    nullptr,
+                    nullptr,
+                    dataArrays.d_alignment_shifts,
+                    dataArrays.d_alignment_best_alignment_flags,
+                    dataArrays.d_alignment_overlaps,
+                    dataArrays.d_alignment_nOps,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_candidate_sequences_data,
+                    dataArrays.d_subject_sequences_lengths,
+                    dataArrays.d_candidate_sequences_lengths,
+                    dataArrays.d_subject_qualities,
+                    dataArrays.d_candidate_qualities,
+                    dataArrays.d_msa_column_properties,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.d_tiles_per_subject_prefixsum,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    dataArrays.h_num_indices,
+                    dataArrays.d_num_indices,
+                    transFuncData.correctionOptions.useQualityScores,
+                    desiredAlignmentMaxErrorRate,
+                    dataArrays.maximum_sequence_length,
+                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.quality_pitch,
+                    dataArrays.msa_pitch,
+                    dataArrays.msa_weights_pitch,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle,
+                    false);//dataArrays.h_subject_read_ids[0] == 940);
+
+        /*cudaDeviceSynchronize(); CUERR;
+        generic_kernel<<<1,1>>>([=] __device__ (){
+
+            const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+            for(int subjectIndex = 0; subjectIndex < dataArrays.n_subjects; subjectIndex++){
+                for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                    bool error = false;
+                    for(int i = 0; i < 4; i++){
+                        const int* countssharedi = &d_counts_tmp[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
+                        const int* countssinglecoli = &dataArrays.d_counts[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
+
+
+                        int countshared = countssharedi[pos];
+                        int countsinglecol = countssinglecoli[pos];
+                        if(countshared != countsinglecol){
+                            printf("count error %d %d. subjectIndex = %d, i = %d, pos = %d\n", countshared, countsinglecol, subjectIndex, i , pos);
+                            error = true;
+                        }
+                    }
+                    if(error) break;
+                }
+
+                for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                    bool error = false;
+                    for(int i = 0; i < 4; i++){
+                        const float* weightsharedi = &d_weights_tmp[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
+                        const float* weightsinglecoli = &dataArrays.d_weights[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
+                        float weightshared = weightsharedi[pos];
+                        float weightsinglecol = weightsinglecoli[pos];
+                        if(weightshared != weightsinglecol){
+                            printf("weight error %.10f %.10f. subjectIndex = %d, i = %d, pos = %d\n", weightshared, weightsinglecol, subjectIndex, i , pos);
+                            error = true;
+                        }
+                    }
+                    if(error) break;
+                }
+
+                const int* coveragesshared = &d_coverage_tmp[subjectIndex * msa_weights_pitch_floats];
+                const int* coveragessinglecol = &dataArrays.d_coverage[subjectIndex * msa_weights_pitch_floats];
+
+                for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                    int coverageshared = coveragesshared[pos];
+                    int coveragesinglecol = coveragessinglecol[pos];
+                    if(coverageshared != coveragesinglecol){
+                        printf("coverage error %d %d. subjectIndex = %d, pos = %d\n", coverageshared, coveragesinglecol, subjectIndex, pos);
+                        break;
+                    }
+                }
+
+            }
+        }); CUERR;
+
+        */
+
+        //cudaDeviceSynchronize(); CUERR;
+
+#endif
 
 #endif
 
@@ -1397,6 +1582,341 @@ namespace gpu{
                     dataArrays.msa_weights_pitch,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
+#if 0
+        call_msa_find_consensus_implicit_kernel_async(
+                    dataArrays.d_counts,
+                    dataArrays.d_weights,
+                    d_consensus_tmp,
+                    d_support_tmp,
+                    dataArrays.d_coverage,
+                    d_orig_weights_tmp,
+                    d_orig_coverages_tmp,
+                    dataArrays.d_subject_sequences_data,
+                    dataArrays.d_msa_column_properties,
+                    dataArrays.n_subjects,
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.msa_pitch,
+                    dataArrays.msa_weights_pitch,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);
+#endif
+
+#endif
+
+#if 0
+        //if(batch.tasks[0].readId == 207){
+
+            //cudaDeviceSynchronize(); CUERR;
+
+            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+
+                    for(size_t pos = threadIdx.x; pos < 4*msa_weights_pitch_floats; pos += blockDim.x){
+                        int oldv = d_counts_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
+                        int newv = dataArrays.d_counts[pos + subjectIndex*4*msa_weights_pitch_floats];
+                        if(oldv != newv){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    __syncthreads();
+
+                    if(error && threadIdx.x == 0){
+                        printf("error counts readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
+                            int oldv = d_counts_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
+                            printf("%d ", oldv);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
+                            int newv = dataArrays.d_counts[pos + subjectIndex * 4*msa_weights_pitch_floats];
+                            printf("%d ", newv);
+                        }
+                        printf("\n");
+                    }
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;
+
+            /*generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+
+                    for(size_t pos = threadIdx.x; pos < 4*msa_weights_pitch_floats; pos += blockDim.x){
+                        float oldv = d_weights_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
+                        float newv = dataArrays.d_weights[pos + subjectIndex*4*msa_weights_pitch_floats];
+                        if(abs(oldv - newv) > 10e-2){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    __syncthreads();
+
+                    if(error && threadIdx.x == 0){
+                        printf("error weights readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
+                            float oldv = d_weights_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
+                            printf("%f ", oldv);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
+                            float newv = dataArrays.d_weights[pos + subjectIndex*4*msa_weights_pitch_floats];
+                            printf("%f ", newv);
+                        }
+                        printf("\n");
+                    }
+
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;*/
+
+            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+
+                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
+                        int oldv = d_coverage_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                        int newv = dataArrays.d_coverage[pos + subjectIndex * msa_weights_pitch_floats];
+                        if(oldv != newv){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    __syncthreads();
+
+                    if(error && threadIdx.x == 0){
+                        printf("error coverage readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            int oldv = d_coverage_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%d ", oldv);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            int newv = dataArrays.d_coverage[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%d ", newv);
+                        }
+                        printf("\n");
+                    }
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;
+
+            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+
+                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
+                        char consold = d_consensus_tmp[pos + subjectIndex * dataArrays.msa_pitch];
+                        char consnew = dataArrays.d_consensus[pos + subjectIndex * dataArrays.msa_pitch];
+                        if(consold != consnew){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    __syncthreads();
+
+                    if(error && threadIdx.x == 0){
+                        printf("error consensus readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            char consold = d_consensus_tmp[pos + subjectIndex * dataArrays.msa_pitch];
+                            printf("%c", consold);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            char consnew = dataArrays.d_consensus[pos + subjectIndex * dataArrays.msa_pitch];
+                            printf("%c", consnew);
+                        }
+                        printf("\n");
+                    }
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;
+
+            //cudaDeviceSynchronize(); CUERR;
+
+            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
+                        float oldw = d_orig_weights_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                        float neww = dataArrays.d_origWeights[pos + subjectIndex * msa_weights_pitch_floats];
+                        if(abs(oldw - neww) > 10e-5){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    if(error && threadIdx.x == 0){
+                        printf("error origweight readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            float oldw = d_orig_weights_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%f ", oldw);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            float neww = dataArrays.d_origWeights[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%f ", neww);
+                        }
+                        printf("\n");
+                    }
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;
+
+            //cudaDeviceSynchronize(); CUERR;
+
+            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
+                        int oldw = d_orig_coverages_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                        int neww = dataArrays.d_origCoverages[pos + subjectIndex * msa_weights_pitch_floats];
+                        if(abs(oldw - neww) > 10e-5){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    if(error && threadIdx.x == 0){
+                        printf("error origcoverage readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            int oldw = d_orig_coverages_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%f ", oldw);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            int neww = dataArrays.d_origCoverages[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%f ", neww);
+                        }
+                        printf("\n");
+                    }
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;
+
+            //cudaDeviceSynchronize(); CUERR;
+
+            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
+                __shared__ int error;
+
+                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
+                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
+
+
+                    if(threadIdx.x == 0) error = 0;
+                    __syncthreads();
+                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
+                        float oldw = d_support_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                        float neww = dataArrays.d_support[pos + subjectIndex * msa_weights_pitch_floats];
+                        if(abs(oldw - neww) > 10e-5){
+                            atomicAdd(&error, 1);
+                        }
+                    }
+
+                    if(error && threadIdx.x == 0){
+                        printf("error origweight readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
+                        printf("old:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            float oldw = d_support_tmp[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%f ", oldw);
+                        }
+                        printf("\n");
+                        printf("new:\n");
+                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
+                            float neww = dataArrays.d_support[pos + subjectIndex * msa_weights_pitch_floats];
+                            printf("%f ", neww);
+                        }
+                        printf("\n");
+                    }
+                    if(error){
+                        break;
+                    }
+                }
+            }); CUERR;
+
+
+
+            //cudaDeviceSynchronize(); CUERR;
+
+            //std::exit(0);
+        //}
+
+        cudaMemcpyAsync(dataArrays.d_counts, d_counts_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.d_weights, d_weights_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.d_coverage, d_coverage_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.d_consensus, d_consensus_tmp, dataArrays.n_subjects * dataArrays.msa_pitch, D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.d_support, d_support_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.d_origWeights, d_orig_weights_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.d_origCoverages, d_orig_coverages_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
+
+        cubCachingAllocator.DeviceFree(d_counts_tmp); CUERR;
+        cubCachingAllocator.DeviceFree(d_weights_tmp); CUERR;
+        cubCachingAllocator.DeviceFree(d_coverage_tmp); CUERR;
+
+        cubCachingAllocator.DeviceFree(d_consensus_tmp); CUERR;
+        cubCachingAllocator.DeviceFree(d_support_tmp); CUERR;
+        cubCachingAllocator.DeviceFree(d_orig_weights_tmp); CUERR;
+        cubCachingAllocator.DeviceFree(d_orig_coverages_tmp); CUERR;
 
 #endif
 
@@ -2420,9 +2940,59 @@ namespace gpu{
 
 		assert(batch.state == BatchState::WriteResults);
 
-		//DataArrays<Sequence_t, read_number>& dataArrays = *batch.dataArrays;
-		//std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		//std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+        /*DataArrays& dataArrays = *batch.dataArrays;
+		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+		std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        for(size_t subjectIndex = 0; subjectIndex < batch.tasks.size(); subjectIndex++){
+            const auto& task = batch.tasks[subjectIndex];
+            if(task.readId == 207){
+
+                cudaDeviceSynchronize(); CUERR;
+
+                cudaMemcpyAsync(dataArrays.msa_data_host,
+                            dataArrays.msa_data_device,
+                            dataArrays.msa_data_usable_size,
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                //DEBUGGING
+                cudaMemcpyAsync(dataArrays.alignment_result_data_host,
+                            dataArrays.alignment_result_data_device,
+                            dataArrays.alignment_result_data_usable_size,
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                //DEBUGGING
+                cudaMemcpyAsync(dataArrays.subject_indices_data_host,
+                            dataArrays.subject_indices_data_device,
+                            dataArrays.subject_indices_data_usable_size,
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
+                            dataArrays.indices_transfer_data_device,
+                            dataArrays.indices_transfer_data_usable_size,
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
+                                dataArrays.qualities_transfer_data_device,
+                                dataArrays.qualities_transfer_data_usable_size,
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                cudaDeviceSynchronize(); CUERR;
+
+                dataArrays.printActiveDataOfSubject(subjectIndex, std::cerr);
+
+            }
+        }*/
 
 		//write result to file
 		for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
