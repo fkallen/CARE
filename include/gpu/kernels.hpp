@@ -16,11 +16,13 @@ namespace gpu {
 
 #ifdef __NVCC__
 struct MSAColumnProperties{
-    int startindex;
-    int endindex;
-    int columnsToCheck;
+    //int startindex;
+    //int endindex;
+    //int columnsToCheck;
     int subjectColumnsBegin_incl;
     int subjectColumnsEnd_excl;
+    int firstColumn_incl;
+    int lastColumn_excl;
 };
 
 
@@ -364,14 +366,15 @@ void call_msa_find_consensus_kernel_async(
             KernelLaunchHandle& handle);
 
 void call_msa_find_consensus_implicit_kernel_async(
-            int* d_counts,
-            float* d_weights,
+            const int* d_counts,
+            const float* d_weights,
             char* d_consensus,
             float* d_support,
-            int* d_coverage,
+            const int* d_coverage,
             float* d_origWeights,
             int* d_origCoverages,
             const char* d_subject_sequences_data,
+            const int* d_indices_per_subject,
             const MSAColumnProperties* d_msa_column_properties,
             int n_subjects,
             size_t encoded_sequence_pitch,

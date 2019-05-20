@@ -717,7 +717,9 @@ struct DataArrays {
         const int* indices = h_indices + h_indices_per_subject_prefixsum[subjectIndex];
         const int subjectColumnsBegin_incl = h_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = h_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-        const int columnsToCheck = h_msa_column_properties[subjectIndex].columnsToCheck;
+        const int firstColumn_incl = h_msa_column_properties[subjectIndex].firstColumn_incl;
+        const int lastColumn_excl = h_msa_column_properties[subjectIndex].lastColumn_excl;
+        const int columnsToCheck = lastColumn_excl - firstColumn_incl;
 
         const char* consensus = &h_consensus[subjectIndex * msa_pitch];
         const int* countsA = &h_counts[4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats];

@@ -45,7 +45,7 @@
 #define MSA_IMPLICIT
 
 //#define REARRANGE_INDICES
-#define USE_MSA_MINIMIZATION
+//#define USE_MSA_MINIMIZATION
 
 #define USE_WAIT_FLAGS
 
@@ -1575,6 +1575,7 @@ namespace gpu{
                     dataArrays.d_origWeights,
                     dataArrays.d_origCoverages,
                     dataArrays.d_subject_sequences_data,
+                    dataArrays.d_indices_per_subject,
                     dataArrays.d_msa_column_properties,
                     dataArrays.n_subjects,
                     dataArrays.encoded_sequence_pitch,
@@ -2645,7 +2646,7 @@ namespace gpu{
                                         weightsG,
                                         weightsT,
                                         msa_rows,
-                                        columnProperties.columnsToCheck,
+                                        columnProperties.lastColumn_excl,
                                         dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
                                         dataArrays.h_support + subject_index * msa_weights_pitch_floats,
                                         dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
@@ -2765,7 +2766,7 @@ namespace gpu{
                                                 dataArrays.h_support + subject_index * msa_weights_pitch_floats,
                                                 dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
                                                 dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
-                                                columnProperties.columnsToCheck,
+                                                columnProperties.lastColumn_excl,
                                                 columnProperties.subjectColumnsBegin_incl,
                                                 columnProperties.subjectColumnsEnd_excl,
                                                 task.subject_string,
@@ -3102,7 +3103,7 @@ namespace gpu{
 						dataArrays.h_support + subject_index * msa_weights_pitch_floats,
 						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
 						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
-						columnProperties.columnsToCheck,
+						columnProperties.lastColumn_excl,
 						columnProperties.subjectColumnsBegin_incl,
 						columnProperties.subjectColumnsEnd_excl,
 						task.subject_string,

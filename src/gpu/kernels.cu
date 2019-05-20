@@ -597,11 +597,10 @@ namespace gpu{
                 if(threadIdx.x == 0) {
                     MSAColumnProperties my_columnproperties;
 
-                    my_columnproperties.startindex = startindex;
-                    my_columnproperties.endindex = endindex;
-                    my_columnproperties.columnsToCheck = my_columnproperties.endindex - my_columnproperties.startindex;
-                    my_columnproperties.subjectColumnsBegin_incl = max(-my_columnproperties.startindex, 0);
+                    my_columnproperties.subjectColumnsBegin_incl = max(-startindex, 0);
                     my_columnproperties.subjectColumnsEnd_excl = my_columnproperties.subjectColumnsBegin_incl + subjectLength;
+                    my_columnproperties.firstColumn_incl = 0;
+                    my_columnproperties.lastColumn_excl = endindex - startindex;
 
                     *properties_ptr = my_columnproperties;
                 }
@@ -610,11 +609,10 @@ namespace gpu{
                 if(threadIdx.x == 0) {
                     MSAColumnProperties my_columnproperties;
 
-                    my_columnproperties.startindex = 0;
-                    my_columnproperties.endindex = 0;
-                    my_columnproperties.columnsToCheck = 0;
                     my_columnproperties.subjectColumnsBegin_incl = 0;
                     my_columnproperties.subjectColumnsEnd_excl = 0;
+                    my_columnproperties.firstColumn_incl = 0;
+                    my_columnproperties.lastColumn_excl = 0;
 
                     *properties_ptr = my_columnproperties;
                 }
@@ -1080,7 +1078,8 @@ namespace gpu{
 
     		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-            const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+            //const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+            const int columnsToCheck = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
             int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
@@ -1288,7 +1287,7 @@ namespace gpu{
             const int columnForThisSubject = columnid - columnsBeforeThisSubject;
 
             if(debug && subjectReadId == debugid){
-                printf("block %d thread %d : column %d / %d\n", blockIdx.x, threadIdx.x, columnForThisSubject, d_msa_column_properties[subjectIndex].columnsToCheck);
+                printf("block %d thread %d : column %d / %d\n", blockIdx.x, threadIdx.x, columnForThisSubject, d_msa_column_properties[subjectIndex].lastColumn_excl);
             }
 
             int countsMatrix[4];
@@ -1473,157 +1472,160 @@ namespace gpu{
         //process multiple sequence alignment of each subject
         //for each column in msa, find consensus and support
         for(unsigned subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
-            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-            const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+            if(d_indices_per_subject[subjectIndex] > 0){
+                const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+                const int firstColumn_incl = d_msa_column_properties[subjectIndex].firstColumn_incl;
+                const int lastColumn_excl = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
-            //number of rows in multiple sequence alignment for subject[subjectIndex]
-            const int msa_rows = 1 + d_indices_per_subject[subjectIndex];
+                //number of rows in multiple sequence alignment for subject[subjectIndex]
+                const int msa_rows = 1 + d_indices_per_subject[subjectIndex];
 
-            const unsigned offset1 = msa_pitch * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
-            const unsigned offset2 = msa_weights_pitch_floats * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
+                const unsigned offset1 = msa_pitch * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
+                const unsigned offset2 = msa_weights_pitch_floats * (subjectIndex + d_indices_per_subject_prefixsum[subjectIndex]);
 
-            const char* const my_multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
-            const float* const my_multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
+                const char* const my_multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
+                const float* const my_multiple_sequence_alignment_weight = d_multiple_sequence_alignment_weights + offset2;
 
-            char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
-            float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
-            int* const my_coverage = d_coverage + subjectIndex * msa_weights_pitch_floats;
+                char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
+                float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
+                int* const my_coverage = d_coverage + subjectIndex * msa_weights_pitch_floats;
 
-            float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
-            int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
+                float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
+                int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-            const int countsOffset = subjectIndex * 4 * msa_weights_pitch_floats;
-            const int weightsOffset = subjectIndex * 4 * msa_weights_pitch_floats;
+                const int countsOffset = subjectIndex * 4 * msa_weights_pitch_floats;
+                const int weightsOffset = subjectIndex * 4 * msa_weights_pitch_floats;
 
-            int* const my_countsA = d_counts + countsOffset + 0 * msa_weights_pitch_floats;
-            int* const my_countsC = d_counts + countsOffset + 1 * msa_weights_pitch_floats;
-            int* const my_countsG = d_counts + countsOffset + 2 * msa_weights_pitch_floats;
-            int* const my_countsT = d_counts + countsOffset + 3 * msa_weights_pitch_floats;
-            float* const my_weightsA = d_weights + weightsOffset + 0 * msa_weights_pitch_floats;
-            float* const my_weightsC = d_weights + weightsOffset + 1 * msa_weights_pitch_floats;
-            float* const my_weightsG = d_weights + weightsOffset + 2 * msa_weights_pitch_floats;
-            float* const my_weightsT = d_weights + weightsOffset + 3 * msa_weights_pitch_floats;
+                int* const my_countsA = d_counts + countsOffset + 0 * msa_weights_pitch_floats;
+                int* const my_countsC = d_counts + countsOffset + 1 * msa_weights_pitch_floats;
+                int* const my_countsG = d_counts + countsOffset + 2 * msa_weights_pitch_floats;
+                int* const my_countsT = d_counts + countsOffset + 3 * msa_weights_pitch_floats;
+                float* const my_weightsA = d_weights + weightsOffset + 0 * msa_weights_pitch_floats;
+                float* const my_weightsC = d_weights + weightsOffset + 1 * msa_weights_pitch_floats;
+                float* const my_weightsG = d_weights + weightsOffset + 2 * msa_weights_pitch_floats;
+                float* const my_weightsT = d_weights + weightsOffset + 3 * msa_weights_pitch_floats;
 
-            for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
+                for(int column = localBlockId * blockDim.x + threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += blocks_per_msa * blockDim.x){
 
-                float Aw = 0.0f;
-                float Cw = 0.0f;
-                float Gw = 0.0f;
-                float Tw = 0.0f;
+                    float Aw = 0.0f;
+                    float Cw = 0.0f;
+                    float Gw = 0.0f;
+                    float Tw = 0.0f;
 
-                int As = 0;
-                int Cs = 0;
-                int Gs = 0;
-                int Ts = 0;
+                    int As = 0;
+                    int Cs = 0;
+                    int Gs = 0;
+                    int Ts = 0;
 
-                int columnCoverage = 0;
+                    int columnCoverage = 0;
 
-                for(int row = 0; row < msa_rows; ++row){
-                    const char base = my_multiple_sequence_alignment[row * msa_pitch + column];
-                    const float weight = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + column];
+                    for(int row = 0; row < msa_rows; ++row){
+                        const char base = my_multiple_sequence_alignment[row * msa_pitch + column];
+                        const float weight = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + column];
 
-                    //if(!(base == 'A' || base == 'C' || base == 'G' || base == 'T')){
-                    //	assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
-                    //}
-    #if 0
-                    Aw += (base == 'A' ? weight : 0);
-                    Cw += (base == 'C' ? weight : 0);
-                    Gw += (base == 'G' ? weight : 0);
-                    Tw += (base == 'T' ? weight : 0);
+                        //if(!(base == 'A' || base == 'C' || base == 'G' || base == 'T')){
+                        //	assert(base == 'A' || base == 'C' || base == 'G' || base == 'T');
+                        //}
+        #if 0
+                        Aw += (base == 'A' ? weight : 0);
+                        Cw += (base == 'C' ? weight : 0);
+                        Gw += (base == 'G' ? weight : 0);
+                        Tw += (base == 'T' ? weight : 0);
 
-                    As += (base == 'A');
-                    Cs += (base == 'C');
-                    Gs += (base == 'G');
-                    Ts += (base == 'T');
-    #else
-                    Aw += (base == A_enc ? weight : 0);
-                    Cw += (base == C_enc ? weight : 0);
-                    Gw += (base == G_enc ? weight : 0);
-                    Tw += (base == T_enc ? weight : 0);
+                        As += (base == 'A');
+                        Cs += (base == 'C');
+                        Gs += (base == 'G');
+                        Ts += (base == 'T');
+        #else
+                        Aw += (base == A_enc ? weight : 0);
+                        Cw += (base == C_enc ? weight : 0);
+                        Gw += (base == G_enc ? weight : 0);
+                        Tw += (base == T_enc ? weight : 0);
 
-                    As += (base == A_enc);
-                    Cs += (base == C_enc);
-                    Gs += (base == G_enc);
-                    Ts += (base == T_enc);
-    #endif
-                    //columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
-                    columnCoverage += (base == A_enc || base == C_enc || base == G_enc || base == T_enc);//!(base & 0xFC);
-                }
+                        As += (base == A_enc);
+                        Cs += (base == C_enc);
+                        Gs += (base == G_enc);
+                        Ts += (base == T_enc);
+        #endif
+                        //columnCoverage += (base == 'A' || base == 'C' || base == 'G' || base == 'T');
+                        columnCoverage += (base == A_enc || base == C_enc || base == G_enc || base == T_enc);//!(base & 0xFC);
+                    }
 
-                my_countsA[column] = As;
-                my_countsC[column] = Cs;
-                my_countsG[column] = Gs;
-                my_countsT[column] = Ts;
-                my_weightsA[column] = Aw;
-                my_weightsC[column] = Cw;
-                my_weightsG[column] = Gw;
-                my_weightsT[column] = Tw;
+                    my_countsA[column] = As;
+                    my_countsC[column] = Cs;
+                    my_countsG[column] = Gs;
+                    my_countsT[column] = Ts;
+                    my_weightsA[column] = Aw;
+                    my_weightsC[column] = Cw;
+                    my_weightsG[column] = Gw;
+                    my_weightsT[column] = Tw;
 
 
-                if(columnCoverage <= 0){
-                    //assert(columnCoverage > 0);
-                }
+                    if(columnCoverage <= 0){
+                        //assert(columnCoverage > 0);
+                    }
 
-                const float columnWeight = Aw + Cw + Gw + Tw;
-                float consWeight = Aw;
-    #if 0
-                char cons = 'A';
+                    const float columnWeight = Aw + Cw + Gw + Tw;
+                    float consWeight = Aw;
+        #if 0
+                    char cons = 'A';
 
-                cons = Cw > consWeight ? 'C' : cons;
-                consWeight = Cw > consWeight ? Cw : consWeight;
+                    cons = Cw > consWeight ? 'C' : cons;
+                    consWeight = Cw > consWeight ? Cw : consWeight;
 
-                cons = Gw > consWeight ? 'G' : cons;
-                consWeight = Gw > consWeight ? Gw : consWeight;
+                    cons = Gw > consWeight ? 'G' : cons;
+                    consWeight = Gw > consWeight ? Gw : consWeight;
 
-                cons = Tw > consWeight ? 'T' : cons;
-                consWeight = Tw > consWeight ? Tw : consWeight;
-    #else
-                char cons = 'A';
+                    cons = Tw > consWeight ? 'T' : cons;
+                    consWeight = Tw > consWeight ? Tw : consWeight;
+        #else
+                    char cons = 'A';
 
-                cons = Cw > consWeight ? 'C' : cons;
-                consWeight = Cw > consWeight ? Cw : consWeight;
+                    cons = Cw > consWeight ? 'C' : cons;
+                    consWeight = Cw > consWeight ? Cw : consWeight;
 
-                cons = Gw > consWeight ? 'G' : cons;
-                consWeight = Gw > consWeight ? Gw : consWeight;
+                    cons = Gw > consWeight ? 'G' : cons;
+                    consWeight = Gw > consWeight ? Gw : consWeight;
 
-                cons = Tw > consWeight ? 'T' : cons;
-                consWeight = Tw > consWeight ? Tw : consWeight;
-    #endif
-                /*char consByCount = 'A';
-                int consByCountCount = As;
-                consByCount = Cs > consByCountCount ? 'C' : cons;
-                consByCountCount = Cs > consByCountCount ? Cs : consWeight;
+                    cons = Tw > consWeight ? 'T' : cons;
+                    consWeight = Tw > consWeight ? Tw : consWeight;
+        #endif
+                    /*char consByCount = 'A';
+                    int consByCountCount = As;
+                    consByCount = Cs > consByCountCount ? 'C' : cons;
+                    consByCountCount = Cs > consByCountCount ? Cs : consWeight;
 
-                consByCount = Gs > consByCountCount ? 'G' : cons;
-                consByCountCount = Gs > consByCountCount ? Gs : consWeight;
+                    consByCount = Gs > consByCountCount ? 'G' : cons;
+                    consByCountCount = Gs > consByCountCount ? Gs : consWeight;
 
-                consByCount = Ts > consByCountCount ? 'T' : cons;
-                consByCountCount = Ts > consByCountCount ? Ts : consWeight;
+                    consByCount = Ts > consByCountCount ? 'T' : cons;
+                    consByCountCount = Ts > consByCountCount ? Ts : consWeight;
 
-                if(consByCount != cons){
-                    printf("cons differ\n");
-                }*/
+                    if(consByCount != cons){
+                        printf("cons differ\n");
+                    }*/
 
-                my_consensus[column] = cons;
-                my_support[column] = consWeight / columnWeight;
-                //printf("subject %d, column %d, support %f\n", subjectIndex, column, my_support[column]);
-                my_coverage[column] = columnCoverage;
+                    my_consensus[column] = cons;
+                    my_support[column] = consWeight / columnWeight;
+                    //printf("subject %d, column %d, support %f\n", subjectIndex, column, my_support[column]);
+                    my_coverage[column] = columnCoverage;
 
-                if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                    const char subjectbase = my_multiple_sequence_alignment[column];
-                    if(subjectbase == A_enc){
-                        my_orig_weights[column] = Aw;
-                        my_orig_coverage[column] = As;
-                    }else if(subjectbase == C_enc){
-                        my_orig_weights[column] = Cw;
-                        my_orig_coverage[column] = Cs;
-                    }else if(subjectbase == G_enc){
-                        my_orig_weights[column] = Gw;
-                        my_orig_coverage[column] = Gs;
-                    }else if(subjectbase == T_enc){
-                        my_orig_weights[column] = Tw;
-                        my_orig_coverage[column] = Ts;
+                    if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
+                        const char subjectbase = my_multiple_sequence_alignment[column];
+                        if(subjectbase == A_enc){
+                            my_orig_weights[column] = Aw;
+                            my_orig_coverage[column] = As;
+                        }else if(subjectbase == C_enc){
+                            my_orig_weights[column] = Cw;
+                            my_orig_coverage[column] = Cs;
+                        }else if(subjectbase == G_enc){
+                            my_orig_weights[column] = Gw;
+                            my_orig_coverage[column] = Gs;
+                        }else if(subjectbase == T_enc){
+                            my_orig_weights[column] = Tw;
+                            my_orig_coverage[column] = Ts;
+                        }
                     }
                 }
             }
@@ -1633,14 +1635,15 @@ namespace gpu{
 
     __global__
     void msa_find_consensus_implicit_kernel(
-                            int* __restrict__ d_counts,
-                            float* __restrict__ d_weights,
+                            const int* __restrict__ d_counts,
+                            const float* __restrict__ d_weights,
                             char* __restrict__ d_consensus,
                             float* __restrict__ d_support,
-                            int* __restrict__ d_coverage,
+                            const int* __restrict__ d_coverage,
                             float* __restrict__ d_origWeights,
                             int* __restrict__ d_origCoverages,
                             const char* __restrict__ d_subject_sequences_data,
+                            const int* __restrict__ d_indices_per_subject,
                             const MSAColumnProperties* __restrict__ d_msa_column_properties,
                             int n_subjects,
                             size_t encoded_sequence_pitch,
@@ -1670,76 +1673,79 @@ namespace gpu{
         //process multiple sequence alignment of each subject
         //for each column in msa, find consensus and support
         for(unsigned subjectIndex = blockIdx.x / blocks_per_msa; subjectIndex < n_subjects; subjectIndex += gridDim.x / blocks_per_msa){
-            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-            const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+            if(d_indices_per_subject[subjectIndex] > 0){
+                const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+                const int firstColumn_incl = d_msa_column_properties[subjectIndex].firstColumn_incl;
+                const int lastColumn_excl = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
-            assert(columnsToCheck <= msa_weights_pitch_floats);
+                assert(lastColumn_excl <= msa_weights_pitch_floats);
 
-            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-            const char* const subject = getSubjectPtr(subjectIndex);
+                const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                const char* const subject = getSubjectPtr(subjectIndex);
 
-            char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
-            float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
+                char* const my_consensus = d_consensus + subjectIndex * msa_pitch;
+                float* const my_support = d_support + subjectIndex * msa_weights_pitch_floats;
 
-            float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
-            int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
+                float* const my_orig_weights = d_origWeights + subjectIndex * msa_weights_pitch_floats;
+                int* const my_orig_coverage = d_origCoverages + subjectIndex * msa_weights_pitch_floats;
 
-            const float* const my_weightsA = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-            const float* const my_weightsC = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-            const float* const my_weightsG = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-            const float* const my_weightsT = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+                const float* const my_weightsA = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                const float* const my_weightsC = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                const float* const my_weightsG = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                const float* const my_weightsT = d_weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
-            for(int column = localBlockId * blockDim.x + threadIdx.x; column < columnsToCheck; column += blocks_per_msa * blockDim.x){
-                const float wA = my_weightsA[column];
-                const float wC = my_weightsC[column];
-                const float wG = my_weightsG[column];
-                const float wT = my_weightsT[column];
-                char cons = 'A';
-                float consWeight = wA;
-                if(wC > consWeight){
-                    cons = 'C';
-                    consWeight = wC;
-                }
-                if(wG > consWeight){
-                    cons = 'G';
-                    consWeight = wG;
-                }
-                if(wT > consWeight){
-                    cons = 'T';
-                    consWeight = wT;
-                }
-                my_consensus[column] = cons;
-                const float columnWeight = wA + wC + wG + wT;
-                if(columnWeight == 0){
-                    printf("s %d c %d\n", subjectIndex, column);
-                    assert(columnWeight != 0);
-                }
+                for(int column = localBlockId * blockDim.x + threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += blocks_per_msa * blockDim.x){
+                    const float wA = my_weightsA[column];
+                    const float wC = my_weightsC[column];
+                    const float wG = my_weightsG[column];
+                    const float wT = my_weightsT[column];
+                    char cons = 'A';
+                    float consWeight = wA;
+                    if(wC > consWeight){
+                        cons = 'C';
+                        consWeight = wC;
+                    }
+                    if(wG > consWeight){
+                        cons = 'G';
+                        consWeight = wG;
+                    }
+                    if(wT > consWeight){
+                        cons = 'T';
+                        consWeight = wT;
+                    }
+                    my_consensus[column] = cons;
+                    const float columnWeight = wA + wC + wG + wT;
+                    if(columnWeight == 0){
+                        printf("s %d c %d\n", subjectIndex, column);
+                        assert(columnWeight != 0);
+                    }
 
-                my_support[column] = consWeight / columnWeight;
+                    my_support[column] = consWeight / columnWeight;
 
 
-                if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                    const int* const my_countsA = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-                    const int* const my_countsC = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-                    const int* const my_countsG = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-                    const int* const my_countsT = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+                    if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
+                        const int* const my_countsA = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                        const int* const my_countsC = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                        const int* const my_countsG = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                        const int* const my_countsT = d_counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
-                    const int localIndex = column - subjectColumnsBegin_incl;
-                    const char subjectbase = get(subject, subjectLength, localIndex);
+                        const int localIndex = column - subjectColumnsBegin_incl;
+                        const char subjectbase = get(subject, subjectLength, localIndex);
 
-                    if(subjectbase == A_enc){
-                        my_orig_weights[column] = wA;
-                        my_orig_coverage[column] = my_countsA[column];
-                    }else if(subjectbase == C_enc){
-                        my_orig_weights[column] = wC;
-                        my_orig_coverage[column] = my_countsC[column];;
-                    }else if(subjectbase == G_enc){
-                        my_orig_weights[column] = wG;
-                        my_orig_coverage[column] = my_countsG[column];
-                    }else if(subjectbase == T_enc){
-                        my_orig_weights[column] = wT;
-                        my_orig_coverage[column] = my_countsT[column];
+                        if(subjectbase == A_enc){
+                            my_orig_weights[column] = wA;
+                            my_orig_coverage[column] = my_countsA[column];
+                        }else if(subjectbase == C_enc){
+                            my_orig_weights[column] = wC;
+                            my_orig_coverage[column] = my_countsC[column];;
+                        }else if(subjectbase == G_enc){
+                            my_orig_weights[column] = wG;
+                            my_orig_coverage[column] = my_countsG[column];
+                        }else if(subjectbase == T_enc){
+                            my_orig_weights[column] = wT;
+                            my_orig_coverage[column] = my_countsT[column];
+                        }
                     }
                 }
             }
@@ -1818,9 +1824,10 @@ namespace gpu{
             const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
             char* const my_corrected_subject = d_corrected_subjects + subjectIndex * sequence_pitch;
 
-            const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
-            const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+            //const int firstColumn_incl = d_msa_column_properties[subjectIndex].firstColumn_incl;
+            const int lastColumn_excl = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
             float avg_support = 0;
             float min_support = 1.0f;
@@ -1828,7 +1835,7 @@ namespace gpu{
             int min_coverage = std::numeric_limits<int>::max();
 
             for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                assert(i < properties.columnsToCheck);
+                assert(i < lastColumn_excl);
 
                 avg_support += my_support[i];
                 min_support = min(my_support[i], min_support);
@@ -2009,9 +2016,10 @@ namespace gpu{
             const char* const my_consensus = d_consensus + msa_pitch  * subjectIndex;
             char* const my_corrected_subject = d_corrected_subjects + subjectIndex * sequence_pitch;
 
-            const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
-            const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+            //const int firstColumn_incl = d_msa_column_properties[subjectIndex].firstColumn_incl;
+            const int lastColumn_excl = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
             float avg_support = 0;
             float min_support = 1.0f;
@@ -2019,7 +2027,7 @@ namespace gpu{
             int min_coverage = std::numeric_limits<int>::max();
 
             for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                assert(i < properties.columnsToCheck);
+                assert(i < lastColumn_excl);
 
                 avg_support += my_support[i];
                 min_support = min(my_support[i], min_support);
@@ -2161,9 +2169,10 @@ namespace gpu{
             char* const my_corrected_candidates = d_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
             int* const my_indices_of_corrected_candidates = d_indices_of_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex];
 
-            const MSAColumnProperties properties = d_msa_column_properties[subjectIndex];
-            const int subjectColumnsBegin_incl = properties.subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = properties.subjectColumnsEnd_excl;
+            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+            const int firstColumn_incl = d_msa_column_properties[subjectIndex].firstColumn_incl;
+            const int lastColumn_excl = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
             int n_corrected_candidates = 0;
 
@@ -2173,8 +2182,9 @@ namespace gpu{
                 //const int candidate_length = d_candidate_sequences_lengths[global_candidate_index];
                 const int candidate_length = getCandidateLength(subjectIndex, local_candidate_index);
                 const BestAlignment_t bestAlignmentFlag = d_alignment_best_alignment_flags[global_candidate_index];
-                const int queryColumnsBegin_incl = shift - properties.startindex;
-                const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidate_length;
+
+                const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+                const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
 
                 //check range condition and length condition
                 if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
@@ -2188,7 +2198,7 @@ namespace gpu{
                         columnindex < subjectColumnsBegin_incl;
                         columnindex++) {
 
-                        assert(columnindex < properties.columnsToCheck);
+                        assert(columnindex < lastColumn_excl);
                         if(queryColumnsBegin_incl <= columnindex) {
                             newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
                             newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
@@ -2197,7 +2207,7 @@ namespace gpu{
                     //check new columns right of subject
                     for(int columnindex = subjectColumnsEnd_excl;
                         columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-                        && columnindex < properties.columnsToCheck;
+                        && columnindex < lastColumn_excl;
                         columnindex++) {
 
                         newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
@@ -3748,14 +3758,15 @@ namespace gpu{
 
 
     void call_msa_find_consensus_implicit_kernel_async(
-                            int* d_counts,
-                            float* d_weights,
+                            const int* d_counts,
+                            const float* d_weights,
                             char* d_consensus,
                             float* d_support,
-                            int* d_coverage,
+                            const int* d_coverage,
                             float* d_origWeights,
                             int* d_origCoverages,
                             const char* d_subject_sequences_data,
+                            const int* d_indices_per_subject,
                             const MSAColumnProperties* d_msa_column_properties,
                             int n_subjects,
                             size_t encoded_sequence_pitch,
@@ -3826,6 +3837,7 @@ namespace gpu{
                                                             d_origWeights,
                                                             d_origCoverages,
                                                             d_subject_sequences_data,
+                                                            d_indices_per_subject,
                                                             d_msa_column_properties,
                                                             n_subjects,
                                                             encoded_sequence_pitch,
