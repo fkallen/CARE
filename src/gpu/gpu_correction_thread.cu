@@ -497,13 +497,13 @@ namespace gpu{
                     return SDIV(num, factor) * factor;
                 };
 
-                const int minOverlapForMaxSeqLength = std::max(1,
+                /*const int minOverlapForMaxSeqLength = std::max(1,
                                                         std::max(transFuncData.min_overlap,
                                                                     int(transFuncData.maxSequenceLength * transFuncData.min_overlap_ratio)));
-                const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);
+                const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);*/
 
                 batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
-                batch.batchDataDevice.resize(int(batch.tasks.size()),
+                /*batch.batchDataDevice.resize(int(batch.tasks.size()),
                                             batch.initialNumberOfCandidates,
                                             roundToNextMultiple(transFuncData.maxSequenceLength, 4),
                                             roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
@@ -515,7 +515,7 @@ namespace gpu{
                                             roundToNextMultiple(transFuncData.maxSequenceLength, 4),
                                             roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
                                             transFuncData.maxSequenceLength,
-                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);
+                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);*/
 
                 batch.initialNumberOfCandidates = 0;
 
@@ -745,42 +745,6 @@ namespace gpu{
 
 		//cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
 
-		auto select_alignment_op = [] __device__ (const BestAlignment_t& flag){
-			return flag != BestAlignment_t::None;
-		};
-
-		/*
-		    Writes indices of candidates with alignmentflag != None to dataArrays.d_indices
-		    Writes number of writen indices to dataArrays.d_num_indices
-		    Elements after d_indices[d_num_indices - 1] are set to -1;
-		 */
-		auto select_alignments_by_flag = [&](auto dataArray, cudaStream_t stream){
-							 dataArray.fill_d_indices(-1, stream);
-
-							 cub::TransformInputIterator<bool,decltype(select_alignment_op), BestAlignment_t*>
-							 d_isGoodAlignment(dataArray.d_alignment_best_alignment_flags,
-							                   select_alignment_op);
-
-							 /*cub::DeviceSelect::Flagged(dataArray.d_temp_storage,
-										 dataArray.tmp_storage_allocation_size,
-										 cub::CountingInputIterator<int>(0),
-										 d_isGoodAlignment,
-										 dataArray.d_indices,
-										 dataArray.d_num_indices,
-										 //nTotalCandidates,
-										 dataArray.n_queries,
-										 stream); CUERR;*/
-
-                             cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
-                                         batch.batchDataDevice.cubTemp.sizeRef(),
-                                         cub::CountingInputIterator<int>(0),
-                                         d_isGoodAlignment,
-                                         dataArray.d_indices,
-                                         dataArray.d_num_indices,
-                                         //nTotalCandidates,
-                                         dataArray.n_queries,
-                                         stream); CUERR;
-						 };
 
         call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
                     dataArrays.d_alignment_scores,
@@ -842,8 +806,52 @@ namespace gpu{
 					streams[primary_stream_index],
 					batch.kernelLaunchHandle);
 
-		//determine indices of remaining alignments
-		select_alignments_by_flag(dataArrays, streams[primary_stream_index]);
+
+        //initialize indices with -1. this allows to calculate the histrogram later on
+        //without knowing the number of valid indices
+        call_fill_kernel_async(dataArrays.d_indices, dataArrays.n_queries, -1, streams[primary_stream_index]);
+
+        auto select_op = [] __device__ (const BestAlignment_t& flag){
+            return flag != BestAlignment_t::None;
+        };
+
+        cub::TransformInputIterator<bool,decltype(select_op), BestAlignment_t*>
+            d_isGoodAlignment(dataArrays.d_alignment_best_alignment_flags,
+                            select_op);
+
+        //Writes indices of candidates with alignmentflag != None to d_indices
+
+        cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
+                                    batch.batchDataDevice.cubTemp.sizeRef(),
+                                    cub::CountingInputIterator<int>(0),
+                                    d_isGoodAlignment,
+                                    dataArrays.d_indices,
+                                    dataArrays.d_num_indices,
+                                    dataArrays.n_queries,
+                                    streams[primary_stream_index]); CUERR;
+
+        //calculate indices_per_subject
+        cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.n_subjects+1,
+                    dataArrays.d_candidates_per_subject_prefixsum,
+                    dataArrays.n_queries,
+                    streams[primary_stream_index]); CUERR;
+
+        //calculate indices_per_subject_prefixsum
+        call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
+                                0,
+                                0,
+                                streams[primary_stream_index]);
+
+        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                    batch.batchDataDevice.cubTemp.sizeRef(),
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum+1,
+                    dataArrays.n_subjects,
+                    streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
@@ -854,31 +862,6 @@ namespace gpu{
         batch.addWaitSignal(BatchState::RearrangeIndices, streams[primary_stream_index]);
 #endif
         cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
-
-		//update indices_per_subject
-
-        cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
-                    batch.batchDataDevice.cubTemp.sizeRef(),
-                    dataArrays.d_indices,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.n_subjects+1,
-                    dataArrays.d_candidates_per_subject_prefixsum,
-                    // *dataArrays.h_num_indices,
-                    dataArrays.n_queries,
-                    streams[primary_stream_index]); CUERR;
-
-        call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
-                                0,
-                                0,
-                                streams[primary_stream_index]);
-
-        //Make indices_per_subject_prefixsum
-        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                    batch.batchDataDevice.cubTemp.sizeRef(),
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum+1,
-                    dataArrays.n_subjects,
-                    streams[primary_stream_index]); CUERR;
 
         return BatchState::RearrangeIndices;
 	}
@@ -1050,8 +1033,12 @@ namespace gpu{
                                                                    transFuncData.threadOpts.deviceId,
                                                                    streams[primary_stream_index]);
 
-                batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * *dataArrays.h_num_indices);
-                read_number* d_tmp_read_ids = (read_number*)batch.batchDataDevice.tmpStorage[0].get();
+
+                //batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * *dataArrays.h_num_indices);
+                //read_number* d_tmp_read_ids = (read_number*)batch.batchDataDevice.tmpStorage[0].get();
+                read_number* d_tmp_read_ids = nullptr;
+                cubCachingAllocator.DeviceAllocate((void**)&d_tmp_read_ids, dataArrays.n_queries * sizeof(read_number), streams[primary_stream_index]); CUERR;
+
                 call_compact_kernel_async(d_tmp_read_ids,
                                             dataArrays.d_candidate_read_ids,
                                             dataArrays.d_indices,
@@ -1064,10 +1051,11 @@ namespace gpu{
                                                                    *dataArrays.h_num_indices,
                                                                    transFuncData.threadOpts.deviceId,
                                                                    streams[primary_stream_index]);
+                cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
 
-               assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+                assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
-               cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+                cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
                 cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
 
@@ -2123,7 +2111,6 @@ namespace gpu{
                                         0,
                                         streams[primary_stream_index]);
 
-                //Make indices_per_subject_prefixsum
                 cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
                             batch.batchDataDevice.cubTemp.sizeRef(),
                             dataArrays.d_indices_per_subject,
