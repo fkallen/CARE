@@ -859,6 +859,7 @@ struct DataArrays {
 		std::size_t required_alignment_transfer_data_allocation_size = memSubjects
 		                                                               + memSubjectLengths
 		                                                               + memNqueriesPrefixSum
+                                                                       + memNqueriesPrefixSum
                                                                        + memTilesPrefixSum
 		                                                               + memQueries
 		                                                               + memQueryLengths
@@ -881,7 +882,8 @@ struct DataArrays {
 		h_candidate_sequences_data = (char*)(((char*)h_subject_sequences_data) + memSubjects);
 		h_subject_sequences_lengths = (int*)(((char*)h_candidate_sequences_data) + memQueries);
 		h_candidate_sequences_lengths = (int*)(((char*)h_subject_sequences_lengths) + memSubjectLengths);
-		h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
+        h_candidates_per_subject = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
+		h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidates_per_subject) + memNqueriesPrefixSum);
         h_tiles_per_subject_prefixsum = (int*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
 		h_subject_read_ids = (read_number*)(((char*)h_tiles_per_subject_prefixsum) + memTilesPrefixSum);
 		//h_candidate_read_ids = (read_number*)(((char*)h_subject_read_ids) + memSubjectIds);
@@ -890,7 +892,8 @@ struct DataArrays {
 		d_candidate_sequences_data = (char*)(((char*)d_subject_sequences_data) + memSubjects);
 		d_subject_sequences_lengths = (int*)(((char*)d_candidate_sequences_data) + memQueries);
 		d_candidate_sequences_lengths = (int*)(((char*)d_subject_sequences_lengths) + memSubjectLengths);
-		d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
+        d_candidates_per_subject = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
+		d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidates_per_subject) + memNqueriesPrefixSum);
         d_tiles_per_subject_prefixsum = (int*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
 		d_subject_read_ids = (read_number*)(((char*)d_tiles_per_subject_prefixsum) + memTilesPrefixSum);
 		//d_candidate_read_ids = (read_number*)(((char*)d_subject_read_ids) + memSubjectIds);
@@ -1247,6 +1250,7 @@ struct DataArrays {
 		a.h_candidate_sequences_data = nullptr;
 		a.h_subject_sequences_lengths = nullptr;
 		a.h_candidate_sequences_lengths = nullptr;
+        a.h_candidates_per_subject = nullptr;
 		a.h_candidates_per_subject_prefixsum = nullptr;
         a.h_tiles_per_subject_prefixsum = nullptr;
 		a.h_subject_read_ids = nullptr;
@@ -1255,6 +1259,7 @@ struct DataArrays {
 		a.d_candidate_sequences_data = nullptr;
 		a.d_subject_sequences_lengths = nullptr;
 		a.d_candidate_sequences_lengths = nullptr;
+        a.d_candidates_per_subject = nullptr;
 		a.d_candidates_per_subject_prefixsum = nullptr;
         a.d_tiles_per_subject_prefixsum = nullptr;
 		a.d_subject_read_ids = nullptr;
@@ -1406,6 +1411,7 @@ struct DataArrays {
 	char* h_candidate_sequences_data = nullptr;
 	int* h_subject_sequences_lengths = nullptr;
 	int* h_candidate_sequences_lengths = nullptr;
+    int* h_candidates_per_subject = nullptr;
 	int* h_candidates_per_subject_prefixsum = nullptr;
     int* h_tiles_per_subject_prefixsum = nullptr;
 	read_number* h_subject_read_ids = nullptr;
@@ -1415,6 +1421,7 @@ struct DataArrays {
 	char* d_candidate_sequences_data = nullptr;
 	int* d_subject_sequences_lengths = nullptr;
 	int* d_candidate_sequences_lengths = nullptr;
+    int* d_candidates_per_subject = nullptr;
 	int* d_candidates_per_subject_prefixsum = nullptr;
     int* d_tiles_per_subject_prefixsum = nullptr;
 	read_number* d_subject_read_ids = nullptr;

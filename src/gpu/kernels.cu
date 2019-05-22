@@ -2673,8 +2673,8 @@ namespace gpu{
                 const int* d_subject_sequences_lengths,
                 const int* d_candidate_sequences_lengths,
     			const int* d_candidates_per_subject_prefixsum,
-                const int* h_tiles_per_subject_prefixsum,
-                const int* d_tiles_per_subject_prefixsum,
+                const int* h_candidates_per_subject,
+                const int* d_candidates_per_subject,
     			int n_subjects,
     			int n_queries,
                 size_t encodedsequencepitch,
@@ -2687,9 +2687,56 @@ namespace gpu{
 
             constexpr int tilesize = shd_tilesize;
 
+            int* d_tiles_per_subject_prefixsum;
+            cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+
+            // calculate blocks per subject prefixsum
+            auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
+                return SDIV(candidates_for_subject, tilesize);
+            };
+            cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
+                d_tiles_per_subject(d_candidates_per_subject,
+                              getTilesPerSubject);
+
+            void* tempstorage = nullptr;
+            size_t tempstoragesize = 0;
+
+            cub::DeviceScan::InclusiveSum(nullptr,
+                        tempstoragesize,
+                        d_tiles_per_subject,
+                        d_tiles_per_subject_prefixsum+1,
+                        n_subjects,
+                        stream); CUERR;
+
+            cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+
+            cub::DeviceScan::InclusiveSum(tempstorage,
+                        tempstoragesize,
+                        d_tiles_per_subject,
+                        d_tiles_per_subject_prefixsum+1,
+                        n_subjects,
+                        stream); CUERR;
+
+            cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+
+            call_set_kernel_async(d_tiles_per_subject_prefixsum,
+                                    0,
+                                    0,
+                                    stream);
+
+
+
+
         	const int blocksize = 128;
             const int tilesPerBlock = blocksize / tilesize;
-            const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
+
+            //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
+
+            int requiredTiles = 0;
+            for(int i = 0; i < n_subjects;i++){
+                requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
+            }
+
             const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
 
             //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
@@ -2768,6 +2815,8 @@ namespace gpu{
         	mycall;
 
     	    #undef mycall
+
+            cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
     }
 
 

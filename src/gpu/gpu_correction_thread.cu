@@ -546,13 +546,8 @@ namespace gpu{
             dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
             for(size_t i = 0; i < batch.tasks.size(); i++){
                 const size_t num = batch.tasks[i].candidate_read_ids.size();
+                dataArrays.h_candidates_per_subject[i] = num;
                 dataArrays.h_candidates_per_subject_prefixsum[i+1] = dataArrays.h_candidates_per_subject_prefixsum[i] + num;
-            }
-
-            dataArrays.h_tiles_per_subject_prefixsum[0] = 0;
-            for(size_t i = 0; i < batch.tasks.size(); i++){
-                const size_t num = batch.tasks[i].candidate_read_ids.size();
-                dataArrays.h_tiles_per_subject_prefixsum[i+1] = dataArrays.h_tiles_per_subject_prefixsum[i] + SDIV(num, shd_tilesize);
             }
 
             for(size_t i = 0; i < batch.tasks.size(); i++){
@@ -577,15 +572,15 @@ namespace gpu{
                             H2D,
                             streams[primary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
-                            dataArrays.h_candidates_per_subject_prefixsum,
+            cudaMemcpyAsync(dataArrays.d_candidates_per_subject,
+                            dataArrays.h_candidates_per_subject,
                             dataArrays.memNqueriesPrefixSum,
                             H2D,
                             streams[primary_stream_index]); CUERR;
 
-            cudaMemcpyAsync(dataArrays.d_tiles_per_subject_prefixsum,
-                            dataArrays.h_tiles_per_subject_prefixsum,
-                            dataArrays.memTilesPrefixSum,
+            cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
+                            dataArrays.h_candidates_per_subject_prefixsum,
+                            dataArrays.memNqueriesPrefixSum,
                             H2D,
                             streams[primary_stream_index]); CUERR;
 
@@ -798,8 +793,8 @@ namespace gpu{
                     dataArrays.d_subject_sequences_lengths,
                     dataArrays.d_candidate_sequences_lengths,
                     dataArrays.d_candidates_per_subject_prefixsum,
-                    dataArrays.h_tiles_per_subject_prefixsum,
-                    dataArrays.d_tiles_per_subject_prefixsum,
+                    dataArrays.h_candidates_per_subject,
+                    dataArrays.d_candidates_per_subject,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.encoded_sequence_pitch,
@@ -1379,7 +1374,6 @@ namespace gpu{
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.d_tiles_per_subject_prefixsum,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.h_num_indices,
