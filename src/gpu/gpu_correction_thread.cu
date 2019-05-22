@@ -1238,8 +1238,6 @@ namespace gpu{
 
         //std::cout << "msa_init" << std::endl;
 
-        cudaMemsetAsync(dataArrays.msa_data_device, 0, dataArrays.msa_data_usable_size, streams[primary_stream_index]); CUERR;
-
         call_msa_init_kernel_async_exp(
                 dataArrays.d_msa_column_properties,
                 dataArrays.d_alignment_shifts,
@@ -1256,63 +1254,7 @@ namespace gpu{
 
 
 
-#ifndef MSA_IMPLICIT
-
-        call_msa_add_sequences_kernel_exp_async(
-                dataArrays.d_multiple_sequence_alignments,
-                dataArrays.d_multiple_sequence_alignment_weights,
-                dataArrays.d_alignment_shifts,
-                dataArrays.d_alignment_best_alignment_flags,
-                dataArrays.d_alignment_overlaps,
-                dataArrays.d_alignment_nOps,
-                dataArrays.d_subject_sequences_data,
-                dataArrays.d_candidate_sequences_data,
-                dataArrays.d_subject_sequences_lengths,
-                dataArrays.d_candidate_sequences_lengths,
-                dataArrays.d_subject_qualities,
-                dataArrays.d_candidate_qualities,
-                dataArrays.d_msa_column_properties,
-                dataArrays.d_candidates_per_subject_prefixsum,
-                dataArrays.d_indices,
-                dataArrays.d_indices_per_subject,
-                dataArrays.d_indices_per_subject_prefixsum,
-                dataArrays.n_subjects,
-                dataArrays.n_queries,
-                dataArrays.h_num_indices,
-                dataArrays.d_num_indices,
-                transFuncData.correctionOptions.useQualityScores,
-                desiredAlignmentMaxErrorRate,
-                dataArrays.maximum_sequence_length,
-                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                dataArrays.encoded_sequence_pitch,
-                dataArrays.quality_pitch,
-                dataArrays.msa_pitch,
-                dataArrays.msa_weights_pitch,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle);
-
-#else
-
 #if 0
-
-        auto getColumnsPerSubject = [] __device__ (const MSAColumnProperties& columnProperties){
-            return columnProperties.columnsToCheck;
-        };
-        cub::TransformInputIterator<int,decltype(getColumnsPerSubject), const MSAColumnProperties*>
-            d_columns_per_subject(dataArrays.d_msa_column_properties, getColumnsPerSubject);
-
-
-        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                    batch.batchDataDevice.cubTemp.sizeRef(),
-                    d_columns_per_subject,
-                    dataArrays.d_tiles_per_subject_prefixsum+1,
-                    dataArrays.n_subjects,
-                    streams[primary_stream_index]); CUERR;
-
-        call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
-                                0,
-                                0,
-                                streams[primary_stream_index]); CUERR;
 
         bool singlecoldebug = std::any_of(dataArrays.h_subject_read_ids,
                                 dataArrays.h_subject_read_ids + dataArrays.n_subjects,
@@ -1339,7 +1281,6 @@ namespace gpu{
                     dataArrays.d_indices_per_subject_prefixsum,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
-                    dataArrays.d_tiles_per_subject_prefixsum,
                     transFuncData.correctionOptions.useQualityScores,
                     desiredAlignmentMaxErrorRate,
                     dataArrays.maximum_sequence_length,
@@ -1353,34 +1294,10 @@ namespace gpu{
                     false);
 #else
 
-        //make blocks per subject prefixsum for msa_add_sequences_kernel_implicit
-
-        auto getBlocksPerSubject = [] __device__ (int indices_for_subject){
-            return SDIV(indices_for_subject, msa_add_sequences_kernel_implicit_shared_blocksize);
-        };
-        cub::TransformInputIterator<int,decltype(getBlocksPerSubject), int*>
-            d_blocksPerSubject(dataArrays.d_indices_per_subject,
-                          getBlocksPerSubject);
-
-        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                    batch.batchDataDevice.cubTemp.sizeRef(),
-                    d_blocksPerSubject,
-                    dataArrays.d_tiles_per_subject_prefixsum+1,
-                    dataArrays.n_subjects,
-                    streams[primary_stream_index]); CUERR;
-
-
-        call_set_kernel_async(dataArrays.d_tiles_per_subject_prefixsum,
-                                0,
-                                0,
-                                streams[primary_stream_index]);
-
         call_msa_add_sequences_kernel_implicit_async(
                     dataArrays.d_counts,
                     dataArrays.d_weights,
                     dataArrays.d_coverage,
-                    dataArrays.d_origWeights,
-                    dataArrays.d_origCoverages,
                     dataArrays.d_alignment_shifts,
                     dataArrays.d_alignment_best_alignment_flags,
                     dataArrays.d_alignment_overlaps,
@@ -1396,7 +1313,6 @@ namespace gpu{
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.d_tiles_per_subject_prefixsum,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.h_num_indices,
@@ -1538,34 +1454,6 @@ namespace gpu{
 
 #endif
 
-#endif
-
-#ifndef MSA_IMPLICIT
-
-		call_msa_find_consensus_kernel_async(
-					dataArrays.d_consensus,
-					dataArrays.d_support,
-					dataArrays.d_coverage,
-					dataArrays.d_origWeights,
-					dataArrays.d_origCoverages,
-                    dataArrays.d_counts,
-                    dataArrays.d_weights,
-					dataArrays.d_multiple_sequence_alignments,
-					dataArrays.d_multiple_sequence_alignment_weights,
-					dataArrays.d_msa_column_properties,
-					dataArrays.d_candidates_per_subject_prefixsum,
-					dataArrays.d_indices_per_subject,
-					dataArrays.d_indices_per_subject_prefixsum,
-					dataArrays.n_subjects,
-					dataArrays.n_queries,
-					dataArrays.d_num_indices,
-					dataArrays.msa_pitch,
-					dataArrays.msa_weights_pitch,
-					3*dataArrays.maximum_sequence_length - 2*transFuncData.min_overlap,
-					streams[primary_stream_index],
-					batch.kernelLaunchHandle);
-#else
-
         call_msa_find_consensus_implicit_kernel_async(
                     dataArrays.d_counts,
                     dataArrays.d_weights,
@@ -1600,8 +1488,6 @@ namespace gpu{
                     dataArrays.msa_weights_pitch,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
-#endif
-
 #endif
 
 #if 0
@@ -2196,6 +2082,20 @@ namespace gpu{
 
 
 
+                //debug
+                //cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
+                /*cudaDeviceSynchronize();
+                thrust::host_vector<int> ipersold(dataArrays.n_subjects);
+                thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, ipersold.begin());*/
+
+                /*if(currentNumIndices != *dataArrays.h_num_indices){
+                    std::cerr << "d_indices_per_subject before:\n";
+                    thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, std::ostream_iterator<int>(std::cerr, " "));
+                    std::cerr << '\n';
+                }*/
+
+
+
                 //calculate indices per subject
                 cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
                             batch.batchDataDevice.cubTemp.sizeRef(),
@@ -2205,6 +2105,23 @@ namespace gpu{
                             dataArrays.d_candidates_per_subject_prefixsum,
                             dataArrays.n_queries,
                             streams[primary_stream_index]); CUERR;
+
+                /*cudaDeviceSynchronize();
+                thrust::host_vector<int> ipersnew(dataArrays.n_subjects);
+                thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, ipersnew.begin());
+
+                auto msastoupdate = thrust::count_if(thrust::make_zip_iterator(thrust::make_tuple(ipersold.begin(), ipersnew.begin())),
+                                                    thrust::make_zip_iterator(thrust::make_tuple(ipersold.end(), ipersnew.end())),
+                                                    [](const auto& tuple){
+                                                        return thrust::get<0>(tuple) != thrust::get<1>(tuple);
+                                                    });
+                std::cerr << "Need to update " << msastoupdate << " of " << dataArrays.n_subjects << " MSAs\n";*/
+
+                /*if(currentNumIndices != *dataArrays.h_num_indices){
+                    std::cerr << "d_indices_per_subject after:\n";
+                    thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, std::ostream_iterator<int>(std::cerr, " "));
+                    std::cerr << '\n';
+                }*/
 
                 //make indices per subject prefixsum
                 call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,

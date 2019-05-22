@@ -31,6 +31,7 @@ enum class KernelId {
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
+    MSAUpdateProperties,
 	MSAAddSequences,
 	MSAFindConsensus,
 	MSACorrectSubject,
@@ -155,7 +156,14 @@ void call_msa_init_kernel_async_exp(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-
+void call_msa_update_properties_kernel_async(
+            MSAColumnProperties* d_msa_column_properties,
+            const int* d_coverage,
+            const int* d_indices_per_subject,
+            int n_subjects,
+            size_t msa_weights_pitch,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
 
 
 
@@ -200,8 +208,6 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
             int* d_counts,
             float* d_weights,
             int* d_coverage,
-            float* d_origWeights,
-            int* d_origCoverages,
             const int* d_alignment_shifts,
             const BestAlignment_t* d_alignment_best_alignment_flags,
             const int* d_alignment_overlaps,
@@ -236,8 +242,6 @@ void call_msa_add_sequences_kernel_implicit_global_async(
             int* d_counts,
             float* d_weights,
             int* d_coverage,
-            float* d_origWeights,
-            int* d_origCoverages,
             const int* d_alignment_shifts,
             const BestAlignment_t* d_alignment_best_alignment_flags,
             const int* d_alignment_overlaps,
@@ -290,7 +294,6 @@ void call_msa_add_sequences_implicit_singlecol_kernel_async(
             const int* d_indices_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
-            const int* d_columns_per_subject_prefixsum,
             bool canUseQualityScores,
             float desiredAlignmentMaxErrorRate,
             int maximum_sequence_length,
@@ -307,8 +310,6 @@ void call_msa_add_sequences_kernel_implicit_async(
             int* d_counts,
             float* d_weights,
             int* d_coverage,
-            float* d_origWeights,
-            int* d_origCoverages,
             const int* d_alignment_shifts,
             const BestAlignment_t* d_alignment_best_alignment_flags,
             const int* d_alignment_overlaps,
@@ -324,7 +325,6 @@ void call_msa_add_sequences_kernel_implicit_async(
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_indices_per_subject_prefixsum,
-            const int* d_blocks_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
             const int* h_num_indices,
