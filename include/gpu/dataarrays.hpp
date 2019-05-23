@@ -128,6 +128,21 @@ namespace detail{
             return *this;
         }
 
+        ~SimpleAllocation(){
+            Allocator alloc;
+            alloc.deallocate(data_);
+        }
+
+        friend void swap(SimpleAllocation& l, SimpleAllocation& r) noexcept{
+    		using std::swap;
+
+    		swap(l.data_, r.data_);
+    		swap(l.size_, r.size_);
+    		swap(l.capacity_, r.capacity_);
+    	}
+
+
+        //size is number of elements of type T
 		void resize(size_t newsize){
 			if(capacity_ < newsize){
 				Allocator alloc;
@@ -149,17 +164,22 @@ namespace detail{
 		size_t& sizeRef(){
 			return size_;
 		}
+
+        size_t sizeInBytes() const{
+            return size_ * sizeof(T);
+        }
 	};
 
-	template<class T>
-	using SimpleAllocationHost = SimpleAllocation<DataLocation::Host, T>;
-
-	template<class T>
-	using SimpleAllocationPinnedHost = SimpleAllocation<DataLocation::PinnedHost, T>;
-
-	template<class T>
-	using SimpleAllocationDevice = SimpleAllocation<DataLocation::Device, T>;
 }
+
+template<class T>
+using SimpleAllocationHost = detail::SimpleAllocation<detail::DataLocation::Host, T>;
+
+template<class T>
+using SimpleAllocationPinnedHost = detail::SimpleAllocation<detail::DataLocation::PinnedHost, T>;
+
+template<class T>
+using SimpleAllocationDevice = detail::SimpleAllocation<detail::DataLocation::Device, T>;
 
 
 
@@ -1040,6 +1060,14 @@ struct DataArrays {
 
 			d_candidate_qualities = (char*)qualities_transfer_data_device;
 			d_subject_qualities = (char*)(((char*)d_candidate_qualities) + memCandidateQualities);
+
+            h_new_subject_qualities.resize(n_sub * quality_pitch);
+            h_new_candidate_qualities.resize(n_quer * quality_pitch);
+
+            d_new_subject_qualities.resize(n_sub * quality_pitch);;
+            d_new_candidate_qualities.resize(n_quer * quality_pitch);
+            d_new_candidate_qualities_tmp.resize(n_quer * quality_pitch);
+
 		}
 
 
@@ -1233,6 +1261,13 @@ struct DataArrays {
 		cudaFree(a.d_temp_storage); CUERR;
 		cudaFree(a.d_candidate_read_ids); CUERR;
 		cudaFreeHost(a.h_candidate_read_ids); CUERR;
+
+        h_new_subject_qualities = std::move(SimpleAllocationPinnedHost<char>{});
+        h_new_candidate_qualities = std::move(SimpleAllocationPinnedHost<char>{});
+
+        d_new_subject_qualities = std::move(SimpleAllocationDevice<char>{});
+        d_new_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
+        d_new_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
 
 		a.subject_indices_data_device = nullptr;
 		a.subject_indices_data_host = nullptr;
@@ -1457,6 +1492,13 @@ struct DataArrays {
 	char* d_candidate_qualities = nullptr;
     char* d_candidate_qualities_tmp = nullptr;
 	char* d_subject_qualities = nullptr;
+
+    SimpleAllocationPinnedHost<char> h_new_subject_qualities;
+    SimpleAllocationPinnedHost<char> h_new_candidate_qualities;
+
+    SimpleAllocationDevice<char> d_new_subject_qualities;
+    SimpleAllocationDevice<char> d_new_candidate_qualities;
+    SimpleAllocationDevice<char> d_new_candidate_qualities_tmp;
 
 	//correction results output
 
