@@ -132,8 +132,7 @@ namespace gpu{
     int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
 #ifdef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(1000);
-    cudaProfilerStart(); CUERR;
+    cpu::RangeGenerator<read_number> readIdGenerator(50000);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
     //cpu::RangeGenerator<read_number> readIdGenerator(50000);
@@ -182,6 +181,10 @@ namespace gpu{
     std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
 
     assert(!(deviceIds.size() == 0 && nGpuThreads > 0));
+
+#ifdef DO_PROFILE
+    cudaProfilerStart(); CUERR;
+#endif
 
     for(int threadId = 0; threadId < nGpuThreads; threadId++) {
 
