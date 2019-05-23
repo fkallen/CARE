@@ -2699,7 +2699,7 @@ namespace gpu{
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
 
-            constexpr int tilesize = shd_tilesize;
+            constexpr int tilesize = 32;
 
             int* d_tiles_per_subject_prefixsum;
             cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
@@ -3486,7 +3486,7 @@ namespace gpu{
 
 
 //std::cerr << "n_subjects: " << n_subjects << ", n_queries: " << n_queries << ", *h_num_indices: " << *h_num_indices << '\n';
-    	const int blocksize = msa_add_sequences_kernel_implicit_shared_blocksize;
+    	const int blocksize = 128;
         const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
 
     	//const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
