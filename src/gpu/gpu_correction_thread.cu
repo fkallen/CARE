@@ -109,7 +109,7 @@ namespace gpu{
                 n_queries,
                 stream,
                 kernelLaunchHandle);
-
+#if 1
         call_msa_add_sequences_kernel_implicit_async(
                     d_counts,
                     d_weights,
@@ -143,7 +143,42 @@ namespace gpu{
                     stream,
                     kernelLaunchHandle,
                     false);
+#else
 
+        call_msa_add_sequences_implicit_singlecol_kernel_async(
+                    d_counts,
+                    d_weights,
+                    d_coverage,
+                    d_alignment_shifts,
+                    d_alignment_best_alignment_flags,
+                    d_alignment_overlaps,
+                    d_alignment_nOps,
+                    d_subject_sequences_data,
+                    d_candidate_sequences_data,
+                    d_subject_sequences_lengths,
+                    d_candidate_sequences_lengths,
+                    d_subject_qualities,
+                    d_candidate_qualities,
+                    d_msa_column_properties,
+                    d_candidates_per_subject_prefixsum,
+                    d_indices,
+                    d_indices_per_subject,
+                    d_indices_per_subject_prefixsum,
+                    n_subjects,
+                    n_queries,
+                    useQualityScores,
+                    desiredAlignmentMaxErrorRate,
+                    maximum_sequence_length,
+                    maxSequenceBytes,
+                    encoded_sequence_pitch,
+                    quality_pitch,
+                    msa_weights_pitch,
+                    stream,
+                    kernelLaunchHandle,
+                    nullptr,
+                    false);
+
+#endif
         call_msa_find_consensus_implicit_kernel_async(
                     d_counts,
                     d_weights,
@@ -338,7 +373,7 @@ namespace gpu{
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
         transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
 		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
-		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func2;
+		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
         transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
 		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
@@ -1286,1208 +1321,10 @@ namespace gpu{
         }else{
             return BatchState::BuildMSA;
         }
-
-	}
-
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_buildmsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
-
-        constexpr BatchState expectedState = BatchState::BuildMSA;
-
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
-
-        assert(batch.state == expectedState);
-
-        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = num_indices_transfered_event_index;
-            return expectedState;
-        }
-#endif
-
-        DataArrays& dataArrays = *batch.dataArrays;
-
-        //if there are no good candidates, clean up batch and discard reads
-        if(*dataArrays.h_num_indices == 0){
-            std::cerr << "*h_num_indices = " << *dataArrays.h_num_indices << '\n';
-            return BatchState::WriteResults;
-        }
-
-        if(transFuncData.correctionOptions.useQualityScores){
-		     cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
-        }
-
-		const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
-
-		//Determine multiple sequence alignment properties
-
-        //std::cout << "msa_init" << std::endl;
-
-#define USEBUILDFUNCTION
-
-#ifdef USEBUILDFUNCTION
-        build_msa_async(dataArrays.d_msa_column_properties,
-                        dataArrays.d_alignment_shifts,
-                        dataArrays.d_alignment_best_alignment_flags,
-                        dataArrays.d_alignment_overlaps,
-                        dataArrays.d_alignment_nOps,
-                        dataArrays.d_subject_sequences_data,
-                        dataArrays.d_candidate_sequences_data,
-                        dataArrays.d_subject_sequences_lengths,
-                        dataArrays.d_candidate_sequences_lengths,
-                        dataArrays.d_subject_qualities,
-                        dataArrays.d_candidate_qualities,
-                        dataArrays.d_candidates_per_subject_prefixsum,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices_per_subject,
-                        dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.d_counts,
-                        dataArrays.d_weights,
-                        dataArrays.d_coverage,
-                        dataArrays.d_support,
-                        dataArrays.d_consensus,
-                        dataArrays.d_origWeights,
-                        dataArrays.d_origCoverages,
-                        dataArrays.n_subjects,
-                        dataArrays.n_queries,
-                        dataArrays.d_num_indices,
-                        transFuncData.correctionOptions.useQualityScores,
-                        desiredAlignmentMaxErrorRate,
-                        dataArrays.maximum_sequence_length,
-                        sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                        dataArrays.encoded_sequence_pitch,
-                        dataArrays.quality_pitch,
-                        dataArrays.msa_pitch,
-                        dataArrays.msa_weights_pitch,
-                        streams[primary_stream_index],
-                        batch.kernelLaunchHandle);
-#endif
-
-#ifndef USEBUILDFUNCTION
-        call_msa_init_kernel_async_exp(
-                dataArrays.d_msa_column_properties,
-                dataArrays.d_alignment_shifts,
-                dataArrays.d_alignment_best_alignment_flags,
-                dataArrays.d_subject_sequences_lengths,
-                dataArrays.d_candidate_sequences_lengths,
-                dataArrays.d_indices,
-                dataArrays.d_indices_per_subject,
-                dataArrays.d_indices_per_subject_prefixsum,
-                dataArrays.n_subjects,
-                dataArrays.n_queries,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle);
-#endif
-
-
-#ifndef USEBUILDFUNCTION
-
-#if 0
-
-        bool singlecoldebug = std::any_of(dataArrays.h_subject_read_ids,
-                                dataArrays.h_subject_read_ids + dataArrays.n_subjects,
-                                [](int id){return id == 207;});
-
-        call_msa_add_sequences_implicit_singlecol_kernel_async(
-                    dataArrays.d_counts,
-                    dataArrays.d_weights,
-                    dataArrays.d_coverage,
-                    dataArrays.d_alignment_shifts,
-                    dataArrays.d_alignment_best_alignment_flags,
-                    dataArrays.d_alignment_overlaps,
-                    dataArrays.d_alignment_nOps,
-                    dataArrays.d_subject_sequences_data,
-                    dataArrays.d_candidate_sequences_data,
-                    dataArrays.d_subject_sequences_lengths,
-                    dataArrays.d_candidate_sequences_lengths,
-                    dataArrays.d_subject_qualities,
-                    dataArrays.d_candidate_qualities,
-                    dataArrays.d_msa_column_properties,
-                    dataArrays.d_candidates_per_subject_prefixsum,
-                    dataArrays.d_indices,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.n_subjects,
-                    dataArrays.n_queries,
-                    transFuncData.correctionOptions.useQualityScores,
-                    desiredAlignmentMaxErrorRate,
-                    dataArrays.maximum_sequence_length,
-                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.quality_pitch,
-                    dataArrays.msa_weights_pitch,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle,
-                    dataArrays.d_subject_read_ids,
-                    false);
-#else
-
-        call_msa_add_sequences_kernel_implicit_async(
-                    dataArrays.d_counts,
-                    dataArrays.d_weights,
-                    dataArrays.d_coverage,
-                    dataArrays.d_alignment_shifts,
-                    dataArrays.d_alignment_best_alignment_flags,
-                    dataArrays.d_alignment_overlaps,
-                    dataArrays.d_alignment_nOps,
-                    dataArrays.d_subject_sequences_data,
-                    dataArrays.d_candidate_sequences_data,
-                    dataArrays.d_subject_sequences_lengths,
-                    dataArrays.d_candidate_sequences_lengths,
-                    dataArrays.d_subject_qualities,
-                    dataArrays.d_candidate_qualities,
-                    dataArrays.d_msa_column_properties,
-                    dataArrays.d_candidates_per_subject_prefixsum,
-                    dataArrays.d_indices,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.n_subjects,
-                    dataArrays.n_queries,
-                    //dataArrays.h_num_indices,
-                    dataArrays.d_num_indices,
-                    transFuncData.correctionOptions.useQualityScores,
-                    desiredAlignmentMaxErrorRate,
-                    dataArrays.maximum_sequence_length,
-                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.quality_pitch,
-                    dataArrays.msa_pitch,
-                    dataArrays.msa_weights_pitch,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle,
-                    false);
-#endif
-
-#endif
-
-#if 0
-        int* d_counts_tmp;
-        float* d_weights_tmp;
-        int* d_coverage_tmp;
-
-        char* d_consensus_tmp;
-        float* d_support_tmp;
-        float* d_orig_weights_tmp;
-        int* d_orig_coverages_tmp;
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_counts_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cubCachingAllocator.DeviceAllocate((void**)&d_weights_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cubCachingAllocator.DeviceAllocate((void**)&d_coverage_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_consensus_tmp, dataArrays.n_subjects * dataArrays.msa_pitch, streams[primary_stream_index]); CUERR;
-        cubCachingAllocator.DeviceAllocate((void**)&d_support_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cubCachingAllocator.DeviceAllocate((void**)&d_orig_weights_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cubCachingAllocator.DeviceAllocate((void**)&d_orig_coverages_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-
-        cudaMemsetAsync(d_counts_tmp, 0, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cudaMemsetAsync(d_weights_tmp, 0, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cudaMemsetAsync(d_coverage_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-
-        cudaMemsetAsync(d_consensus_tmp, 0, dataArrays.n_subjects * dataArrays.msa_pitch, streams[primary_stream_index]); CUERR;
-        cudaMemsetAsync(d_support_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cudaMemsetAsync(d_orig_weights_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-        cudaMemsetAsync(d_orig_coverages_tmp, 0, dataArrays.n_subjects * dataArrays.msa_weights_pitch, streams[primary_stream_index]); CUERR;
-
-        call_msa_add_sequences_kernel_implicit_async(
-                    d_counts_tmp,
-                    d_weights_tmp,
-                    d_coverage_tmp,
-                    nullptr,
-                    nullptr,
-                    dataArrays.d_alignment_shifts,
-                    dataArrays.d_alignment_best_alignment_flags,
-                    dataArrays.d_alignment_overlaps,
-                    dataArrays.d_alignment_nOps,
-                    dataArrays.d_subject_sequences_data,
-                    dataArrays.d_candidate_sequences_data,
-                    dataArrays.d_subject_sequences_lengths,
-                    dataArrays.d_candidate_sequences_lengths,
-                    dataArrays.d_subject_qualities,
-                    dataArrays.d_candidate_qualities,
-                    dataArrays.d_msa_column_properties,
-                    dataArrays.d_candidates_per_subject_prefixsum,
-                    dataArrays.d_indices,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.n_subjects,
-                    dataArrays.n_queries,
-                    //dataArrays.h_num_indices,
-                    dataArrays.d_num_indices,
-                    transFuncData.correctionOptions.useQualityScores,
-                    desiredAlignmentMaxErrorRate,
-                    dataArrays.maximum_sequence_length,
-                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.quality_pitch,
-                    dataArrays.msa_pitch,
-                    dataArrays.msa_weights_pitch,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle,
-                    false);//dataArrays.h_subject_read_ids[0] == 940);
-
-        /*cudaDeviceSynchronize(); CUERR;
-        generic_kernel<<<1,1>>>([=] __device__ (){
-
-            const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-            for(int subjectIndex = 0; subjectIndex < dataArrays.n_subjects; subjectIndex++){
-                for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                    bool error = false;
-                    for(int i = 0; i < 4; i++){
-                        const int* countssharedi = &d_counts_tmp[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
-                        const int* countssinglecoli = &dataArrays.d_counts[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
-
-
-                        int countshared = countssharedi[pos];
-                        int countsinglecol = countssinglecoli[pos];
-                        if(countshared != countsinglecol){
-                            printf("count error %d %d. subjectIndex = %d, i = %d, pos = %d\n", countshared, countsinglecol, subjectIndex, i , pos);
-                            error = true;
-                        }
-                    }
-                    if(error) break;
-                }
-
-                for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                    bool error = false;
-                    for(int i = 0; i < 4; i++){
-                        const float* weightsharedi = &d_weights_tmp[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
-                        const float* weightsinglecoli = &dataArrays.d_weights[subjectIndex * 4 * msa_weights_pitch_floats + i * msa_weights_pitch_floats];
-                        float weightshared = weightsharedi[pos];
-                        float weightsinglecol = weightsinglecoli[pos];
-                        if(weightshared != weightsinglecol){
-                            printf("weight error %.10f %.10f. subjectIndex = %d, i = %d, pos = %d\n", weightshared, weightsinglecol, subjectIndex, i , pos);
-                            error = true;
-                        }
-                    }
-                    if(error) break;
-                }
-
-                const int* coveragesshared = &d_coverage_tmp[subjectIndex * msa_weights_pitch_floats];
-                const int* coveragessinglecol = &dataArrays.d_coverage[subjectIndex * msa_weights_pitch_floats];
-
-                for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                    int coverageshared = coveragesshared[pos];
-                    int coveragesinglecol = coveragessinglecol[pos];
-                    if(coverageshared != coveragesinglecol){
-                        printf("coverage error %d %d. subjectIndex = %d, pos = %d\n", coverageshared, coveragesinglecol, subjectIndex, pos);
-                        break;
-                    }
-                }
-
-            }
-        }); CUERR;
-
-        */
-
-        //cudaDeviceSynchronize(); CUERR;
-
-#endif
-
-#ifndef USEBUILDFUNCTION
-        call_msa_find_consensus_implicit_kernel_async(
-                    dataArrays.d_counts,
-                    dataArrays.d_weights,
-                    dataArrays.d_consensus,
-                    dataArrays.d_support,
-                    dataArrays.d_coverage,
-                    dataArrays.d_origWeights,
-                    dataArrays.d_origCoverages,
-                    dataArrays.d_subject_sequences_data,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_msa_column_properties,
-                    dataArrays.n_subjects,
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.msa_pitch,
-                    dataArrays.msa_weights_pitch,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
-
-#endif
-
-#if 0
-        call_msa_find_consensus_implicit_kernel_async(
-                    dataArrays.d_counts,
-                    dataArrays.d_weights,
-                    d_consensus_tmp,
-                    d_support_tmp,
-                    dataArrays.d_coverage,
-                    d_orig_weights_tmp,
-                    d_orig_coverages_tmp,
-                    dataArrays.d_subject_sequences_data,
-                    dataArrays.d_msa_column_properties,
-                    dataArrays.n_subjects,
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.msa_pitch,
-                    dataArrays.msa_weights_pitch,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
-#endif
-
-#if 0
-        //if(batch.tasks[0].readId == 207){
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-
-                    for(size_t pos = threadIdx.x; pos < 4*msa_weights_pitch_floats; pos += blockDim.x){
-                        int oldv = d_counts_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
-                        int newv = dataArrays.d_counts[pos + subjectIndex*4*msa_weights_pitch_floats];
-                        if(oldv != newv){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    __syncthreads();
-
-                    if(error && threadIdx.x == 0){
-                        printf("error counts readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
-                            int oldv = d_counts_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
-                            printf("%d ", oldv);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
-                            int newv = dataArrays.d_counts[pos + subjectIndex * 4*msa_weights_pitch_floats];
-                            printf("%d ", newv);
-                        }
-                        printf("\n");
-                    }
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;
-
-            /*generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-
-                    for(size_t pos = threadIdx.x; pos < 4*msa_weights_pitch_floats; pos += blockDim.x){
-                        float oldv = d_weights_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
-                        float newv = dataArrays.d_weights[pos + subjectIndex*4*msa_weights_pitch_floats];
-                        if(abs(oldv - newv) > 10e-2){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    __syncthreads();
-
-                    if(error && threadIdx.x == 0){
-                        printf("error weights readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
-                            float oldv = d_weights_tmp[pos + subjectIndex * 4*msa_weights_pitch_floats];
-                            printf("%f ", oldv);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < 4*msa_weights_pitch_floats; pos++){
-                            float newv = dataArrays.d_weights[pos + subjectIndex*4*msa_weights_pitch_floats];
-                            printf("%f ", newv);
-                        }
-                        printf("\n");
-                    }
-
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;*/
-
-            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-
-                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
-                        int oldv = d_coverage_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                        int newv = dataArrays.d_coverage[pos + subjectIndex * msa_weights_pitch_floats];
-                        if(oldv != newv){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    __syncthreads();
-
-                    if(error && threadIdx.x == 0){
-                        printf("error coverage readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            int oldv = d_coverage_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%d ", oldv);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            int newv = dataArrays.d_coverage[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%d ", newv);
-                        }
-                        printf("\n");
-                    }
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;
-
-            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-
-                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
-                        char consold = d_consensus_tmp[pos + subjectIndex * dataArrays.msa_pitch];
-                        char consnew = dataArrays.d_consensus[pos + subjectIndex * dataArrays.msa_pitch];
-                        if(consold != consnew){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    __syncthreads();
-
-                    if(error && threadIdx.x == 0){
-                        printf("error consensus readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            char consold = d_consensus_tmp[pos + subjectIndex * dataArrays.msa_pitch];
-                            printf("%c", consold);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            char consnew = dataArrays.d_consensus[pos + subjectIndex * dataArrays.msa_pitch];
-                            printf("%c", consnew);
-                        }
-                        printf("\n");
-                    }
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
-                        float oldw = d_orig_weights_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                        float neww = dataArrays.d_origWeights[pos + subjectIndex * msa_weights_pitch_floats];
-                        if(abs(oldw - neww) > 10e-5){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    if(error && threadIdx.x == 0){
-                        printf("error origweight readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            float oldw = d_orig_weights_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%f ", oldw);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            float neww = dataArrays.d_origWeights[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%f ", neww);
-                        }
-                        printf("\n");
-                    }
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
-                        int oldw = d_orig_coverages_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                        int neww = dataArrays.d_origCoverages[pos + subjectIndex * msa_weights_pitch_floats];
-                        if(abs(oldw - neww) > 10e-5){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    if(error && threadIdx.x == 0){
-                        printf("error origcoverage readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            int oldw = d_orig_coverages_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%f ", oldw);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            int neww = dataArrays.d_origCoverages[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%f ", neww);
-                        }
-                        printf("\n");
-                    }
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            generic_kernel<<<1,128,0,streams[primary_stream_index]>>>([=]__device__(){
-                __shared__ int error;
-
-                const size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-                for(int subjectIndex = blockIdx.x; subjectIndex < dataArrays.n_subjects; subjectIndex += gridDim.x){
-
-
-                    if(threadIdx.x == 0) error = 0;
-                    __syncthreads();
-                    for(size_t pos = threadIdx.x; pos < msa_weights_pitch_floats; pos += blockDim.x){
-                        float oldw = d_support_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                        float neww = dataArrays.d_support[pos + subjectIndex * msa_weights_pitch_floats];
-                        if(abs(oldw - neww) > 10e-5){
-                            atomicAdd(&error, 1);
-                        }
-                    }
-
-                    if(error && threadIdx.x == 0){
-                        printf("error origweight readId %d\n", dataArrays.d_subject_read_ids[subjectIndex]);
-                        printf("old:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            float oldw = d_support_tmp[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%f ", oldw);
-                        }
-                        printf("\n");
-                        printf("new:\n");
-                        for(size_t pos = 0; pos < msa_weights_pitch_floats; pos++){
-                            float neww = dataArrays.d_support[pos + subjectIndex * msa_weights_pitch_floats];
-                            printf("%f ", neww);
-                        }
-                        printf("\n");
-                    }
-                    if(error){
-                        break;
-                    }
-                }
-            }); CUERR;
-
-
-
-            //cudaDeviceSynchronize(); CUERR;
-
-            //std::exit(0);
-        //}
-
-        cudaMemcpyAsync(dataArrays.d_counts, d_counts_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.d_weights, d_weights_tmp, dataArrays.n_subjects * 4 * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.d_coverage, d_coverage_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.d_consensus, d_consensus_tmp, dataArrays.n_subjects * dataArrays.msa_pitch, D2D, streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.d_support, d_support_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.d_origWeights, d_orig_weights_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
-        cudaMemcpyAsync(dataArrays.d_origCoverages, d_orig_coverages_tmp, dataArrays.n_subjects * dataArrays.msa_weights_pitch, D2D, streams[primary_stream_index]); CUERR;
-
-        cubCachingAllocator.DeviceFree(d_counts_tmp); CUERR;
-        cubCachingAllocator.DeviceFree(d_weights_tmp); CUERR;
-        cubCachingAllocator.DeviceFree(d_coverage_tmp); CUERR;
-
-        cubCachingAllocator.DeviceFree(d_consensus_tmp); CUERR;
-        cubCachingAllocator.DeviceFree(d_support_tmp); CUERR;
-        cubCachingAllocator.DeviceFree(d_orig_weights_tmp); CUERR;
-        cubCachingAllocator.DeviceFree(d_orig_coverages_tmp); CUERR;
-
-#endif
-
-#ifdef USE_MSA_MINIMIZATION
-
-        constexpr int max_num_minimizations = 5;
-
-        if(max_num_minimizations > 0){
-            if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == *dataArrays.h_num_indices)){
-//if(batch.tasks[0].readId == 207){
-//                std::cerr << "starting minimization " << batch.numMinimizations << '\n';
-//}
-                const int currentNumIndices = *dataArrays.h_num_indices;
-
-                bool* d_shouldBeKept;
-
-
-                cubCachingAllocator.DeviceAllocate((void**)&d_shouldBeKept, sizeof(bool) * dataArrays.n_queries, streams[primary_stream_index]); CUERR;
-                call_fill_kernel_async(d_shouldBeKept, dataArrays.n_queries, true, streams[primary_stream_index]);
-
-                //select candidates which are to be removed
-                call_msa_findCandidatesOfDifferentRegion_kernel_async(
-                            d_shouldBeKept,
-                            dataArrays.d_subject_sequences_data,
-                            dataArrays.d_candidate_sequences_data,
-                            dataArrays.d_subject_sequences_lengths,
-                            dataArrays.d_candidate_sequences_lengths,
-                            dataArrays.d_candidates_per_subject_prefixsum,
-                            dataArrays.d_alignment_shifts,
-                            dataArrays.d_alignment_best_alignment_flags,
-                            dataArrays.n_subjects,
-                            dataArrays.n_queries,
-                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
-                            dataArrays.encoded_sequence_pitch,
-                            dataArrays.d_consensus,
-                            dataArrays.d_counts,
-                            dataArrays.d_weights,
-                            dataArrays.d_msa_column_properties,
-                            dataArrays.msa_pitch,
-                            dataArrays.msa_weights_pitch,
-                            dataArrays.d_indices,
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.d_indices_per_subject_prefixsum,
-                            transFuncData.estimatedCoverage,
-                            streams[primary_stream_index],
-                            batch.kernelLaunchHandle,
-                            dataArrays.d_subject_read_ids,
-                            false);  CUERR;
-
-
-#if 0
-                for(size_t subjectIndex = 0; subjectIndex < batch.tasks.size(); subjectIndex++){
-                    const auto& task = batch.tasks[subjectIndex];
-                    if(task.readId == 207){
-
-                        cudaDeviceSynchronize(); CUERR;
-
-                        cudaMemcpyAsync(dataArrays.msa_data_host,
-                                    dataArrays.msa_data_device,
-                                    dataArrays.msa_data_usable_size,
-                                    D2H,
-                                    streams[primary_stream_index]); CUERR;
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                        //DEBUGGING
-                        cudaMemcpyAsync(dataArrays.alignment_result_data_host,
-                                    dataArrays.alignment_result_data_device,
-                                    dataArrays.alignment_result_data_usable_size,
-                                    D2H,
-                                    streams[primary_stream_index]); CUERR;
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                        //DEBUGGING
-                        cudaMemcpyAsync(dataArrays.subject_indices_data_host,
-                                    dataArrays.subject_indices_data_device,
-                                    dataArrays.subject_indices_data_usable_size,
-                                    D2H,
-                                    streams[primary_stream_index]); CUERR;
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                        cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
-                                    dataArrays.indices_transfer_data_device,
-                                    dataArrays.indices_transfer_data_usable_size,
-                                    D2H,
-                                    streams[primary_stream_index]); CUERR;
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                        cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
-                                        dataArrays.qualities_transfer_data_device,
-                                        dataArrays.qualities_transfer_data_usable_size,
-                                        D2H,
-                                        streams[primary_stream_index]); CUERR;
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                        cudaDeviceSynchronize(); CUERR;
-
-                        const int numIndices = dataArrays.h_indices_per_subject[subjectIndex];
-                        const int* myIndices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subjectIndex];
-
-                        std::unique_ptr<bool[]> boolptr = std::make_unique<bool[]>(numIndices);
-                        cudaMemcpy(boolptr.get(), d_shouldBeKept, sizeof(bool) * numIndices, D2H);
-
-                        int toKeep = std::count_if(boolptr.get(), boolptr.get() + numIndices, [](auto b){return b;});
-                        int toRemove = std::count_if(boolptr.get(), boolptr.get() + numIndices, [](auto b){return !b;});
-                        std::cerr << "numindices: " << numIndices << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';
-
-                        /*size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
-
-                        const int subjectColumnsBegin_incl = dataArrays.h_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-                        const int subjectColumnsEnd_excl = dataArrays.h_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-                        const int columnsToCheck = dataArrays.h_msa_column_properties[subjectIndex].columnsToCheck;*/
-
-                        //dataArrays.printActiveDataOfSubject(subjectIndex, std::cerr);
-
-                        /*std::cerr << "subjectColumnsBegin_incl: " << subjectColumnsBegin_incl
-                                << ", subjectColumnsEnd_excl: " << subjectColumnsEnd_excl
-                                << ", columnsToCheck: " << columnsToCheck << '\n';
-
-
-                        std::cerr << "shifts:\n";
-                        for(int i = 0; i < numIndices; i++){
-                            std::cerr << dataArrays.h_alignment_shifts[myIndices[i]] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "consensus:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_consensus[i + subjectIndex * dataArrays.msa_pitch] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "countsA:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "countsC:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * subjectIndex + 1*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "countsG:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "countsT:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_counts[i + 4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "weightsA:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * subjectIndex + 0*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "weightsC:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * subjectIndex + 1*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "weightsG:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';
-
-                        std::cerr << "weightsT:\n";
-                        for(int i = 0; i < columnsToCheck; i++){
-                            std::cerr << dataArrays.h_weights[i + 4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats] << ", ";
-                        }
-                        std::cerr << '\n';*/
-
-                        //std::exit(0);
-                    }
-                }
-#endif
-                //calculate new index list with selected candidates removed
-
-                /*cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
-                            batch.batchDataDevice.cubTemp.sizeRef(),
-                            dataArrays.d_indices,
-                            d_shouldBeKept,
-                            d_newIndices,
-                            dataArrays.d_num_indices,
-                            *dataArrays.h_num_indices,
-                            streams[primary_stream_index]); CUERR;
-
-                cudaMemcpyAsync(dataArrays.d_indices, d_newIndices, sizeof(int) * dataArrays.n_queries, D2D, streams[primary_stream_index]); CUERR;
-
-                */
-
-
-
-                int* d_shouldBeKept_positions = nullptr;
-                cubCachingAllocator.DeviceAllocate((void**)&d_shouldBeKept_positions, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]); CUERR;
-
-                int* d_newIndices = nullptr;
-                cubCachingAllocator.DeviceAllocate((void**)&d_newIndices, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]); CUERR;
-
-                call_fill_kernel_async(d_newIndices, dataArrays.n_queries, -1, streams[primary_stream_index]);
-
-                cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
-                            batch.batchDataDevice.cubTemp.sizeRef(),
-                            cub::CountingInputIterator<int>{0},
-                            d_shouldBeKept,
-                            d_shouldBeKept_positions,
-                            dataArrays.d_num_indices,
-                            currentNumIndices,
-                            streams[primary_stream_index]); CUERR;
-
-                call_compact_kernel_async(d_newIndices,
-                    dataArrays.d_indices,
-                    d_shouldBeKept_positions,
-                    dataArrays.d_num_indices,
-                    currentNumIndices,
-                    streams[primary_stream_index]);
-
-                cudaMemcpyAsync(dataArrays.d_indices, d_newIndices, sizeof(int) * dataArrays.n_queries, D2D, streams[primary_stream_index]); CUERR;
-
-                //compact the quality scores
-                {
-                    dim3 block(128,1,1);
-                    dim3 grid(SDIV(currentNumIndices, block.x),1,1);
-
-                    char* const d_candidate_qualities = dataArrays.d_candidate_qualities;
-                    char* const d_candidate_qualities_tmp = dataArrays.d_candidate_qualities_tmp;
-                    const size_t quality_pitch = dataArrays.quality_pitch;
-                    const int* const d_num_indices = dataArrays.d_num_indices;
-
-                    cudaMemsetAsync(d_candidate_qualities_tmp, currentNumIndices * quality_pitch, 0, streams[primary_stream_index]); CUERR;
-
-                    generic_kernel<<<grid, block,0, streams[primary_stream_index]>>>([=] __device__ (){
-                        const int numIndices = *d_num_indices;
-
-                        for(int targetIndex = blockIdx.x; targetIndex < numIndices; targetIndex += gridDim.x){
-                            const int srcIndex = d_shouldBeKept_positions[targetIndex];
-                            if(targetIndex != srcIndex){
-                                const char* const srcPtr = &d_candidate_qualities[srcIndex * quality_pitch];
-                                char* const destPtr = &d_candidate_qualities_tmp[targetIndex * quality_pitch];
-
-                                for(int pos = threadIdx.x; pos < quality_pitch; pos += blockDim.x){
-                                    destPtr[pos] = srcPtr[pos];
-                                }
-                            }
-                        }
-                    }); CUERR;
-
-                    cudaMemcpyAsync(d_candidate_qualities,
-                                    d_candidate_qualities_tmp,
-                                    currentNumIndices * quality_pitch,
-                                    D2H, streams[primary_stream_index]); CUERR;
-                }
-
-                /*cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                if(toRemove == 0){
-                    generic_kernel<<<1,1>>>([=] __device__ (){
-                        bool error = false;
-                        for(int i = 0; i < *dataArrays.d_num_indices; i++){
-                            if(dataArrays.d_indices[i] != d_newIndices[i]){
-                                printf("error at position %d\n", i);
-                                error = true;
-                            }
-                        }
-                        if(error){
-                            assert(false);
-                        }else{
-                            printf("ok1\n");
-                        }
-                    }); CUERR;
-                }
-
-                cudaDeviceSynchronize();*/
-
-
-
-                //debug
-                //cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
-                /*cudaDeviceSynchronize();
-                thrust::host_vector<int> ipersold(dataArrays.n_subjects);
-                thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, ipersold.begin());*/
-
-                /*if(currentNumIndices != *dataArrays.h_num_indices){
-                    std::cerr << "d_indices_per_subject before:\n";
-                    thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, std::ostream_iterator<int>(std::cerr, " "));
-                    std::cerr << '\n';
-                }*/
-
-
-
-                //calculate indices per subject
-                cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
-                            batch.batchDataDevice.cubTemp.sizeRef(),
-                            dataArrays.d_indices,
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.n_subjects+1,
-                            dataArrays.d_candidates_per_subject_prefixsum,
-                            dataArrays.n_queries,
-                            streams[primary_stream_index]); CUERR;
-
-                /*cudaDeviceSynchronize();
-                thrust::host_vector<int> ipersnew(dataArrays.n_subjects);
-                thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, ipersnew.begin());
-
-                auto msastoupdate = thrust::count_if(thrust::make_zip_iterator(thrust::make_tuple(ipersold.begin(), ipersnew.begin())),
-                                                    thrust::make_zip_iterator(thrust::make_tuple(ipersold.end(), ipersnew.end())),
-                                                    [](const auto& tuple){
-                                                        return thrust::get<0>(tuple) != thrust::get<1>(tuple);
-                                                    });
-                std::cerr << "Need to update " << msastoupdate << " of " << dataArrays.n_subjects << " MSAs\n";*/
-
-                /*if(currentNumIndices != *dataArrays.h_num_indices){
-                    std::cerr << "d_indices_per_subject after:\n";
-                    thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, std::ostream_iterator<int>(std::cerr, " "));
-                    std::cerr << '\n';
-                }*/
-
-                //make indices per subject prefixsum
-                call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
-                                        0,
-                                        0,
-                                        streams[primary_stream_index]);
-
-                cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                            batch.batchDataDevice.cubTemp.sizeRef(),
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.d_indices_per_subject_prefixsum+1,
-                            dataArrays.n_subjects,
-                            streams[primary_stream_index]); CUERR;
-
-                cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
-
-
-
-
-
-
-                /*generic_kernel<<<1,1>>>([=] __device__ (){
-                    printf("new index stats:\n");
-                    printf("num_indices: %d\n", *dataArrays.d_num_indices);
-                    printf("indices_per_subject: ");
-                    for(int i = 0; i < dataArrays.n_subjects; i++){
-                        printf("%d, ", dataArrays.d_indices_per_subject[i]);
-                    }
-                    printf("\n");
-                    printf("d_indices_per_subject_prefixsum: ");
-                    for(int i = 0; i < dataArrays.n_subjects+1; i++){
-                        printf("%d, ", dataArrays.d_indices_per_subject_prefixsum[i]);
-                    }
-                    printf("\n");
-                }); CUERR;*/
-
-                //cudaDeviceSynchronize(); CUERR;
-
-    #ifdef USE_WAIT_FLAGS
-                batch.addWaitSignal(expectedState, streams[primary_stream_index]);
-    #endif
-
-                cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
-
-                cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
-                cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
-                cubCachingAllocator.DeviceFree(d_shouldBeKept_positions); CUERR;
-
-                batch.numMinimizations++;
-                batch.previousNumIndices = currentNumIndices;
-
-                //repeat state_buildmsa_func to rebuild the msa using the new index list
-                return expectedState;
-
-            }else{
-                //std::cerr << "minimization finished\n";
-                cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
-        					dataArrays.indices_transfer_data_device,
-        					dataArrays.indices_transfer_data_usable_size,
-        					D2H,
-        					streams[secondary_stream_index]); CUERR;
-
-        		assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
-
-        		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-    #ifdef USE_WAIT_FLAGS
-                batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
-    #endif
-            }
-        }
-#endif
-
-        //At this point the msa is built, maybe minimized, and is ready to be used for correction
-
-        assert(cudaSuccess == cudaEventQuery(events[msa_build_finished_event_index])); CUERR;
-
-        cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
-
-#if 0
-        for(size_t subjectIndex = 0; subjectIndex < batch.tasks.size(); subjectIndex++){
-            const auto& task = batch.tasks[subjectIndex];
-            if(task.readId == 207){
-
-                cudaDeviceSynchronize(); CUERR;
-
-                cudaMemcpyAsync(dataArrays.msa_data_host,
-                            dataArrays.msa_data_device,
-                            dataArrays.msa_data_usable_size,
-                            D2H,
-                            streams[primary_stream_index]); CUERR;
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                //DEBUGGING
-                cudaMemcpyAsync(dataArrays.alignment_result_data_host,
-                            dataArrays.alignment_result_data_device,
-                            dataArrays.alignment_result_data_usable_size,
-                            D2H,
-                            streams[primary_stream_index]); CUERR;
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                //DEBUGGING
-                cudaMemcpyAsync(dataArrays.subject_indices_data_host,
-                            dataArrays.subject_indices_data_device,
-                            dataArrays.subject_indices_data_usable_size,
-                            D2H,
-                            streams[primary_stream_index]); CUERR;
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
-                            dataArrays.indices_transfer_data_device,
-                            dataArrays.indices_transfer_data_usable_size,
-                            D2H,
-                            streams[primary_stream_index]); CUERR;
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
-                                dataArrays.qualities_transfer_data_device,
-                                dataArrays.qualities_transfer_data_usable_size,
-                                D2H,
-                                streams[primary_stream_index]); CUERR;
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                cudaDeviceSynchronize(); CUERR;
-
-                std::cerr << "After MSA build is finished:\n";
-
-                dataArrays.printActiveDataOfSubject(subjectIndex, std::cerr);
-
-            }
-        }
-#endif
-
-        if(transFuncData.correctionOptions.extractFeatures || transFuncData.correctionOptions.correctionType != CorrectionType::Classic) {
-
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_consensus,
-                        dataArrays.d_consensus,
-                        dataArrays.n_subjects * dataArrays.msa_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_support,
-                        dataArrays.d_support,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_coverage,
-                        dataArrays.d_coverage,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_origCoverages,
-                        dataArrays.d_origCoverages,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignment_weights,
-                        dataArrays.d_multiple_sequence_alignment_weights,
-                        (dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;*/
-            /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignments,
-                        dataArrays.d_multiple_sequence_alignments,
-                        (dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;*/
-            cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                        dataArrays.d_msa_column_properties,
-                        dataArrays.n_subjects * sizeof(MSAColumnProperties),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_counts,
-                        dataArrays.d_counts,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_weights,
-                        dataArrays.d_weights,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-            cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-        #ifdef USE_WAIT_FLAGS
-            batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
-            batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
-            batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
-        #endif
-
-        }
-
-        if(transFuncData.correctionOptions.extractFeatures){
-            return BatchState::WriteFeatures;
-        }else{
-            switch(transFuncData.correctionOptions.correctionType){
-            case CorrectionType::Classic:
-                return BatchState::StartClassicCorrection;
-            case CorrectionType::Forest:
-                return BatchState::StartForestCorrection;
-            case CorrectionType::Convnet:
-                return BatchState::StartConvnetCorrection;
-            default:
-                return BatchState::StartClassicCorrection;
-            }
-        }
 	}
 
 
-
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_buildmsa_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_buildmsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
@@ -2669,6 +1506,16 @@ namespace gpu{
                 int* d_newIndices = nullptr;
                 cubCachingAllocator.DeviceAllocate((void**)&d_newIndices, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]); CUERR;
 
+                int* d_indices_per_subject_tmp = nullptr;
+                cubCachingAllocator.DeviceAllocate((void**)&d_indices_per_subject_tmp, sizeof(int) * dataArrays.n_subjects, streams[primary_stream_index]); CUERR;
+
+                //save current indices_per_subject
+                cudaMemcpyAsync(d_indices_per_subject_tmp,
+                    dataArrays.d_indices_per_subject,
+                    sizeof(int) * dataArrays.n_subjects,
+                    D2D,
+                    streams[primary_stream_index]); CUERR;
+
                 call_fill_kernel_async(d_newIndices, dataArrays.n_queries, -1, streams[primary_stream_index]);
 
                 cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp.get(),
@@ -2687,7 +1534,35 @@ namespace gpu{
                     currentNumIndices,
                     streams[primary_stream_index]);
 
-                cudaMemcpyAsync(dataArrays.d_indices, d_newIndices, sizeof(int) * dataArrays.n_queries, D2D, streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.d_indices,
+                    d_newIndices,
+                    sizeof(int) * dataArrays.n_queries,
+                    D2D,
+                    streams[primary_stream_index]); CUERR;
+
+                //calculate indices per subject
+                cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
+                            batch.batchDataDevice.cubTemp.sizeRef(),
+                            d_newIndices,
+                            dataArrays.d_indices_per_subject,
+                            dataArrays.n_subjects+1,
+                            dataArrays.d_candidates_per_subject_prefixsum,
+                            dataArrays.n_queries,
+                            streams[primary_stream_index]); CUERR;
+
+                //make indices per subject prefixsum
+                call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
+                                        0,
+                                        0,
+                                        streams[primary_stream_index]);
+
+                cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
+                            batch.batchDataDevice.cubTemp.sizeRef(),
+                            dataArrays.d_indices_per_subject,
+                            dataArrays.d_indices_per_subject_prefixsum+1,
+                            dataArrays.n_subjects,
+                            streams[primary_stream_index]); CUERR;
+
 
                 //compact the quality scores
                 {
@@ -2706,13 +1581,11 @@ namespace gpu{
 
                         for(int targetIndex = blockIdx.x; targetIndex < numIndices; targetIndex += gridDim.x){
                             const int srcIndex = d_shouldBeKept_positions[targetIndex];
-                            if(targetIndex != srcIndex){
-                                const char* const srcPtr = &d_candidate_qualities[srcIndex * quality_pitch];
-                                char* const destPtr = &d_candidate_qualities_tmp[targetIndex * quality_pitch];
+                            const char* const srcPtr = &d_candidate_qualities[srcIndex * quality_pitch];
+                            char* const destPtr = &d_candidate_qualities_tmp[targetIndex * quality_pitch];
 
-                                for(int pos = threadIdx.x; pos < quality_pitch; pos += blockDim.x){
-                                    destPtr[pos] = srcPtr[pos];
-                                }
+                            for(int pos = threadIdx.x; pos < quality_pitch; pos += blockDim.x){
+                                destPtr[pos] = srcPtr[pos];
                             }
                         }
                     }); CUERR;
@@ -2720,60 +1593,33 @@ namespace gpu{
                     cudaMemcpyAsync(d_candidate_qualities,
                                     d_candidate_qualities_tmp,
                                     currentNumIndices * quality_pitch,
-                                    D2H, streams[primary_stream_index]); CUERR;
+                                    D2D, streams[primary_stream_index]); CUERR;
                 }
 
-                //debug
-                /*cudaDeviceSynchronize();
-                thrust::host_vector<int> ipersold(dataArrays.n_subjects);
-                thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, ipersold.begin());*/
+                {
+                    /*
+                        compare old indices_per_subject , which are stored in indices_per_subject_tmp
+                        to the new indices_per_subject.
+                        set value in indices_per_subject_tmp to 0 if old value and new value are equal, else the value is set to the new value.
+                        this prevents rebuilding the MSAs of subjects whose indices where not changed by minimization (all indices are kept)
+                    */
 
+                    const int* d_indices_per_subject = dataArrays.d_indices_per_subject;
+                    const int n_subjects = dataArrays.n_subjects;
+                    cudaStream_t stream = streams[primary_stream_index];
 
-                //calculate indices per subject
-                cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp.get(),
-                            batch.batchDataDevice.cubTemp.sizeRef(),
-                            dataArrays.d_indices,
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.n_subjects+1,
-                            dataArrays.d_candidates_per_subject_prefixsum,
-                            dataArrays.n_queries,
-                            streams[primary_stream_index]); CUERR;
-
-                /*cudaDeviceSynchronize();
-                thrust::host_vector<int> ipersnew(dataArrays.n_subjects);
-                thrust::copy_n(thrust::device_ptr<int>(dataArrays.d_indices_per_subject), dataArrays.n_subjects, ipersnew.begin());
-
-                auto msastoupdate = thrust::count_if(thrust::make_zip_iterator(thrust::make_tuple(ipersold.begin(), ipersnew.begin())),
-                                                    thrust::make_zip_iterator(thrust::make_tuple(ipersold.end(), ipersnew.end())),
-                                                    [](const auto& tuple){
-                                                        return thrust::get<0>(tuple) != thrust::get<1>(tuple);
-                                                    });
-                std::cerr << "Need to update " << msastoupdate << " of " << dataArrays.n_subjects << " MSAs\n";*/
-
-                //make indices per subject prefixsum
-                call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum,
-                                        0,
-                                        0,
-                                        streams[primary_stream_index]);
-
-                cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp.get(),
-                            batch.batchDataDevice.cubTemp.sizeRef(),
-                            dataArrays.d_indices_per_subject,
-                            dataArrays.d_indices_per_subject_prefixsum+1,
-                            dataArrays.n_subjects,
-                            streams[primary_stream_index]); CUERR;
-
-                cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
-
-    #ifdef USE_WAIT_FLAGS
-                batch.addWaitSignal(expectedState, streams[primary_stream_index]);
-    #endif
-
-                cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
-
-                cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
-                cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
-                cubCachingAllocator.DeviceFree(d_shouldBeKept_positions); CUERR;
+                    dim3 block(128,1,1);
+                    dim3 grid(SDIV(dataArrays.n_subjects, block.x),1,1);
+                    generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+                        for(int i = threadIdx.x + blockDim.x * blockIdx.x; i < n_subjects; i += blockDim.x * gridDim.x){
+                            if(d_indices_per_subject[i] == d_indices_per_subject_tmp[i]){
+                                d_indices_per_subject_tmp[i] = 0;
+                            }else{
+                                d_indices_per_subject_tmp[i] = d_indices_per_subject[i];
+                            }
+                        }
+                    }); CUERR;
+                }
 
                 const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
 
@@ -2790,7 +1636,7 @@ namespace gpu{
                                 dataArrays.d_candidate_qualities,
                                 dataArrays.d_candidates_per_subject_prefixsum,
                                 dataArrays.d_indices,
-                                dataArrays.d_indices_per_subject,
+                                d_indices_per_subject_tmp,
                                 dataArrays.d_indices_per_subject_prefixsum,
                                 dataArrays.d_counts,
                                 dataArrays.d_weights,
@@ -2812,6 +1658,19 @@ namespace gpu{
                                 dataArrays.msa_weights_pitch,
                                 streams[primary_stream_index],
                                 batch.kernelLaunchHandle);
+
+                cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
+
+    #ifdef USE_WAIT_FLAGS
+                batch.addWaitSignal(expectedState, streams[primary_stream_index]);
+    #endif
+
+                cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
+
+                cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
+                cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
+                cubCachingAllocator.DeviceFree(d_indices_per_subject_tmp); CUERR;
+                cubCachingAllocator.DeviceFree(d_shouldBeKept_positions); CUERR;
 
                 batch.numMinimizations++;
                 batch.previousNumIndices = currentNumIndices;

@@ -383,12 +383,6 @@ public:
 				bool isPausable,
 				const TransitionFunctionData& transFuncData);
 
-    static BatchState state_buildmsa_func2(Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const TransitionFunctionData& transFuncData);
-
     static BatchState state_improvemsa_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,

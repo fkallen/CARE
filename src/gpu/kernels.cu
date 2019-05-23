@@ -917,25 +917,27 @@ namespace gpu{
 
         //add subjects
     	for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
-    		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-    		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-    		const char* const subject = getSubjectPtr(subjectIndex);
-    		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
-            const int shift = 0;
+            if(d_indices_per_subject[subjectIndex] > 0){
+        		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+        		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+        		const char* const subject = getSubjectPtr(subjectIndex);
+        		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
+                const int shift = 0;
 
-            int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+                int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
-            //printf("subject: ");
-            for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-                const int globalIndex = subjectColumnsBegin_incl + shift + i;
-                const char base = get(subject, subjectLength, i);
-                //printf("%d ", int(base));
-                const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-                const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
-                atomicAdd(d_counts + ptrOffset + globalIndex, 1);
-                atomicAdd(d_weights + ptrOffset + globalIndex, weight);
-                atomicAdd(my_coverage + globalIndex, 1);
+                //printf("subject: ");
+                for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+                    const int globalIndex = subjectColumnsBegin_incl + shift + i;
+                    const char base = get(subject, subjectLength, i);
+                    //printf("%d ", int(base));
+                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+                    const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+                    atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+                    atomicAdd(d_weights + ptrOffset + globalIndex, weight);
+                    atomicAdd(my_coverage + globalIndex, 1);
+                }
             }
     	}
         //printf("\n");
@@ -954,55 +956,57 @@ namespace gpu{
                     break;
             }
 
-            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+            if(d_indices_per_subject[subjectIndex] > 0){
 
-            int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+                const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+                const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
-            const char* const query = getCandidatePtr(queryIndex);
-    		const int queryLength = getCandidateLength(queryIndex);
-    		const char* const queryQualityScore = getCandidateQualityPtr(index);
+                int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
-    		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
-    		const int query_alignment_nops = d_alignment_nOps[queryIndex];
+                const char* const query = getCandidatePtr(queryIndex);
+        		const int queryLength = getCandidateLength(queryIndex);
+        		const char* const queryQualityScore = getCandidateQualityPtr(index);
 
-    		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
-    					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+        		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
+        		const int query_alignment_nops = d_alignment_nOps[queryIndex];
 
-            assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
-            //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
-    		//copy query into msa
-    		if(flag == BestAlignment_t::Forward) {
-                for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
-                    const int globalIndex = defaultcolumnoffset + i;
-                    const char base = get(query, queryLength, i);
-                    //printf("%d ", int(base));
-                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
-                    const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
-    				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
-    				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
-                    atomicAdd(my_coverage + globalIndex, 1);
-                }
-    		}else{
-                auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-                    constexpr std::uint8_t mask = 0x03;
-                    return (~in & mask);
-                };
+        		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
+        					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
 
-                for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
-                    const int reverseIndex = queryLength - 1 - i;
-                    const int globalIndex = defaultcolumnoffset + i;
-                    const char base = get(query, queryLength, reverseIndex);
-                    const char revCompl = make_reverse_complement_byte(base);
-                    //printf("%d ", int(revCompl));
-                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
-                    const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(revCompl) * msa_weights_row_pitch_floats;
-    				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
-    				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
-                    atomicAdd(my_coverage + globalIndex, 1);
+                assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+                //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
+        		//copy query into msa
+        		if(flag == BestAlignment_t::Forward) {
+                    for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                        const int globalIndex = defaultcolumnoffset + i;
+                        const char base = get(query, queryLength, i);
+                        //printf("%d ", int(base));
+                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
+                        const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
+        				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+        				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
+                        atomicAdd(my_coverage + globalIndex, 1);
+                    }
+        		}else{
+                    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                        constexpr std::uint8_t mask = 0x03;
+                        return (~in & mask);
+                    };
+
+                    for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
+                        const int reverseIndex = queryLength - 1 - i;
+                        const int globalIndex = defaultcolumnoffset + i;
+                        const char base = get(query, queryLength, reverseIndex);
+                        const char revCompl = make_reverse_complement_byte(base);
+                        //printf("%d ", int(revCompl));
+                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
+                        const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(revCompl) * msa_weights_row_pitch_floats;
+        				atomicAdd(d_counts + ptrOffset + globalIndex, 1);
+        				atomicAdd(d_weights + ptrOffset + globalIndex, weight);
+                        atomicAdd(my_coverage + globalIndex, 1);
+                    }
                 }
             }
-            //printf("\n");
 
     	}
     }
@@ -1113,156 +1117,163 @@ namespace gpu{
     				break;
     		}
 
-            const int blockForThisSubject = logicalBlockId - blocks_per_subject_prefixsum[subjectIndex];
+            if(d_indices_per_subject[subjectIndex] > 0){
 
-            const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-            //const int indicesBeforeThisSubject = d_indices_per_subject_prefixsum[subjectIndex];
-            const int id = blockForThisSubject * blockDim.x + threadIdx.x;
-            const int maxid_excl = d_indices_per_subject[subjectIndex];
-            const int globalIndexlistIndex = d_indices_per_subject_prefixsum[subjectIndex] + id;
+                const int blockForThisSubject = logicalBlockId - blocks_per_subject_prefixsum[subjectIndex];
+
+                const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                //const int indicesBeforeThisSubject = d_indices_per_subject_prefixsum[subjectIndex];
+                const int id = blockForThisSubject * blockDim.x + threadIdx.x;
+                const int maxid_excl = d_indices_per_subject[subjectIndex];
+                const int globalIndexlistIndex = d_indices_per_subject_prefixsum[subjectIndex] + id;
 
 
-    		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-            const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
-            //const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
-            const int columnsToCheck = d_msa_column_properties[subjectIndex].lastColumn_excl;
+        		const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
+                //const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
+                const int columnsToCheck = d_msa_column_properties[subjectIndex].lastColumn_excl;
 
-            int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
+                int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
 
-            assert(columnsToCheck <= msa_weights_row_pitch_floats);
-
-            //ensure that the subject is only inserted once, by the first block
-            if(blockForThisSubject == 0){
-        		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-        		const char* const subject = getSubjectPtr(subjectIndex);
-        		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
-
-                //if(debug){
-                //    printf("subject sharedkernel\n");
+                //if(size_t(columnsToCheck) > msa_weights_row_pitch_floats){
+                //    printf("columnsToCheck %d, msa_weights_row_pitch_floats %lu\n", columnsToCheck, msa_weights_row_pitch_floats);
+                    assert(columnsToCheck <= msa_weights_row_pitch_floats);
                 //}
-                for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
-                    const int shift = 0;
-                    const int globalIndex = subjectColumnsBegin_incl + shift + i;
-                    const char base = get(subject, subjectLength, i);
-                    //printf("%d ", int(base));
-                    //if(subjectQualityScore[i] == '\0'){
-                        //assert(subjectQualityScore[i] != '\0');
-                    //}
 
-                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
-                    const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
-                    atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-                    atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-                    atomicAdd(my_coverage + globalIndex, 1);
+
+                //ensure that the subject is only inserted once, by the first block
+                if(blockForThisSubject == 0){
+            		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+            		const char* const subject = getSubjectPtr(subjectIndex);
+            		const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
                     //if(debug){
-                    //    printf("%f ", weight);
+                    //    printf("subject sharedkernel\n");
                     //}
-                }
-                //if(debug){
-                //    printf("\n");
-                //}
-            }
-            //printf("\n");
-
-            //if(subjectIndex == 1){
-            //    printf("thread %d id %d, maxid_excl %d\n", threadIdx.x, id, maxid_excl);
-            //}
-
-
-            if(id < maxid_excl){
-                const int queryIndex = indices_for_this_subject[id];
-                const int shift = d_alignment_shifts[queryIndex];
-                const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
-                const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
-
-                const char* const query = getCandidatePtr(queryIndex);
-        		const int queryLength = getCandidateLength(queryIndex);
-        		const char* const queryQualityScore = getCandidateQualityPtr(globalIndexlistIndex);
-
-        		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
-        		const int query_alignment_nops = d_alignment_nOps[queryIndex];
-
-        		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
-        					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
-
-                assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
-
-                //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
-
-                //if(subjectIndex == 1){
-                //    printf("thread %d flag %d\n", threadIdx.x, flag);
-                //}
-
-                if(flag == BestAlignment_t::Forward) {
-                    for(int i = 0; i < queryLength; i += 1){
-                        const int globalIndex = defaultcolumnoffset + i;
-                        const char base = get(query, queryLength, i);
+                    for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
+                        const int shift = 0;
+                        const int globalIndex = subjectColumnsBegin_incl + shift + i;
+                        const char base = get(subject, subjectLength, i);
                         //printf("%d ", int(base));
-                        //if(queryQualityScore[i] == '\0'){
-                            //assert(queryQualityScore[i] != '\0');
+                        //if(subjectQualityScore[i] == '\0'){
+                            //assert(subjectQualityScore[i] != '\0');
                         //}
 
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
-                        assert(weight != 0);
+                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
                         const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                         atomicAdd(my_coverage + globalIndex, 1);
-                        if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
-                            printf("globalIndex %d, index %d, queryIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, base, weight);
-                        }
-                    }
-        		}else{
-                    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-                        constexpr std::uint8_t mask = 0x03;
-                        return (~in & mask);
-                    };
 
-                    for(int i = 0; i < queryLength; i += 1){
-                        const int reverseIndex = queryLength - 1 - i;
-                        const int globalIndex = defaultcolumnoffset + i;
-                        const char base = get(query, queryLength, reverseIndex);
-                        const char revCompl = make_reverse_complement_byte(base);
-                        //printf("%d ", int(revCompl));
-
-                        //if(queryQualityScore[reverseIndex] == '\0'){
-                            //assert(queryQualityScore[reverseIndex] != '\0');
+                        //if(debug){
+                        //    printf("%f ", weight);
                         //}
-
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
-                        assert(weight != 0);
-                        const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
-                        atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-                        atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-                        atomicAdd(my_coverage + globalIndex, 1);
-
-                        if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
-                            printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, reverseIndex, base, weight);
-                        }
                     }
+                    //if(debug){
+                    //    printf("\n");
+                    //}
                 }
                 //printf("\n");
-            }
 
-            __syncthreads();
+                //if(subjectIndex == 1){
+                //    printf("thread %d id %d, maxid_excl %d\n", threadIdx.x, id, maxid_excl);
+                //}
 
-            for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
-                for(int k = 0; k < 4; k++){
-                    const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
-                    int* const destCounts = d_counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
-                    const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats + index;
-                    float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
-                    atomicAdd(destCounts ,*srcCounts);
-                    atomicAdd(destWeights, *srcWeights);
 
-                    if(debug && (index == 23 || index == 35 || index == 42)){
-                        printf("globalIndex %d, %.10f\n", index, *srcWeights);
+                if(id < maxid_excl){
+                    const int queryIndex = indices_for_this_subject[id];
+                    const int shift = d_alignment_shifts[queryIndex];
+                    const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
+                    const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
+
+                    const char* const query = getCandidatePtr(queryIndex);
+            		const int queryLength = getCandidateLength(queryIndex);
+            		const char* const queryQualityScore = getCandidateQualityPtr(globalIndexlistIndex);
+
+            		const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
+            		const int query_alignment_nops = d_alignment_nOps[queryIndex];
+
+            		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
+            					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+
+                    assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
+
+                    //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
+
+                    //if(subjectIndex == 1){
+                    //    printf("thread %d flag %d\n", threadIdx.x, flag);
+                    //}
+
+                    if(flag == BestAlignment_t::Forward) {
+                        for(int i = 0; i < queryLength; i += 1){
+                            const int globalIndex = defaultcolumnoffset + i;
+                            const char base = get(query, queryLength, i);
+                            //printf("%d ", int(base));
+                            //if(queryQualityScore[i] == '\0'){
+                                //assert(queryQualityScore[i] != '\0');
+                            //}
+
+                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : 1.0f;
+                            assert(weight != 0);
+                            const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
+                            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                            atomicAdd(my_coverage + globalIndex, 1);
+                            if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
+                                printf("globalIndex %d, index %d, queryIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, base, weight);
+                            }
+                        }
+            		}else{
+                        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                            constexpr std::uint8_t mask = 0x03;
+                            return (~in & mask);
+                        };
+
+                        for(int i = 0; i < queryLength; i += 1){
+                            const int reverseIndex = queryLength - 1 - i;
+                            const int globalIndex = defaultcolumnoffset + i;
+                            const char base = get(query, queryLength, reverseIndex);
+                            const char revCompl = make_reverse_complement_byte(base);
+                            //printf("%d ", int(revCompl));
+
+                            //if(queryQualityScore[reverseIndex] == '\0'){
+                                //assert(queryQualityScore[reverseIndex] != '\0');
+                            //}
+
+                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : 1.0f;
+                            assert(weight != 0);
+                            const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
+                            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                            atomicAdd(my_coverage + globalIndex, 1);
+
+                            if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
+                                printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, reverseIndex, base, weight);
+                            }
+                        }
+                    }
+                    //printf("\n");
+                }
+
+                __syncthreads();
+
+                for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
+                    for(int k = 0; k < 4; k++){
+                        const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
+                        int* const destCounts = d_counts + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
+                        const float* const srcWeights = shared_weights + k * msa_weights_row_pitch_floats + index;
+                        float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
+                        atomicAdd(destCounts ,*srcCounts);
+                        atomicAdd(destWeights, *srcWeights);
+
+                        if(debug && (index == 23 || index == 35 || index == 42)){
+                            printf("globalIndex %d, %.10f\n", index, *srcWeights);
+                        }
                     }
                 }
-            }
 
-            __syncthreads();
+                __syncthreads();
+            }
         }
 
     }
@@ -1308,7 +1319,7 @@ namespace gpu{
 
         constexpr read_number debugid = 207;
 
-        if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("singlecol\n");
+        //if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("singlecol\n");
 
         auto get = [] (const char* data, int length, int index){
             return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
@@ -1327,157 +1338,160 @@ namespace gpu{
                     break;
             }
 
-            const read_number subjectReadId = d_subject_read_ids[subjectIndex];
+            if(d_indices_per_subject[subjectIndex] > 0){
 
-            const int columnsBeforeThisSubject = d_columns_per_subject_prefixsum[subjectIndex];
-            const int columnForThisSubject = columnid - columnsBeforeThisSubject;
+                const read_number subjectReadId = d_subject_read_ids[subjectIndex];
 
-            if(debug && subjectReadId == debugid){
-                printf("block %d thread %d : column %d / %d\n", blockIdx.x, threadIdx.x, columnForThisSubject, d_msa_column_properties[subjectIndex].lastColumn_excl);
-            }
+                const int columnsBeforeThisSubject = d_columns_per_subject_prefixsum[subjectIndex];
+                const int columnForThisSubject = columnid - columnsBeforeThisSubject;
 
-            int countsMatrix[4];
-            float weightsMatrix[4];
-            int coverage;
+                //if(debug && subjectReadId == debugid){
+                //    printf("block %d thread %d : column %d / %d\n", blockIdx.x, threadIdx.x, columnForThisSubject, d_msa_column_properties[subjectIndex].lastColumn_excl);
+                //}
 
-            #pragma unroll
-            for(int i = 0; i < 4; i++){
-                countsMatrix[i] = 0;
-                weightsMatrix[i] = 0;
-            }
+                int countsMatrix[4];
+                float weightsMatrix[4];
+                int coverage;
 
-            coverage = 0;
-
-            const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
-
-            auto countSequence = [&](const char* sequenceptr, const char* qualptr, int sequenceLength, int shift, float weightFactor, bool forward, bool print, int index, int queryIndex){
-                const int positionInMSABegin = subjectColumnsBegin_incl + shift;
-                const int positionInMSAEnd = subjectColumnsBegin_incl + shift + sequenceLength;
-
-                if(forward){
-
-                    if(positionInMSABegin <= columnForThisSubject && columnForThisSubject < positionInMSAEnd){
-                        const int baseposition = columnForThisSubject - positionInMSABegin;
-                        const char encodedBase = get(sequenceptr, sequenceLength, baseposition);
-
-                        countsMatrix[0] += (encodedBase == baseA_enc);
-                        countsMatrix[1] += (encodedBase == baseC_enc);
-                        countsMatrix[2] += (encodedBase == baseG_enc);
-                        countsMatrix[3] += (encodedBase == baseT_enc);
-
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[baseposition]] * weightFactor : 1.0f;
-
-                        //if(debug && print){
-                        //    printf("%f ", weight);
-                        //}
-                        weightsMatrix[0] += (encodedBase == baseA_enc) * weight;
-                        weightsMatrix[1] += (encodedBase == baseC_enc) * weight;
-                        weightsMatrix[2] += (encodedBase == baseG_enc) * weight;
-                        weightsMatrix[3] += (encodedBase == baseT_enc) * weight;
-
-
-                        coverage++;
-
-                        if(debug && subjectReadId == debugid){
-                            //printf("globalIndex %d, index %d, queryIndex %d, encodedBase %d, weight %.10f\n", columnForThisSubject, index, queryIndex, encodedBase, weight);
-                        }
-                    }
-                }else{
-                    auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
-                        constexpr std::uint8_t mask = 0x03;
-                        return (~in & mask);
-                    };
-
-                    if(positionInMSABegin <= columnForThisSubject && columnForThisSubject < positionInMSAEnd){
-                        const int reverseIndex = sequenceLength - 1 - (columnForThisSubject - positionInMSABegin);
-                        const char base = get(sequenceptr, sequenceLength, reverseIndex);
-                        const char revCompl = make_reverse_complement_byte(base);
-
-                        countsMatrix[0] += (revCompl == baseA_enc);
-                        countsMatrix[1] += (revCompl == baseC_enc);
-                        countsMatrix[2] += (revCompl == baseG_enc);
-                        countsMatrix[3] += (revCompl == baseT_enc);
-
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[reverseIndex]] * weightFactor : 1.0f;
-
-                        weightsMatrix[0] += (revCompl == baseA_enc) * weight;
-                        weightsMatrix[1] += (revCompl == baseC_enc) * weight;
-                        weightsMatrix[2] += (revCompl == baseG_enc) * weight;
-                        weightsMatrix[3] += (revCompl == baseT_enc) * weight;
-
-
-                        coverage++;
-
-                        if(debug && subjectReadId == debugid){
-                            //printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", columnForThisSubject, index, queryIndex, reverseIndex, base, weight);
-                        }
-                    }
+                #pragma unroll
+                for(int i = 0; i < 4; i++){
+                    countsMatrix[i] = 0;
+                    weightsMatrix[i] = 0;
                 }
 
-                assert(countsMatrix[0] + countsMatrix[1] + countsMatrix[2] + countsMatrix[3] == coverage);
-            };
+                coverage = 0;
 
-            //count bases of subject in chunk
-            const char* const subjectptr = &d_subject_sequences_data[encoded_sequence_pitch * subjectIndex];
-            const char* const subjectqualptr = &d_subject_qualities[quality_pitch * subjectIndex];
-            const int subjectLength = d_subject_sequences_lengths[subjectIndex];
-            //if(debug && columnForThisSubject == 0){
-            //    printf("subject singlecolkernel\n");
-            //}
-            countSequence(subjectptr, subjectqualptr, subjectLength, 0, 1.0f, true, true,-1,-1);
+                const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
 
-            //if(debug && columnForThisSubject == columnsBeforeThisSubject-1){
-            //    printf("\n");
-            //}
+                auto countSequence = [&](const char* sequenceptr, const char* qualptr, int sequenceLength, int shift, float weightFactor, bool forward, bool print, int index, int queryIndex){
+                    const int positionInMSABegin = subjectColumnsBegin_incl + shift;
+                    const int positionInMSAEnd = subjectColumnsBegin_incl + shift + sequenceLength;
 
-            //count bases of candidates in chunk
-            const int numIndicesForThisSubject = d_indices_per_subject[subjectIndex];
-            const int* const indicesForThisSubject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-            const char* const qualitiesOfCandidates = d_candidate_qualities + (quality_pitch * d_indices_per_subject_prefixsum[subjectIndex]);
+                    if(forward){
 
-            for(int indexToIndices = 0; indexToIndices < numIndicesForThisSubject; indexToIndices++){
-                const int candidateIndex = indicesForThisSubject[indexToIndices];
-                const char* const candidatePtr = &d_candidate_sequences_data[encoded_sequence_pitch * candidateIndex];
-                const char* const candidatequalPtr = &qualitiesOfCandidates[quality_pitch * indexToIndices];
-                const int candidateLength = d_candidate_sequences_lengths[candidateIndex];
-                const int shift = d_alignment_shifts[candidateIndex];
-                const bool forward = d_alignment_best_alignment_flags[candidateIndex] == gpu::BestAlignment_t::Forward;
-                const int query_alignment_overlap = d_alignment_overlaps[candidateIndex];
-                const int query_alignment_nops = d_alignment_nOps[candidateIndex];
+                        if(positionInMSABegin <= columnForThisSubject && columnForThisSubject < positionInMSAEnd){
+                            const int baseposition = columnForThisSubject - positionInMSABegin;
+                            const char encodedBase = get(sequenceptr, sequenceLength, baseposition);
 
-                const float weightFactor = 1.0f - sqrtf(query_alignment_nops
-                            / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+                            countsMatrix[0] += (encodedBase == baseA_enc);
+                            countsMatrix[1] += (encodedBase == baseC_enc);
+                            countsMatrix[2] += (encodedBase == baseG_enc);
+                            countsMatrix[3] += (encodedBase == baseT_enc);
 
-                //if(debug) printf("candidate %d\n", candidateIndex);
-                countSequence(candidatePtr, candidatequalPtr, candidateLength, shift, weightFactor, forward, false, indexToIndices, candidateIndex);
-            }
+                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[baseposition]] * weightFactor : 1.0f;
 
-            //save counts to global memory
-            int* const myCountsA = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
-            int* const myCountsC = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
-            int* const myCountsG = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
-            int* const myCountsT = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
-            float* const myWeightsA = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
-            float* const myWeightsC = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
-            float* const myWeightsG = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
-            float* const myWeightsT = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
-            int* const myCoverage = d_coverage + subjectIndex * msa_weights_pitch_floats;
+                            //if(debug && print){
+                            //    printf("%f ", weight);
+                            //}
+                            weightsMatrix[0] += (encodedBase == baseA_enc) * weight;
+                            weightsMatrix[1] += (encodedBase == baseC_enc) * weight;
+                            weightsMatrix[2] += (encodedBase == baseG_enc) * weight;
+                            weightsMatrix[3] += (encodedBase == baseT_enc) * weight;
 
-            myCountsA[columnForThisSubject] = countsMatrix[0];
-            myCountsC[columnForThisSubject] = countsMatrix[1];
-            myCountsG[columnForThisSubject] = countsMatrix[2];
-            myCountsT[columnForThisSubject] = countsMatrix[3];
-            myWeightsA[columnForThisSubject] = weightsMatrix[0];
-            myWeightsC[columnForThisSubject] = weightsMatrix[1];
-            myWeightsG[columnForThisSubject] = weightsMatrix[2];
-            myWeightsT[columnForThisSubject] = weightsMatrix[3];
-            myCoverage[columnForThisSubject] = coverage;
 
-            if(debug && subjectReadId == debugid){
-                printf("globalIndex %d A , %.10f\n", columnForThisSubject, weightsMatrix[0]);
-                printf("globalIndex %d C , %.10f\n", columnForThisSubject, weightsMatrix[1]);
-                printf("globalIndex %d G , %.10f\n", columnForThisSubject, weightsMatrix[2]);
-                printf("globalIndex %d T , %.10f\n", columnForThisSubject, weightsMatrix[3]);
+                            coverage++;
+
+                            if(debug && subjectReadId == debugid){
+                                //printf("globalIndex %d, index %d, queryIndex %d, encodedBase %d, weight %.10f\n", columnForThisSubject, index, queryIndex, encodedBase, weight);
+                            }
+                        }
+                    }else{
+                        auto make_reverse_complement_byte = [](std::uint8_t in) -> std::uint8_t{
+                            constexpr std::uint8_t mask = 0x03;
+                            return (~in & mask);
+                        };
+
+                        if(positionInMSABegin <= columnForThisSubject && columnForThisSubject < positionInMSAEnd){
+                            const int reverseIndex = sequenceLength - 1 - (columnForThisSubject - positionInMSABegin);
+                            const char base = get(sequenceptr, sequenceLength, reverseIndex);
+                            const char revCompl = make_reverse_complement_byte(base);
+
+                            countsMatrix[0] += (revCompl == baseA_enc);
+                            countsMatrix[1] += (revCompl == baseC_enc);
+                            countsMatrix[2] += (revCompl == baseG_enc);
+                            countsMatrix[3] += (revCompl == baseT_enc);
+
+                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[reverseIndex]] * weightFactor : 1.0f;
+
+                            weightsMatrix[0] += (revCompl == baseA_enc) * weight;
+                            weightsMatrix[1] += (revCompl == baseC_enc) * weight;
+                            weightsMatrix[2] += (revCompl == baseG_enc) * weight;
+                            weightsMatrix[3] += (revCompl == baseT_enc) * weight;
+
+
+                            coverage++;
+
+                            if(debug && subjectReadId == debugid){
+                                //printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", columnForThisSubject, index, queryIndex, reverseIndex, base, weight);
+                            }
+                        }
+                    }
+
+                    assert(countsMatrix[0] + countsMatrix[1] + countsMatrix[2] + countsMatrix[3] == coverage);
+                };
+
+                //count bases of subject in chunk
+                const char* const subjectptr = &d_subject_sequences_data[encoded_sequence_pitch * subjectIndex];
+                const char* const subjectqualptr = &d_subject_qualities[quality_pitch * subjectIndex];
+                const int subjectLength = d_subject_sequences_lengths[subjectIndex];
+                //if(debug && columnForThisSubject == 0){
+                //    printf("subject singlecolkernel\n");
+                //}
+                countSequence(subjectptr, subjectqualptr, subjectLength, 0, 1.0f, true, true,-1,-1);
+
+                //if(debug && columnForThisSubject == columnsBeforeThisSubject-1){
+                //    printf("\n");
+                //}
+
+                //count bases of candidates in chunk
+                const int numIndicesForThisSubject = d_indices_per_subject[subjectIndex];
+                const int* const indicesForThisSubject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                const char* const qualitiesOfCandidates = d_candidate_qualities + (quality_pitch * d_indices_per_subject_prefixsum[subjectIndex]);
+
+                for(int indexToIndices = 0; indexToIndices < numIndicesForThisSubject; indexToIndices++){
+                    const int candidateIndex = indicesForThisSubject[indexToIndices];
+                    const char* const candidatePtr = &d_candidate_sequences_data[encoded_sequence_pitch * candidateIndex];
+                    const char* const candidatequalPtr = &qualitiesOfCandidates[quality_pitch * indexToIndices];
+                    const int candidateLength = d_candidate_sequences_lengths[candidateIndex];
+                    const int shift = d_alignment_shifts[candidateIndex];
+                    const bool forward = d_alignment_best_alignment_flags[candidateIndex] == gpu::BestAlignment_t::Forward;
+                    const int query_alignment_overlap = d_alignment_overlaps[candidateIndex];
+                    const int query_alignment_nops = d_alignment_nOps[candidateIndex];
+
+                    const float weightFactor = 1.0f - sqrtf(query_alignment_nops
+                                / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+
+                    //if(debug) printf("candidate %d\n", candidateIndex);
+                    countSequence(candidatePtr, candidatequalPtr, candidateLength, shift, weightFactor, forward, false, indexToIndices, candidateIndex);
+                }
+
+                //save counts to global memory
+                int* const myCountsA = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
+                int* const myCountsC = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
+                int* const myCountsG = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
+                int* const myCountsT = d_counts + subjectIndex * 4 * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
+                float* const myWeightsA = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
+                float* const myWeightsC = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
+                float* const myWeightsG = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
+                float* const myWeightsT = d_weights + subjectIndex * 4 * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
+                int* const myCoverage = d_coverage + subjectIndex * msa_weights_pitch_floats;
+
+                myCountsA[columnForThisSubject] = countsMatrix[0];
+                myCountsC[columnForThisSubject] = countsMatrix[1];
+                myCountsG[columnForThisSubject] = countsMatrix[2];
+                myCountsT[columnForThisSubject] = countsMatrix[3];
+                myWeightsA[columnForThisSubject] = weightsMatrix[0];
+                myWeightsC[columnForThisSubject] = weightsMatrix[1];
+                myWeightsG[columnForThisSubject] = weightsMatrix[2];
+                myWeightsT[columnForThisSubject] = weightsMatrix[3];
+                myCoverage[columnForThisSubject] = coverage;
+
+                /*if(debug && subjectReadId == debugid){
+                    printf("globalIndex %d A , %.10f\n", columnForThisSubject, weightsMatrix[0]);
+                    printf("globalIndex %d C , %.10f\n", columnForThisSubject, weightsMatrix[1]);
+                    printf("globalIndex %d G , %.10f\n", columnForThisSubject, weightsMatrix[2]);
+                    printf("globalIndex %d T , %.10f\n", columnForThisSubject, weightsMatrix[3]);
+                }*/
             }
         }
     }
