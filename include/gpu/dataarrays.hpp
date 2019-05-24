@@ -986,46 +986,20 @@ struct DataArrays {
 		//d_candidate_read_ids = (read_number*)(((char*)d_subject_read_ids) + memSubjectIds);
 
 		//alignment output
-		std::size_t memAlignmentScores = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memAlignmentOverlaps = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memAlignmentShifts = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memAlignmentnOps = SDIV((2*n_quer) * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memAlignmentisValid = SDIV((2*n_quer) * sizeof(bool), padding_bytes) * padding_bytes;
-		std::size_t memAlignmentBestAlignmentFlags = SDIV((n_quer) * sizeof(BestAlignment_t), padding_bytes) * padding_bytes;
 
-		std::size_t required_alignment_result_data_allocation_size = memAlignmentScores
-		                                                             + memAlignmentOverlaps
-		                                                             + memAlignmentShifts
-		                                                             + memAlignmentnOps
-		                                                             + memAlignmentisValid
-		                                                             + memAlignmentBestAlignmentFlags;
+		h_alignment_scores.resize(2*n_quer * allocfactor);
+        h_alignment_overlaps.resize(2*n_quer * allocfactor);
+        h_alignment_shifts.resize(2*n_quer * allocfactor);
+        h_alignment_nOps.resize(2*n_quer * allocfactor);
+        h_alignment_isValid.resize(2*n_quer * allocfactor);
+        h_alignment_best_alignment_flags.resize(n_quer * allocfactor);
 
-		if(required_alignment_result_data_allocation_size > alignment_result_data_allocation_size) {
-			//std::cout << "B" << std::endl;
-			cudaFree(alignment_result_data_device); CUERR;
-			cudaMalloc(&alignment_result_data_device, std::size_t(required_alignment_result_data_allocation_size * allocfactor)); CUERR;
-			cudaFreeHost(alignment_result_data_host); CUERR;
-			cudaMallocHost(&alignment_result_data_host, std::size_t(required_alignment_result_data_allocation_size * allocfactor)); CUERR;
-
-
-			alignment_result_data_allocation_size = std::size_t(required_alignment_result_data_allocation_size * allocfactor);
-		}
-
-		alignment_result_data_usable_size = required_alignment_result_data_allocation_size;
-
-		h_alignment_scores = (int*)alignment_result_data_host;
-		h_alignment_overlaps = (int*)(((char*)h_alignment_scores) + memAlignmentScores);
-		h_alignment_shifts = (int*)(((char*)h_alignment_overlaps) + memAlignmentOverlaps);
-		h_alignment_nOps = (int*)(((char*)h_alignment_shifts) + memAlignmentShifts);
-		h_alignment_isValid = (bool*)(((char*)h_alignment_nOps) + memAlignmentnOps);
-		h_alignment_best_alignment_flags = (BestAlignment_t*)(((char*)h_alignment_isValid) + memAlignmentisValid);
-
-		d_alignment_scores = (int*)alignment_result_data_device;
-		d_alignment_overlaps = (int*)(((char*)d_alignment_scores) + memAlignmentScores);
-		d_alignment_shifts = (int*)(((char*)d_alignment_overlaps) + memAlignmentOverlaps);
-		d_alignment_nOps = (int*)(((char*)d_alignment_shifts) + memAlignmentShifts);
-		d_alignment_isValid = (bool*)(((char*)d_alignment_nOps) + memAlignmentnOps);
-		d_alignment_best_alignment_flags = (BestAlignment_t*)(((char*)d_alignment_isValid) + memAlignmentisValid);
+        d_alignment_scores.resize(2*n_quer * allocfactor);
+        d_alignment_overlaps.resize(2*n_quer * allocfactor);
+        d_alignment_shifts.resize(2*n_quer * allocfactor);
+        d_alignment_nOps.resize(2*n_quer * allocfactor);
+        d_alignment_isValid.resize(2*n_quer * allocfactor);
+        d_alignment_best_alignment_flags.resize(n_quer * allocfactor);
 
 
 		//indices of hq subjects
@@ -1210,7 +1184,14 @@ struct DataArrays {
 		            -1);*/
 		cudaMemsetAsync(d_num_indices, 0, sizeof(int), stream); CUERR;
 		cudaMemsetAsync(subject_indices_data_device, 0, subject_indices_data_usable_size, stream); CUERR;
-		cudaMemsetAsync(alignment_result_data_device, 0, alignment_result_data_usable_size, stream); CUERR;
+
+        cudaMemsetAsync(d_alignment_scores.get(), 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_overlaps.get(), 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_shifts.get(), 0, d_alignment_shifts.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_nOps.get(), 0, d_alignment_nOps.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_isValid.get(), 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_best_alignment_flags.get(), 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
+
 		cudaMemsetAsync(alignment_transfer_data_device, 0, alignment_transfer_data_usable_size, stream); CUERR;
 		//cudaMemsetAsync(d_candidate_read_ids, 0, candidate_ids_usable_size); CUERR;
 	}
@@ -1237,8 +1218,7 @@ struct DataArrays {
 
 		cudaFree(a.alignment_transfer_data_device); CUERR;
 		cudaFreeHost(a.alignment_transfer_data_host); CUERR;
-		cudaFree(a.alignment_result_data_device); CUERR;
-		cudaFreeHost(a.alignment_result_data_host); CUERR;
+
 		cudaFree(a.subject_indices_data_device); CUERR;
 		cudaFreeHost(a.subject_indices_data_host); CUERR;
 		cudaFree(a.d_num_indices); CUERR;
@@ -1275,6 +1255,21 @@ struct DataArrays {
         d_msa_column_properties = std::move(SimpleAllocationDevice<MSAColumnProperties>{});
         d_counts = std::move(SimpleAllocationDevice<int>{});
         d_weights = std::move(SimpleAllocationDevice<float>{});
+
+        h_alignment_scores = std::move(SimpleAllocationPinnedHost<int>{});
+        h_alignment_overlaps = std::move(SimpleAllocationPinnedHost<int>{});
+        h_alignment_shifts = std::move(SimpleAllocationPinnedHost<int>{});
+        h_alignment_nOps = std::move(SimpleAllocationPinnedHost<int>{});
+        h_alignment_isValid = std::move(SimpleAllocationPinnedHost<bool>{});
+        h_alignment_best_alignment_flags = std::move(SimpleAllocationPinnedHost<BestAlignment_t>{});
+
+        d_alignment_scores = std::move(SimpleAllocationDevice<int>{});
+        d_alignment_overlaps = std::move(SimpleAllocationDevice<int>{});
+        d_alignment_shifts = std::move(SimpleAllocationDevice<int>{});
+        d_alignment_nOps = std::move(SimpleAllocationDevice<int>{});
+        d_alignment_isValid = std::move(SimpleAllocationDevice<bool>{});
+        d_alignment_best_alignment_flags = std::move(SimpleAllocationDevice<BestAlignment_t>{});
+
 
 		a.subject_indices_data_device = nullptr;
 		a.subject_indices_data_host = nullptr;
@@ -1328,20 +1323,7 @@ struct DataArrays {
 		a.d_num_corrected_candidates = nullptr;
 		a.d_subject_is_corrected = nullptr;
 		a.d_indices_of_corrected_candidates = nullptr;
-		a.alignment_result_data_host = nullptr;
-		a.alignment_result_data_device = nullptr;
-		a.h_alignment_scores = nullptr;
-		a.h_alignment_overlaps = nullptr;
-		a.h_alignment_shifts = nullptr;
-		a.h_alignment_nOps = nullptr;
-		a.h_alignment_isValid = nullptr;
-		a.h_alignment_best_alignment_flags = nullptr;
-		a.d_alignment_scores = nullptr;
-		a.d_alignment_overlaps = nullptr;
-		a.d_alignment_shifts = nullptr;
-		a.d_alignment_nOps = nullptr;
-		a.d_alignment_isValid = nullptr;
-		a.d_alignment_best_alignment_flags = nullptr;
+
 		a.d_temp_storage = nullptr;
 
 		a.n_subjects = 0;
@@ -1361,8 +1343,7 @@ struct DataArrays {
 		a.correction_results_transfer_data_allocation_size = 0;
 		a.correction_results_transfer_data_usable_size = 0;
 		a.sequence_pitch = 0;
-		a.alignment_result_data_allocation_size = 0;
-		a.alignment_result_data_usable_size = 0;
+
 		a.tmp_storage_allocation_size = 0;
 		a.tmp_storage_usable_size = 0;
 
@@ -1483,24 +1464,20 @@ struct DataArrays {
 
 
 	//alignment results
-	void* alignment_result_data_host = nullptr;
-	void* alignment_result_data_device = nullptr;
-	std::size_t alignment_result_data_allocation_size = 0;
-	std::size_t alignment_result_data_usable_size = 0;
 
-	int* h_alignment_scores = nullptr;
-	int* h_alignment_overlaps = nullptr;
-	int* h_alignment_shifts = nullptr;
-	int* h_alignment_nOps = nullptr;
-	bool* h_alignment_isValid = nullptr;
-	BestAlignment_t* h_alignment_best_alignment_flags = nullptr;
+    SimpleAllocationPinnedHost<int> h_alignment_scores;
+    SimpleAllocationPinnedHost<int> h_alignment_overlaps;
+    SimpleAllocationPinnedHost<int> h_alignment_shifts;
+    SimpleAllocationPinnedHost<int> h_alignment_nOps;
+    SimpleAllocationPinnedHost<bool> h_alignment_isValid;
+    SimpleAllocationPinnedHost<BestAlignment_t> h_alignment_best_alignment_flags;
 
-	int* d_alignment_scores = nullptr;
-	int* d_alignment_overlaps = nullptr;
-	int* d_alignment_shifts = nullptr;
-	int* d_alignment_nOps = nullptr;
-	bool* d_alignment_isValid = nullptr;
-	BestAlignment_t* d_alignment_best_alignment_flags = nullptr;
+    SimpleAllocationDevice<int> d_alignment_scores;
+    SimpleAllocationDevice<int> d_alignment_overlaps;
+    SimpleAllocationDevice<int> d_alignment_shifts;
+    SimpleAllocationDevice<int> d_alignment_nOps;
+    SimpleAllocationDevice<bool> d_alignment_isValid;
+    SimpleAllocationDevice<BestAlignment_t> d_alignment_best_alignment_flags;
 
 	//tmp storage
 	std::size_t tmp_storage_allocation_size = 0;
