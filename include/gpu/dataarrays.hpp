@@ -92,10 +92,44 @@ namespace detail{
 		}
 	};
 
+    template<DataLocation location, class T>
+    struct SimpleAllocationAccessor;
+
+    template<class T>
+    struct SimpleAllocationAccessor<DataLocation::Host, T>{
+        static const T& access(const T* array, size_t i){
+            return array[i];
+        }
+        static T& access(T* array, size_t i){
+            return array[i];
+        }
+    };
+
+    template<class T>
+    struct SimpleAllocationAccessor<DataLocation::PinnedHost, T>{
+        static const T& access(const T* array, size_t i){
+            return array[i];
+        }
+        static T& access(T* array, size_t i){
+            return array[i];
+        }
+    };
+
+    template<class T>
+    struct SimpleAllocationAccessor<DataLocation::Device, T>{
+        //cannot access device memory on host, return default value
+        static T access(const T* array, size_t i){
+            return T{};
+        }
+        static T access(T* array, size_t i){
+            return T{};
+        }
+    };
 
 	template<DataLocation location, class T>
 	struct SimpleAllocation{
 		using Allocator = SimpleAllocator<location, T>;
+        using Accessor = SimpleAllocationAccessor<location, T>;
 
 		T* data_{};
 		size_t size_{};
@@ -140,6 +174,42 @@ namespace detail{
     		swap(l.size_, r.size_);
     		swap(l.capacity_, r.capacity_);
     	}
+
+        T& operator[](size_t i){
+            return Accessor::access(get(), i);
+        }
+
+        const T& operator[](size_t i) const{
+            return Accessor::access(get(), i);
+        }
+
+        T& at(size_t i){
+            if(i < size()){
+                return Accessor::access(get(), i);
+            }else{
+                throw std::out_of_range("SimpleAllocation::at out-of-bounds access.");
+            }
+        }
+
+        const T& at(size_t i) const{
+            if(i < size()){
+                return Accessor::access(get(), i);
+            }else{
+                throw std::out_of_range("SimpleAllocation::at out-of-bounds access.");
+            }
+        }
+
+        T* operator+(size_t i) const{
+            return get() + i;
+        }
+
+        operator T*(){
+            return get();
+        }
+
+        operator const T*() const{
+            return get();
+        }
 
 
         //size is number of elements of type T
@@ -730,7 +800,7 @@ struct DataArrays {
 
     void printActiveDataOfSubject(int subjectIndex, std::ostream& out){
         assert(subjectIndex < n_subjects);
-
+#if 0
         size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
         const int numIndices = h_indices_per_subject[subjectIndex];
@@ -831,7 +901,7 @@ struct DataArrays {
 
         out << "subject_is_corrected: " << subject_is_corrected << '\n';
         out << "is_high_quality_subject: " << is_high_quality_subject << '\n';
-
+#endif
     }
 
 	void allocCandidateIds(int n_quer){
@@ -862,9 +932,6 @@ struct DataArrays {
 		encoded_sequence_pitch = SDIV(maximum_sequence_bytes, padding_bytes) * padding_bytes;
 		quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
 		sequence_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
-		int msa_max_column_count = (3*max_seq_length - 2*min_overlap_);
-		msa_pitch = SDIV(sizeof(char)*msa_max_column_count, padding_bytes) * padding_bytes;
-		msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, padding_bytes) * padding_bytes;
 
 		//alignment input
 		memSubjects = n_sub * encoded_sequence_pitch;
@@ -1084,70 +1151,28 @@ struct DataArrays {
 
 		//multiple sequence alignment
 
-		//std::size_t memMultipleSequenceAlignment = (n_sub + n_quer) * msa_pitch;
-		//std::size_t memMultipleSequenceAlignmentWeights = (n_sub + n_quer) * msa_weights_pitch;
-		std::size_t memConsensus = n_sub * msa_pitch;
-		std::size_t memSupport = n_sub * msa_weights_pitch;
-		std::size_t memCoverage = n_sub * msa_weights_pitch;
-		std::size_t memOrigWeights = n_sub * msa_weights_pitch;
-		std::size_t memOrigCoverage = n_sub * msa_weights_pitch;
-		std::size_t memMSAColumnProperties = SDIV(n_sub * sizeof(MSAColumnProperties), padding_bytes) * padding_bytes;
-		//std::size_t memIsHighQualityMSA = SDIV(n_sub *  sizeof(bool), padding_bytes) * padding_bytes;
-        std::size_t memCounts = n_sub * msa_weights_pitch;
-        std::size_t memWeights = n_sub * msa_weights_pitch;
-        std::size_t memAllCounts = n_sub * msa_weights_pitch * 4;
-        std::size_t memAllWeights = n_sub * msa_weights_pitch * 4;
-		std::size_t required_msa_data_allocation_size = //memMultipleSequenceAlignment
-		                                                //+ memMultipleSequenceAlignmentWeights
-		                                                memConsensus
-		                                                + memSupport
-		                                                + memCoverage
-		                                                + memOrigWeights
-		                                                + memOrigCoverage
-		                                                + memMSAColumnProperties
-                                                        + 4 * memCounts
-                                                        + 4 * memWeights
-                                                        + memAllCounts
-                                                        + memAllWeights;
-		                                                //+ memIsHighQualityMSA;
+        int msa_max_column_count = (3*max_seq_length - 2*min_overlap_);
+        msa_pitch = SDIV(sizeof(char)*msa_max_column_count, padding_bytes) * padding_bytes;
+        msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, padding_bytes) * padding_bytes;
+        size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
-		if(required_msa_data_allocation_size > msa_data_allocation_size) {
-			//std::cout << "G" << std::endl;
-			cudaFree(msa_data_device); CUERR;
-			cudaMalloc(&msa_data_device, std::size_t(required_msa_data_allocation_size * allocfactor)); CUERR;
-			cudaFreeHost(msa_data_host); CUERR;
-			cudaMallocHost(&msa_data_host, std::size_t(required_msa_data_allocation_size * allocfactor)); CUERR;
+        h_consensus.resize(n_sub * msa_pitch * allocfactor);
+        h_support.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        h_coverage.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        h_origWeights.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        h_origCoverages.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        h_msa_column_properties.resize(n_sub * allocfactor);
+        h_counts.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
+        h_weights.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
 
-			msa_data_allocation_size = std::size_t(required_msa_data_allocation_size * allocfactor);
-		}
-
-		msa_data_usable_size = required_msa_data_allocation_size;
-
-		//h_multiple_sequence_alignments = (char*)msa_data_host;
-		//h_multiple_sequence_alignment_weights = (float*)(((char*)h_multiple_sequence_alignments) + memMultipleSequenceAlignment);
-		//h_consensus = (char*)(((char*)h_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
-        h_consensus = (char*)msa_data_host;
-		h_support = (float*)(((char*)h_consensus) + memConsensus);
-		h_coverage = (int*)(((char*)h_support) + memSupport);
-		h_origWeights = (float*)(((char*)h_coverage) + memCoverage);
-		h_origCoverages = (int*)(((char*)h_origWeights) + memOrigWeights);
-		h_msa_column_properties = (MSAColumnProperties*)(((char*)h_origCoverages) + memOrigCoverage);
-        h_counts = (int*)(((char*)h_msa_column_properties) + memMSAColumnProperties);
-        h_weights = (float*)(((char*)h_counts) + memAllCounts);
-
-		//d_multiple_sequence_alignments = (char*)msa_data_device;
-		//d_multiple_sequence_alignment_weights = (float*)(((char*)d_multiple_sequence_alignments) + memMultipleSequenceAlignment);
-		//d_consensus = (char*)(((char*)d_multiple_sequence_alignment_weights) + memMultipleSequenceAlignmentWeights);
-        d_consensus = (char*)msa_data_device;
-		d_support = (float*)(((char*)d_consensus) + memConsensus);
-		d_coverage = (int*)(((char*)d_support) + memSupport);
-		d_origWeights = (float*)(((char*)d_coverage) + memCoverage);
-		d_origCoverages = (int*)(((char*)d_origWeights) + memOrigWeights);
-		d_msa_column_properties = (MSAColumnProperties*)(((char*)d_origCoverages) + memOrigCoverage);
-        d_counts = (int*)(((char*)d_msa_column_properties) + memMSAColumnProperties);
-        d_weights = (float*)(((char*)d_counts) + memAllCounts);
-
-
+        d_consensus.resize(n_sub * msa_pitch * allocfactor);
+        d_support.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        d_coverage.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        d_origWeights.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        d_origCoverages.resize(n_sub * msa_weights_pitch_floats * allocfactor);
+        d_msa_column_properties.resize(n_sub * allocfactor);
+        d_counts.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
+        d_weights.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
 
 	}
 
@@ -1163,9 +1188,14 @@ struct DataArrays {
 	}
 
 	void zero_gpu(cudaStream_t stream){
-		cudaMemsetAsync(msa_data_device, 0, msa_data_usable_size, stream); CUERR;
-
-        //cudaMemsetAsync(d_multiple_sequence_alignments, char(0xFC), (n_subjects + n_queries) * msa_pitch, stream);
+        cudaMemsetAsync(d_consensus.get(), 0, d_consensus.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_support.get(), 0, d_support.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_coverage.get(), 0, d_coverage.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_origWeights.get(), 0, d_origWeights.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_origCoverages.get(), 0, d_origCoverages.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_msa_column_properties.get(), 0, d_msa_column_properties.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_counts.get(), 0, d_counts.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_weights.get(), 0, d_weights.sizeInBytes(), stream); CUERR;
 
 		cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
 
@@ -1217,8 +1247,6 @@ struct DataArrays {
 		cudaFreeHost(a.indices_transfer_data_host); CUERR;
 		cudaFree(a.correction_results_transfer_data_device); CUERR;
 		cudaFreeHost(a.correction_results_transfer_data_host); CUERR;
-		cudaFree(a.msa_data_device); CUERR;
-		cudaFreeHost(a.msa_data_host); CUERR;
 		cudaFree(a.d_temp_storage); CUERR;
 		cudaFree(a.d_candidate_read_ids); CUERR;
 		cudaFreeHost(a.h_candidate_read_ids); CUERR;
@@ -1229,6 +1257,24 @@ struct DataArrays {
         d_subject_qualities = std::move(SimpleAllocationDevice<char>{});
         d_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
         d_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
+
+        h_consensus = std::move(SimpleAllocationPinnedHost<char>{});
+        h_support = std::move(SimpleAllocationPinnedHost<float>{});
+        h_coverage = std::move(SimpleAllocationPinnedHost<int>{});
+        h_origWeights = std::move(SimpleAllocationPinnedHost<float>{});
+        h_origCoverages = std::move(SimpleAllocationPinnedHost<int>{});
+        h_msa_column_properties = std::move(SimpleAllocationPinnedHost<MSAColumnProperties>{});
+        h_counts = std::move(SimpleAllocationPinnedHost<int>{});
+        h_weights = std::move(SimpleAllocationPinnedHost<float>{});
+
+        d_consensus = std::move(SimpleAllocationDevice<char>{});
+        d_support = std::move(SimpleAllocationDevice<float>{});
+        d_coverage = std::move(SimpleAllocationDevice<int>{});
+        d_origWeights = std::move(SimpleAllocationDevice<float>{});
+        d_origCoverages = std::move(SimpleAllocationDevice<int>{});
+        d_msa_column_properties = std::move(SimpleAllocationDevice<MSAColumnProperties>{});
+        d_counts = std::move(SimpleAllocationDevice<int>{});
+        d_weights = std::move(SimpleAllocationDevice<float>{});
 
 		a.subject_indices_data_device = nullptr;
 		a.subject_indices_data_host = nullptr;
@@ -1297,30 +1343,6 @@ struct DataArrays {
 		a.d_alignment_isValid = nullptr;
 		a.d_alignment_best_alignment_flags = nullptr;
 		a.d_temp_storage = nullptr;
-		a.msa_data_device = nullptr;
-		a.msa_data_host = nullptr;
-		//a.d_multiple_sequence_alignments = nullptr;
-		//a.d_multiple_sequence_alignment_weights = nullptr;
-		a.d_consensus = nullptr;
-		a.d_support = nullptr;
-		a.d_coverage = nullptr;
-		a.d_origWeights = nullptr;
-		a.d_origCoverages = nullptr;
-		a.d_msa_column_properties = nullptr;
-		//a.h_multiple_sequence_alignments = nullptr;
-		//a.h_multiple_sequence_alignment_weights = nullptr;
-		a.h_consensus = nullptr;
-		a.h_support = nullptr;
-		a.h_coverage = nullptr;
-		a.h_origWeights = nullptr;
-		a.h_origCoverages = nullptr;
-		a.h_msa_column_properties = nullptr;
-		a.d_candidate_read_ids = nullptr;
-		a.h_candidate_read_ids = nullptr;
-        a.h_counts = nullptr;
-        a.h_weights = nullptr;
-        a.d_counts = nullptr;
-        a.d_weights = nullptr;
 
 		a.n_subjects = 0;
 		a.n_queries = 0;
@@ -1343,8 +1365,7 @@ struct DataArrays {
 		a.alignment_result_data_usable_size = 0;
 		a.tmp_storage_allocation_size = 0;
 		a.tmp_storage_usable_size = 0;
-		a.msa_data_allocation_size = 0;
-		a.msa_data_usable_size = 0;
+
 		a.msa_pitch = 0;
 		a.msa_weights_pitch = 0;
 		a.candidate_ids_allocation_size = 0;
@@ -1489,35 +1510,27 @@ struct DataArrays {
 
 
 	// multiple sequence alignment
-	void* msa_data_device = nullptr;
-	void* msa_data_host = nullptr;
-	std::size_t msa_data_allocation_size = 0;
-	std::size_t msa_data_usable_size = 0;
+
 	std::size_t msa_pitch = 0;
 	std::size_t msa_weights_pitch = 0;
 
-	//need host msa for debuging mostly
-	//char* h_multiple_sequence_alignments = nullptr;
-	//float* h_multiple_sequence_alignment_weights = nullptr;
-	char* h_consensus = nullptr;
-	float* h_support = nullptr;
-	int* h_coverage = nullptr;
-	float* h_origWeights = nullptr;
-	int* h_origCoverages = nullptr;
-	MSAColumnProperties* h_msa_column_properties = nullptr;
-    int* h_counts = nullptr;
-    float* h_weights = nullptr;
+    SimpleAllocationPinnedHost<char> h_consensus;
+    SimpleAllocationPinnedHost<float> h_support;
+    SimpleAllocationPinnedHost<int> h_coverage;
+    SimpleAllocationPinnedHost<float> h_origWeights;
+    SimpleAllocationPinnedHost<int> h_origCoverages;
+    SimpleAllocationPinnedHost<MSAColumnProperties> h_msa_column_properties;
+    SimpleAllocationPinnedHost<int> h_counts;
+    SimpleAllocationPinnedHost<float> h_weights;
 
-	//char* d_multiple_sequence_alignments = nullptr;
-	//float* d_multiple_sequence_alignment_weights = nullptr;
-	char* d_consensus = nullptr;
-	float* d_support = nullptr;
-	int* d_coverage = nullptr;
-	float* d_origWeights = nullptr;
-	int* d_origCoverages = nullptr;
-	MSAColumnProperties* d_msa_column_properties = nullptr;
-    int* d_counts = nullptr;
-    float* d_weights = nullptr;
+    SimpleAllocationDevice<char> d_consensus;
+    SimpleAllocationDevice<float> d_support;
+    SimpleAllocationDevice<int> d_coverage;
+    SimpleAllocationDevice<float> d_origWeights;
+    SimpleAllocationDevice<int> d_origCoverages;
+    SimpleAllocationDevice<MSAColumnProperties> d_msa_column_properties;
+    SimpleAllocationDevice<int> d_counts;
+    SimpleAllocationDevice<float> d_weights;
 
 };
 

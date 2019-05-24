@@ -1401,7 +1401,7 @@ namespace gpu{
 
         //std::cout << "msa_init" << std::endl;
 
-        build_msa_async(dataArrays.d_msa_column_properties,
+        build_msa_async(dataArrays.d_msa_column_properties.get(),
                         dataArrays.d_alignment_shifts,
                         dataArrays.d_alignment_best_alignment_flags,
                         dataArrays.d_alignment_overlaps,
@@ -1416,13 +1416,13 @@ namespace gpu{
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
                         dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.d_counts,
-                        dataArrays.d_weights,
-                        dataArrays.d_coverage,
-                        dataArrays.d_support,
-                        dataArrays.d_consensus,
-                        dataArrays.d_origWeights,
-                        dataArrays.d_origCoverages,
+                        dataArrays.d_counts.get(),
+                        dataArrays.d_weights.get(),
+                        dataArrays.d_coverage.get(),
+                        dataArrays.d_support.get(),
+                        dataArrays.d_consensus.get(),
+                        dataArrays.d_origWeights.get(),
+                        dataArrays.d_origCoverages.get(),
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
                         dataArrays.d_num_indices,
@@ -1515,10 +1515,10 @@ namespace gpu{
                             dataArrays.n_queries,
                             sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
                             dataArrays.encoded_sequence_pitch,
-                            dataArrays.d_consensus,
-                            dataArrays.d_counts,
-                            dataArrays.d_weights,
-                            dataArrays.d_msa_column_properties,
+                            dataArrays.d_consensus.get(),
+                            dataArrays.d_counts.get(),
+                            dataArrays.d_weights.get(),
+                            dataArrays.d_msa_column_properties.get(),
                             dataArrays.msa_pitch,
                             dataArrays.msa_weights_pitch,
                             dataArrays.d_indices,
@@ -1652,7 +1652,7 @@ namespace gpu{
 
                 const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
 
-                build_msa_async(dataArrays.d_msa_column_properties,
+                build_msa_async(dataArrays.d_msa_column_properties.get(),
                                 dataArrays.d_alignment_shifts,
                                 dataArrays.d_alignment_best_alignment_flags,
                                 dataArrays.d_alignment_overlaps,
@@ -1667,13 +1667,13 @@ namespace gpu{
                                 dataArrays.d_indices,
                                 d_indices_per_subject_tmp,
                                 dataArrays.d_indices_per_subject_prefixsum,
-                                dataArrays.d_counts,
-                                dataArrays.d_weights,
-                                dataArrays.d_coverage,
-                                dataArrays.d_support,
-                                dataArrays.d_consensus,
-                                dataArrays.d_origWeights,
-                                dataArrays.d_origCoverages,
+                                dataArrays.d_counts.get(),
+                                dataArrays.d_weights.get(),
+                                dataArrays.d_coverage.get(),
+                                dataArrays.d_support.get(),
+                                dataArrays.d_consensus.get(),
+                                dataArrays.d_origWeights.get(),
+                                dataArrays.d_origCoverages.get(),
                                 dataArrays.n_subjects,
                                 dataArrays.n_queries,
                                 dataArrays.d_num_indices,
@@ -1744,50 +1744,38 @@ namespace gpu{
 
             cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_consensus,
-                        dataArrays.d_consensus,
+            cudaMemcpyAsync(dataArrays.h_consensus.get(),
+                        dataArrays.d_consensus.get(),
                         dataArrays.n_subjects * dataArrays.msa_pitch,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_support,
-                        dataArrays.d_support,
+            cudaMemcpyAsync(dataArrays.h_support.get(),
+                        dataArrays.d_support.get(),
                         dataArrays.n_subjects * dataArrays.msa_weights_pitch,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_coverage,
-                        dataArrays.d_coverage,
+            cudaMemcpyAsync(dataArrays.h_coverage.get(),
+                        dataArrays.d_coverage.get(),
                         dataArrays.n_subjects * dataArrays.msa_weights_pitch,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_origCoverages,
-                        dataArrays.d_origCoverages,
+            cudaMemcpyAsync(dataArrays.h_origCoverages.get(),
+                        dataArrays.d_origCoverages.get(),
                         dataArrays.n_subjects * dataArrays.msa_weights_pitch,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-            /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignment_weights,
-                        dataArrays.d_multiple_sequence_alignment_weights,
-                        (dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;*/
-            /*cudaMemcpyAsync(dataArrays.h_multiple_sequence_alignments,
-                        dataArrays.d_multiple_sequence_alignments,
-                        (dataArrays.n_subjects + dataArrays.n_queries) * dataArrays.msa_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;*/
-            cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                        dataArrays.d_msa_column_properties,
+            cudaMemcpyAsync(dataArrays.h_msa_column_properties.get(),
+                        dataArrays.d_msa_column_properties.get(),
                         dataArrays.n_subjects * sizeof(MSAColumnProperties),
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_counts,
-                        dataArrays.d_counts,
+            cudaMemcpyAsync(dataArrays.h_counts.get(),
+                        dataArrays.d_counts.get(),
                         dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_weights,
-                        dataArrays.d_weights,
+            cudaMemcpyAsync(dataArrays.h_weights.get(),
+                        dataArrays.d_weights.get(),
                         dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
                         D2H,
                         streams[secondary_stream_index]); CUERR;
@@ -1852,12 +1840,12 @@ namespace gpu{
 
 #ifndef MSA_IMPLICIT
 			call_msa_correct_subject_kernel_async(
-						dataArrays.d_consensus,
-						dataArrays.d_support,
-						dataArrays.d_coverage,
-						dataArrays.d_origCoverages,
+						dataArrays.d_consensus.get(),
+						dataArrays.d_support.get(),
+						dataArrays.d_coverage.get(),
+						dataArrays.d_origCoverages.get(),
 						dataArrays.d_multiple_sequence_alignments,
-						dataArrays.d_msa_column_properties,
+						dataArrays.d_msa_column_properties.get(),
 						dataArrays.d_indices_per_subject_prefixsum,
 						dataArrays.d_is_high_quality_subject,
 						dataArrays.d_corrected_subjects,
@@ -1879,11 +1867,11 @@ namespace gpu{
 #else
 
             call_msa_correct_subject_implicit_kernel_async(
-                        dataArrays.d_consensus,
-                        dataArrays.d_support,
-                        dataArrays.d_coverage,
-                        dataArrays.d_origCoverages,
-                        dataArrays.d_msa_column_properties,
+                        dataArrays.d_consensus.get(),
+                        dataArrays.d_support.get(),
+                        dataArrays.d_coverage.get(),
+                        dataArrays.d_origCoverages.get(),
+                        dataArrays.d_msa_column_properties.get(),
                         dataArrays.d_subject_sequences_data,
                         dataArrays.d_is_high_quality_subject,
                         dataArrays.d_corrected_subjects,
@@ -1929,11 +1917,11 @@ namespace gpu{
 
 				// correct candidates
                 call_msa_correct_candidates_kernel_async_exp(
-                        dataArrays.d_consensus,
-                        dataArrays.d_support,
-                        dataArrays.d_coverage,
-                        dataArrays.d_origCoverages,
-                        dataArrays.d_msa_column_properties,
+                        dataArrays.d_consensus.get(),
+                        dataArrays.d_support.get(),
+                        dataArrays.d_coverage.get(),
+                        dataArrays.d_origCoverages.get(),
+                        dataArrays.d_msa_column_properties.get(),
                         dataArrays.d_candidate_sequences_lengths,
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
@@ -2357,6 +2345,48 @@ namespace gpu{
             if(task.readId == 207){
 
                 cudaDeviceSynchronize(); CUERR;
+
+                cudaMemcpyAsync(dataArrays.h_consensus.get(),
+                                dataArrays.d_consensus.get(),
+                                dataArrays.d_consensus.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_support.get(),
+                                dataArrays.d_support.get(),
+                                dataArrays.d_support.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_coverage.get(),
+                                dataArrays.d_coverage.get(),
+                                dataArrays.d_coverage.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_origWeights.get(),
+                                dataArrays.d_origWeights.get(),
+                                dataArrays.d_origWeights.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_msa_column_properties.get(),
+                                dataArrays.d_msa_column_properties.get(),
+                                dataArrays.d_msa_column_properties.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_counts.get(),
+                                dataArrays.d_counts.get(),
+                                dataArrays.d_counts.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_weights.get(),
+                                dataArrays.d_weights.get(),
+                                dataArrays.d_weights.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]);
 
                 cudaMemcpyAsync(dataArrays.msa_data_host,
                             dataArrays.msa_data_device,
@@ -3071,8 +3101,8 @@ namespace gpu{
 
 
 
-        /*cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                    dataArrays.d_msa_column_properties,
+        /*cudaMemcpyAsync(dataArrays.h_msa_column_properties.get(),
+                    dataArrays.d_msa_column_properties.get(),
                     dataArrays.n_subjects * sizeof(MSAColumnProperties),
                     D2H,
                     streams[primary_stream_index]); CUERR;
