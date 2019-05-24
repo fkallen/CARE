@@ -1188,12 +1188,12 @@ namespace gpu{
 
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
 
-                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
-                                                                   dataArrays.quality_pitch,
-                                                                   dataArrays.d_subject_read_ids,
-                                                                   dataArrays.n_subjects,
-                                                                   transFuncData.threadOpts.deviceId,
-                                                                   streams[primary_stream_index]);
+               gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities.get(),
+                                                                  dataArrays.quality_pitch,
+                                                                  dataArrays.d_subject_read_ids,
+                                                                  dataArrays.n_subjects,
+                                                                  transFuncData.threadOpts.deviceId,
+                                                                  streams[primary_stream_index]);
 
 
                 //batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * *dataArrays.h_num_indices);
@@ -1207,12 +1207,15 @@ namespace gpu{
                                             *dataArrays.h_num_indices,
                                             streams[primary_stream_index]);
 
-                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
-                                                                   dataArrays.quality_pitch,
-                                                                   d_tmp_read_ids,
-                                                                   *dataArrays.h_num_indices,
-                                                                   transFuncData.threadOpts.deviceId,
-                                                                   streams[primary_stream_index]);
+                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities.get(),
+                                                                  dataArrays.quality_pitch,
+                                                                  d_tmp_read_ids,
+                                                                  *dataArrays.h_num_indices,
+                                                                  transFuncData.threadOpts.deviceId,
+                                                                  streams[primary_stream_index]);
+
+
+
                 cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
 
                 assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
@@ -1221,11 +1224,17 @@ namespace gpu{
 
                 cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
 
-                cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
-                           dataArrays.qualities_transfer_data_device,
-                           dataArrays.qualities_transfer_data_usable_size,
-                           D2H,
-                           streams[secondary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_subject_qualities.get(),
+                                dataArrays.d_subject_qualities.get(),
+                                dataArrays.d_subject_qualities.sizeInBytes(),
+                                D2H,
+                                streams[secondary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.h_candidate_qualities.get(),
+                                dataArrays.d_candidate_qualities.get(),
+                                dataArrays.d_candidate_qualities.sizeInBytes(),
+                                D2H,
+                                streams[secondary_stream_index]);
 
                 return BatchState::BuildMSA;
 			}else{
@@ -1262,7 +1271,8 @@ namespace gpu{
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(readId);
 
     					assert(subjectIndex * dataArrays.quality_pitch + sequencelength <= maxsubjectqualitychars);
-    					std::memcpy(dataArrays.h_subject_qualities + subjectIndex * dataArrays.quality_pitch,
+
+                        std::memcpy(dataArrays.h_subject_qualities.get() + subjectIndex * dataArrays.quality_pitch,
     								qualityptr,
     								sequencelength);
                     }
@@ -1299,9 +1309,11 @@ namespace gpu{
                         const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
 
     				    assert(index * dataArrays.quality_pitch + sequencelength <= maxcandidatequalitychars);
-    					std::memcpy(dataArrays.h_candidate_qualities + index * dataArrays.quality_pitch,
-    								qualityptr,
-    								sequencelength);
+
+                        std::memcpy(dataArrays.h_candidate_qualities.get() + index * dataArrays.quality_pitch,
+                                    qualityptr,
+                                    sequencelength);
+
                     }
 
                     batch.copiedCandidates = loop_end_excl;
@@ -1311,11 +1323,23 @@ namespace gpu{
                     }
                 }
 
-                cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
+                /*cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
                             dataArrays.qualities_transfer_data_host,
                             dataArrays.qualities_transfer_data_usable_size,
                             H2D,
-                            streams[secondary_stream_index]); CUERR;
+                            streams[secondary_stream_index]); CUERR;*/
+
+                cudaMemcpyAsync(dataArrays.d_subject_qualities.get(),
+                                dataArrays.h_subject_qualities.get(),
+                                dataArrays.h_subject_qualities.sizeInBytes(),
+                                H2D,
+                                streams[secondary_stream_index]);
+
+                cudaMemcpyAsync(dataArrays.d_candidate_qualities.get(),
+                                dataArrays.h_candidate_qualities.get(),
+                                dataArrays.h_candidate_qualities.sizeInBytes(),
+                                H2D,
+                                streams[secondary_stream_index]);
             }
             assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
@@ -1386,8 +1410,8 @@ namespace gpu{
                         dataArrays.d_candidate_sequences_data,
                         dataArrays.d_subject_sequences_lengths,
                         dataArrays.d_candidate_sequences_lengths,
-                        dataArrays.d_subject_qualities,
-                        dataArrays.d_candidate_qualities,
+                        dataArrays.d_subject_qualities.get(),
+                        dataArrays.d_candidate_qualities.get(),
                         dataArrays.d_candidates_per_subject_prefixsum,
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
@@ -1576,8 +1600,9 @@ namespace gpu{
                     dim3 block(128,1,1);
                     dim3 grid(SDIV(currentNumIndices, block.x),1,1);
 
-                    char* const d_candidate_qualities = dataArrays.d_candidate_qualities;
-                    char* const d_candidate_qualities_tmp = dataArrays.d_candidate_qualities_tmp;
+                    char* const d_candidate_qualities = dataArrays.d_candidate_qualities.get();
+                    char* const d_candidate_qualities_tmp = dataArrays.d_candidate_qualities_tmp.get();
+
                     const size_t quality_pitch = dataArrays.quality_pitch;
                     const int* const d_num_indices = dataArrays.d_num_indices;
 
@@ -1597,10 +1622,7 @@ namespace gpu{
                         }
                     }); CUERR;
 
-                    cudaMemcpyAsync(d_candidate_qualities,
-                                    d_candidate_qualities_tmp,
-                                    currentNumIndices * quality_pitch,
-                                    D2D, streams[primary_stream_index]); CUERR;
+                    std::swap(dataArrays.d_candidate_qualities, dataArrays.d_candidate_qualities_tmp);
                 }
 
                 {
@@ -1639,8 +1661,8 @@ namespace gpu{
                                 dataArrays.d_candidate_sequences_data,
                                 dataArrays.d_subject_sequences_lengths,
                                 dataArrays.d_candidate_sequences_lengths,
-                                dataArrays.d_subject_qualities,
-                                dataArrays.d_candidate_qualities,
+                                dataArrays.d_subject_qualities.get(),
+                                dataArrays.d_candidate_qualities.get(),
                                 dataArrays.d_candidates_per_subject_prefixsum,
                                 dataArrays.d_indices,
                                 d_indices_per_subject_tmp,
@@ -1692,6 +1714,13 @@ namespace gpu{
         					dataArrays.indices_transfer_data_usable_size,
         					D2H,
         					streams[secondary_stream_index]); CUERR;
+
+                            //update host qscores accordingly
+                            /*cudaMemcpyAsync(dataArrays.h_candidate_qualities.get(),
+                                            dataArrays.d_candidate_qualities.get(),
+                                            dataArrays.d_candidate_qualities.sizeInBytes(),
+                                            D2H,
+                                            streams[secondary_stream_index]);*/
 
         		assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
 

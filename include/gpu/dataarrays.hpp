@@ -1034,40 +1034,12 @@ struct DataArrays {
 
 		//qualitiy scores
 		if(useQualityScores) {
-			std::size_t memCandidateQualities = n_quer * quality_pitch;
-			std::size_t memSubjectQualities = n_sub * quality_pitch;
+            h_subject_qualities.resize(n_sub * quality_pitch);
+            h_candidate_qualities.resize(n_quer * quality_pitch);
 
-			std::size_t required_qualities_transfer_data_allocation_size = memCandidateQualities
-			                                                               + memSubjectQualities;
-
-			if(required_qualities_transfer_data_allocation_size > qualities_transfer_data_allocation_size) {
-				//std::cout << "E" << std::endl;
-				cudaFree(qualities_transfer_data_device); CUERR;
-				cudaMalloc(&qualities_transfer_data_device, std::size_t(required_qualities_transfer_data_allocation_size * allocfactor)); CUERR;
-				cudaFreeHost(qualities_transfer_data_host); CUERR;
-				cudaMallocHost(&qualities_transfer_data_host, std::size_t(required_qualities_transfer_data_allocation_size * allocfactor)); CUERR;
-
-				qualities_transfer_data_allocation_size = std::size_t(required_qualities_transfer_data_allocation_size * allocfactor);
-
-                cudaFree(d_candidate_qualities_tmp); CUERR;
-                cudaMalloc(&d_candidate_qualities_tmp, memCandidateQualities * allocfactor); CUERR;
-			}
-
-			qualities_transfer_data_usable_size = required_qualities_transfer_data_allocation_size;
-
-			h_candidate_qualities = (char*)qualities_transfer_data_host;
-			h_subject_qualities = (char*)(((char*)h_candidate_qualities) + memCandidateQualities);
-
-			d_candidate_qualities = (char*)qualities_transfer_data_device;
-			d_subject_qualities = (char*)(((char*)d_candidate_qualities) + memCandidateQualities);
-
-            h_new_subject_qualities.resize(n_sub * quality_pitch);
-            h_new_candidate_qualities.resize(n_quer * quality_pitch);
-
-            d_new_subject_qualities.resize(n_sub * quality_pitch);;
-            d_new_candidate_qualities.resize(n_quer * quality_pitch);
-            d_new_candidate_qualities_tmp.resize(n_quer * quality_pitch);
-
+            d_subject_qualities.resize(n_sub * quality_pitch);;
+            d_candidate_qualities.resize(n_quer * quality_pitch);
+            d_candidate_qualities_tmp.resize(n_quer * quality_pitch);
 		}
 
 
@@ -1190,26 +1162,17 @@ struct DataArrays {
 		tmp_storage_usable_size = newsize;
 	}
 
-	void zero_cpu(){
-		std::memset(msa_data_host, 0, msa_data_usable_size);
-		std::memset(correction_results_transfer_data_host, 0, correction_results_transfer_data_usable_size);
-		std::memset(qualities_transfer_data_host, 0, qualities_transfer_data_usable_size);
-		std::memset(indices_transfer_data_host, 0, indices_transfer_data_usable_size);
-		//std::fill((int*)indices_transfer_data_host, (int*)(((char*)indices_transfer_data_host) + indices_transfer_data_usable_size), -1);
-		std::memset(h_num_indices, 0, sizeof(int));
-		std::memset(subject_indices_data_host, 0, subject_indices_data_usable_size);
-		std::memset(alignment_result_data_host, 0, alignment_result_data_usable_size);
-		std::memset(alignment_transfer_data_host, 0, alignment_transfer_data_usable_size);
-		//std::memset(h_candidate_read_ids, 0, candidate_ids_usable_size);
-	}
-
 	void zero_gpu(cudaStream_t stream){
 		cudaMemsetAsync(msa_data_device, 0, msa_data_usable_size, stream); CUERR;
 
         //cudaMemsetAsync(d_multiple_sequence_alignments, char(0xFC), (n_subjects + n_queries) * msa_pitch, stream);
 
 		cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
-		cudaMemsetAsync(qualities_transfer_data_device, 0, qualities_transfer_data_usable_size, stream); CUERR;
+
+        cudaMemsetAsync(d_subject_qualities.get(), 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_qualities.get(), 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_qualities_tmp.get(), 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
+
 		//cudaMemsetAsync(indices_transfer_data_device, 0, indices_transfer_data_usable_size, stream); CUERR;
 		/*thrust::fill(thrust::cuda::par.on(stream),
 		            thrust::device_ptr<int>((int*)indices_transfer_data_device),
@@ -1252,8 +1215,6 @@ struct DataArrays {
 		cudaFreeHost(a.h_num_indices); CUERR;
 		cudaFree(a.indices_transfer_data_device); CUERR;
 		cudaFreeHost(a.indices_transfer_data_host); CUERR;
-		cudaFree(a.qualities_transfer_data_device); CUERR;
-		cudaFreeHost(a.qualities_transfer_data_host); CUERR;
 		cudaFree(a.correction_results_transfer_data_device); CUERR;
 		cudaFreeHost(a.correction_results_transfer_data_host); CUERR;
 		cudaFree(a.msa_data_device); CUERR;
@@ -1262,12 +1223,12 @@ struct DataArrays {
 		cudaFree(a.d_candidate_read_ids); CUERR;
 		cudaFreeHost(a.h_candidate_read_ids); CUERR;
 
-        h_new_subject_qualities = std::move(SimpleAllocationPinnedHost<char>{});
-        h_new_candidate_qualities = std::move(SimpleAllocationPinnedHost<char>{});
+        h_subject_qualities = std::move(SimpleAllocationPinnedHost<char>{});
+        h_candidate_qualities = std::move(SimpleAllocationPinnedHost<char>{});
 
-        d_new_subject_qualities = std::move(SimpleAllocationDevice<char>{});
-        d_new_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
-        d_new_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
+        d_subject_qualities = std::move(SimpleAllocationDevice<char>{});
+        d_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
+        d_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
 
 		a.subject_indices_data_device = nullptr;
 		a.subject_indices_data_host = nullptr;
@@ -1309,13 +1270,6 @@ struct DataArrays {
 		a.d_indices_per_subject_prefixsum = nullptr;
 		a.h_num_indices = nullptr;
 		a.d_num_indices = nullptr;
-		a.qualities_transfer_data_host = nullptr;
-		a.qualities_transfer_data_device = nullptr;
-		a.h_candidate_qualities = nullptr;
-		a.h_subject_qualities = nullptr;
-		a.d_candidate_qualities = nullptr;
-        a.d_candidate_qualities_tmp = nullptr;
-		a.d_subject_qualities = nullptr;
 		a.correction_results_transfer_data_host = nullptr;
 		a.correction_results_transfer_data_device = nullptr;
 		a.h_corrected_subjects = nullptr;
@@ -1381,8 +1335,6 @@ struct DataArrays {
 		a.encoded_sequence_pitch = 0;
 		a.indices_transfer_data_allocation_size = 0;
 		a.indices_transfer_data_usable_size = 0;
-		a.qualities_transfer_data_allocation_size = 0;
-		a.qualities_transfer_data_usable_size = 0;
 		a.quality_pitch = 0;
 		a.correction_results_transfer_data_allocation_size = 0;
 		a.correction_results_transfer_data_usable_size = 0;
@@ -1479,26 +1431,14 @@ struct DataArrays {
 	int* h_num_indices = nullptr;
 	int* d_num_indices = nullptr;
 
-	//qualities input
-	void* qualities_transfer_data_host = nullptr;
-	void* qualities_transfer_data_device = nullptr;
-	std::size_t qualities_transfer_data_allocation_size = 0;
-	std::size_t qualities_transfer_data_usable_size = 0;
 	std::size_t quality_pitch = 0;
 
-	char* h_candidate_qualities = nullptr;
-	char* h_subject_qualities = nullptr;
+    SimpleAllocationPinnedHost<char> h_subject_qualities;
+    SimpleAllocationPinnedHost<char> h_candidate_qualities;
 
-	char* d_candidate_qualities = nullptr;
-    char* d_candidate_qualities_tmp = nullptr;
-	char* d_subject_qualities = nullptr;
-
-    SimpleAllocationPinnedHost<char> h_new_subject_qualities;
-    SimpleAllocationPinnedHost<char> h_new_candidate_qualities;
-
-    SimpleAllocationDevice<char> d_new_subject_qualities;
-    SimpleAllocationDevice<char> d_new_candidate_qualities;
-    SimpleAllocationDevice<char> d_new_candidate_qualities_tmp;
+    SimpleAllocationDevice<char> d_subject_qualities;
+    SimpleAllocationDevice<char> d_candidate_qualities;
+    SimpleAllocationDevice<char> d_candidate_qualities_tmp;
 
 	//correction results output
 
