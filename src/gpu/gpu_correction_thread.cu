@@ -1119,7 +1119,7 @@ namespace gpu{
         call_compact_kernel_async(d_alignment_best_alignment_flags_compact,
                                 dataArrays.d_alignment_best_alignment_flags,
                                 dataArrays.d_indices,
-                                *dataArrays.h_num_indices,
+                                dataArrays.h_num_indices[0],
                                 streams[primary_stream_index]);
 
         //partition d_indices according to d_alignment_best_alignment_flags
@@ -1137,7 +1137,7 @@ namespace gpu{
                                                 (char*)d_alignment_best_alignment_flags_discardedoutput,
                                                 dataArrays.d_indices,
                                                 d_indices_segmented_partitioned,
-                                                *dataArrays.h_num_indices,
+                                                dataArrays.h_num_indices[0],
                                                 dataArrays.n_subjects,
                                                 dataArrays.d_indices_per_subject_prefixsum,
                                                 dataArrays.d_indices_per_subject_prefixsum+1,
@@ -1145,7 +1145,7 @@ namespace gpu{
                                                 3,
                                                 streams[primary_stream_index]);
 
-        cudaMemcpyAsync(dataArrays.d_indices, d_indices_segmented_partitioned, sizeof(int) * (*dataArrays.h_num_indices), D2D, streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.d_indices, d_indices_segmented_partitioned, sizeof(int) * (dataArrays.h_num_indices[0]), D2D, streams[primary_stream_index]); CUERR;
 
         cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_compact);
         cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_discardedoutput);
@@ -1186,6 +1186,7 @@ namespace gpu{
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
 #ifdef USE_WAIT_FLAGS
+        batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
         batch.addWaitSignal(BatchState::CopyQualities, streams[secondary_stream_index]);
         batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
 #endif
@@ -1235,7 +1236,7 @@ namespace gpu{
         DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
-        if(*dataArrays.h_num_indices == 0){
+        if(dataArrays.h_num_indices[0] == 0){
             return BatchState::WriteResults;
         }
 
@@ -1255,7 +1256,7 @@ namespace gpu{
                                                                   streams[primary_stream_index]);
 
 
-                //batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * *dataArrays.h_num_indices);
+                //batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * dataArrays.h_num_indices[0]);
                 //read_number* d_tmp_read_ids = (read_number*)batch.batchDataDevice.tmpStorage[0];
                 read_number* d_tmp_read_ids = nullptr;
                 cubCachingAllocator.DeviceAllocate((void**)&d_tmp_read_ids, dataArrays.n_queries * sizeof(read_number), streams[primary_stream_index]); CUERR;
@@ -1263,13 +1264,13 @@ namespace gpu{
                 call_compact_kernel_async(d_tmp_read_ids,
                                             dataArrays.d_candidate_read_ids.get(),
                                             dataArrays.d_indices,
-                                            *dataArrays.h_num_indices,
+                                            dataArrays.h_num_indices[0],
                                             streams[primary_stream_index]);
 
                 gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
                                                                   dataArrays.quality_pitch,
                                                                   d_tmp_read_ids,
-                                                                  *dataArrays.h_num_indices,
+                                                                  dataArrays.h_num_indices[0],
                                                                   transFuncData.threadOpts.deviceId,
                                                                   streams[primary_stream_index]);
 
@@ -1344,7 +1345,7 @@ namespace gpu{
                 }
 
                 const int firstCandidateIndex = batch.copiedCandidates;
-                const int lastCandidateIndexExcl = *dataArrays.h_num_indices;
+                const int lastCandidateIndexExcl = dataArrays.h_num_indices[0];
                 const int candidateChunks = SDIV((lastCandidateIndexExcl - firstCandidateIndex), candidateschunksize);
 
                 for(int chunkId = 0; chunkId < candidateChunks; chunkId++){
@@ -1381,12 +1382,6 @@ namespace gpu{
                         return expectedState;
                     }
                 }
-
-                /*cudaMemcpyAsync(dataArrays.qualities_transfer_data_device,
-                            dataArrays.qualities_transfer_data_host,
-                            dataArrays.qualities_transfer_data_usable_size,
-                            H2D,
-                            streams[secondary_stream_index]); CUERR;*/
 
                 cudaMemcpyAsync(dataArrays.d_subject_qualities,
                                 dataArrays.h_subject_qualities,
@@ -1447,8 +1442,8 @@ namespace gpu{
         DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
-        if(*dataArrays.h_num_indices == 0){
-            std::cerr << "*h_num_indices = " << *dataArrays.h_num_indices << '\n';
+        if(dataArrays.h_num_indices[0] == 0){
+            std::cerr << "buildmsa *h_num_indices = " << dataArrays.h_num_indices[0] << '\n';
             return BatchState::WriteResults;
         }
 
@@ -1539,8 +1534,8 @@ namespace gpu{
         DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
-        if(*dataArrays.h_num_indices == 0){
-            std::cerr << "*h_num_indices = " << *dataArrays.h_num_indices << '\n';
+        if(dataArrays.h_num_indices[0] == 0){
+            std::cerr << "improvemsa *h_num_indices = " << dataArrays.h_num_indices[0] << '\n';
             return BatchState::WriteResults;
         }
 
@@ -1550,9 +1545,9 @@ namespace gpu{
         constexpr int max_num_minimizations = 5;
 
         if(max_num_minimizations > 0){
-            if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == *dataArrays.h_num_indices)){
+            if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == dataArrays.h_num_indices[0])){
 
-                const int currentNumIndices = *dataArrays.h_num_indices;
+                const int currentNumIndices = dataArrays.h_num_indices[0];
 
                 bool* d_shouldBeKept;
 
@@ -1657,7 +1652,7 @@ namespace gpu{
 
 
                 //compact the quality scores
-                {
+                if(transFuncData.correctionOptions.useQualityScores){
                     dim3 block(128,1,1);
                     dim3 grid(SDIV(currentNumIndices, block.x),1,1);
 
@@ -3360,7 +3355,7 @@ namespace gpu{
         }
 
         std::cout << "candidate quality scores" << std::endl;
-        for(int i = 0; i< *dataArrays.h_num_indices; i++) {
+        for(int i = 0; i< dataArrays.h_num_indices[0]; i++) {
             for(size_t k = 0; k < dataArrays.quality_pitch; k++){
                 std::cout << dataArrays.h_candidate_qualities[i * dataArrays.quality_pitch + k];
             }
@@ -3420,7 +3415,7 @@ namespace gpu{
 
 		//DEBUGGING
 		std::cout << "h_indices" << std::endl;
-		for(int i = 0; i< *dataArrays.h_num_indices; i++) {
+		for(int i = 0; i< dataArrays.h_num_indices[0]; i++) {
 			std::cout << dataArrays.h_indices[i] << "\t";
 		}
 		std::cout << std::endl;
@@ -3476,7 +3471,7 @@ namespace gpu{
 
 		//DEBUGGING
 		std::cout << "h_indices_of_corrected_candidates" << std::endl;
-		for(int i = 0; i< *dataArrays.h_num_indices; i++) {
+		for(int i = 0; i< dataArrays.h_num_indices[0]; i++) {
 			std::cout << dataArrays.h_indices_of_corrected_candidates[i] << "\t";
 		}
 		std::cout << std::endl;
