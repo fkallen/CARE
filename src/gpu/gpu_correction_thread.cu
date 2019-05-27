@@ -1980,9 +1980,9 @@ namespace gpu{
                 cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
                             cubTempSize,
                             cub::CountingInputIterator<int>(0),
-                            dataArrays.d_is_high_quality_subject,
-                            dataArrays.d_high_quality_subject_indices,
-                            dataArrays.d_num_high_quality_subject_indices,
+                            dataArrays.d_is_high_quality_subject.get(),
+                            dataArrays.d_high_quality_subject_indices.get(),
+                            dataArrays.d_num_high_quality_subject_indices.get(),
                             dataArrays.n_subjects,
                             streams[primary_stream_index]); CUERR;
 

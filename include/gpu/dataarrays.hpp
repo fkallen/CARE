@@ -951,42 +951,6 @@ struct DataArrays {
         d_alignment_isValid.resize(2*n_quer * allocfactor);
         d_alignment_best_alignment_flags.resize(n_quer * allocfactor);
 
-
-		//indices of hq subjects
-		std::size_t memSubjectIndices = SDIV((n_sub) * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memHQSubjectIndices = SDIV((n_sub) * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memIsHQSubject = SDIV((n_sub) * sizeof(bool), padding_bytes) * padding_bytes;
-		std::size_t memNumHQSubjectIndices = sizeof(int);
-
-		std::size_t required_subject_indices_data_allocation_size = memSubjectIndices
-		                                                            + memHQSubjectIndices
-		                                                            + memIsHQSubject
-		                                                            + memNumHQSubjectIndices;
-
-		if(required_subject_indices_data_allocation_size > subject_indices_data_allocation_size) {
-			//std::cout << "C" << " " << n_sub << " " << required_subject_indices_data_allocation_size << " >= " <<  subject_indices_data_allocation_size << std::endl;
-			cudaFree(subject_indices_data_device); CUERR;
-			cudaMalloc(&subject_indices_data_device, std::size_t(required_subject_indices_data_allocation_size * allocfactor)); CUERR;
-
-			cudaFreeHost(subject_indices_data_host); CUERR;
-			cudaMallocHost(&subject_indices_data_host, std::size_t(required_subject_indices_data_allocation_size * allocfactor)); CUERR;
-
-			subject_indices_data_allocation_size = required_subject_indices_data_allocation_size;
-		}
-
-		subject_indices_data_usable_size = required_subject_indices_data_allocation_size;
-
-		h_subject_indices = (int*)subject_indices_data_host;
-		h_high_quality_subject_indices = (int*)(((char*)h_subject_indices) + memSubjectIndices);
-		h_is_high_quality_subject = (bool*)(((char*)h_high_quality_subject_indices) + memHQSubjectIndices);
-		h_num_high_quality_subject_indices = (int*)(((char*)h_is_high_quality_subject) + memIsHQSubject);
-
-		d_subject_indices = (int*)subject_indices_data_device;
-		d_high_quality_subject_indices = (int*)(((char*)d_subject_indices) + memSubjectIndices);
-		d_is_high_quality_subject = (bool*)(((char*)d_high_quality_subject_indices) + memHQSubjectIndices);
-		d_num_high_quality_subject_indices = (int*)(((char*)d_is_high_quality_subject) + memIsHQSubject);
-
-
 		// candidate indices
 
         h_indices.resize(n_quer * allocfactor);
@@ -1001,12 +965,12 @@ struct DataArrays {
 
 		//qualitiy scores
 		if(useQualityScores) {
-            h_subject_qualities.resize(n_sub * quality_pitch);
-            h_candidate_qualities.resize(n_quer * quality_pitch);
+            h_subject_qualities.resize(n_sub * quality_pitch * allocfactor);
+            h_candidate_qualities.resize(n_quer * quality_pitch * allocfactor);
 
-            d_subject_qualities.resize(n_sub * quality_pitch);;
-            d_candidate_qualities.resize(n_quer * quality_pitch);
-            d_candidate_qualities_tmp.resize(n_quer * quality_pitch);
+            d_subject_qualities.resize(n_sub * quality_pitch * allocfactor);
+            d_candidate_qualities.resize(n_quer * quality_pitch * allocfactor);
+            d_candidate_qualities_tmp.resize(n_quer * quality_pitch * allocfactor);
 		}
 
 
@@ -1023,6 +987,14 @@ struct DataArrays {
         d_num_corrected_candidates.resize(n_sub * allocfactor);
         d_subject_is_corrected.resize(n_sub * allocfactor);
         d_indices_of_corrected_candidates.resize(n_quer * allocfactor);
+
+        h_is_high_quality_subject.resize(n_sub * allocfactor);
+        h_high_quality_subject_indices.resize(n_sub * allocfactor);
+        h_num_high_quality_subject_indices.resize(1);
+
+        d_is_high_quality_subject.resize(n_sub * allocfactor);
+        d_high_quality_subject_indices.resize(n_sub * allocfactor);
+        d_num_high_quality_subject_indices.resize(1);
 
 		//multiple sequence alignment
 
@@ -1071,15 +1043,9 @@ struct DataArrays {
         cudaMemsetAsync(d_num_corrected_candidates, 0, d_num_corrected_candidates.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_subject_is_corrected, 0, d_subject_is_corrected.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_indices_of_corrected_candidates, 0, d_indices_of_corrected_candidates.sizeInBytes(), stream); CUERR;
-
-
-        cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
-
-
-		cudaMemsetAsync(d_num_indices, 0, sizeof(int), stream); CUERR;
-		cudaMemsetAsync(subject_indices_data_device, 0, subject_indices_data_usable_size, stream); CUERR;
+        cudaMemsetAsync(d_is_high_quality_subject, 0, d_is_high_quality_subject.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_high_quality_subject_indices, 0, d_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_num_high_quality_subject_indices, 0, d_num_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
 
         cudaMemsetAsync(d_alignment_scores, 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_alignment_overlaps, 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
@@ -1097,13 +1063,12 @@ struct DataArrays {
         cudaMemsetAsync(d_subject_read_ids, 0, d_subject_read_ids.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_candidate_read_ids, 0, d_candidate_read_ids.sizeInBytes(), stream); CUERR;
 
+        cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
 	}
 
 	void reset(){
-		auto& a = *this;
-
-		cudaFree(a.subject_indices_data_device); CUERR;
-		cudaFreeHost(a.subject_indices_data_host); CUERR;
 
         h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
         h_candidate_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
@@ -1167,12 +1132,18 @@ struct DataArrays {
         h_num_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
         h_subject_is_corrected = std::move(SimpleAllocationPinnedHost<bool>{});
         h_indices_of_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
+        h_is_high_quality_subject = std::move(SimpleAllocationPinnedHost<bool>{});
+        h_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
+        h_num_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
 
         d_corrected_subjects = std::move(SimpleAllocationDevice<char>{});
         d_corrected_candidates = std::move(SimpleAllocationDevice<char>{});
         d_num_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
         d_subject_is_corrected = std::move(SimpleAllocationDevice<bool>{});
         d_indices_of_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
+        d_is_high_quality_subject = std::move(SimpleAllocationDevice<bool>{});
+        d_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
+        d_num_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
 
         h_indices = std::move(SimpleAllocationPinnedHost<int>{});
         h_indices_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
@@ -1186,38 +1157,18 @@ struct DataArrays {
 
         d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
 
+		n_subjects = 0;
+		n_queries = 0;
+		n_indices = 0;
+		maximum_sequence_length = 0;
+        maximum_sequence_bytes = 0;
+		min_overlap = 1;
 
-
-
-
-
-
-		a.subject_indices_data_device = nullptr;
-		a.subject_indices_data_host = nullptr;
-		a.h_subject_indices = nullptr;
-		a.h_high_quality_subject_indices = nullptr;
-		a.h_is_high_quality_subject = nullptr;
-		a.h_num_high_quality_subject_indices = nullptr;
-		a.d_subject_indices = nullptr;
-		a.d_high_quality_subject_indices = nullptr;
-		a.d_is_high_quality_subject = nullptr;
-		a.d_num_high_quality_subject_indices = nullptr;
-
-		a.n_subjects = 0;
-		a.n_queries = 0;
-		a.n_indices = 0;
-		a.maximum_sequence_length = 0;
-        a.maximum_sequence_bytes = 0;
-		a.min_overlap = 1;
-		a.subject_indices_data_allocation_size = 0;
-		a.subject_indices_data_usable_size = 0;
-
-		a.encoded_sequence_pitch = 0;
-
-		a.quality_pitch = 0;
-		a.sequence_pitch = 0;
-		a.msa_pitch = 0;
-		a.msa_weights_pitch = 0;
+		encoded_sequence_pitch = 0;
+		quality_pitch = 0;
+		sequence_pitch = 0;
+		msa_pitch = 0;
+		msa_weights_pitch = 0;
 	}
 
 	int deviceId = -1;
@@ -1231,18 +1182,13 @@ struct DataArrays {
 
 	//subject indices
 
-	std::size_t subject_indices_data_allocation_size = 0;
-	std::size_t subject_indices_data_usable_size = 0;
-	void* subject_indices_data_host = nullptr;
-	void* subject_indices_data_device = nullptr;
-	int* h_subject_indices = nullptr;
-	int* h_high_quality_subject_indices = nullptr;
-	bool* h_is_high_quality_subject = nullptr;
-	int* h_num_high_quality_subject_indices = nullptr;
-	int* d_subject_indices = nullptr;
-	int* d_high_quality_subject_indices = nullptr;
-	bool* d_is_high_quality_subject = nullptr;
-	int* d_num_high_quality_subject_indices = nullptr;
+    SimpleAllocationPinnedHost<bool> h_is_high_quality_subject;
+    SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;
+    SimpleAllocationPinnedHost<int> h_num_high_quality_subject_indices;
+
+    SimpleAllocationDevice<bool> d_is_high_quality_subject;
+    SimpleAllocationDevice<int> d_high_quality_subject_indices;
+    SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
 
 	// alignment input
 
