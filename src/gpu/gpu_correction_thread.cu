@@ -1192,11 +1192,7 @@ namespace gpu{
 #endif
 
         if(transFuncData.correctionOptions.useQualityScores) {
-            /*if(transFuncData.readStorageGpuData.isValidQualityData()) {
-                return BatchState::BuildMSA;
-            }else{*/
-                return BatchState::CopyQualities;
-            //}
+            return BatchState::CopyQualities;
         }else{
             return BatchState::BuildMSA;
         }
