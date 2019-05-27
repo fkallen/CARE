@@ -800,7 +800,7 @@ struct DataArrays {
 
     void printActiveDataOfSubject(int subjectIndex, std::ostream& out){
         assert(subjectIndex < n_subjects);
-#if 0
+#if 1
         size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
         const int numIndices = h_indices_per_subject[subjectIndex];
@@ -904,12 +904,13 @@ struct DataArrays {
 #endif
     }
 
-	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores){
+	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores_){
         n_subjects = n_sub;
 		n_queries = n_quer;
 		maximum_sequence_length = max_seq_length;
         maximum_sequence_bytes = max_seq_bytes;
 		min_overlap = std::max(1, std::max(min_overlap_, int(maximum_sequence_length * min_overlap_ratio_)));
+        useQualityScores = useQualityScores_;
 
 		encoded_sequence_pitch = SDIV(maximum_sequence_bytes, padding_bytes) * padding_bytes;
 		quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
@@ -1063,9 +1064,11 @@ struct DataArrays {
         cudaMemsetAsync(d_subject_read_ids, 0, d_subject_read_ids.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_candidate_read_ids, 0, d_candidate_read_ids.sizeInBytes(), stream); CUERR;
 
-        cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
+        if(useQualityScores){
+            cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
+            cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+            cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
+        }
 	}
 
 	void reset(){
@@ -1179,6 +1182,7 @@ struct DataArrays {
 	int maximum_sequence_length = 0;
     int maximum_sequence_bytes = 0;
 	int min_overlap = 1;
+    bool useQualityScores = false;
 
 	//subject indices
 
