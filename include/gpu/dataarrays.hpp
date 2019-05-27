@@ -1102,14 +1102,8 @@ struct DataArrays {
 	}
 
 
-	void set_tmp_storage_size(std::size_t newsize){
-		if(newsize > tmp_storage_allocation_size) {
-			cudaFree(d_temp_storage); CUERR;
-			cudaMalloc(&d_temp_storage, std::size_t(newsize * allocfactor)); CUERR;
-			tmp_storage_allocation_size = std::size_t(newsize * allocfactor);
-		}
-
-		tmp_storage_usable_size = newsize;
+	void set_cub_temp_storage_size(std::size_t newsize){
+		d_cub_temp_storage.resize(newsize * allocfactor);
 	}
 
 	void zero_gpu(cudaStream_t stream){
@@ -1162,7 +1156,6 @@ struct DataArrays {
 		cudaFree(a.subject_indices_data_device); CUERR;
 		cudaFreeHost(a.subject_indices_data_host); CUERR;
 
-		cudaFree(a.d_temp_storage); CUERR;
 		cudaFree(a.d_candidate_read_ids); CUERR;
 		cudaFreeHost(a.h_candidate_read_ids); CUERR;
 
@@ -1227,6 +1220,8 @@ struct DataArrays {
         d_indices_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
         d_num_indices = std::move(SimpleAllocationDevice<int>{});
 
+        d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
+
 
 
 
@@ -1262,8 +1257,6 @@ struct DataArrays {
 		a.d_subject_read_ids = nullptr;
 		a.d_candidate_read_ids = nullptr;
 
-		a.d_temp_storage = nullptr;
-
 		a.n_subjects = 0;
 		a.n_queries = 0;
 		a.n_indices = 0;
@@ -1277,12 +1270,7 @@ struct DataArrays {
 		a.encoded_sequence_pitch = 0;
 
 		a.quality_pitch = 0;
-
 		a.sequence_pitch = 0;
-
-		a.tmp_storage_allocation_size = 0;
-		a.tmp_storage_usable_size = 0;
-
 		a.msa_pitch = 0;
 		a.msa_weights_pitch = 0;
 		a.candidate_ids_allocation_size = 0;
@@ -1406,11 +1394,8 @@ struct DataArrays {
     SimpleAllocationDevice<bool> d_alignment_isValid;
     SimpleAllocationDevice<BestAlignment_t> d_alignment_best_alignment_flags;
 
-	//tmp storage
-	std::size_t tmp_storage_allocation_size = 0;
-	std::size_t tmp_storage_usable_size = 0;
-	char* d_temp_storage = nullptr;
-
+	//tmp storage for cub
+    SimpleAllocationDevice<char> d_cub_temp_storage;
 
 
 	// multiple sequence alignment

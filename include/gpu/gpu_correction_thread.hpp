@@ -192,9 +192,6 @@ struct ErrorCorrectionThreadOnlyGPU {
 
 		DataArrays* dataArrays;
 
-        BatchDataHost batchDataHost;
-        BatchDataDevice batchDataDevice;
-
         bool doImproveMSA = false;
         int numMinimizations = 0;
         int previousNumIndices = 0;

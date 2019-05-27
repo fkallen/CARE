@@ -652,7 +652,7 @@ namespace gpu{
 
                 temp_storage_bytes = max_temp_storage_bytes;
 
-                //dataArrays.set_tmp_storage_size(max_temp_storage_bytes);
+                dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
                 dataArrays.zero_gpu(streams[primary_stream_index]);
 
                 auto roundToNextMultiple = [](int num, int factor){
@@ -664,7 +664,7 @@ namespace gpu{
                                                                     int(transFuncData.maxSequenceLength * transFuncData.min_overlap_ratio)));
                 const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);*/
 
-                batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
+                //batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
                 /*batch.batchDataDevice.resize(int(batch.tasks.size()),
                                             batch.initialNumberOfCandidates,
                                             roundToNextMultiple(transFuncData.maxSequenceLength, 4),
@@ -982,9 +982,10 @@ namespace gpu{
                             select_op);
 
         //Writes indices of candidates with alignmentflag != None to d_indices
+        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
-        cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp,
-                                    batch.batchDataDevice.cubTemp.sizeRef(),
+        cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
+                                    cubTempSize,
                                     cub::CountingInputIterator<int>(0),
                                     d_isGoodAlignment,
                                     dataArrays.d_indices.get(),
@@ -993,8 +994,8 @@ namespace gpu{
                                     streams[primary_stream_index]); CUERR;
 
         //calculate indices_per_subject
-        cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp,
-                    batch.batchDataDevice.cubTemp.sizeRef(),
+        cub::DeviceHistogram::HistogramRange(dataArrays.d_cub_temp_storage.get(),
+                    cubTempSize,
                     dataArrays.d_indices.get(),
                     dataArrays.d_indices_per_subject.get(),
                     dataArrays.n_subjects+1,
@@ -1008,8 +1009,8 @@ namespace gpu{
                                 0,
                                 streams[primary_stream_index]);
 
-        cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp,
-                    batch.batchDataDevice.cubTemp.sizeRef(),
+        cub::DeviceScan::InclusiveSum(dataArrays.d_cub_temp_storage.get(),
+                    cubTempSize,
                     dataArrays.d_indices_per_subject.get(),
                     dataArrays.d_indices_per_subject_prefixsum.get()+1,
                     dataArrays.n_subjects,
@@ -1090,8 +1091,10 @@ namespace gpu{
         //where each pair is composed of (key: d_alignment_best_alignment_flags[d_indices[i]], value: d_indices[i])
         static_assert(sizeof(char) == sizeof(BestAlignment_t), "");
 
-        cub::DeviceSegmentedRadixSort::SortPairs(batch.batchDataDevice.cubTemp,
-                                                batch.batchDataDevice.cubTemp.sizeRef(),
+        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+
+        cub::DeviceSegmentedRadixSort::SortPairs(dataArrays.d_cub_temp_storage.get(),
+                                                cubTempSize,
                                                 (const char*) d_alignment_best_alignment_flags_compact,
                                                 (char*)d_alignment_best_alignment_flags_discardedoutput,
                                                 dataArrays.d_indices,
@@ -1567,8 +1570,10 @@ namespace gpu{
 
                 call_fill_kernel_async(d_newIndices, dataArrays.n_queries, -1, streams[primary_stream_index]);
 
-                cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp,
-                            batch.batchDataDevice.cubTemp.sizeRef(),
+                size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+
+                cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
+                            cubTempSize,
                             cub::CountingInputIterator<int>{0},
                             d_shouldBeKept,
                             d_shouldBeKept_positions,
@@ -1590,8 +1595,8 @@ namespace gpu{
                     streams[primary_stream_index]); CUERR;
 
                 //calculate indices per subject
-                cub::DeviceHistogram::HistogramRange(batch.batchDataDevice.cubTemp,
-                            batch.batchDataDevice.cubTemp.sizeRef(),
+                cub::DeviceHistogram::HistogramRange(dataArrays.d_cub_temp_storage.get(),
+                            cubTempSize,
                             d_newIndices,
                             dataArrays.d_indices_per_subject.get(),
                             dataArrays.n_subjects+1,
@@ -1605,8 +1610,8 @@ namespace gpu{
                                         0,
                                         streams[primary_stream_index]);
 
-                cub::DeviceScan::InclusiveSum(batch.batchDataDevice.cubTemp,
-                            batch.batchDataDevice.cubTemp.sizeRef(),
+                cub::DeviceScan::InclusiveSum(dataArrays.d_cub_temp_storage.get(),
+                            cubTempSize,
                             dataArrays.d_indices_per_subject.get(),
                             dataArrays.d_indices_per_subject_prefixsum.get()+1,
                             dataArrays.n_subjects,
@@ -1942,8 +1947,11 @@ namespace gpu{
 							dataArrays.n_subjects,
 							streams[primary_stream_index]); CUERR;
 */
-                cub::DeviceSelect::Flagged(batch.batchDataDevice.cubTemp,
-                            batch.batchDataDevice.cubTemp.sizeRef(),
+
+                size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+
+                cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
+                            cubTempSize,
                             cub::CountingInputIterator<int>(0),
                             dataArrays.d_is_high_quality_subject,
                             dataArrays.d_high_quality_subject_indices,
@@ -3035,9 +3043,6 @@ namespace gpu{
 
         for(auto& batch : batches){
             batch.waitUntilAllCallbacksFinished();
-
-            batch.batchDataDevice.destroy();
-            batch.batchDataHost.destroy();
         }
 
         assert(stopAndAbort || tmptasksBuffer.empty());
