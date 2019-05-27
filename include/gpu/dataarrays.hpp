@@ -1038,40 +1038,16 @@ struct DataArrays {
 
 
 		// candidate indices
-		if(d_num_indices == nullptr) {
-			cudaMalloc(&d_num_indices, sizeof(int)); CUERR;
-		}
-		if(h_num_indices == nullptr) {
-			cudaMallocHost(&h_num_indices, sizeof(int)); CUERR;
-		}
 
-		std::size_t memIndices = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memIndicesPerSubject = SDIV(n_sub* sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memIndicesPerSubjectPrefixSum = SDIV((n_sub+1)* sizeof(int), padding_bytes) * padding_bytes;
+        h_indices.resize(n_quer * allocfactor);
+        h_indices_per_subject.resize(n_sub * allocfactor);
+        h_indices_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
+        h_num_indices.resize(1);
 
-		std::size_t required_indices_transfer_data_allocation_size = memIndices
-		                                                             + memIndicesPerSubject
-		                                                             + memIndicesPerSubjectPrefixSum;
-
-		if(required_indices_transfer_data_allocation_size > indices_transfer_data_allocation_size) {
-			//std::cout << "D" << std::endl;
-			cudaFree(indices_transfer_data_device); CUERR;
-			cudaMalloc(&indices_transfer_data_device, std::size_t(required_indices_transfer_data_allocation_size * allocfactor)); CUERR;
-			cudaFreeHost(indices_transfer_data_host); CUERR;
-			cudaMallocHost(&indices_transfer_data_host, std::size_t(required_indices_transfer_data_allocation_size * allocfactor)); CUERR;
-
-			indices_transfer_data_allocation_size = std::size_t(required_indices_transfer_data_allocation_size * allocfactor);
-		}
-
-		indices_transfer_data_usable_size = required_indices_transfer_data_allocation_size;
-
-		h_indices = (int*)indices_transfer_data_host;
-		h_indices_per_subject = (int*)(((char*)h_indices) + memIndices);
-		h_indices_per_subject_prefixsum = (int*)(((char*)h_indices_per_subject) + memIndicesPerSubject);
-
-		d_indices = (int*)indices_transfer_data_device;
-		d_indices_per_subject = (int*)(((char*)d_indices) + memIndices);
-		d_indices_per_subject_prefixsum = (int*)(((char*)d_indices_per_subject) + memIndicesPerSubject);
+        d_indices.resize(n_quer * allocfactor);
+        d_indices_per_subject.resize(n_sub * allocfactor);
+        d_indices_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
+        d_num_indices.resize(1);
 
 		//qualitiy scores
 		if(useQualityScores) {
@@ -1176,22 +1152,6 @@ struct DataArrays {
 		//cudaMemsetAsync(d_candidate_read_ids, 0, candidate_ids_usable_size); CUERR;
 	}
 
-	void fill_d_indices(int val, cudaStream_t stream){
-		/*thrust::fill(thrust::cuda::par.on(stream),
-					thrust::device_ptr<int>((int*)indices_transfer_data_device),
-					thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
-					val);*/
-
-        /*thrust::async::for_each(thrust::cuda::par.on(stream),
-					thrust::device_ptr<int>((int*)indices_transfer_data_device),
-					thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
-					[val] __device__ (int& i){i = val;});*/
-        assert(indices_transfer_data_usable_size % sizeof(int) == 0);
-
-        const int elements = indices_transfer_data_usable_size / sizeof(int);
-        call_fill_kernel_async((int*)indices_transfer_data_device, elements, val, stream);
-	}
-
 	void reset(){
 		auto& a = *this;
 
@@ -1201,10 +1161,6 @@ struct DataArrays {
 
 		cudaFree(a.subject_indices_data_device); CUERR;
 		cudaFreeHost(a.subject_indices_data_host); CUERR;
-		cudaFree(a.d_num_indices); CUERR;
-		cudaFreeHost(a.h_num_indices); CUERR;
-		cudaFree(a.indices_transfer_data_device); CUERR;
-		cudaFreeHost(a.indices_transfer_data_host); CUERR;
 
 		cudaFree(a.d_temp_storage); CUERR;
 		cudaFree(a.d_candidate_read_ids); CUERR;
@@ -1261,6 +1217,18 @@ struct DataArrays {
         d_subject_is_corrected = std::move(SimpleAllocationDevice<bool>{});
         d_indices_of_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
 
+        h_indices = std::move(SimpleAllocationPinnedHost<int>{});
+        h_indices_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
+        h_indices_per_subject_prefixsum = std::move(SimpleAllocationPinnedHost<int>{});
+        h_num_indices = std::move(SimpleAllocationPinnedHost<int>{});
+
+        d_indices = std::move(SimpleAllocationDevice<int>{});
+        d_indices_per_subject = std::move(SimpleAllocationDevice<int>{});
+        d_indices_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
+        d_num_indices = std::move(SimpleAllocationDevice<int>{});
+
+
+
 
 
 		a.subject_indices_data_device = nullptr;
@@ -1293,16 +1261,6 @@ struct DataArrays {
         a.d_tiles_per_subject_prefixsum = nullptr;
 		a.d_subject_read_ids = nullptr;
 		a.d_candidate_read_ids = nullptr;
-		a.indices_transfer_data_host = nullptr;
-		a.indices_transfer_data_device = nullptr;
-		a.h_indices = nullptr;
-		a.h_indices_per_subject = nullptr;
-		a.h_indices_per_subject_prefixsum = nullptr;
-		a.d_indices = nullptr;
-		a.d_indices_per_subject = nullptr;
-		a.d_indices_per_subject_prefixsum = nullptr;
-		a.h_num_indices = nullptr;
-		a.d_num_indices = nullptr;
 
 		a.d_temp_storage = nullptr;
 
@@ -1317,8 +1275,7 @@ struct DataArrays {
 		a.alignment_transfer_data_allocation_size = 0;
 		a.alignment_transfer_data_usable_size = 0;
 		a.encoded_sequence_pitch = 0;
-		a.indices_transfer_data_allocation_size = 0;
-		a.indices_transfer_data_usable_size = 0;
+
 		a.quality_pitch = 0;
 
 		a.sequence_pitch = 0;
@@ -1396,21 +1353,16 @@ struct DataArrays {
 	read_number* d_candidate_read_ids = nullptr;
 
 	//indices
-	void* indices_transfer_data_host = nullptr;
-	void* indices_transfer_data_device = nullptr;
-	std::size_t indices_transfer_data_allocation_size = 0;
-	std::size_t indices_transfer_data_usable_size = 0;
 
-	int* h_indices = nullptr;
-	int* h_indices_per_subject = nullptr;
-	int* h_indices_per_subject_prefixsum = nullptr;
+    SimpleAllocationPinnedHost<int> h_indices;
+    SimpleAllocationPinnedHost<int> h_indices_per_subject;
+    SimpleAllocationPinnedHost<int> h_indices_per_subject_prefixsum;
+    SimpleAllocationPinnedHost<int> h_num_indices;
 
-	int* d_indices = nullptr;
-	int* d_indices_per_subject = nullptr;
-	int* d_indices_per_subject_prefixsum = nullptr;
-
-	int* h_num_indices = nullptr;
-	int* d_num_indices = nullptr;
+    SimpleAllocationDevice<int> d_indices;
+    SimpleAllocationDevice<int> d_indices_per_subject;
+    SimpleAllocationDevice<int> d_indices_per_subject_prefixsum;
+    SimpleAllocationDevice<int> d_num_indices;
 
 	std::size_t quality_pitch = 0;
 
