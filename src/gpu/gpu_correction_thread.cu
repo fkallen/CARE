@@ -1951,11 +1951,34 @@ namespace gpu{
 
 			cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
-			cudaMemcpyAsync(dataArrays.correction_results_transfer_data_host,
-						dataArrays.correction_results_transfer_data_device,
-						dataArrays.correction_results_transfer_data_usable_size,
-						D2H,
-						streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_corrected_subjects,
+                            dataArrays.d_corrected_subjects,
+                            dataArrays.d_corrected_subjects.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_subject_is_corrected,
+                            dataArrays.d_subject_is_corrected,
+                            dataArrays.d_subject_is_corrected.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+
+            if(transFuncData.correctionOptions.correctCandidates){
+                cudaMemcpyAsync(dataArrays.h_corrected_candidates,
+                                dataArrays.d_corrected_candidates,
+                                dataArrays.d_corrected_candidates.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_num_corrected_candidates,
+                                dataArrays.d_num_corrected_candidates,
+                                dataArrays.d_num_corrected_candidates.sizeInBytes(),
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+                cudaMemcpyAsync(dataArrays.h_indices_of_corrected_candidates,
+                                dataArrays.d_indices_of_corrected_candidates,
+                                dataArrays.d_indices_of_corrected_candidates.sizeInBytes(), 
+                                D2H,
+                                streams[primary_stream_index]); CUERR;
+            }
 
 			assert(cudaSuccess == cudaEventQuery(events[result_transfer_finished_event_index])); CUERR;
 
@@ -2382,7 +2405,7 @@ namespace gpu{
                                 D2H,
                                 streams[primary_stream_index]);
 
-                cudaMemcpyAsync(dataArrays.h_weights, 
+                cudaMemcpyAsync(dataArrays.h_weights,
                                 dataArrays.d_weights,
                                 dataArrays.d_weights.sizeInBytes(),
                                 D2H,

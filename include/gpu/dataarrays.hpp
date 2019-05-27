@@ -1086,42 +1086,17 @@ struct DataArrays {
 
 		//correction results
 
-		std::size_t memCorrectedSubjects = n_sub * sequence_pitch;
-		std::size_t memCorrectedCandidates = n_quer * sequence_pitch;
-		std::size_t memNumCorrectedCandidates = SDIV(n_sub * sizeof(int), padding_bytes) * padding_bytes;
-		std::size_t memSubjectIsCorrected = SDIV(n_sub * sizeof(bool), padding_bytes) * padding_bytes;
-		std::size_t memIndicesOfCorrectedCandidates = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
+        h_corrected_subjects.resize(n_sub * sequence_pitch * allocfactor);
+        h_corrected_candidates.resize(n_quer * sequence_pitch * allocfactor);
+        h_num_corrected_candidates.resize(n_sub * allocfactor);
+        h_subject_is_corrected.resize(n_sub * allocfactor);
+        h_indices_of_corrected_candidates.resize(n_quer * allocfactor);
 
-		std::size_t required_correction_results_transfer_data_allocation_size = memCorrectedSubjects
-		                                                                        + memCorrectedCandidates
-		                                                                        + memNumCorrectedCandidates
-		                                                                        + memSubjectIsCorrected
-		                                                                        + memIndicesOfCorrectedCandidates;
-
-		if(required_correction_results_transfer_data_allocation_size > correction_results_transfer_data_allocation_size) {
-			//std::cout << "F" << std::endl;
-			cudaFree(correction_results_transfer_data_device); CUERR;
-			cudaMalloc(&correction_results_transfer_data_device, std::size_t(required_correction_results_transfer_data_allocation_size * allocfactor)); CUERR;
-			cudaFreeHost(correction_results_transfer_data_host); CUERR;
-			cudaMallocHost(&correction_results_transfer_data_host, std::size_t(required_correction_results_transfer_data_allocation_size * allocfactor)); CUERR;
-
-			correction_results_transfer_data_allocation_size = std::size_t(required_correction_results_transfer_data_allocation_size * allocfactor);
-		}
-
-		correction_results_transfer_data_usable_size = required_correction_results_transfer_data_allocation_size;
-
-		h_corrected_subjects = (char*)correction_results_transfer_data_host;
-		h_corrected_candidates = (char*)(((char*)h_corrected_subjects) + memCorrectedSubjects);
-		h_num_corrected_candidates = (int*)(((char*)h_corrected_candidates) + memCorrectedCandidates);
-		h_subject_is_corrected = (bool*)(((char*)h_num_corrected_candidates) + memNumCorrectedCandidates);
-		h_indices_of_corrected_candidates = (int*)(((char*)h_subject_is_corrected) + memSubjectIsCorrected);
-
-		d_corrected_subjects = (char*)correction_results_transfer_data_device;
-		d_corrected_candidates = (char*)(((char*)d_corrected_subjects) + memCorrectedSubjects);
-		d_num_corrected_candidates = (int*)(((char*)d_corrected_candidates) + memCorrectedCandidates);
-		d_subject_is_corrected = (bool*)(((char*)d_num_corrected_candidates) + memNumCorrectedCandidates);
-		d_indices_of_corrected_candidates = (int*)(((char*)d_subject_is_corrected) + memSubjectIsCorrected);
-
+        d_corrected_subjects.resize(n_sub * sequence_pitch * allocfactor);
+        d_corrected_candidates.resize(n_quer * sequence_pitch * allocfactor);
+        d_num_corrected_candidates.resize(n_sub * allocfactor);
+        d_subject_is_corrected.resize(n_sub * allocfactor);
+        d_indices_of_corrected_candidates.resize(n_quer * allocfactor);
 
 		//multiple sequence alignment
 
@@ -1162,20 +1137,25 @@ struct DataArrays {
 	}
 
 	void zero_gpu(cudaStream_t stream){
-        cudaMemsetAsync(d_consensus.get(), 0, d_consensus.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_support.get(), 0, d_support.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_coverage.get(), 0, d_coverage.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_origWeights.get(), 0, d_origWeights.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_origCoverages.get(), 0, d_origCoverages.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_msa_column_properties.get(), 0, d_msa_column_properties.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_counts.get(), 0, d_counts.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_weights.get(), 0, d_weights.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_consensus, 0, d_consensus.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_support, 0, d_support.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_coverage, 0, d_coverage.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_origWeights, 0, d_origWeights.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_origCoverages, 0, d_origCoverages.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_msa_column_properties, 0, d_msa_column_properties.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_counts, 0, d_counts.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_weights, 0, d_weights.sizeInBytes(), stream); CUERR;
 
-		cudaMemsetAsync(correction_results_transfer_data_device, 0, correction_results_transfer_data_usable_size, stream); CUERR;
+        cudaMemsetAsync(d_corrected_subjects, 0, d_corrected_subjects.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_corrected_candidates, 0, d_corrected_candidates.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_num_corrected_candidates, 0, d_num_corrected_candidates.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_subject_is_corrected, 0, d_subject_is_corrected.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_indices_of_corrected_candidates, 0, d_indices_of_corrected_candidates.sizeInBytes(), stream); CUERR;
 
-        cudaMemsetAsync(d_subject_qualities.get(), 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_qualities.get(), 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_qualities_tmp.get(), 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
+
+        cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
 
 		//cudaMemsetAsync(indices_transfer_data_device, 0, indices_transfer_data_usable_size, stream); CUERR;
 		/*thrust::fill(thrust::cuda::par.on(stream),
@@ -1185,12 +1165,12 @@ struct DataArrays {
 		cudaMemsetAsync(d_num_indices, 0, sizeof(int), stream); CUERR;
 		cudaMemsetAsync(subject_indices_data_device, 0, subject_indices_data_usable_size, stream); CUERR;
 
-        cudaMemsetAsync(d_alignment_scores.get(), 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_overlaps.get(), 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_shifts.get(), 0, d_alignment_shifts.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_nOps.get(), 0, d_alignment_nOps.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_isValid.get(), 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_best_alignment_flags.get(), 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_scores, 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_overlaps, 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_shifts, 0, d_alignment_shifts.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_nOps, 0, d_alignment_nOps.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_isValid, 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_alignment_best_alignment_flags, 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
 
 		cudaMemsetAsync(alignment_transfer_data_device, 0, alignment_transfer_data_usable_size, stream); CUERR;
 		//cudaMemsetAsync(d_candidate_read_ids, 0, candidate_ids_usable_size); CUERR;
@@ -1225,8 +1205,7 @@ struct DataArrays {
 		cudaFreeHost(a.h_num_indices); CUERR;
 		cudaFree(a.indices_transfer_data_device); CUERR;
 		cudaFreeHost(a.indices_transfer_data_host); CUERR;
-		cudaFree(a.correction_results_transfer_data_device); CUERR;
-		cudaFreeHost(a.correction_results_transfer_data_host); CUERR;
+
 		cudaFree(a.d_temp_storage); CUERR;
 		cudaFree(a.d_candidate_read_ids); CUERR;
 		cudaFreeHost(a.h_candidate_read_ids); CUERR;
@@ -1270,6 +1249,19 @@ struct DataArrays {
         d_alignment_isValid = std::move(SimpleAllocationDevice<bool>{});
         d_alignment_best_alignment_flags = std::move(SimpleAllocationDevice<BestAlignment_t>{});
 
+        h_corrected_subjects = std::move(SimpleAllocationPinnedHost<char>{});
+        h_corrected_candidates = std::move(SimpleAllocationPinnedHost<char>{});
+        h_num_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
+        h_subject_is_corrected = std::move(SimpleAllocationPinnedHost<bool>{});
+        h_indices_of_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
+
+        d_corrected_subjects = std::move(SimpleAllocationDevice<char>{});
+        d_corrected_candidates = std::move(SimpleAllocationDevice<char>{});
+        d_num_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
+        d_subject_is_corrected = std::move(SimpleAllocationDevice<bool>{});
+        d_indices_of_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
+
+
 
 		a.subject_indices_data_device = nullptr;
 		a.subject_indices_data_host = nullptr;
@@ -1311,18 +1303,6 @@ struct DataArrays {
 		a.d_indices_per_subject_prefixsum = nullptr;
 		a.h_num_indices = nullptr;
 		a.d_num_indices = nullptr;
-		a.correction_results_transfer_data_host = nullptr;
-		a.correction_results_transfer_data_device = nullptr;
-		a.h_corrected_subjects = nullptr;
-		a.h_corrected_candidates = nullptr;
-		a.h_num_corrected_candidates = nullptr;
-		a.h_subject_is_corrected = nullptr;
-		a.h_indices_of_corrected_candidates = nullptr;
-		a.d_corrected_subjects = nullptr;
-		a.d_corrected_candidates = nullptr;
-		a.d_num_corrected_candidates = nullptr;
-		a.d_subject_is_corrected = nullptr;
-		a.d_indices_of_corrected_candidates = nullptr;
 
 		a.d_temp_storage = nullptr;
 
@@ -1340,8 +1320,7 @@ struct DataArrays {
 		a.indices_transfer_data_allocation_size = 0;
 		a.indices_transfer_data_usable_size = 0;
 		a.quality_pitch = 0;
-		a.correction_results_transfer_data_allocation_size = 0;
-		a.correction_results_transfer_data_usable_size = 0;
+
 		a.sequence_pitch = 0;
 
 		a.tmp_storage_allocation_size = 0;
@@ -1444,23 +1423,19 @@ struct DataArrays {
 
 	//correction results output
 
-	void* correction_results_transfer_data_host = nullptr;
-	void* correction_results_transfer_data_device = nullptr;
-	std::size_t correction_results_transfer_data_allocation_size = 0;
-	std::size_t correction_results_transfer_data_usable_size = 0;
 	std::size_t sequence_pitch = 0;
 
-	char* h_corrected_subjects = nullptr;
-	char* h_corrected_candidates = nullptr;
-	int* h_num_corrected_candidates = nullptr;
-	bool* h_subject_is_corrected = nullptr;
-	int* h_indices_of_corrected_candidates = nullptr;
+    SimpleAllocationPinnedHost<char> h_corrected_subjects;
+    SimpleAllocationPinnedHost<char> h_corrected_candidates;
+    SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
+    SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
+    SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
 
-	char* d_corrected_subjects = nullptr;
-	char* d_corrected_candidates = nullptr;
-	int* d_num_corrected_candidates = nullptr;
-	bool* d_subject_is_corrected = nullptr;
-	int* d_indices_of_corrected_candidates = nullptr;
+    SimpleAllocationDevice<char> d_corrected_subjects;
+    SimpleAllocationDevice<char> d_corrected_candidates;
+    SimpleAllocationDevice<int> d_num_corrected_candidates;
+    SimpleAllocationDevice<bool> d_subject_is_corrected;
+    SimpleAllocationDevice<int> d_indices_of_corrected_candidates;
 
 
 	//alignment results
