@@ -904,24 +904,6 @@ struct DataArrays {
 #endif
     }
 
-	void allocCandidateIds(int n_quer){
-		memCandidateIds = SDIV(sizeof(read_number) * n_quer, padding_bytes) * padding_bytes;
-
-		std::size_t required_size = memCandidateIds;
-
-		if(required_size > candidate_ids_allocation_size) {
-			cudaFree(d_candidate_read_ids); CUERR;
-			cudaFreeHost(h_candidate_read_ids); CUERR;
-
-			cudaMalloc(&d_candidate_read_ids, size_t(required_size * allocfactor)); CUERR;
-			cudaMallocHost(&h_candidate_read_ids, size_t(required_size * allocfactor)); CUERR;
-
-			candidate_ids_allocation_size = required_size;
-		}
-
-		candidate_ids_usable_size = required_size;
-	}
-
 	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores){
         n_subjects = n_sub;
 		n_queries = n_quer;
@@ -933,57 +915,25 @@ struct DataArrays {
 		quality_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
 		sequence_pitch = SDIV(max_seq_length * sizeof(char), padding_bytes) * padding_bytes;
 
-		//alignment input
-		memSubjects = n_sub * encoded_sequence_pitch;
-		memSubjectLengths = SDIV(n_sub * sizeof(int), padding_bytes) * padding_bytes;
-		memNqueriesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
-        memTilesPrefixSum = SDIV((n_sub+1) * sizeof(int), padding_bytes) * padding_bytes;
-		memQueries = n_quer * encoded_sequence_pitch;
-		memQueryLengths = SDIV(n_quer * sizeof(int), padding_bytes) * padding_bytes;
-		memSubjectIds = SDIV(sizeof(read_number) * n_sub, padding_bytes) * padding_bytes;
-		//memCandidateIds = SDIV(sizeof(read_number) * n_quer, padding_bytes) * padding_bytes;
+		//sequence input data
 
-		std::size_t required_alignment_transfer_data_allocation_size = memSubjects
-		                                                               + memSubjectLengths
-		                                                               + memNqueriesPrefixSum
-                                                                       + memNqueriesPrefixSum
-                                                                       + memTilesPrefixSum
-		                                                               + memQueries
-		                                                               + memQueryLengths
-		                                                               + memSubjectIds;
-		//+ memCandidateIds;
+        h_subject_sequences_data.resize(n_sub * encoded_sequence_pitch * allocfactor);
+        h_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch * allocfactor);
+        h_subject_sequences_lengths.resize(n_sub * allocfactor);
+        h_candidate_sequences_lengths.resize(n_quer * allocfactor);
+        h_candidates_per_subject.resize(n_sub * allocfactor);
+        h_candidates_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
+        h_subject_read_ids.resize(n_sub * allocfactor);
+        h_candidate_read_ids.resize(n_quer * allocfactor);
 
-		if(required_alignment_transfer_data_allocation_size > alignment_transfer_data_allocation_size) {
-			//std::cout << "A" << std::endl;
-			cudaFree(alignment_transfer_data_device); CUERR;
-			cudaMalloc(&alignment_transfer_data_device, std::size_t(required_alignment_transfer_data_allocation_size * allocfactor)); CUERR;
-			cudaFreeHost(alignment_transfer_data_host); CUERR;
-			cudaMallocHost(&alignment_transfer_data_host, std::size_t(required_alignment_transfer_data_allocation_size * allocfactor)); CUERR;
-
-			alignment_transfer_data_allocation_size = std::size_t(required_alignment_transfer_data_allocation_size * allocfactor);
-		}
-
-		alignment_transfer_data_usable_size = required_alignment_transfer_data_allocation_size;
-
-		h_subject_sequences_data = (char*)alignment_transfer_data_host;
-		h_candidate_sequences_data = (char*)(((char*)h_subject_sequences_data) + memSubjects);
-		h_subject_sequences_lengths = (int*)(((char*)h_candidate_sequences_data) + memQueries);
-		h_candidate_sequences_lengths = (int*)(((char*)h_subject_sequences_lengths) + memSubjectLengths);
-        h_candidates_per_subject = (int*)(((char*)h_candidate_sequences_lengths) + memQueryLengths);
-		h_candidates_per_subject_prefixsum = (int*)(((char*)h_candidates_per_subject) + memNqueriesPrefixSum);
-        h_tiles_per_subject_prefixsum = (int*)(((char*)h_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
-		h_subject_read_ids = (read_number*)(((char*)h_tiles_per_subject_prefixsum) + memTilesPrefixSum);
-		//h_candidate_read_ids = (read_number*)(((char*)h_subject_read_ids) + memSubjectIds);
-
-		d_subject_sequences_data = (char*)alignment_transfer_data_device;
-		d_candidate_sequences_data = (char*)(((char*)d_subject_sequences_data) + memSubjects);
-		d_subject_sequences_lengths = (int*)(((char*)d_candidate_sequences_data) + memQueries);
-		d_candidate_sequences_lengths = (int*)(((char*)d_subject_sequences_lengths) + memSubjectLengths);
-        d_candidates_per_subject = (int*)(((char*)d_candidate_sequences_lengths) + memQueryLengths);
-		d_candidates_per_subject_prefixsum = (int*)(((char*)d_candidates_per_subject) + memNqueriesPrefixSum);
-        d_tiles_per_subject_prefixsum = (int*)(((char*)d_candidates_per_subject_prefixsum) + memNqueriesPrefixSum);
-		d_subject_read_ids = (read_number*)(((char*)d_tiles_per_subject_prefixsum) + memTilesPrefixSum);
-		//d_candidate_read_ids = (read_number*)(((char*)d_subject_read_ids) + memSubjectIds);
+        d_subject_sequences_data.resize(n_sub * encoded_sequence_pitch * allocfactor);
+        d_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch * allocfactor);
+        d_subject_sequences_lengths.resize(n_sub * allocfactor);
+        d_candidate_sequences_lengths.resize(n_quer * allocfactor);
+        d_candidates_per_subject.resize(n_sub * allocfactor);
+        d_candidates_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
+        d_subject_read_ids.resize(n_sub * allocfactor);
+        d_candidate_read_ids.resize(n_quer * allocfactor);
 
 		//alignment output
 
@@ -1127,11 +1077,7 @@ struct DataArrays {
         cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
 
-		//cudaMemsetAsync(indices_transfer_data_device, 0, indices_transfer_data_usable_size, stream); CUERR;
-		/*thrust::fill(thrust::cuda::par.on(stream),
-		            thrust::device_ptr<int>((int*)indices_transfer_data_device),
-		            thrust::device_ptr<int>((int*)(((char*)indices_transfer_data_device) + indices_transfer_data_usable_size)),
-		            -1);*/
+
 		cudaMemsetAsync(d_num_indices, 0, sizeof(int), stream); CUERR;
 		cudaMemsetAsync(subject_indices_data_device, 0, subject_indices_data_usable_size, stream); CUERR;
 
@@ -1142,22 +1088,40 @@ struct DataArrays {
         cudaMemsetAsync(d_alignment_isValid, 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_alignment_best_alignment_flags, 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
 
-		cudaMemsetAsync(alignment_transfer_data_device, 0, alignment_transfer_data_usable_size, stream); CUERR;
-		//cudaMemsetAsync(d_candidate_read_ids, 0, candidate_ids_usable_size); CUERR;
+        cudaMemsetAsync(d_subject_sequences_data, 0, d_subject_sequences_data.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_sequences_data, 0, d_candidate_sequences_data.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_subject_sequences_lengths, 0, d_subject_sequences_lengths.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_sequences_lengths, 0, d_candidate_sequences_lengths.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidates_per_subject, 0, d_candidates_per_subject.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidates_per_subject_prefixsum, 0, d_candidates_per_subject_prefixsum.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_subject_read_ids, 0, d_subject_read_ids.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_candidate_read_ids, 0, d_candidate_read_ids.sizeInBytes(), stream); CUERR;
+
 	}
 
 	void reset(){
 		auto& a = *this;
 
-
-		cudaFree(a.alignment_transfer_data_device); CUERR;
-		cudaFreeHost(a.alignment_transfer_data_host); CUERR;
-
 		cudaFree(a.subject_indices_data_device); CUERR;
 		cudaFreeHost(a.subject_indices_data_host); CUERR;
 
-		cudaFree(a.d_candidate_read_ids); CUERR;
-		cudaFreeHost(a.h_candidate_read_ids); CUERR;
+        h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
+        h_candidate_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
+        h_subject_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
+        h_candidate_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
+        h_candidates_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
+        h_candidates_per_subject_prefixsum = std::move(SimpleAllocationPinnedHost<int>{});
+        h_subject_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
+        h_candidate_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
+
+        d_subject_sequences_data = std::move(SimpleAllocationDevice<char>{});
+        d_candidate_sequences_data = std::move(SimpleAllocationDevice<char>{});
+        d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
+        d_candidate_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
+        d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
+        d_candidates_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
+        d_subject_read_ids = std::move(SimpleAllocationDevice<read_number>{});
+        d_candidate_read_ids = std::move(SimpleAllocationDevice<read_number>{});
 
         h_subject_qualities = std::move(SimpleAllocationPinnedHost<char>{});
         h_candidate_qualities = std::move(SimpleAllocationPinnedHost<char>{});
@@ -1226,6 +1190,8 @@ struct DataArrays {
 
 
 
+
+
 		a.subject_indices_data_device = nullptr;
 		a.subject_indices_data_host = nullptr;
 		a.h_subject_indices = nullptr;
@@ -1236,26 +1202,6 @@ struct DataArrays {
 		a.d_high_quality_subject_indices = nullptr;
 		a.d_is_high_quality_subject = nullptr;
 		a.d_num_high_quality_subject_indices = nullptr;
-		a.alignment_transfer_data_host = nullptr;
-		a.alignment_transfer_data_device = nullptr;
-		a.h_subject_sequences_data = nullptr;
-		a.h_candidate_sequences_data = nullptr;
-		a.h_subject_sequences_lengths = nullptr;
-		a.h_candidate_sequences_lengths = nullptr;
-        a.h_candidates_per_subject = nullptr;
-		a.h_candidates_per_subject_prefixsum = nullptr;
-        a.h_tiles_per_subject_prefixsum = nullptr;
-		a.h_subject_read_ids = nullptr;
-		a.h_candidate_read_ids = nullptr;
-		a.d_subject_sequences_data = nullptr;
-		a.d_candidate_sequences_data = nullptr;
-		a.d_subject_sequences_lengths = nullptr;
-		a.d_candidate_sequences_lengths = nullptr;
-        a.d_candidates_per_subject = nullptr;
-		a.d_candidates_per_subject_prefixsum = nullptr;
-        a.d_tiles_per_subject_prefixsum = nullptr;
-		a.d_subject_read_ids = nullptr;
-		a.d_candidate_read_ids = nullptr;
 
 		a.n_subjects = 0;
 		a.n_queries = 0;
@@ -1265,16 +1211,13 @@ struct DataArrays {
 		a.min_overlap = 1;
 		a.subject_indices_data_allocation_size = 0;
 		a.subject_indices_data_usable_size = 0;
-		a.alignment_transfer_data_allocation_size = 0;
-		a.alignment_transfer_data_usable_size = 0;
+
 		a.encoded_sequence_pitch = 0;
 
 		a.quality_pitch = 0;
 		a.sequence_pitch = 0;
 		a.msa_pitch = 0;
 		a.msa_weights_pitch = 0;
-		a.candidate_ids_allocation_size = 0;
-		a.candidate_ids_usable_size = 0;
 	}
 
 	int deviceId = -1;
@@ -1302,43 +1245,26 @@ struct DataArrays {
 	int* d_num_high_quality_subject_indices = nullptr;
 
 	// alignment input
-	std::size_t memSubjects;
-	std::size_t memSubjectLengths;
-	std::size_t memNqueriesPrefixSum;
-    std::size_t memTilesPrefixSum;
-	std::size_t memQueries;
-	std::size_t memQueryLengths;
-	std::size_t memSubjectIds;
-	std::size_t memCandidateIds;
 
-	void* alignment_transfer_data_host = nullptr;
-	void* alignment_transfer_data_device = nullptr;
-
-	std::size_t alignment_transfer_data_allocation_size = 0;
-	std::size_t alignment_transfer_data_usable_size = 0;
-	std::size_t candidate_ids_allocation_size = 0;
-	std::size_t candidate_ids_usable_size = 0;
 	std::size_t encoded_sequence_pitch = 0;
 
-	char* h_subject_sequences_data = nullptr;
-	char* h_candidate_sequences_data = nullptr;
-	int* h_subject_sequences_lengths = nullptr;
-	int* h_candidate_sequences_lengths = nullptr;
-    int* h_candidates_per_subject = nullptr;
-	int* h_candidates_per_subject_prefixsum = nullptr;
-    int* h_tiles_per_subject_prefixsum = nullptr;
-	read_number* h_subject_read_ids = nullptr;
-	read_number* h_candidate_read_ids = nullptr;
+    SimpleAllocationPinnedHost<char> h_subject_sequences_data;
+    SimpleAllocationPinnedHost<char> h_candidate_sequences_data;
+    SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
+    SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
+    SimpleAllocationPinnedHost<int> h_candidates_per_subject;
+    SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
+    SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
+    SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
 
-	char* d_subject_sequences_data = nullptr;
-	char* d_candidate_sequences_data = nullptr;
-	int* d_subject_sequences_lengths = nullptr;
-	int* d_candidate_sequences_lengths = nullptr;
-    int* d_candidates_per_subject = nullptr;
-	int* d_candidates_per_subject_prefixsum = nullptr;
-    int* d_tiles_per_subject_prefixsum = nullptr;
-	read_number* d_subject_read_ids = nullptr;
-	read_number* d_candidate_read_ids = nullptr;
+    SimpleAllocationDevice<char> d_subject_sequences_data;
+    SimpleAllocationDevice<char> d_candidate_sequences_data;
+    SimpleAllocationDevice<int> d_subject_sequences_lengths;
+    SimpleAllocationDevice<int> d_candidate_sequences_lengths;
+    SimpleAllocationDevice<int> d_candidates_per_subject;
+    SimpleAllocationDevice<int> d_candidates_per_subject_prefixsum;
+    SimpleAllocationDevice<read_number> d_subject_read_ids;
+    SimpleAllocationDevice<read_number> d_candidate_read_ids;
 
 	//indices
 
