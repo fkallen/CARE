@@ -971,6 +971,7 @@ struct DataArrays {
 
             d_subject_qualities.resize(n_sub * quality_pitch * allocfactor);
             d_candidate_qualities.resize(n_quer * quality_pitch * allocfactor);
+            d_candidate_qualities_transposed.resize(n_quer * quality_pitch * allocfactor);
             d_candidate_qualities_tmp.resize(n_quer * quality_pitch * allocfactor);
 		}
 
@@ -1067,6 +1068,7 @@ struct DataArrays {
         if(useQualityScores){
             cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
             cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+            cudaMemsetAsync(d_candidate_qualities_transposed, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
             cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
         }
 	}
@@ -1096,6 +1098,7 @@ struct DataArrays {
 
         d_subject_qualities = std::move(SimpleAllocationDevice<char>{});
         d_candidate_qualities = std::move(SimpleAllocationDevice<char>{});
+        d_candidate_qualities_transposed = std::move(SimpleAllocationDevice<char>{});
         d_candidate_qualities_tmp = std::move(SimpleAllocationDevice<char>{});
 
         h_consensus = std::move(SimpleAllocationPinnedHost<char>{});
@@ -1235,6 +1238,7 @@ struct DataArrays {
 
     SimpleAllocationDevice<char> d_subject_qualities;
     SimpleAllocationDevice<char> d_candidate_qualities;
+    SimpleAllocationDevice<char> d_candidate_qualities_transposed;
     SimpleAllocationDevice<char> d_candidate_qualities_tmp;
 
 	//correction results output
