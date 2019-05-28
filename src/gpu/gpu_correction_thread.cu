@@ -1668,8 +1668,8 @@ namespace gpu{
 
                 //compact the quality scores
                 if(transFuncData.correctionOptions.useQualityScores){
-                    //dim3 block(128,1,1);
-                    //dim3 grid(SDIV(currentNumIndices, block.x),1,1);
+                    dim3 block(128,1,1);
+                    dim3 grid(SDIV(currentNumIndices, block.x),1,1);
 
                     char* const d_candidate_qualities = dataArrays.d_candidate_qualities;
                     char* const d_candidate_qualities_tmp = dataArrays.d_candidate_qualities_tmp;
