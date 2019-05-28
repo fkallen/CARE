@@ -64,6 +64,7 @@ public:
 
     //return false if EOF or if error occured. true otherwise
     bool getNextRead(Read* read);
+    bool getNextReadUnsafe(Read* read);
 
     std::uint64_t getReadnum() const{
         return readnum;
@@ -80,6 +81,7 @@ public:
 
     //return false if EOF or if error occured while reading file. true otherwise
     virtual bool getNextRead_impl(Read* read) = 0;
+    virtual bool getNextReadUnsafe_impl(Read* read) = 0;
 	virtual void skipBytes_impl(std::uint64_t nBytes) = 0;
 	virtual void skipReads_impl(std::uint64_t nReads) = 0;
 	std::string filename;
@@ -99,6 +101,7 @@ public:
 
 
 	bool getNextRead_impl(Read* read) override;
+    bool getNextReadUnsafe_impl(Read* read) override;
 	void skipBytes_impl(std::uint64_t nBytes) override;
 	void skipReads_impl(std::uint64_t nBytes) override;
 
@@ -128,6 +131,11 @@ void deleteFiles(std::vector<std::string> filenames);
 void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                       FileFormat originalFormat,
                       const std::vector<std::string>& filesToMerge, const std::string& outputfile);
+
+void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                    FileFormat originalFormat,
+                    const std::vector<std::string>& filesToMerge, const std::string& outputfile,
+                    size_t tempbytes);
 
 } //end namespace
 

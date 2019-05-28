@@ -28,6 +28,13 @@ namespace care{
         return b;
     }
 
+    bool SequenceFileReader::getNextReadUnsafe(Read* read){
+        bool b = getNextReadUnsafe_impl(read);
+        if(b)
+            readnum++;
+        return b;
+    }
+
     FastqReader::FastqReader(const std::string& filename_) : SequenceFileReader(filename_){
 		is.open(filename);
 		if (!(bool)is)
@@ -64,6 +71,31 @@ namespace care{
 			std::stringstream ss; ss << "unexpected file format of file " << filename << ". Line does not start with +";
 			throw std::runtime_error(ss.str());
 		}
+
+		std::getline(is, read->quality);
+		if (!is.good())
+			return false;
+
+		return !(is.fail() || is.bad());
+	}
+
+    bool FastqReader::getNextReadUnsafe_impl(Read* read){
+		if (!is.good())
+			return false;
+
+		read->reset();
+        while(std::getline(is, read->header).good() && read->header == ""){
+            ;
+        }
+		if (!is.good())
+			return false;
+
+		std::getline(is, read->sequence);
+		if (!is.good())
+			return false;
+		std::getline(is, stmp);
+		if (!is.good())
+			return false;
 
 		std::getline(is, read->quality);
 		if (!is.good())
@@ -755,6 +787,155 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 #endif
 
     std::ios::sync_with_stdio(oldsyncflag);
+}
+
+
+
+
+
+
+
+void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+                      FileFormat originalFormat,
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile,
+                        size_t tempbytes){
+
+    std::string tempfile = outputfile + "mergetempfile";
+    std::stringstream commandbuilder;
+
+    //sort the result files and save sorted result file in tempfile.
+    //Then, merge original file and tempfile, replacing the reads in
+    //original file by the corresponding reads in the tempfile.
+
+    commandbuilder << "sort --parallel=4 -k1,1 -n ";
+    for(const auto& filename : filesToMerge){
+        commandbuilder << "\"" << filename << "\" ";
+    }
+    commandbuilder << " > " << tempfile;
+
+    std::string command = commandbuilder.str();
+    TIMERSTARTCPU(sort_during_merge);
+    int r1 = std::system(command.c_str());
+
+    TIMERSTOPCPU(sort_during_merge);
+    if(r1 != 0){
+        throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+    }
+
+    std::unique_ptr<SequenceFileReader> reader;
+    switch (originalFormat) {
+    case FileFormat::FASTQ:
+        reader.reset(new FastqReader(originalReadFile));
+        break;
+    default:
+        throw std::runtime_error("Merging: Invalid file format.");
+    }
+
+    std::ifstream correctionsstream(tempfile);
+    std::ofstream outputstream(outputfile);
+
+    std::string correctionline;
+    //loop over correction sequences
+    TIMERSTARTCPU(actualmerging);
+
+#if 1
+    std::vector<std::string> correctionLines;
+    constexpr int maxCorrectionLines = 1;
+    constexpr int maxCachedOutputReads = 1;
+    correctionLines.reserve(maxCorrectionLines);
+
+    while(std::getline(correctionsstream, correctionline)){
+        correctionLines.clear();
+
+        correctionLines.emplace_back(correctionline);
+        int lines = 1;
+
+        while(lines < maxCorrectionLines && std::getline(correctionsstream, correctionline)){
+            correctionLines.emplace_back(correctionline);
+            lines++;
+        }
+
+        int cachedOutputReads = 0;
+        std::stringstream outstringstream;
+        for(int i = 0; i < lines; i++){
+            std::stringstream ss(correctionLines[i]);
+
+            std::uint64_t correctionReadId;
+            std::string correctedSequence;
+            ss >> correctionReadId >> correctedSequence;
+
+            std::uint64_t originalReadId = reader->getReadnum();
+            Read read;
+            //copy preceding reads from original file
+            while(originalReadId < correctionReadId){
+                bool valid = reader->getNextRead(&read);
+
+                assert(valid);
+
+                outstringstream << read.header << '\n' << read.sequence << '\n';
+                if (originalFormat == FileFormat::FASTQ)
+                    outstringstream << '+' << '\n' << read.quality << '\n';
+
+                originalReadId = reader->getReadnum();
+
+                cachedOutputReads++;
+
+                if(cachedOutputReads >= maxCachedOutputReads){
+                    outputstream << outstringstream.rdbuf();
+                    cachedOutputReads = 0;
+                    outstringstream.str(std::string());
+                    outstringstream.clear();
+                }
+            }
+            //replace sequence of next read with corrected sequence
+            bool valid = reader->getNextRead(&read);
+
+            assert(valid);
+
+            outstringstream << read.header << '\n' << correctedSequence << '\n';
+            if (originalFormat == FileFormat::FASTQ)
+                outstringstream << '+' << '\n' << read.quality << '\n';
+
+            cachedOutputReads++;
+
+            if(cachedOutputReads >= maxCachedOutputReads){
+                outputstream << outstringstream.rdbuf();
+                cachedOutputReads = 0;
+                outstringstream.str(std::string());
+                outstringstream.clear();
+            }
+        }
+
+        if(cachedOutputReads >= 0){
+            outputstream << outstringstream.rdbuf();
+            cachedOutputReads = 0;
+            outstringstream.str(std::string());
+            outstringstream.clear();
+        }
+
+    }
+
+#endif
+
+    //copy remaining reads from original file
+    Read read;
+
+    TIMERSTARTCPU(copy_remaining_reads);
+    while(reader->getNextReadUnsafe(&read)){
+        outputstream << read.header << '\n' << read.sequence << '\n';
+        if (originalFormat == FileFormat::FASTQ)
+            outputstream << '+' << '\n' << read.quality << '\n';
+    }
+
+    outputstream.flush();
+    outputstream.close();
+
+    TIMERSTOPCPU(copy_remaining_reads);
+
+    TIMERSTOPCPU(actualmerging);
+
+    deleteFiles({tempfile});
+
 }
 
 
