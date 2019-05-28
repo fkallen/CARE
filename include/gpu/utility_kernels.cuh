@@ -80,6 +80,64 @@ void call_compact_kernel_async(T* out, const T* in, const int* indices, const in
     compact_kernel_nptr<<<grid, block, 0, stream>>>(out, in, indices, n); CUERR;
 }
 
+
+template<int blocksize_x, int blocksize_y, class T>
+__global__
+void transpose_kernel(T* __restrict__ output, const T* __restrict__ input, int numRows, int numColumns, int columnpitchelements){
+    constexpr int tilesize = 32;
+    __shared__ T tile[tilesize][tilesize+1];
+
+    const int requiredTilesX = SDIV(numColumns, tilesize);
+    const int requiredTilesY = SDIV(numRows, tilesize);
+    const int dstNumRows = numColumns;
+    const int dstNumColumns = numRows;
+
+    for(int blockId = blockIdx.x; blockId < requiredTilesX * requiredTilesY; blockId += gridDim.x){
+        const int tile_id_x = blockId % requiredTilesX;
+        const int tile_id_y = blockId / requiredTilesX;
+
+        for(int tile_x = threadIdx.x; tile_x < tilesize; tile_x += blocksize_x){
+            for(int tile_y = threadIdx.y; tile_y < tilesize; tile_y += blocksize_y){
+                const int srcColumn = tile_id_x * tilesize + tile_x;
+                const int srcRow = tile_id_y * tilesize + tile_y;
+
+                if(srcColumn < numColumns && srcRow < numRows){
+                    tile[tile_y][tile_x] = input[srcRow * columnpitchelements + srcColumn];
+                }
+            }
+        }
+
+        __syncthreads(); //wait for tile to be loaded
+
+        for(int tile_x = threadIdx.x; tile_x < tilesize; tile_x += blocksize_x){
+            for(int tile_y = threadIdx.y; tile_y < tilesize; tile_y += blocksize_y){
+                const int dstColumn = tile_id_y * tilesize + tile_x;
+                const int dstRow = tile_id_x * tilesize + tile_y;
+
+                if(dstRow < dstNumRows && dstColumn < dstNumColumns){
+                    output[dstRow * dstNumColumns + dstColumn] = tile[tile_x][tile_y];
+                }
+            }
+        }
+
+        __syncthreads(); //wait before reusing shared memory
+    }
+}
+
+template<class T>
+void call_transpose_kernel(T* output, const T* input, int numRows, int numColumns, int columnpitchelements, cudaStream_t stream){
+    dim3 block(32,8);
+    const int blocks_x = SDIV(numColumns, block.x);
+    const int blocks_y = SDIV(numRows, block.y);
+    dim3 grid(min(65535, blocks_x * blocks_y), 1, 1);
+
+    transpose_kernel<32,8><<<grid, block, 0, stream>>>(output,
+                                                input,
+                                                numRows,
+                                                numColumns,
+                                                columnpitchelements); CUERR;
+}
+
 #endif
 
 #endif
