@@ -3483,7 +3483,7 @@ namespace gpu{
     			const int* d_indices_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
-                //const int* h_num_indices,
+                const int* h_num_indices,
     			const int* d_num_indices,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
@@ -3545,8 +3545,8 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-        //dim3 grid(std::min(*h_num_indices, max_blocks_per_device), 1, 1);
-        dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+        dim3 grid(std::min(*h_num_indices, max_blocks_per_device), 1, 1);
+        //dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
 
     	msa_add_sequences_kernel_exp
                 <<<grid, block, smem, stream>>>(d_multiple_sequence_alignments,
@@ -3603,6 +3603,7 @@ namespace gpu{
     			int n_queries,
                 const int* h_num_indices,
     			const int* d_num_indices,
+                float expectedAffectedIndicesFraction,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
@@ -3686,8 +3687,8 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-    	//dim3 grid(std::min(*h_num_indices, max_blocks_per_device), 1, 1);
-        dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
+        dim3 grid(std::min(std::max(1, int(*h_num_indices * expectedAffectedIndicesFraction)), max_blocks_per_device), 1, 1);
+        //dim3 grid(std::min(n_queries, max_blocks_per_device), 1, 1);
 
     	msa_add_sequences_kernel_implicit_global<<<grid, block, smem, stream>>>(
                                         d_counts,
@@ -3745,8 +3746,9 @@ namespace gpu{
                 //const int* d_blocks_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
-                //const int* h_num_indices,
+                const int* h_num_indices,
     			const int* d_num_indices,
+                float expectedAffectedIndicesFraction,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
@@ -3885,8 +3887,8 @@ namespace gpu{
 
     	dim3 block(blocksize, 1, 1);
 
-        //const int blocks = SDIV(*h_num_indices, blocksize);
-        const int blocks = SDIV(n_queries, blocksize);
+        const int blocks = SDIV(std::max(1, int(*h_num_indices * expectedAffectedIndicesFraction)), blocksize);
+        //const int blocks = SDIV(n_queries, blocksize);
     	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
         /*if(debug){
@@ -4352,8 +4354,9 @@ namespace gpu{
     			const int* d_indices_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
-                //const int* h_num_indices,
+                const int* h_num_indices,
     			const int* d_num_indices,
+                float expectedAffectedIndicesFraction,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
@@ -4389,8 +4392,9 @@ namespace gpu{
                                                             d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
-                                                            //h_num_indices,
+                                                            h_num_indices,
                                                             d_num_indices,
+                                                            expectedAffectedIndicesFraction,
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
                                                             maximum_sequence_length,
@@ -4425,8 +4429,9 @@ namespace gpu{
                                                             d_indices_per_subject_prefixsum,
                                                             n_subjects,
                                                             n_queries,
-                                                            //h_num_indices,
+                                                            h_num_indices,
                                                             d_num_indices,
+                                                            expectedAffectedIndicesFraction,
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
                                                             maximum_sequence_length,

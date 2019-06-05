@@ -91,7 +91,9 @@ namespace gpu{
                     int* d_origCoverages,
                     int n_subjects,
                     int n_queries,
+                    const int* h_num_indices,
                     const int* d_num_indices,
+                    float expectedAffectedIndicesFraction,
                     bool useQualityScores,
                     float desiredAlignmentMaxErrorRate,
                     int maximum_sequence_length,
@@ -138,7 +140,9 @@ namespace gpu{
                     d_indices_per_subject_prefixsum,
                     n_subjects,
                     n_queries,
+                    h_num_indices,
                     d_num_indices,
+                    expectedAffectedIndicesFraction,
                     useQualityScores,
                     desiredAlignmentMaxErrorRate,
                     maximum_sequence_length,
@@ -1273,7 +1277,7 @@ namespace gpu{
 
 
                 cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
-
+/*
                 call_transpose_kernel(dataArrays.d_candidate_qualities_tmp.get(),
                                       dataArrays.d_candidate_qualities.get(),
                                       dataArrays.h_num_indices[0],
@@ -1283,6 +1287,35 @@ namespace gpu{
 
                 std::swap(dataArrays.d_candidate_qualities_tmp, dataArrays.d_candidate_qualities_transposed);
 
+                char* d_candidate_qualities = dataArrays.d_candidate_qualities;
+                char* d_candidate_qualities_transposed = dataArrays.d_candidate_qualities_transposed;
+                int numIndices = dataArrays.h_num_indices[0];
+                size_t quality_pitch = dataArrays.quality_pitch;
+                generic_kernel<<<1,1,0,streams[primary_stream_index]>>>([=]__device__(){
+                        printf("d_candidate_qualities\n");
+
+                        for(int row = 0; row < numIndices; row++){
+                            for(int col = 0; col < quality_pitch; col++){
+                                printf("%c", d_candidate_qualities[row * quality_pitch + col]);
+                            }
+                            printf("\n");
+                        }
+                        printf("\n");
+
+                        printf("d_candidate_qualities_transposed\n");
+
+                        for(int row = 0; row < quality_pitch; row++){
+                            for(int col = 0; col < numIndices; col++){
+                                printf("%c", d_candidate_qualities_transposed[row * numIndices + col]);
+                            }
+                            printf("\n");
+                        }
+                        printf("\n");
+
+                }); CUERR;
+                cudaDeviceSynchronize(); CUERR;
+                std::exit(0);
+*/
                 assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
                 cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
@@ -1481,6 +1514,7 @@ namespace gpu{
                         dataArrays.d_candidate_sequences_lengths,
                         dataArrays.d_subject_qualities,
                         dataArrays.d_candidate_qualities,
+                        //dataArrays.d_candidate_qualities_transposed,
                         dataArrays.d_candidates_per_subject_prefixsum,
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
@@ -1494,7 +1528,9 @@ namespace gpu{
                         dataArrays.d_origCoverages,
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
+                        dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
+                        1.0f,
                         transFuncData.correctionOptions.useQualityScores,
                         desiredAlignmentMaxErrorRate,
                         dataArrays.maximum_sequence_length,
@@ -1675,7 +1711,7 @@ namespace gpu{
                     char* const d_candidate_qualities_tmp = dataArrays.d_candidate_qualities_tmp;
 
                     const size_t quality_pitch = dataArrays.quality_pitch;
-                    const int maximum_sequence_length = dataArrays.maximum_sequence_length;
+                    //const int maximum_sequence_length = dataArrays.maximum_sequence_length;
                     const int* const d_num_indices = dataArrays.d_num_indices;
                     //const int numCandidates = dataArrays.n_queries;
 
@@ -1695,22 +1731,125 @@ namespace gpu{
                         }
                     }); CUERR;
 
-                    /*dim3 block(32,8,1);
-                    dim3 grid(SDIV(currentNumIndices, block.x), SDIV(maximum_sequence_length, block.y),1);
 
-                    generic_kernel<<<grid, block,0, streams[primary_stream_index]>>>([=] __device__ (){
+
+                   /* char* d_candidate_qualities_tmp2;
+                    cubCachingAllocator.DeviceAllocate((void**)&d_candidate_qualities_tmp2, currentNumIndices * quality_pitch, streams[primary_stream_index]); CUERR;
+                    cudaMemsetAsync(d_candidate_qualities_tmp2, currentNumIndices * quality_pitch, 0, streams[primary_stream_index]); CUERR;
+
+                    char* const d_candidate_qualities_transposed = dataArrays.d_candidate_qualities_transposed;
+                    dim3 block2(32,8,1);
+                    dim3 grid2(SDIV(currentNumIndices, block.x), SDIV(maximum_sequence_length, block.y),1);
+
+                    generic_kernel<<<grid2, block2,0, streams[primary_stream_index]>>>([=] __device__ (){
                         const int numIndices = *d_num_indices;
 
                         for(int targetIndex = threadIdx.x + blockIdx.x * blockDim.x; targetIndex < numIndices; targetIndex += blockDim.x * gridDim.x){
                             const int srcIndex = d_shouldBeKept_positions[targetIndex];
-                            const char* const srcPtr = &d_candidate_qualities[srcIndex];
-                            char* const destPtr = &d_candidate_qualities_tmp[targetIndex];
+                            const char* const srcPtr = &d_candidate_qualities_transposed[srcIndex];
+                            char* const destPtr = &d_candidate_qualities_tmp2[targetIndex];
 
                             for(int pos = threadIdx.y + blockIdx.y * blockDim.y; pos < maximum_sequence_length; pos += blockDim.y * gridDim.y){
                                 destPtr[pos * numIndices] = srcPtr[pos * numIndices];
                             }
                         }
+                    }); CUERR;
+
+                    char* d_candidate_qualities_tmp3;
+                    cubCachingAllocator.DeviceAllocate((void**)&d_candidate_qualities_tmp3, currentNumIndices * quality_pitch, streams[primary_stream_index]); CUERR;
+                    cudaMemsetAsync(d_candidate_qualities_tmp3, currentNumIndices * quality_pitch, 0, streams[primary_stream_index]); CUERR;
+
+                    call_transpose_kernel(d_candidate_qualities_tmp3, d_candidate_qualities_tmp, currentNumIndices, maximum_sequence_length, quality_pitch, streams[primary_stream_index]);
+
+                    generic_kernel<<<1,1,0,streams[primary_stream_index]>>>([=]__device__(){
+                        for(int row = 0; row < maximum_sequence_length; row++){
+                            for(int col = 0; col < currentNumIndices; col++){
+                                if(d_candidate_qualities_tmp3[row * currentNumIndices + col] != d_candidate_qualities_tmp2[row * currentNumIndices + col]){
+                                    //printf("error at row %d, col %d\n", row, col);
+                                    //assert(false);
+                                }
+                                printf("%c", d_candidate_qualities_tmp3[row * currentNumIndices + col]);
+                            }
+                            printf("\n");
+                        }
+                        printf("\n");
+
+                        for(int row = 0; row < maximum_sequence_length; row++){
+                            for(int col = 0; col < currentNumIndices; col++){
+                                printf("%c", d_candidate_qualities_tmp2[row * currentNumIndices + col]);
+                            }
+                            printf("\n");
+                        }
+                        printf("\n");
+
+                        for(int row = 0; row < maximum_sequence_length; row++){
+                            for(int col = 0; col < currentNumIndices; col++){
+                                if(d_candidate_qualities_tmp3[row * currentNumIndices + col] != d_candidate_qualities_tmp2[row * currentNumIndices + col]){
+                                    printf("error at row %d, col %d\n", row, col);
+                                    assert(false);
+                                }
+                            }
+                        }
                     }); CUERR;*/
+                    /*generic_kernel<<<1,1,0,streams[primary_stream_index]>>>([=]__device__(){
+                        bool error = false;
+                        int r = 0;
+                        int c = 0;
+                        const int numIndices = *d_num_indices;
+
+                        for(int row = 0; row < maximum_sequence_length && !error; row++){
+                            for(int col = 0; col < numIndices && !error; col++){
+                                if(d_candidate_qualities_tmp3[row * numIndices + col] != d_candidate_qualities_tmp2[row * numIndices + col]){
+                                    error = true;
+                                    r = row;
+                                    c = col;
+                                }
+                            }
+                        }
+
+                        if(error){
+                            printf("d_candidate_qualities_tmp3\n");
+
+                            for(int row = 0; row < maximum_sequence_length; row++){
+                                for(int col = 0; col < numIndices; col++){
+                                    printf("%c", d_candidate_qualities_tmp3[row * numIndices + col]);
+                                }
+                                printf("\n");
+                            }
+                            printf("\n");
+
+                            printf("d_candidate_qualities_tmp2\n");
+
+                            for(int row = 0; row < maximum_sequence_length; row++){
+                                for(int col = 0; col < numIndices; col++){
+                                    printf("%c", d_candidate_qualities_tmp2[row * numIndices + col]);
+                                }
+                                printf("\n");
+                            }
+                            printf("\n");
+
+                            printf("d_candidate_qualities_tmp\n");
+
+                            for(int row = 0; row < numIndices; row++){
+                                for(int col = 0; col < quality_pitch; col++){
+                                    printf("%c", d_candidate_qualities_tmp[row * quality_pitch + col]);
+                                }
+                                printf("\n");
+                            }
+                            printf("\n");
+
+                            printf("error at row %d, col %d\n", r, c);
+
+                            assert(false);
+                        }
+                    }); CUERR;
+
+                    cudaDeviceSynchronize(); CUERR;
+
+                    cubCachingAllocator.DeviceFree(d_candidate_qualities_tmp2); CUERR;
+                    cubCachingAllocator.DeviceFree(d_candidate_qualities_tmp3); CUERR;*/
+
+                    //std::exit(0);
 
                     std::swap(dataArrays.d_candidate_qualities, dataArrays.d_candidate_qualities_tmp);
                 }
@@ -1738,6 +1877,15 @@ namespace gpu{
                             }
                         }
                     }); CUERR;
+                    
+                    /*const int* d_num_indices = dataArrays.d_num_indices;
+                    generic_kernel<<<1, 1, 0, stream>>>([=] __device__ (){
+                        int sum = 0;
+                        for(int i = 0; i < n_subjects; i++){
+                            sum += d_indices_per_subject_tmp[i];
+                        }
+                        printf("sum = %d, totalindices %d\n", sum, *d_num_indices);
+                    }); CUERR;*/
                 }
 
                 const float desiredAlignmentMaxErrorRate = transFuncData.maxErrorRate;
@@ -1766,7 +1914,9 @@ namespace gpu{
                                 dataArrays.d_origCoverages,
                                 dataArrays.n_subjects,
                                 dataArrays.n_queries,
+                                dataArrays.h_num_indices,
                                 dataArrays.d_num_indices,
+                                0.05f, //
                                 transFuncData.correctionOptions.useQualityScores,
                                 desiredAlignmentMaxErrorRate,
                                 dataArrays.maximum_sequence_length,

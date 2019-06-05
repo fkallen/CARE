@@ -132,7 +132,7 @@ namespace gpu{
     int nCpuThreads = nCorrectorThreads - nGpuThreads;
 
 #ifdef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(50000);
+    cpu::RangeGenerator<read_number> readIdGenerator(100000);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
     //cpu::RangeGenerator<read_number> readIdGenerator(50000);
@@ -287,6 +287,7 @@ namespace gpu{
 
     //std::cout << "threads done" << std::endl;
 
+    size_t occupiedMemory = minhasher.numBytes() + cpuReadStorage.size();
 
     minhasher.destroy();
     cpuReadStorage.destroy();
@@ -301,6 +302,7 @@ namespace gpu{
         TIMERSTARTCPU(merge);
 
         mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+        //mergeResultFiles2(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, occupiedMemory);
 
         TIMERSTOPCPU(merge);
 
