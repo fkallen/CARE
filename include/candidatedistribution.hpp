@@ -172,6 +172,33 @@ namespace cpu{
 
         return allncandidates;
     }
+
+
+    template<class minhasher_t, class readStorage_t>
+    std::uint64_t calculateMaxCandidatesPerReadThreshold(const minhasher_t& minhasher,
+                                                            const readStorage_t& readStorage,
+                                                            std::uint64_t candidatesToCheck,
+                                                            int num_hits,
+                                                            int threads){
+
+        std::map<std::int64_t, std::int64_t> candidateHistogram
+                = getCandidateCountHistogram(minhasher,
+                                            readStorage,
+                                            candidatesToCheck,
+                                            num_hits,
+                                            threads);
+
+        Dist<std::int64_t, std::int64_t> candidateDistribution = estimateDist(candidateHistogram);
+
+        const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
+        const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
+        const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
+                                                        + 2.5 * estimatedDeviationAlignedCandidates;
+
+        return estimatedAlignmentCountThreshold;
+    }
+
+
 }
 }
 

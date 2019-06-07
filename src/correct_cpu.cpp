@@ -46,6 +46,7 @@ namespace cpu{
                       const SequenceFileProperties& sequenceFileProperties,
                       Minhasher& minhasher,
                       cpu::ContiguousReadStorage& readStorage,
+                      std::uint64_t maxCandidatesPerRead,
     				  std::vector<char>& readIsCorrectedVector,
     				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
     				  std::size_t nLocksForProcessedFlags){
@@ -62,62 +63,6 @@ namespace cpu{
 
     	std::cout << "Using " << nCorrectorThreads << " corrector threads" << std::endl;
 
-          // initialize qscore-to-weight lookup table
-      	//cpu::init_weights();
-
-        //SequenceFileProperties sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-
-        /*
-            Make candidate statistics
-        */
-
-        std::uint64_t max_candidates = runtimeOptions.max_candidates;
-        //std::uint64_t max_candidates = std::numeric_limits<std::uint64_t>::max();
-
-        if(max_candidates == 0){
-            std::cout << "estimating candidate cutoff" << std::endl;
-
-            Dist<std::int64_t, std::int64_t> candidateDistribution;
-            cpu::Dist2<std::int64_t, std::int64_t> candidateDistribution2;
-
-            {
-                TIMERSTARTCPU(candidateestimation);
-                std::map<std::int64_t, std::int64_t> candidateHistogram
-                        = getCandidateCountHistogram(minhasher,
-                                                    readStorage,
-                                                    sequenceFileProperties.nReads / 10,
-                                                    correctionOptions.hits_per_candidate,
-                                                    runtimeOptions.threads);
-
-                TIMERSTOPCPU(candidateestimation);
-
-                candidateDistribution = estimateDist(candidateHistogram);
-                //candidateDistribution2 = cpu::estimateDist2(candidateHistogram);
-
-                std::vector<std::pair<std::int64_t, std::int64_t>> vec(candidateHistogram.begin(), candidateHistogram.end());
-                std::sort(vec.begin(), vec.end(), [](auto p1, auto p2){ return p1.second < p2.second;});
-
-                std::ofstream of("ncandidates.txt");
-                for(const auto& p : vec)
-                    of << p.first << " " << p.second << '\n';
-                of.flush();
-            }
-
-            std::cout << "candidates.max " << candidateDistribution.max << std::endl;
-            std::cout << "candidates.average " << candidateDistribution.average << std::endl;
-            std::cout << "candidates.stddev " << candidateDistribution.stddev << std::endl;
-
-            const std::uint64_t estimatedMeanAlignedCandidates = candidateDistribution.max;
-            const std::uint64_t estimatedDeviationAlignedCandidates = candidateDistribution.stddev;
-            const std::uint64_t estimatedAlignmentCountThreshold = estimatedMeanAlignedCandidates
-                                                            + 2.5 * estimatedDeviationAlignedCandidates;
-
-            max_candidates = estimatedAlignmentCountThreshold;
-            //max_candidates = candidateDistribution2.percentRanges[90].first;
-            //std::exit(0);
-        }
-
-        std::cout << "Using candidate cutoff: " << max_candidates << std::endl;
 
         /*
             Spawn correction threads
@@ -156,7 +101,7 @@ namespace cpu{
             cpucorrectorThreads[threadId].fileOptions = fileOptions;
             cpucorrectorThreads[threadId].threadOpts = threadOpts;
             cpucorrectorThreads[threadId].fileProperties = sequenceFileProperties;
-            cpucorrectorThreads[threadId].max_candidates = max_candidates;
+            cpucorrectorThreads[threadId].max_candidates = maxCandidatesPerRead;
 
             cpucorrectorThreads[threadId].classifierBase = &nnClassifierBase;
 

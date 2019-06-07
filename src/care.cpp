@@ -7,6 +7,7 @@
 #include <minhasher_transform.hpp>
 #include <dispatch_correction.hpp>
 #include <options.hpp>
+#include <candidatedistribution.hpp>
 
 #include <sequence.hpp>
 #include <readstorage.hpp>
@@ -183,6 +184,23 @@ void performCorrection(MinhashOptions minhashOptions,
 
         printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
+        TIMERSTARTCPU(candidateestimation);
+        std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
+
+        if(maxCandidatesPerRead == 0){
+            maxCandidatesPerRead = calculateMaxCandidatesPerReadThreshold(minhasher,
+                                                    readStorage,
+                                                    sequenceFileProperties.nReads / 10,
+                                                    correctionOptions.hits_per_candidate,
+                                                    runtimeOptions.threads);
+
+            std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
+        }
+
+
+
+        TIMERSTOPCPU(candidateestimation);
+
         readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
 
         std::cerr << "readIsCorrectedVector bytes: " << readIsCorrectedVector.size() / 1024. / 1024. << " MB\n";
@@ -193,6 +211,7 @@ void performCorrection(MinhashOptions minhashOptions,
                             goodAlignmentProperties, correctionOptions,
                             runtimeOptions, iterFileOptions, sequenceFileProperties,
                             minhasher, readStorage,
+                            maxCandidatesPerRead,
                             readIsCorrectedVector, locksForProcessedFlags,
                             nLocksForProcessedFlags);
 
