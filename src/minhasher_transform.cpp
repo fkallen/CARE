@@ -17,6 +17,7 @@ namespace care{
 
         cpu_transformation(map.keys, map.values, map.countsPrefixSum);
 
+        map.nKeys = map.keys.size();
         map.noMoreWrites = true;
 
 

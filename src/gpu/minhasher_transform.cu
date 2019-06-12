@@ -186,10 +186,9 @@ namespace care{
                 std::cerr << "Fallback to cpu transformation\n";
                 cpu_transformation(map.keys, map.values, map.countsPrefixSum);
             }
-
-            map.nKeys = map.keys.size();
         }
 
+        map.nKeys = map.keys.size();
         map.noMoreWrites = true;
 
 
