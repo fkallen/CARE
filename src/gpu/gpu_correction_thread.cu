@@ -214,8 +214,128 @@ namespace gpu{
 
 
 
+    /*for each active read pair in tasks, if at least one read has more than threshold candidates:
+        1. find out candidates whose paired candidate is a candidate of the paired read
+        2. for each read with more than threshold candidates:
+             remove all candidates which are not found in step 1.
 
+        tasks without pair remain unchanged.
+        modified tasks with no candidates left are set inactive.
+        read pairs are identified by read id.
+        reads A and B are considered a pair if readIdA / 2 == readIdB / 2
+    */
+    void
+    removeNonPairedCandidatesFromHighCoverageTasks(std::vector<CorrectionTask>& tasks,
+                                        size_t threshold){
+        //paired reads have consecutive read ids, where the first read id of the read pair is even, the second read id is odd.
+        auto pairedReadId = [](read_number readId){
+            return readId / 2;
+        };
+        auto compByPairedReadId = [&](read_number l, read_number r){
+            return pairedReadId(l) < pairedReadId(r);
+        };
 
+        //for each read, only keep candidates whose pair is a candidate of the paired read
+        std::vector<read_number> candidatepairs;
+        std::vector<read_number> newcandidateids;
+        size_t index = 0;
+        while(index < tasks.size()){
+            if(index == tasks.size() -1 ){
+                //std::cerr << "no pair found\n";
+                tasks[index].active = false;
+
+                index += 1;
+                continue;
+            }
+            auto& taskl = tasks[index];
+            auto& taskr = tasks[index+1];
+
+            const read_number readIdl = taskl.readId;
+            const read_number readIdr = taskr.readId;
+
+            //check if tasks[index] and tasks[index+1] are a paired read.
+            if(taskl.active && taskr.active && pairedReadId(readIdl) == pairedReadId(readIdr)){
+                const size_t oldNumCandidatesl = taskl.candidate_read_ids.size();
+                const size_t oldNumCandidatesr = taskr.candidate_read_ids.size();
+
+                //check threshold
+                const bool updatel = oldNumCandidatesl > threshold;
+                const bool updater = oldNumCandidatesr > threshold;
+
+                if(updatel || updater){
+
+                    candidatepairs.clear();
+                    candidatepairs.resize(std::min(taskl.candidate_read_ids.size(), taskr.candidate_read_ids.size()));
+
+                    const auto pairsend = std::set_intersection(taskl.candidate_read_ids.begin(), taskl.candidate_read_ids.end(),
+                                                          taskr.candidate_read_ids.begin(), taskr.candidate_read_ids.end(),
+                                                          candidatepairs.begin(),
+                                                          compByPairedReadId);
+
+                    const size_t numcandidatepairs = std::distance(candidatepairs.begin(), pairsend);
+
+                    if(updatel){
+                        newcandidateids.clear();
+                        newcandidateids.resize(std::min(numcandidatepairs, taskl.candidate_read_ids.size()));
+
+                        const auto newcandidateidsend = std::set_intersection(taskl.candidate_read_ids.begin(), taskl.candidate_read_ids.end(),
+                                                                        candidatepairs.begin(), pairsend,
+                                                                        newcandidateids.begin(),
+                                                                        compByPairedReadId);
+                        newcandidateids.erase(newcandidateidsend, newcandidateids.end());
+                        std::swap(newcandidateids, taskl.candidate_read_ids);
+
+                        if(taskl.candidate_read_ids.size() == 0){
+                            taskl.active = false;
+                        }
+                    }
+
+                    if(updater){
+                        newcandidateids.clear();
+                        newcandidateids.resize(std::min(numcandidatepairs, taskr.candidate_read_ids.size()));
+
+                        const auto newcandidateidsend = std::set_intersection(taskr.candidate_read_ids.begin(), taskr.candidate_read_ids.end(),
+                                                                        candidatepairs.begin(), pairsend,
+                                                                        newcandidateids.begin(),
+                                                                        compByPairedReadId);
+                        newcandidateids.erase(newcandidateidsend, newcandidateids.end());
+                        std::swap(newcandidateids, taskr.candidate_read_ids);
+
+                        if(taskr.candidate_read_ids.size() == 0){
+                            taskr.active = false;
+                        }
+                    }
+
+                    /*assert(std::all_of(taskl.candidate_read_ids.begin(),
+                                        taskl.candidate_read_ids.end(),
+                                        [&](auto readId){
+                                            return readId < transFuncData.gpuReadStorage->cpuReadStorage->getNumberOfSequences();
+                                        }));
+
+                    assert(std::all_of(taskr.candidate_read_ids.begin(),
+                                        taskr.candidate_read_ids.end(),
+                                        [&](auto readId){
+                                            return readId < transFuncData.gpuReadStorage->cpuReadStorage->getNumberOfSequences();
+                                        }));*/
+
+                    //const size_t deltal = oldNumCandidatesl - taskl.candidate_read_ids.size();
+                    //const size_t deltar = oldNumCandidatesr - taskr.candidate_read_ids.size();
+
+                    //std::cerr << "removed " << deltal << "( " << oldNumCandidatesl << " ), " << deltar << "( " << oldNumCandidatesr << " )\n";
+
+                }
+
+                //assert(taskl.candidate_read_ids.size() <= std::size_t(transFuncData.max_candidates));
+                //assert(taskr.candidate_read_ids.size() <= std::size_t(transFuncData.max_candidates));
+
+                index += 2;
+            }else{
+                //std::cerr << "no pair found\n";
+
+                index += 1;
+            }
+        }
+    }
 
 
 
@@ -379,7 +499,7 @@ namespace gpu{
 	}
 
 	void ErrorCorrectionThreadOnlyGPU::makeTransitionFunctionTable(){
-		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
+		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func2;
 		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
         transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
@@ -595,6 +715,276 @@ namespace gpu{
             }else{
 
                 assert(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch + transFuncData.max_candidates);
+
+                //allocate data arrays
+
+                dataArrays.set_problem_dimensions(int(batch.tasks.size()),
+                            batch.initialNumberOfCandidates,
+                            transFuncData.maxSequenceLength,
+                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength),
+                            transFuncData.min_overlap,
+                            transFuncData.min_overlap_ratio,
+                            transFuncData.correctionOptions.useQualityScores); CUERR;
+
+                //std::cout << "batch.initialNumberOfCandidates " << batch.initialNumberOfCandidates << std::endl;
+
+                std::size_t temp_storage_bytes = 0;
+                std::size_t max_temp_storage_bytes = 0;
+                cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
+                            (int*)nullptr, (int*)nullptr,
+                            dataArrays.n_subjects+1,
+                            (int*)nullptr,
+                            dataArrays.n_queries,
+                            streams[primary_stream_index]); CUERR;
+
+                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                            (bool*)nullptr, (int*)nullptr, (int*)nullptr,
+                            batch.initialNumberOfCandidates,
+                            streams[primary_stream_index]); CUERR;
+
+                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                            (int*)nullptr,
+                            dataArrays.n_subjects,
+                            streams[primary_stream_index]); CUERR;
+
+                cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                            (int*)nullptr,
+                            dataArrays.n_subjects,
+                            streams[primary_stream_index]); CUERR;
+
+                cub::DeviceSegmentedRadixSort::SortPairs((void*)nullptr,
+                                                        temp_storage_bytes,
+                                                        (const char*) nullptr,
+                                                        (char*)nullptr,
+                                                		(const int*)nullptr,
+                                                		(int*)nullptr,
+                                                		batch.initialNumberOfCandidates,
+                                                		dataArrays.n_subjects,
+                                                		(const int*)nullptr,
+                                                		(const int*)nullptr,
+                                                        0,
+                                                        3,
+                                                        streams[primary_stream_index]);
+
+                max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+                temp_storage_bytes = max_temp_storage_bytes;
+
+                dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
+                dataArrays.zero_gpu(streams[primary_stream_index]);
+
+                auto roundToNextMultiple = [](int num, int factor){
+                    return SDIV(num, factor) * factor;
+                };
+
+                /*const int minOverlapForMaxSeqLength = std::max(1,
+                                                        std::max(transFuncData.min_overlap,
+                                                                    int(transFuncData.maxSequenceLength * transFuncData.min_overlap_ratio)));
+                const int msa_max_column_count = (3*transFuncData.maxSequenceLength - 2*minOverlapForMaxSeqLength);*/
+
+                //batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
+                /*batch.batchDataDevice.resize(int(batch.tasks.size()),
+                                            batch.initialNumberOfCandidates,
+                                            roundToNextMultiple(transFuncData.maxSequenceLength, 4),
+                                            roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
+                                            transFuncData.maxSequenceLength,
+                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);
+
+                batch.batchDataHost.resize(int(batch.tasks.size()),
+                                            batch.initialNumberOfCandidates,
+                                            roundToNextMultiple(transFuncData.maxSequenceLength, 4),
+                                            roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), 4),
+                                            transFuncData.maxSequenceLength,
+                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.maxSequenceLength), msa_max_column_count);*/
+
+                batch.initialNumberOfCandidates = 0;
+
+                //std::cout << batch.tasks.size() << std::endl;
+
+                return BatchState::CopyReads;
+            }
+        }
+    }
+
+
+    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_unprepared_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+                bool canBlock,
+                bool canLaunchKernel,
+                bool isPausable,
+                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+
+        assert(batch.state == BatchState::Unprepared);
+        assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
+
+        auto identity = [](auto i){return i;};
+
+        const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
+
+        DataArrays& dataArrays = *batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
+        std::vector<CorrectionTask_t>* tmptasksBuffer = transFuncData.tmptasksBuffer;
+
+        auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
+                        auto copybegin = position_to_erase;
+                        std::advance(copybegin, 1);
+                        return std::copy(copybegin, end, position_to_erase);
+                    };
+
+        const auto* gpuReadStorage = transFuncData.gpuReadStorage;
+        const auto& minhasher = transFuncData.minhasher;
+
+
+        constexpr int num_simultaneous_tasks = 64;
+
+        std::vector<CorrectionTask_t> tmptasks;
+        //std::vector<bool> tmpokflags(num_simultaneous_tasks);
+
+        //ake the smallest even amount of tasks
+        //whose sum of candidates is not less than minimum_candidates_per_batch
+        while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
+              && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty() && tmptasksBuffer->empty())) {
+
+
+
+            if(tmptasksBuffer->empty()){
+
+                if(readIdBuffer->empty())
+                    *readIdBuffer = transFuncData.readIdGenerator->next_n(1000);
+
+                if(readIdBuffer->empty())
+                    continue;
+
+                const int readIdsInBuffer = readIdBuffer->size();
+                const int max_tmp_tasks = std::min(readIdsInBuffer, num_simultaneous_tasks);
+
+                tmptasks.resize(max_tmp_tasks);
+
+                #pragma omp parallel for num_threads(4)
+                for(int tmptaskindex = 0; tmptaskindex < max_tmp_tasks; tmptaskindex++){
+                    auto& task = tmptasks[tmptaskindex];
+
+                    const read_number readId = (*readIdBuffer)[tmptaskindex];
+                    task = CorrectionTask_t(readId);
+                    //std::cout << readId << std::endl;
+
+                    bool ok = false;
+                    if ((*transFuncData.readIsCorrectedVector)[readId] == 0) {
+                        ok = true;
+                    }
+
+                    if(ok){
+                        const char* sequenceptr = gpuReadStorage->fetchSequenceData_ptr(readId);
+                        const int sequencelength = gpuReadStorage->fetchSequenceLength(readId);
+
+                        task.subject_string.resize(sequencelength);
+                        decode2BitHiLoSequence(&task.subject_string[0], (const unsigned int*)sequenceptr, sequencelength, identity);
+                        task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.max_candidates);
+
+                        auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+
+                        if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                            task.candidate_read_ids.erase(readIdPos);
+                        }
+
+                        std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+                        assert(myNumCandidates <= std::size_t(transFuncData.max_candidates));
+
+                        if(myNumCandidates == 0) {
+                            task.active = false;
+                        }
+                    }else{
+                        task.active = false;
+                    }
+                }
+
+                readIdBuffer->erase(readIdBuffer->begin(), readIdBuffer->begin() + max_tmp_tasks);
+
+                std::swap(*tmptasksBuffer, tmptasks);
+
+                //only perform one iteration if pausable
+                if(isPausable)
+                    break;
+            }
+
+
+            const size_t threshold = transFuncData.estimatedCoverage * 10;
+            removeNonPairedCandidatesFromHighCoverageTasks(*tmptasksBuffer, threshold);
+
+
+
+
+            //assert(tmptasksBuffer->size() % 2 == 0);
+
+            //from the prepared tasks in tmptasksBuffer, take the smallest even amount of tasks
+            //whose sum of candidates is not less than minimum_candidates_per_batch
+            size_t processedTasks = 0;
+
+            while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
+                    && processedTasks < tmptasksBuffer->size() ){
+
+                auto& task = (*tmptasksBuffer)[processedTasks];
+                //std::cout << task.readId << std::endl;
+                if(task.active){
+
+                    const read_number id = task.readId;
+                    bool ok = false;
+                    transFuncData.lock(id);
+                    if ((*transFuncData.readIsCorrectedVector)[id] == 0) {
+                        (*transFuncData.readIsCorrectedVector)[id] = 1;
+                        ok = true;
+                    }else{
+                    }
+                    transFuncData.unlock(id);
+
+                    if(ok){
+                        const size_t myNumCandidates = task.candidate_read_ids.size();
+
+                        batch.tasks.emplace_back(task);
+                        batch.initialNumberOfCandidates += int(myNumCandidates);
+                    }
+                }
+
+                processedTasks++;
+            }
+
+            tmptasksBuffer->erase(tmptasksBuffer->begin(), tmptasksBuffer->begin() + processedTasks);
+
+            //only perform one iteration if pausable
+            if(isPausable)
+                break;
+        }
+
+
+        if(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
+            && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())) {
+            //still more read ids to add
+
+            return BatchState::Unprepared;
+        }else{
+
+            if(batch.initialNumberOfCandidates == 0) {
+                return BatchState::Aborted;
+            }else{
+
+                //assert(std::is_sorted(batch.tasks.begin(), batch.tasks.end(), [](const auto& l, const auto& r){return l.readId < r.readId;}));
+
+
+                if(batch.initialNumberOfCandidates >= transFuncData.minimum_candidates_per_batch + 2*transFuncData.max_candidates){
+                    std::cerr << batch.initialNumberOfCandidates << " >= " << (transFuncData.minimum_candidates_per_batch + 2*transFuncData.max_candidates) << "\n";
+                    for(const auto& task : batch.tasks){
+                        std::cerr << task.candidate_read_ids.size() << "\n";
+                    }
+                    assert(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch + 2*transFuncData.max_candidates);
+                }
+
 
                 //allocate data arrays
 
@@ -1877,7 +2267,7 @@ namespace gpu{
                             }
                         }
                     }); CUERR;
-                    
+
                     /*const int* d_num_indices = dataArrays.d_num_indices;
                     generic_kernel<<<1, 1, 0, stream>>>([=] __device__ (){
                         int sum = 0;
