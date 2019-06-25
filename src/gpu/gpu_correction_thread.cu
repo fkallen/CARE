@@ -499,7 +499,7 @@ namespace gpu{
 	}
 
 	void ErrorCorrectionThreadOnlyGPU::makeTransitionFunctionTable(){
-		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func2;
+		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
 		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
         transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
@@ -1167,21 +1167,21 @@ namespace gpu{
                                                                          dataArrays.n_queries,
                                                                          transFuncData.threadOpts.deviceId, streams[primary_stream_index]);
 
-             assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
-
-             call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
-                                 (const int*)dataArrays.d_subject_sequences_data.get(),
-                                 dataArrays.n_subjects,
-                                 getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
-                                 dataArrays.encoded_sequence_pitch / sizeof(int),
-                                 streams[primary_stream_index]);
-
-             call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
-                                 (const int*)dataArrays.d_candidate_sequences_data.get(),
-                                 dataArrays.n_queries,
-                                 getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
-                                 dataArrays.encoded_sequence_pitch / sizeof(int),
-                                 streams[primary_stream_index]);
+             // assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
+             //
+             // call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
+             //                     (const int*)dataArrays.d_subject_sequences_data.get(),
+             //                     dataArrays.n_subjects,
+             //                     getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
+             //                     dataArrays.encoded_sequence_pitch / sizeof(int),
+             //                     streams[primary_stream_index]);
+             //
+             // call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
+             //                     (const int*)dataArrays.d_candidate_sequences_data.get(),
+             //                     dataArrays.n_queries,
+             //                     getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
+             //                     dataArrays.encoded_sequence_pitch / sizeof(int),
+             //                     streams[primary_stream_index]);
 
         }else{
             constexpr int subjectschunksize = 1000;
@@ -1295,21 +1295,21 @@ namespace gpu{
                             H2D,
                             streams[primary_stream_index]); CUERR;
 
-            assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
-
-            call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
-                                (const int*)dataArrays.d_subject_sequences_data.get(),
-                                dataArrays.n_subjects,
-                                getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
-                                dataArrays.encoded_sequence_pitch / sizeof(int),
-                                streams[primary_stream_index]);
-
-            call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
-                                (const int*)dataArrays.d_candidate_sequences_data.get(),
-                                dataArrays.n_queries,
-                                getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
-                                dataArrays.encoded_sequence_pitch / sizeof(int),
-                                streams[primary_stream_index]);
+            // assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
+            //
+            // call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
+            //                     (const int*)dataArrays.d_subject_sequences_data.get(),
+            //                     dataArrays.n_subjects,
+            //                     getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
+            //                     dataArrays.encoded_sequence_pitch / sizeof(int),
+            //                     streams[primary_stream_index]);
+            //
+            // call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
+            //                     (const int*)dataArrays.d_candidate_sequences_data.get(),
+            //                     dataArrays.n_queries,
+            //                     getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength),
+            //                     dataArrays.encoded_sequence_pitch / sizeof(int),
+            //                     streams[primary_stream_index]);
         }
 
         cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;

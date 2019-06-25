@@ -14,14 +14,15 @@
 #include <cassert>
 
 
-#ifdef __NVCC__
 #include <cub/cub.cuh>
 #include <cub/util_allocator.cuh>
 
 #include <cooperative_groups.h>
 
 namespace cg = cooperative_groups;
-#endif
+
+#include <thrust/binary_search.h>
+
 
 namespace care{
 namespace gpu{
@@ -69,7 +70,7 @@ namespace gpu{
             return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
         };
 
-        auto getSubjectPtr = [&] (int subjectIndex){
+        /*auto getSubjectPtr = [&] (int subjectIndex){
             const char* result = subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
             return result;
         };
@@ -77,17 +78,7 @@ namespace gpu{
         auto getCandidatePtr = [&] (int candidateIndex){
             const char* result = candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
             return result;
-        };
-
-        auto getSubjectLength = [&] (int subjectIndex){
-            const int length = subject_sequences_lengths[subjectIndex];
-            return length;
-        };
-
-        auto getCandidateLength = [&] (int candidateIndex){
-            const int length = candidate_sequences_lengths[candidateIndex];
-            return length;
-        };
+        };*/
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
             reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
@@ -164,11 +155,25 @@ namespace gpu{
             const int forwardTileId = isReverseComplement ? logicalTileId - requiredTiles : logicalTileId;
 
             //find subjectindex
-            int subjectIndex = 0;
+            /*int subjectIndex = 0;
             for(; subjectIndex < n_subjects; subjectIndex++) {
                 if(forwardTileId < tiles_per_subject_prefixsum[subjectIndex+1])
                     break;
-            }
+            }*/
+
+            const int subjectIndex = thrust::distance(tiles_per_subject_prefixsum,
+                                                    thrust::lower_bound(
+                                                        thrust::seq,
+                                                        tiles_per_subject_prefixsum,
+                                                        tiles_per_subject_prefixsum + n_subjects + 1,
+                                                        forwardTileId + 1))-1;
+
+            /*if(subjectIndex != subjectIndex2){
+                //printf("%d %d\n", subjectIndex, subjectIndex2);
+                assert(false);
+            }else{
+                //printf("%d %d ok\n", subjectIndex, subjectIndex2);
+            }*/
 
             //assert(subjectIndex < n_subjects);
 
@@ -199,12 +204,16 @@ namespace gpu{
                     blockIdx.x, globalTileId, threadIdx.x, globalTileId, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
                     candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
-            const int subjectbases = getSubjectLength(subjectIndex);
-            const char* subjectptr = getSubjectPtr(subjectIndex);
+            const int subjectbases = subject_sequences_lengths[subjectIndex];
+            const char* subjectptr = subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
+            //transposed
+            //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
             //save subject in shared memory (in parallel, per tile)
             for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
                 subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
+                //transposed
+                //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
             }
 
             cg::tiled_partition<tilesize>(cg::this_thread_block()).sync();
@@ -215,12 +224,16 @@ namespace gpu{
                         blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
                         candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
-                const int querybases = getCandidateLength(queryIndex);
-                const char* candidateptr = getCandidatePtr(queryIndex);
+                const int querybases = candidate_sequences_lengths[queryIndex];
+                //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
+                //transposed
+                const char* candidateptr = (const char*)((unsigned int*)(candidate_sequences_data) + std::size_t(queryIndex));
 
                 //save query in shared memory
                 for(int i = 0; i < max_sequence_ints; i += 1) {
-                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
+                    //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
+                    //transposed
+                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i * n_candidates];
                 }
 
                 //queryIndex != resultIndex -> reverse complement
@@ -387,11 +400,18 @@ namespace gpu{
             const int querylength = getCandidateLength(resultIndex);
 
             //find subjectindex
-            int subjectIndex = 0;
+            /*int subjectIndex = 0;
             for(; subjectIndex < n_subjects; subjectIndex++) {
                 if(resultIndex < d_candidates_per_subject_prefixsum[subjectIndex+1])
                     break;
-            }
+            }*/
+
+            const int subjectIndex = thrust::distance(d_candidates_per_subject_prefixsum,
+                                                    thrust::lower_bound(
+                                                        thrust::seq,
+                                                        d_candidates_per_subject_prefixsum,
+                                                        d_candidates_per_subject_prefixsum + n_subjects + 1,
+                                                        resultIndex + 1))-1;
 
             //const int subjectlength = d_subject_sequences_lengths[subjectIndex];
             const int subjectlength = getSubjectLength(subjectIndex);
@@ -1054,8 +1074,8 @@ namespace gpu{
 
         if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
 
-        auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        auto get = [] (const char* data, int length, int index, auto trafo){
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, trafo);
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1117,12 +1137,19 @@ namespace gpu{
             }
             __syncthreads();
 
-    		int subjectIndex = 0;
+    		/*int subjectIndex = 0;
     		for(; subjectIndex < n_subjects; subjectIndex++) {
     			if(logicalBlockId < blocks_per_subject_prefixsum[subjectIndex+1])
                 //if(logicalBlockId < subjectIndex+1)
     				break;
-    		}
+    		}*/
+
+            const int subjectIndex = thrust::distance(blocks_per_subject_prefixsum,
+                                                    thrust::lower_bound(
+                                                        thrust::seq,
+                                                        blocks_per_subject_prefixsum,
+                                                        blocks_per_subject_prefixsum + n_subjects + 1,
+                                                        logicalBlockId + 1))-1;
 
             if(d_indices_per_subject[subjectIndex] > 0){
 
@@ -1160,7 +1187,7 @@ namespace gpu{
                     for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
                         const int shift = 0;
                         const int globalIndex = subjectColumnsBegin_incl + shift + i;
-                        const char base = get(subject, subjectLength, i);
+                        const char base = get(subject, subjectLength, i, [](auto i){return i;});
                         //printf("%d ", int(base));
                         //if(subjectQualityScore[i] == '\0'){
                             //assert(subjectQualityScore[i] != '\0');
@@ -1214,7 +1241,7 @@ namespace gpu{
                     if(flag == BestAlignment_t::Forward) {
                         for(int i = 0; i < queryLength; i += 1){
                             const int globalIndex = defaultcolumnoffset + i;
-                            const char base = get(query, queryLength, i);
+                            const char base = get(query, queryLength, i, [](auto i){return i;});
                             //printf("%d ", int(base));
                             //if(queryQualityScore[i] == '\0'){
                                 //assert(queryQualityScore[i] != '\0');
@@ -1243,7 +1270,7 @@ namespace gpu{
                         for(int i = 0; i < queryLength; i += 1){
                             const int reverseIndex = queryLength - 1 - i;
                             const int globalIndex = defaultcolumnoffset + i;
-                            const char base = get(query, queryLength, reverseIndex);
+                            const char base = get(query, queryLength, reverseIndex, [](auto i){return i;});
                             const char revCompl = make_reverse_complement_byte(base);
                             //printf("%d ", int(revCompl));
 
@@ -1295,7 +1322,7 @@ namespace gpu{
 #endif
 
     }
-    
+
 
     __global__
     void msa_add_sequences_kernel_implicit_shared_testwithsubjectselection(
@@ -1333,31 +1360,31 @@ namespace gpu{
         size_t msa_weights_row_pitch,
         bool debug){
         //#define transposequal
-        
+
         // sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
         //+ sizeof(int) * 4 * msa_weights_row_pitch_floats // counts
         extern __shared__ float sharedmem[];
-        
+
         if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
-        
+
         auto get = [] (const char* data, int length, int index){
             return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
         };
-        
+
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
             return reverseComplementStringInplace((char*)sequence, sequencelength);
         };
-        
+
         auto getSubjectPtr = [&] (int subjectIndex){
             const char* result = d_subject_sequences_data + std::size_t(subjectIndex) * encoded_sequence_pitch;
             return result;
         };
-        
+
         auto getCandidatePtr = [&] (int candidateIndex){
             const char* result = d_candidate_sequences_data + std::size_t(candidateIndex) * encoded_sequence_pitch;
             return result;
         };
-        
+
         auto getSubjectQualityPtr = [&] (int subjectIndex){
             const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
             return result;
@@ -1373,26 +1400,26 @@ namespace gpu{
             return result;
         };
         #endif
-        
+
         auto getSubjectLength = [&] (int subjectIndex){
             const int length = d_subject_sequences_lengths[subjectIndex];
             return length;
         };
-        
+
         auto getCandidateLength = [&] __device__ (int candidateIndex){
             //const int candidateIndex = d_active_candidate_indices[localCandidateIndex];
             const int length = d_candidate_sequences_lengths[candidateIndex];
             return length;
         };
-        
+
         const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
         const int smemsizefloats = 4 * msa_weights_row_pitch_floats + 4 * msa_weights_row_pitch_floats;
-        
+
         float* const shared_weights = sharedmem;
         int* const shared_counts = (int*)(shared_weights + 4 * msa_weights_row_pitch_floats);
-        
+
         const int num_active_subject_indices = *d_num_active_subject_indices;
-        
+
         //const int requiredTiles = n_subjects;//blocksPerActiveSubjectPrefixsum[n_subjects];
         const int requiredTiles = blocksPerActiveSubjectPrefixsum[num_active_subject_indices];
         #ifdef transposequal
@@ -1404,43 +1431,43 @@ namespace gpu{
                 sharedmem[i] = 0;
             }
             __syncthreads();
-            
+
             int subjectindicesIndex = 0;
             for(; subjectindicesIndex < num_active_subject_indices; subjectindicesIndex++) {
                 if(logicalBlockId < blocksPerActiveSubjectPrefixsum[subjectindicesIndex+1])
                     break;
             }
-            
+
             const int subjectIndex = d_active_subject_indices[subjectindicesIndex];
-                
+
             const int blockForThisSubject = logicalBlockId - blocksPerActiveSubjectPrefixsum[subjectIndex];
-            
+
             const int* const indices_for_this_subject = d_active_candidate_indices + d_active_candidate_indices_per_subject_prefixsum[subjectIndex];
             //const int indicesBeforeThisSubject = d_active_candidate_indices_per_subject_prefixsum[subjectIndex];
             const int id = blockForThisSubject * blockDim.x + threadIdx.x;
             const int maxid_excl = d_active_candidate_indices_per_subject[subjectIndex];
             const int globalIndexlistIndex = d_active_candidate_indices_per_subject_prefixsum[subjectIndex] + id;
-            
-            
+
+
             const int subjectColumnsBegin_incl = d_msa_column_properties[subjectIndex].subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = d_msa_column_properties[subjectIndex].subjectColumnsEnd_excl;
             //const int columnsToCheck = d_msa_column_properties[subjectIndex].columnsToCheck;
             const int columnsToCheck = d_msa_column_properties[subjectIndex].lastColumn_excl;
-            
+
             int* const my_coverage = d_coverage + subjectIndex * msa_weights_row_pitch_floats;
-            
+
             //if(size_t(columnsToCheck) > msa_weights_row_pitch_floats){
             //    printf("columnsToCheck %d, msa_weights_row_pitch_floats %lu\n", columnsToCheck, msa_weights_row_pitch_floats);
             assert(columnsToCheck <= msa_weights_row_pitch_floats);
             //}
-            
-            
+
+
             //ensure that the subject is only inserted once, by the first block
             if(blockForThisSubject == 0){
                 const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const char* const subject = getSubjectPtr(subjectIndex);
                 const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
-                
+
                 //if(debug){
                 //    printf("subject sharedkernel\n");
                 //}
@@ -1452,13 +1479,13 @@ namespace gpu{
                     //if(subjectQualityScore[i] == '\0'){
                     //assert(subjectQualityScore[i] != '\0');
                     //}
-                    
+
                     const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
                     const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                     atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                     atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                     atomicAdd(my_coverage + globalIndex, 1);
-                    
+
                     //if(debug){
                     //    printf("%f ", weight);
                     //}
@@ -1468,36 +1495,36 @@ namespace gpu{
                 //}
             }
             //printf("\n");
-            
+
             //if(subjectIndex == 1){
             //    printf("thread %d id %d, maxid_excl %d\n", threadIdx.x, id, maxid_excl);
             //}
-            
-            
+
+
             if(id < maxid_excl){
                 const int queryIndex = indices_for_this_subject[id];
                 const int shift = d_alignment_shifts[queryIndex];
                 const BestAlignment_t flag = d_alignment_best_alignment_flags[queryIndex];
                 const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
-                
+
                 const char* const query = getCandidatePtr(queryIndex);
                 const int queryLength = getCandidateLength(queryIndex);
                 const char* const queryQualityScore = getCandidateQualityPtr(globalIndexlistIndex);
-                
+
                 const int query_alignment_overlap = d_alignment_overlaps[queryIndex];
                 const int query_alignment_nops = d_alignment_nOps[queryIndex];
-                
+
                 const float defaultweight = 1.0f - sqrtf(query_alignment_nops
                 / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
-                
+
                 assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
-                
+
                 //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
-                
+
                 //if(subjectIndex == 1){
                 //    printf("thread %d flag %d\n", threadIdx.x, flag);
                 //}
-                
+
                 if(flag == BestAlignment_t::Forward) {
                     for(int i = 0; i < queryLength; i += 1){
                         const int globalIndex = defaultcolumnoffset + i;
@@ -1506,7 +1533,7 @@ namespace gpu{
                         //if(queryQualityScore[i] == '\0'){
                         //assert(queryQualityScore[i] != '\0');
                         //}
-                        
+
                         #ifndef transposequal
                         const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : defaultweight;
                         #else
@@ -1526,14 +1553,14 @@ namespace gpu{
                         constexpr std::uint8_t mask = 0x03;
                         return (~in & mask);
                     };
-                    
+
                     for(int i = 0; i < queryLength; i += 1){
                         const int reverseIndex = queryLength - 1 - i;
                         const int globalIndex = defaultcolumnoffset + i;
                         const char base = get(query, queryLength, reverseIndex);
                         const char revCompl = make_reverse_complement_byte(base);
                         //printf("%d ", int(revCompl));
-                        
+
                         //if(queryQualityScore[reverseIndex] == '\0'){
                         //assert(queryQualityScore[reverseIndex] != '\0');
                         //}
@@ -1542,13 +1569,13 @@ namespace gpu{
                         #else
                         const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex*num_indices]] * defaultweight : defaultweight;
                         #endif
-                        
+
                         assert(weight != 0);
                         const int ptrOffset = int(revCompl) * msa_weights_row_pitch_floats;
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                         atomicAdd(my_coverage + globalIndex, 1);
-                        
+
                         if(debug && (globalIndex == 23 || globalIndex == 35 || globalIndex == 42)){
                             printf("globalIndex %d, index %d, queryIndex %d, reverseIndex %d, encodedBase %d, weight %.10f\n", globalIndex, id, queryIndex, reverseIndex, base, weight);
                         }
@@ -1556,9 +1583,9 @@ namespace gpu{
                 }
                 //printf("\n");
             }
-            
+
             __syncthreads();
-            
+
             for(int index = threadIdx.x; index < columnsToCheck; index += blockDim.x){
                 for(int k = 0; k < 4; k++){
                     const int* const srcCounts = shared_counts + k * msa_weights_row_pitch_floats + index;
@@ -1567,19 +1594,19 @@ namespace gpu{
                     float* const destWeights = d_weights + 4 * msa_weights_row_pitch_floats * subjectIndex + k * msa_weights_row_pitch_floats + index;
                     atomicAdd(destCounts ,*srcCounts);
                     atomicAdd(destWeights, *srcWeights);
-                    
+
                     if(debug && (index == 23 || index == 35 || index == 42)){
                         printf("globalIndex %d, %.10f\n", index, *srcWeights);
                     }
                 }
             }
-            
+
             __syncthreads();
         }
         #ifdef transposequal
         #undef transposequal
         #endif
-        
+
         }
 
 
@@ -3931,9 +3958,9 @@ namespace gpu{
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;
     }
-    
-    
-    
+
+
+
     void call_msa_add_sequences_kernel_implicit_shared_testwithsubjectselection_async(
         int* d_counts,
         float* d_weights,
@@ -3971,59 +3998,59 @@ namespace gpu{
         cudaStream_t stream,
         KernelLaunchHandle& handle,
         bool debug){
-        
+
         // set counts, weights, and coverages to zero for subjects with valid indices
         generic_kernel<<<n_subjects, 128, 0, stream>>>([=] __device__ (){
             const int numActiveSubjects = *d_num_active_subject_indices;
-            
+
             for(int subjectindicesIndex = blockIdx.x; subjectindicesIndex < numActiveSubjects; subjectindicesIndex += gridDim.x){
                 const int subjectIndex = d_active_subject_indices[subjectindicesIndex];
-                
+
                 const size_t msa_weights_pitch_floats = msa_weights_row_pitch / sizeof(float);
-                
+
                 int* const mycounts = d_counts + msa_weights_pitch_floats * 4 * subjectIndex;
                 float* const myweights = d_weights + msa_weights_pitch_floats * 4 * subjectIndex;
                 int* const mycoverages = d_coverage + msa_weights_pitch_floats * subjectIndex;
-                
+
                 for(int column = threadIdx.x; column < msa_weights_pitch_floats * 4; column += blockDim.x){
                     mycounts[column] = 0;
                     myweights[column] = 0;
                 }
-                
+
                 for(int column = threadIdx.x; column < msa_weights_pitch_floats; column += blockDim.x){
                     mycoverages[column] = 0;
                 }
             }
         }); CUERR;
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
+
+
+
+
+
+
+
+
         //std::cerr << "n_subjects: " << n_subjects << ", n_queries: " << n_queries << ", *h_num_indices: " << *h_num_indices << '\n';
         const int blocksize = 128;
         const std::size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
-        
+
         //const std::size_t smem = sizeof(char) * maximum_sequence_length + sizeof(float) * maximum_sequence_length;
         const std::size_t smem = sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
         + sizeof(int) * 4 * msa_weights_row_pitch_floats; // counts
-        
-        
+
+
         int max_blocks_per_device = 1;
-        
+
         KernelLaunchConfig kernelLaunchConfig;
         kernelLaunchConfig.threads_per_block = blocksize;
         kernelLaunchConfig.smem = smem;
-        
+
         auto iter = handle.kernelPropertiesMap.find(KernelId::MSAAddSequencesImplicitSharedTest);
         if(iter == handle.kernelPropertiesMap.end()) {
-            
+
             std::map<KernelLaunchConfig, KernelProperties> mymap;
-            
+
             #define getProp(blocksize) { \
             KernelLaunchConfig kernelLaunchConfig; \
             kernelLaunchConfig.threads_per_block = (blocksize); \
@@ -4035,7 +4062,7 @@ namespace gpu{
             kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
             mymap[kernelLaunchConfig] = kernelProperties; \
             }
-            
+
             getProp(1);
             getProp(32);
             getProp(64);
@@ -4045,12 +4072,12 @@ namespace gpu{
             getProp(192);
             getProp(224);
             getProp(256);
-            
+
             const auto& kernelProperties = mymap[kernelLaunchConfig];
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
-            
+
             handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitSharedTest] = std::move(mymap);
-            
+
             #undef getProp
         }else{
             std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
@@ -4058,13 +4085,13 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
             //std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
         }
-        
-        
+
+
         int* d_blocksPerActiveSubjectPrefixSum;
         cubCachingAllocator.DeviceAllocate((void**)&d_blocksPerActiveSubjectPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
-        
-        // calculate blocks per subject prefixsum       
-        
+
+        // calculate blocks per subject prefixsum
+
         auto getBlocksPerActiveSubject = [=] __device__ (int subjectindicesIndex){
             const int subjectIndex = d_active_subject_indices[subjectindicesIndex];
             return SDIV(d_active_candidate_indices_per_subject[subjectIndex], blocksize);
@@ -4072,39 +4099,39 @@ namespace gpu{
         cub::CountingInputIterator<int> countingIter(0);
         cub::TransformInputIterator<int,decltype(getBlocksPerActiveSubject), cub::CountingInputIterator<int>>
                 d_blocksPerActiveSubject(countingIter, getBlocksPerActiveSubject);
-        
+
         void* tempstorage = nullptr;
         size_t tempstoragesize = 0;
-        
+
         cub::DeviceScan::InclusiveSum(nullptr,
                                       tempstoragesize,
                                       d_blocksPerActiveSubject,
                                       d_blocksPerActiveSubjectPrefixSum+1,
                                       n_subjects,
                                       stream); CUERR;
-                                      
+
         cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
-        
+
         cub::DeviceScan::InclusiveSum(tempstorage,
                                     tempstoragesize,
                                     d_blocksPerActiveSubject,
                                     d_blocksPerActiveSubjectPrefixSum+1,
                                     n_subjects,
                                     stream); CUERR;
-                                    
+
         cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
-        
+
         call_set_kernel_async(d_blocksPerActiveSubjectPrefixSum,
                                 0,
                                 0,
                                 stream);
-        
-        
+
+
         dim3 block(blocksize, 1, 1);
-        
+
         const int blocks = SDIV(*h_num_active_candidate_indices, blocksize);
         dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
-        
+
         msa_add_sequences_kernel_implicit_shared_testwithsubjectselection<<<grid, block, smem, stream>>>(
             d_counts,
             d_weights,
@@ -4139,7 +4166,7 @@ namespace gpu{
             msa_row_pitch,
             msa_weights_row_pitch,
             debug); CUERR;
-            
+
         cubCachingAllocator.DeviceFree(d_blocksPerActiveSubjectPrefixSum); CUERR;
     }
 
