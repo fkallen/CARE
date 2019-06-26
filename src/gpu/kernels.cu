@@ -225,15 +225,15 @@ namespace gpu{
                         candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
                 const int querybases = candidate_sequences_lengths[queryIndex];
-                const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
+                //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
                 //transposed
-                //const char* candidateptr = (const char*)((unsigned int*)(candidate_sequences_data) + std::size_t(queryIndex));
+                const char* candidateptr = (const char*)((unsigned int*)(candidate_sequences_data) + std::size_t(queryIndex));
 
                 //save query in shared memory
                 for(int i = 0; i < max_sequence_ints; i += 1) {
-                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
+                    //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
                     //transposed
-                    //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i * n_candidates];
+                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i * n_candidates];
                 }
 
                 //queryIndex != resultIndex -> reverse complement
