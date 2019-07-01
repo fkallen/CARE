@@ -3,6 +3,22 @@
 
 #ifdef __NVCC__
 
+#include <iostream>
+#include <stdexcept>
+
+#ifndef CUERR
+
+#define CUERR {                                                            \
+    cudaError_t err;                                                       \
+    if ((err = cudaGetLastError()) != cudaSuccess) {                       \
+        std::cerr << "CUDA error: " << cudaGetErrorString(err) << " : "    \
+                  << __FILE__ << ", line " << __LINE__ << "\n";       \
+        exit(1);                                                           \
+    }                                                                      \
+}
+
+#endif
+
 namespace detail{
 
 	enum class DataLocation {Host, PinnedHost, Device};
