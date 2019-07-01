@@ -107,7 +107,7 @@ namespace cpu{
 
     		isRunning = true;
 
-            const int max_sequence_bytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(fileOptions.maximum_sequence_length);
+            const int max_sequence_bytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(fileProperties.maxSequenceLength);
 
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
