@@ -9,9 +9,11 @@
 #include <algorithm>
 #include <numeric>
 #include <cassert>
+#include <iterator>
 
     DistributedArray::DistributedArray(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, size_t numElements_, size_t sizeOfElement_, int preferedLocation_)
-            : numGpus(deviceIds_.size()),
+            : debug(true),
+            numGpus(deviceIds_.size()),
             numLocations(numGpus+1),
             hostLocation(numLocations-1),
             preferedLocation(preferedLocation_),
@@ -76,6 +78,16 @@
 
         std::partial_sum(elementsPerLocation.begin(), elementsPerLocation.end(), elementsPerLocationPS.begin()+1);
 
+        if(debug){
+             std::cerr << "device ids: ";
+             std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));
+             std::cerr << "\n";
+
+             std::cerr << "elements per location: ";
+             std::copy(elementsPerLocation.begin(), elementsPerLocation.end(), std::ostream_iterator<size_t>(std::cerr, " "));
+             std::cerr << "\n";
+        }
+
         cudaSetDevice(oldId); CUERR;
     }
 
@@ -111,19 +123,6 @@
             int oldDevice; cudaGetDevice(&oldDevice); CUERR;
             cudaSetDevice(deviceIds[location]); CUERR;
             cudaMemcpy(dataPtrPerLocation[location] + sizeOfElement * localIndex, data, sizeOfElement, H2D); CUERR;
-            cudaSetDevice(oldDevice); CUERR;
-        }
-    }
-
-    void DistributedArray::get(size_t index, char* result){
-        int location = getLocation(index);
-        size_t localIndex = index - elementsPerLocationPS[location];
-        if(location == hostLocation){
-            std::copy_n(dataPtrPerLocation[hostLocation] + sizeOfElement * localIndex, sizeOfElement, result);
-        }else{
-            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-            cudaSetDevice(deviceIds[location]); CUERR;
-            cudaMemcpy(result, dataPtrPerLocation[location] + sizeOfElement * localIndex, sizeOfElement, D2H); CUERR;
             cudaSetDevice(oldDevice); CUERR;
         }
     }
@@ -186,8 +185,23 @@
         cudaSetDevice(oldDevice); CUERR;
     }
 
-    //d_result, d_readIds must point to memory of device deviceId. read ids must be local read ids for this device
-    void DistributedArray::copyDataToGpuBufferAsync(char* d_result, const size_t* d_indices, size_t nIndices, int deviceId, cudaStream_t stream) const{
+    void DistributedArray::get(size_t index, char* result){
+        int location = getLocation(index);
+        size_t localIndex = index - elementsPerLocationPS[location];
+        if(location == hostLocation){
+            std::copy_n(dataPtrPerLocation[hostLocation] + sizeOfElement * localIndex, sizeOfElement, result);
+        }else{
+            int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+            cudaSetDevice(deviceIds[location]); CUERR;
+            cudaMemcpy(result, dataPtrPerLocation[location] + sizeOfElement * localIndex, sizeOfElement, D2H); CUERR;
+            cudaSetDevice(oldDevice); CUERR;
+        }
+    }
+
+
+
+    //d_result, d_indices must point to memory of device deviceId. d_indices[i] + indexOffset must be a local element index for this device
+    void DistributedArray::copyDataToGpuBufferAsync(char* d_result, const size_t* d_indices, size_t nIndices, int deviceId, cudaStream_t stream, size_t indexOffset) const{
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
         cudaSetDevice(deviceId); CUERR;
@@ -205,7 +219,7 @@
 
         generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
             for(size_t k = threadIdx.x + blockDim.x * blockIdx.x; k < nIndices; k += blockDim.x * gridDim.x){
-                const size_t index = d_indices[k];
+                const size_t index = d_indices[k] + indexOffset;
                 for(size_t b = 0; b < sizeOfElement_; b++){
                     d_result[k * sizeOfElement_ + b] = gpuData[index * sizeOfElement_ + b];
                 }
@@ -213,6 +227,11 @@
         });
 
         cudaSetDevice(oldDevice); CUERR;
+    }
+
+    //d_result, d_indices must point to memory of device deviceId. d_indices[i] must be a local element index for this device
+    void DistributedArray::copyDataToGpuBufferAsync(char* d_result, const size_t* d_indices, size_t nIndices, int deviceId, cudaStream_t stream) const{
+        copyDataToGpuBufferAsync(d_result, d_indices, nIndices, deviceId, stream, 0);
     }
 
 
@@ -368,6 +387,8 @@
 
     //the same GatherHandle must not be used in another call until the results of the previous call are calculated
     void DistributedArray::gatherReadsInGpuMemAsync(const std::unique_ptr<GatherHandle>& handle, size_t* indices, size_t* d_indices, size_t numIds, int deviceId, char* d_result, cudaStream_t stream) const{
+        if(numIds == 0) return;
+
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
     	std::vector<size_t> hitsPerLocation(numLocations, 0);
@@ -375,6 +396,25 @@
     		int location = getLocation(indices[i]);
     		hitsPerLocation[location]++;
     	}
+
+        //shortcut. if all elements reside on the gpu with device id deviceId, perform a simple gather on the gpu, avoiding copies to host and from host.
+        bool simpleGatherOnSameDevice = true;
+        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+        int deviceIdLocation = -1;
+        if(deviceIdIter != deviceIds.end()){
+            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
+            for(int i = 0; i < numLocations && simpleGatherOnSameDevice; i++){
+                if(i != deviceIdLocation && hitsPerLocation[i] > 0){
+                    simpleGatherOnSameDevice = false;
+                }
+            }
+        }
+
+        if(simpleGatherOnSameDevice){
+            if(debug) std::cerr << "simpleGatherOnSameDevice " << deviceId << '\n';
+            copyDataToGpuBufferAsync(d_result, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[deviceIdLocation]);
+            return;
+        }
 
     	std::vector<size_t> hitsPerLocationPrefixSum(numLocations+1,0);
     	std::partial_sum(hitsPerLocation.begin(), hitsPerLocation.end(), hitsPerLocationPrefixSum.begin()+1);

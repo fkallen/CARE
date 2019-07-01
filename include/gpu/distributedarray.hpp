@@ -26,6 +26,7 @@ public:
         std::vector<cudaEvent_t> eventsPerGpu;
     };
 
+    bool debug;
     int numGpus;
     int numLocations; //numGpus + 1
     int hostLocation; // numLocations - 1
@@ -66,7 +67,10 @@ public:
     //the same GatherHandle must not be used in another call until the results of the previous call are calculated
     void gatherReadsInGpuMemAsync(const std::unique_ptr<GatherHandle>&, size_t* indices, size_t* d_indices, size_t numIds, int deviceId, char* d_result, cudaStream_t stream) const;
 
-    //d_result, d_readIds must point to memory of device deviceId. read ids must be local read ids for this device
+    //d_result, d_indices must point to memory of device deviceId. d_indices[i] + indexOffset must be a local element index for this device
+    void copyDataToGpuBufferAsync(char* d_result, const size_t* d_indices, size_t nIndices, int deviceId, cudaStream_t stream, size_t indexOffset) const;
+
+    //d_result, d_indices must point to memory of device deviceId. d_indices[i] must be a local element index for this device
     void copyDataToGpuBufferAsync(char* d_result, const size_t* d_indices, size_t nIndices, int deviceId, cudaStream_t stream) const;
 };
 
