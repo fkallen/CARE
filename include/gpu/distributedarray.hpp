@@ -10,7 +10,6 @@
 #include <map>
 #include <future>
 
-
 struct DistributedArray{
 public:
     struct GatherHandle{
@@ -56,7 +55,7 @@ public:
 
     std::unique_ptr<GatherHandle> makeGatherHandle() const;
 
-    void destroyGatherHandle(std::unique_ptr<GatherHandle>&& handle) const;
+    void destroyGatherHandle(const std::unique_ptr<GatherHandle>& handle) const;
 
     std::future<void> gatherReadsInHostMemAsync(const std::unique_ptr<GatherHandle>&, size_t* indices, size_t numIds, char* result) const;
 

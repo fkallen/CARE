@@ -10,7 +10,6 @@
 #include <numeric>
 #include <cassert>
 
-
     DistributedArray::DistributedArray(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, size_t numElements_, size_t sizeOfElement_, int preferedLocation_)
             : numGpus(deviceIds_.size()),
             numLocations(numGpus+1),
@@ -360,9 +359,11 @@
     }
 
     void DistributedArray::gatherReadsInGpuMem(const std::unique_ptr<GatherHandle>& handle, size_t* indices, size_t* d_indices, size_t numIds, int deviceId, char* d_result) const {
-        cudaStream_t defaultstream = 0;
-        gatherReadsInGpuMemAsync(handle, indices, d_indices, numIds, deviceId, d_result, defaultstream);
-        cudaStreamSynchronize(defaultstream); CUERR;
+        cudaStream_t stream = 0;
+        cudaStreamCreate(&stream); CUERR;
+        gatherReadsInGpuMemAsync(handle, indices, d_indices, numIds, deviceId, d_result, stream);
+        cudaStreamSynchronize(stream); CUERR;
+        cudaStreamDestroy(stream); CUERR;
     }
 
     //the same GatherHandle must not be used in another call until the results of the previous call are calculated
