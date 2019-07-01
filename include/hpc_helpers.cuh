@@ -60,7 +60,7 @@
         a##label = std::chrono::system_clock::now();
 #endif
 
-#ifndef TIMERSTARTCPU
+#ifndef TIMERSTOPCPU
     #define TIMERSTOPCPU(label)                                                   \
         b##label = std::chrono::system_clock::now();                           \
         std::chrono::duration<double> delta##label = b##label-a##label;        \
