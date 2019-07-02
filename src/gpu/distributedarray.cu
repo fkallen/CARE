@@ -11,6 +11,7 @@
 #include <cassert>
 #include <iterator>
 
+
     DistributedArray::DistributedArray(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, size_t numElements_, size_t sizeOfElement_, int preferedLocation_)
             : debug(true),
             numGpus(deviceIds_.size()),
@@ -20,7 +21,8 @@
             numElements(numElements_),
             sizeOfElement(sizeOfElement_),
             deviceIds(std::move(deviceIds_)),
-            maxFreeMemFraction(std::move(maxFreeMemFraction_)){
+            maxFreeMemFraction(std::move(maxFreeMemFraction_)),
+            peerAccess(PeerAccess{}){
 
         assert(deviceIds.size() == maxFreeMemFraction.size());
         assert(std::all_of(maxFreeMemFraction.begin(), maxFreeMemFraction.end(), [](float f){return f <= 1.0f;}));
@@ -226,7 +228,37 @@
                     d_result[k * sizeOfElement_ + b] = gpuData[index * sizeOfElement_ + b];
                 }
             }
-        });
+        }); CUERR;
+
+        cudaSetDevice(oldDevice); CUERR;
+    }
+
+    void DistributedArray::copyDataToGpuBufferAsync(char* d_result, int resultDevice, const size_t* d_indices, size_t nIndices, int sourceDevice, cudaStream_t stream, size_t indexOffset) const{
+        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+
+
+
+        auto it = std::find(deviceIds.begin(), deviceIds.end(), sourceDevice);
+        assert(it != deviceIds.end());
+
+        int gpu = std::distance(deviceIds.begin(), it);
+        size_t sizeOfElement_ = sizeOfElement;
+
+        const char* const gpuData = dataPtrPerLocation[gpu];
+
+        dim3 grid(SDIV(nIndices, 128),1,1);
+        dim3 block(128,1,1);
+
+        cudaSetDevice(resultDevice); CUERR;
+
+        generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+            for(size_t k = threadIdx.x + blockDim.x * blockIdx.x; k < nIndices; k += blockDim.x * gridDim.x){
+                const size_t index = d_indices[k] + indexOffset;
+                for(size_t b = 0; b < sizeOfElement_; b++){
+                    d_result[k * sizeOfElement_ + b] = gpuData[index * sizeOfElement_ + b];
+                }
+            }
+        }); CUERR;
 
         cudaSetDevice(oldDevice); CUERR;
     }
@@ -239,7 +271,7 @@
 
     std::unique_ptr<DistributedArray::GatherHandle> DistributedArray::makeGatherHandle() const{
         auto handle = std::make_unique<GatherHandle>();
-        handle->deviceLocalReadIdsPerLocation.resize(numLocations);
+        handle->deviceLocalIndicesPerLocation.resize(numLocations);
         handle->dataPerGpu.resize(numGpus);
         handle->streamsPerGpu.resize(numGpus);
         handle->eventsPerGpu.resize(numGpus);
@@ -263,7 +295,7 @@
         for(size_t gpu = 0; gpu < handle->dataPerGpu.size(); gpu++){
             cudaSetDevice(deviceIds[gpu]); CUERR;
 
-            handle->deviceLocalReadIdsPerLocation[gpu] = std::move(SimpleAllocationDevice<size_t>{});
+            handle->deviceLocalIndicesPerLocation[gpu] = std::move(SimpleAllocationDevice<size_t>{});
             handle->dataPerGpu[gpu] = std::move(SimpleAllocationDevice<char>{});
             cudaStreamDestroy(handle->streamsPerGpu[gpu]); CUERR;
             cudaEventDestroy(handle->eventsPerGpu[gpu]); CUERR;
@@ -332,7 +364,7 @@
 
                 cudaSetDevice(deviceIds[gpu]); CUERR;
 
-                auto& myLocalIds = handle->deviceLocalReadIdsPerLocation[gpu];
+                auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
                 auto& myResult = handle->dataPerGpu[gpu];
 
 
@@ -391,26 +423,15 @@
     void DistributedArray::gatherReadsInGpuMemAsync(const std::unique_ptr<GatherHandle>& handle, size_t* indices, size_t* d_indices, size_t numIds, int deviceId, char* d_result, cudaStream_t stream) const{
         if(numIds == 0) return;
 
-        PeerAccess peerAccess;
-
-        if(debug){
-            std::cerr << "Peer access per location: \n";
-            for(int i = 0; i < numGpus; i++){
-                for(int k = 0; k < numGpus; k++){
-                    std::cerr << peerAccess.hasPeerAccess(deviceIds[i], deviceIds[k]) << " ";
-                }
-                std::cerr << "\n";
-            }
-            std::cerr << "\n";
-        }
-
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
+TIMERSTARTCPU(countsHitsPerLocation);
     	std::vector<size_t> hitsPerLocation(numLocations, 0);
     	for(size_t i = 0; i < numIds; i++){
     		int location = getLocation(indices[i]);
     		hitsPerLocation[location]++;
     	}
+TIMERSTOPCPU(countsHitsPerLocation);
 
         if(debug){
             std::cerr << "hitsPerLocation: ";
@@ -437,6 +458,7 @@
             return;
         }
 
+TIMERSTARTCPU(makenewindices);
     	std::vector<size_t> hitsPerLocationPrefixSum(numLocations+1,0);
     	std::partial_sum(hitsPerLocation.begin(), hitsPerLocation.end(), hitsPerLocationPrefixSum.begin()+1);
         std::fill(hitsPerLocation.begin(), hitsPerLocation.end(), 0);
@@ -455,12 +477,19 @@
             //std::cerr << "read id " << readIds[i] << ", location " << location << ", localReadId " << localReadId << ", index " << index << "\n";
     		hitsPerLocation[location]++;
     	}
+TIMERSTOPCPU(makenewindices);
+
+TIMERSTARTCPU(resizedevicevectors)
         handle->pinnedResultData.resize(numIds * sizeOfElement);
 
-
-
-
         cudaSetDevice(deviceId); CUERR;
+        handle->localIndicesOnDevice[deviceId].resize(numIds);
+        cudaMemcpyAsync(handle->localIndicesOnDevice[deviceId].get(),
+                        handle->pinnedLocalIndices.get(),
+                        sizeof(size_t) * numIds,
+                        H2D,
+                        stream); CUERR;
+
         handle->tmpResultsOfDevice[deviceId].resize(numIds * sizeOfElement);
 
         handle->permutationIndicesOfDevice[deviceId].resize(numIds);
@@ -470,6 +499,7 @@
                         sizeof(size_t) * numIds,
                         H2D,
                         stream); CUERR;
+TIMERSTOPCPU(resizedevicevectors);
 
         //gather from gpus to host
         for(int gpu = 0; gpu < numGpus; gpu++){
@@ -479,40 +509,64 @@
                 cudaStream_t mystream = handle->streamsPerGpu[gpu];
                 cudaEvent_t myevent = handle->eventsPerGpu[gpu];
 
-        		cudaSetDevice(mydeviceId); CUERR;
+                if(true && (peerAccess.hasPeerAccess(deviceId, mydeviceId) || deviceId == mydeviceId)){
+                    std::cerr << "use peer access / local access: " << deviceId << " <---- " << mydeviceId << "\n";
+/*
+                    cudaSetDevice(mydeviceId); CUERR;
+                    auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
+                    myLocalIds.resize(numHits);
+                    cudaMemcpyAsync(myLocalIds.get(),
+                                    handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
+                                    sizeof(size_t) * numHits,
+                                    H2D,
+                                    mystream); CUERR;
+                    cudaEventRecord(myevent, mystream); CUERR;
+*/
+                    cudaSetDevice(deviceId); CUERR;
+                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until remote indices are ready
+                    char* destptr = handle->tmpResultsOfDevice[deviceId].get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement;
+                    size_t* localIdsPtr = handle->localIndicesOnDevice[deviceId].get() + hitsPerLocationPrefixSum[gpu];
+                    //copyDataToGpuBufferAsync(destptr, deviceId, myLocalIds.get(), numHits, mydeviceId, stream, 0);
+                    copyDataToGpuBufferAsync(destptr, deviceId, localIdsPtr, numHits, mydeviceId, stream, 0);
+                }else{
+                    std::cerr << "use intermediate host: " << deviceId << " <---- host <---- " << mydeviceId << "\n";
 
-                auto& myLocalIds = handle->deviceLocalReadIdsPerLocation[gpu];
-                auto& myResult = handle->dataPerGpu[gpu];
+
+            	    cudaSetDevice(mydeviceId); CUERR;
+
+                    auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
+                    auto& myResult = handle->dataPerGpu[gpu];
 
 
-        	    myLocalIds.resize(numHits);
-                cudaMemcpyAsync(myLocalIds.get(),
-                                handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
-                                sizeof(size_t) * numHits,
-                                H2D,
-                                mystream); CUERR;
+            	    myLocalIds.resize(numHits);
+                    cudaMemcpyAsync(myLocalIds.get(),
+                                    handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
+                                    sizeof(size_t) * numHits,
+                                    H2D,
+                                    mystream); CUERR;
 
-        		myResult.resize(numHits * sizeOfElement);
+            	    myResult.resize(numHits * sizeOfElement);
 
-                copyDataToGpuBufferAsync(myResult.get(), myLocalIds.get(), numHits, mydeviceId, mystream);
+                    copyDataToGpuBufferAsync(myResult.get(), mydeviceId, myLocalIds.get(), numHits, mydeviceId, mystream, 0);
 
-                cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
-                                myResult.get(),
-                                sizeOfElement * numHits,
-                                D2H,
-                                mystream); CUERR;
+                    cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                                    myResult.get(),
+                                    sizeOfElement * numHits,
+                                    D2H,
+                                    mystream); CUERR;
 
-                cudaEventRecord(myevent, mystream); CUERR;
+                    cudaEventRecord(myevent, mystream); CUERR;
 
-                cudaSetDevice(deviceId); CUERR;
-                cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
+                    cudaSetDevice(deviceId); CUERR;
+                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
 
-                //copy partial results to tmp result buffer on device
-                cudaMemcpyAsync(handle->tmpResultsOfDevice[deviceId].get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
-                                handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
-                                sizeOfElement * hitsPerLocation[gpu],
-                                H2D,
-                                stream);
+                    //copy partial results to tmp result buffer on device
+                    cudaMemcpyAsync(handle->tmpResultsOfDevice[deviceId].get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                                    handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                                    sizeOfElement * hitsPerLocation[gpu],
+                                    H2D,
+                                    stream);
+                }
             }
     	}
 

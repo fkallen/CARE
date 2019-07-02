@@ -11,89 +11,93 @@
 #include <future>
 #include <cassert>
 
+
+struct PeerAccess{
+    int numGpus;
+    std::vector<int> accessMatrix;
+
+    PeerAccess(){
+        cudaGetDeviceCount(&numGpus); CUERR;
+        accessMatrix.resize(numGpus * numGpus);
+        for(int i = 0; i < numGpus; i++){
+            for(int k = 0; k < numGpus; k++){
+                //device i can access device k?
+                cudaDeviceCanAccessPeer(&accessMatrix[i * numGpus + k], i, k);
+            }
+        }
+    }
+
+    bool hasPeerAccess(int device, int peerDevice) const{
+        assert(device < numGpus);
+        assert(peerDevice < numGpus);
+        return accessMatrix[device * numGpus + peerDevice] == 1;
+    }
+
+    void enablePeerAccess(int device, int peerDevice) const{
+        assert(hasPeerAccess(device, peerDevice));
+        int oldId; cudaGetDevice(&oldId); CUERR;
+        cudaSetDevice(device); CUERR;
+        cudaError_t status = cudaDeviceEnablePeerAccess(peerDevice, 0);
+        if(status != cudaSuccess){
+            if(status == cudaErrorPeerAccessAlreadyEnabled){
+                std::cerr << "Peer access from " << device << " to " << peerDevice << " has already been enabled\n";
+            }else{
+                CUERR;
+            }
+        }
+        cudaSetDevice(oldId); CUERR;
+    }
+
+    void disablePeerAccess(int device, int peerDevice) const{
+        assert(hasPeerAccess(device, peerDevice));
+        int oldId; cudaGetDevice(&oldId); CUERR;
+        cudaSetDevice(device); CUERR;
+        cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice); CUERR;
+        if(status != cudaSuccess){
+            if(status == cudaErrorPeerAccessNotEnabled){
+                std::cerr << "Peer access from " << device << " to " << peerDevice << " has not yet been enabled\n";
+            }else{
+                CUERR;
+            }
+        }
+        cudaSetDevice(oldId); CUERR;
+    }
+
+    void enableAllPeerAccesses(){
+        for(int i = 0; i < numGpus; i++){
+            for(int k = 0; k < numGpus; k++){
+                if(hasPeerAccess(i, k)){
+                    enablePeerAccess(i, k);
+                }
+            }
+        }
+    }
+
+    void disableAllPeerAccesses(){
+        for(int i = 0; i < numGpus; i++){
+            for(int k = 0; k < numGpus; k++){
+                if(hasPeerAccess(i, k)){
+                    disablePeerAccess(i, k);
+                }
+            }
+        }
+    }
+};
+
 struct DistributedArray{
 public:
-    struct PeerAccess{
-        int numGpus;
-        std::vector<int> accessMatrix;
 
-        PeerAccess(){
-            cudaGetDeviceCount(&numGpus); CUERR;
-            accessMatrix.resize(numGpus * numGpus);
-            for(int i = 0; i < numGpus; i++){
-                for(int k = 0; k < numGpus; k++){
-                    //device i can access device k?
-                    cudaDeviceCanAccessPeer(&accessMatrix[i * numGpus + k], i, k);
-                }
-            }
-        }
-
-        bool hasPeerAccess(int device, int peerDevice) const{
-            assert(device < numGpus);
-            assert(peerDevice < numGpus);
-            return accessMatrix[device * numGpus + peerDevice] == 1;
-        }
-
-        void enablePeerAccess(int device, int peerDevice) const{
-            assert(hasPeerAccess(device, peerDevice));
-            int oldId; cudaGetDevice(&oldId); CUERR;
-            cudaSetDevice(device); CUERR;
-            cudaError_t status = cudaDeviceEnablePeerAccess(peerDevice, 0);
-            if(status != cudaSuccess){
-                if(status == cudaErrorPeerAccessAlreadyEnabled){
-                    std::cerr << "Peer access from " << device << " to " << peerDevice << " has already been enabled\n";
-                }else{
-                    CUERR;
-                }
-            }
-            cudaSetDevice(oldId); CUERR;
-        }
-
-        void disablePeerAccess(int device, int peerDevice) const{
-            assert(hasPeerAccess(device, peerDevice));
-            int oldId; cudaGetDevice(&oldId); CUERR;
-            cudaSetDevice(device); CUERR;
-            cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice); CUERR;
-            if(status != cudaSuccess){
-                if(status == cudaErrorPeerAccessNotEnabled){
-                    std::cerr << "Peer access from " << device << " to " << peerDevice << " has not yet been enabled\n";
-                }else{
-                    CUERR;
-                }
-            }
-            cudaSetDevice(oldId); CUERR;
-        }
-
-        void enableAllPeerAccesses(){
-            for(int i = 0; i < numGpus; i++){
-                for(int k = 0; k < numGpus; k++){
-                    if(hasPeerAccess(i, k)){
-                        enablePeerAccess(i, k);
-                    }
-                }
-            }
-        }
-
-        void disableAllPeerAccesses(){
-            for(int i = 0; i < numGpus; i++){
-                for(int k = 0; k < numGpus; k++){
-                    if(hasPeerAccess(i, k)){
-                        disablePeerAccess(i, k);
-                    }
-                }
-            }
-        }
-    };
 
     struct GatherHandle{
         SimpleAllocationPinnedHost<size_t> pinnedLocalIndices;
         SimpleAllocationPinnedHost<size_t> pinnedPermutationIndices;
         SimpleAllocationPinnedHost<char> pinnedResultData;
-        std::vector<SimpleAllocationDevice<size_t>> deviceLocalReadIdsPerLocation;
+        std::vector<SimpleAllocationDevice<size_t>> deviceLocalIndicesPerLocation;
         std::vector<SimpleAllocationDevice<char>> dataPerGpu;
 
         std::map<int, SimpleAllocationDevice<char>> tmpResultsOfDevice;
         std::map<int, SimpleAllocationDevice<size_t>> permutationIndicesOfDevice;
+        std::map<int, SimpleAllocationDevice<size_t>> localIndicesOnDevice;
 
         std::vector<cudaStream_t> streamsPerGpu;
         std::vector<cudaEvent_t> eventsPerGpu;
@@ -111,6 +115,7 @@ public:
     std::vector<size_t> elementsPerLocation; // how many elements are stored on which location
     std::vector<size_t> elementsPerLocationPS; //inclusive prefix sum with leading zero
     std::vector<char*> dataPtrPerLocation; // the storage of each location. dataPtrPerLocation[hostLocation] is the host data. dataPtrPerLocation[gpu] is device data
+    PeerAccess peerAccess;
 
     DistributedArray(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, size_t numElements_, size_t sizeOfElement_, int preferedLocation_ = -1);
 
@@ -145,6 +150,10 @@ public:
 
     //d_result, d_indices must point to memory of device deviceId. d_indices[i] must be a local element index for this device
     void copyDataToGpuBufferAsync(char* d_result, const size_t* d_indices, size_t nIndices, int deviceId, cudaStream_t stream) const;
+
+    //d_result points to memory of resultDevice, d_indices points to memory of sourceDevice. Gathers array elements of sourceDevice to resultDevice
+    // if resultDevice != sourceDevice, peer access must be enabled
+    void copyDataToGpuBufferAsync(char* d_result, int resultDevice, const size_t* d_indices, size_t nIndices, int sourceDevice, cudaStream_t stream, size_t indexOffset) const;
 };
 
 
