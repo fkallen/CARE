@@ -9,9 +9,82 @@
 #include <vector>
 #include <map>
 #include <future>
+#include <cassert>
 
 struct DistributedArray{
 public:
+    struct PeerAccess{
+        int numGpus;
+        std::vector<int> accessMatrix;
+
+        PeerAccess(){
+            cudaGetDeviceCount(&numGpus); CUERR;
+            accessMatrix.resize(numGpus * numGpus);
+            for(int i = 0; i < numGpus; i++){
+                for(int k = 0; k < numGpus; k++){
+                    //device i can access device k?
+                    cudaDeviceCanAccessPeer(&accessMatrix[i * numGpus + k], i, k);
+                }
+            }
+        }
+
+        bool hasPeerAccess(int device, int peerDevice) const{
+            assert(device < numGpus);
+            assert(peerDevice < numGpus);
+            return accessMatrix[device * numGpus + peerDevice] == 1;
+        }
+
+        void enablePeerAccess(int device, int peerDevice) const{
+            assert(hasPeerAccess(device, peerDevice));
+            int oldId; cudaGetDevice(&oldId); CUERR;
+            cudaSetDevice(device); CUERR;
+            cudaError_t status = cudaDeviceEnablePeerAccess(peerDevice, 0);
+            if(status != cudaSuccess){
+                if(status == cudaErrorPeerAccessAlreadyEnabled){
+                    std::cerr << "Peer access from " << device << " to " << peerDevice << " has already been enabled\n";
+                }else{
+                    CUERR;
+                }
+            }
+            cudaSetDevice(oldId); CUERR;
+        }
+
+        void disablePeerAccess(int device, int peerDevice) const{
+            assert(hasPeerAccess(device, peerDevice));
+            int oldId; cudaGetDevice(&oldId); CUERR;
+            cudaSetDevice(device); CUERR;
+            cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice); CUERR;
+            if(status != cudaSuccess){
+                if(status == cudaErrorPeerAccessNotEnabled){
+                    std::cerr << "Peer access from " << device << " to " << peerDevice << " has not yet been enabled\n";
+                }else{
+                    CUERR;
+                }
+            }
+            cudaSetDevice(oldId); CUERR;
+        }
+
+        void enableAllPeerAccesses(){
+            for(int i = 0; i < numGpus; i++){
+                for(int k = 0; k < numGpus; k++){
+                    if(hasPeerAccess(i, k)){
+                        enablePeerAccess(i, k);
+                    }
+                }
+            }
+        }
+
+        void disableAllPeerAccesses(){
+            for(int i = 0; i < numGpus; i++){
+                for(int k = 0; k < numGpus; k++){
+                    if(hasPeerAccess(i, k)){
+                        disablePeerAccess(i, k);
+                    }
+                }
+            }
+        }
+    };
+
     struct GatherHandle{
         SimpleAllocationPinnedHost<size_t> pinnedLocalIndices;
         SimpleAllocationPinnedHost<size_t> pinnedPermutationIndices;

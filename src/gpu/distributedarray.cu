@@ -52,6 +52,7 @@
         }
 
         if(preferedLocationIsSufficient){
+            cudaSetDevice(deviceIds[preferedLocation]); CUERR;
             elementsPerLocation[preferedLocation] = numElements;
             cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory); CUERR;
         }else{
@@ -59,6 +60,7 @@
             size_t remainingElements = numElements;
 
             for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
+                cudaSetDevice(deviceIds[gpu]); CUERR;
                 freeMemPerGpuTreshold[gpu] = freeMemPerGpu[gpu] * maxFreeMemFraction[gpu];
                 size_t elements = std::min(remainingElements, freeMemPerGpuTreshold[gpu] / sizeOfElement);
                 elementsPerLocation[gpu] = elements;
@@ -79,13 +81,13 @@
         std::partial_sum(elementsPerLocation.begin(), elementsPerLocation.end(), elementsPerLocationPS.begin()+1);
 
         if(debug){
-             std::cerr << "device ids: ";
+             std::cerr << "device ids: [";
              std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));
-             std::cerr << "\n";
+             std::cerr << "]\n";
 
-             std::cerr << "elements per location: ";
+             std::cerr << "elements per location: [";
              std::copy(elementsPerLocation.begin(), elementsPerLocation.end(), std::ostream_iterator<size_t>(std::cerr, " "));
-             std::cerr << "\n";
+             std::cerr << "]\n";
         }
 
         cudaSetDevice(oldId); CUERR;
@@ -389,6 +391,19 @@
     void DistributedArray::gatherReadsInGpuMemAsync(const std::unique_ptr<GatherHandle>& handle, size_t* indices, size_t* d_indices, size_t numIds, int deviceId, char* d_result, cudaStream_t stream) const{
         if(numIds == 0) return;
 
+        PeerAccess peerAccess;
+
+        if(debug){
+            std::cerr << "Peer access per location: \n";
+            for(int i = 0; i < numGpus; i++){
+                for(int k = 0; k < numGpus; k++){
+                    std::cerr << peerAccess.hasPeerAccess(deviceIds[i], deviceIds[k]) << " ";
+                }
+                std::cerr << "\n";
+            }
+            std::cerr << "\n";
+        }
+
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
     	std::vector<size_t> hitsPerLocation(numLocations, 0);
@@ -396,6 +411,12 @@
     		int location = getLocation(indices[i]);
     		hitsPerLocation[location]++;
     	}
+
+        if(debug){
+            std::cerr << "hitsPerLocation: ";
+            std::copy(hitsPerLocation.begin(), hitsPerLocation.end(), std::ostream_iterator<size_t>(std::cerr, " "));
+            std::cerr << "\n";
+        }
 
         //shortcut. if all elements reside on the gpu with device id deviceId, perform a simple gather on the gpu, avoiding copies to host and from host.
         bool simpleGatherOnSameDevice = true;
@@ -436,9 +457,7 @@
     	}
         handle->pinnedResultData.resize(numIds * sizeOfElement);
 
-        // std::cerr << "hitsPerLocation: ";
-        // std::copy(hitsPerLocation.begin(), hitsPerLocation.end(), std::ostream_iterator<size_t>(std::cerr, " "));
-        // std::cerr << "\n";
+
 
 
         cudaSetDevice(deviceId); CUERR;
@@ -456,10 +475,11 @@
         for(int gpu = 0; gpu < numGpus; gpu++){
             size_t numHits = hitsPerLocation[gpu];
             if(numHits > 0){
-                int deviceId = deviceIds[gpu];
-                cudaStream_t stream = handle->streamsPerGpu[gpu];
+                int mydeviceId = deviceIds[gpu];
+                cudaStream_t mystream = handle->streamsPerGpu[gpu];
+                cudaEvent_t myevent = handle->eventsPerGpu[gpu];
 
-        		cudaSetDevice(deviceIds[gpu]); CUERR;
+        		cudaSetDevice(mydeviceId); CUERR;
 
                 auto& myLocalIds = handle->deviceLocalReadIdsPerLocation[gpu];
                 auto& myResult = handle->dataPerGpu[gpu];
@@ -470,19 +490,29 @@
                                 handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
                                 sizeof(size_t) * numHits,
                                 H2D,
-                                stream); CUERR;
+                                mystream); CUERR;
 
         		myResult.resize(numHits * sizeOfElement);
 
-                copyDataToGpuBufferAsync(myResult.get(), myLocalIds.get(), numHits, deviceId, stream);
+                copyDataToGpuBufferAsync(myResult.get(), myLocalIds.get(), numHits, mydeviceId, mystream);
 
                 cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
                                 myResult.get(),
                                 sizeOfElement * numHits,
                                 D2H,
-                                stream); CUERR;
+                                mystream); CUERR;
 
-                cudaEventRecord(handle->eventsPerGpu[gpu]); CUERR;
+                cudaEventRecord(myevent, mystream); CUERR;
+
+                cudaSetDevice(deviceId); CUERR;
+                cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
+
+                //copy partial results to tmp result buffer on device
+                cudaMemcpyAsync(handle->tmpResultsOfDevice[deviceId].get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                                handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                                sizeOfElement * hitsPerLocation[gpu],
+                                H2D,
+                                stream);
             }
     	}
 
@@ -499,15 +529,21 @@
 
         cudaSetDevice(deviceId); CUERR;
 
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaStreamWaitEvent(stream, handle->eventsPerGpu[gpu], 0); CUERR;
-        }
+        // for(int gpu = 0; gpu < numGpus; gpu++){
+        //     cudaStreamWaitEvent(stream, handle->eventsPerGpu[gpu], 0); CUERR;
+        // }
 
         //cudaStreamSynchronize(stream); CUERR;
 
-        cudaMemcpyAsync(handle->tmpResultsOfDevice[deviceId].get(),
-                        handle->pinnedResultData.get(),
-                        sizeOfElement * numIds,
+        // cudaMemcpyAsync(handle->tmpResultsOfDevice[deviceId].get(),
+        //                 handle->pinnedResultData.get(),
+        //                 sizeOfElement * numIds,
+        //                 H2D,
+        //                 stream);
+
+        cudaMemcpyAsync(handle->tmpResultsOfDevice[deviceId].get() + hitsPerLocationPrefixSum[hostLocation] * sizeOfElement,
+                        handle->pinnedResultData.get() + hitsPerLocationPrefixSum[hostLocation] * sizeOfElement,
+                        hitsPerLocation[hostLocation] * sizeOfElement,
                         H2D,
                         stream);
 
