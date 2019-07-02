@@ -41,6 +41,7 @@ struct PeerAccess{
         if(status != cudaSuccess){
             if(status == cudaErrorPeerAccessAlreadyEnabled){
                 std::cerr << "Peer access from " << device << " to " << peerDevice << " has already been enabled\n";
+                cudaGetLastError(); //reset error state;
             }else{
                 CUERR;
             }
@@ -56,6 +57,7 @@ struct PeerAccess{
         if(status != cudaSuccess){
             if(status == cudaErrorPeerAccessNotEnabled){
                 std::cerr << "Peer access from " << device << " to " << peerDevice << " has not yet been enabled\n";
+                cudaGetLastError(); //reset error state;
             }else{
                 CUERR;
             }
