@@ -57,11 +57,11 @@ nowstring=$(date +"%Y-%m-%d_%H-%M-%S")
 #0: Classic, 1: Forest, 2: Convnet
 correctionType=0
 
-#forest="./forests/combinedforestaligncov.so"
+forest="./forests/combinedforestaligncov.so"
 #forest="./forests/combinedecolielegansmelanogaster_clipmin_forest.so"
 #forest="./forests/combinedforestwithconsensus.so"
 #forest="./forests/C.elegans_SRX218989_with_consforest.so"
-forest="./forests/eleganslabeledsimple.so"
+#forest="./forests/eleganslabeledsimple.so"
 nnmodel="./nn_models/conv_ele736/model_conv_03-27_0006.ckpt"
 
 fileformat=fastq
