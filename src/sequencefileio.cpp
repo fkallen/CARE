@@ -197,7 +197,9 @@ namespace care{
             read->header += kseq->comment.s;
         }
         read->sequence = kseq->seq.s;
-        read->quality = kseq->qual.s;
+        if(kseq->qual.l > 0){
+            read->quality = kseq->qual.s;
+        }
     }
 
     namespace ksequncompressed{
