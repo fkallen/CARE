@@ -9,6 +9,7 @@
 #include <vector>
 
 namespace care{
+
     enum class CorrectionMode {Hamming, Graph};
     enum class CorrectionType {Classic, Forest, Convnet};
 
@@ -84,6 +85,15 @@ namespace care{
         std::string forestfilename;
         std::string nnmodelfilename;
 	};
+
+    struct AllOptions{
+        MinhashOptions minhashOptions;
+        AlignmentOptions alignmentOptions;
+        GoodAlignmentProperties goodAlignmentProperties;
+        CorrectionOptions correctionOptions;
+        RuntimeOptions runtimeOptions;
+        FileOptions fileOptions;
+    };
 }
 
 

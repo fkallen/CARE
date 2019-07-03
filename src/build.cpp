@@ -634,12 +634,7 @@ namespace care{
             };
 
             if(nThreads == 1){
-                std::unique_ptr<SequenceFileReader> reader;
-
-                switch(fileOptions.format) {
-                    case FileFormat::FASTQ: reader.reset(new FastqReader(fileOptions.inputfile)); break;
-                    default: assert(false && "inputfileformat"); break;
-                }
+                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
                 Read read;
 
@@ -672,16 +667,7 @@ namespace care{
                         });
                 }
 
-                std::unique_ptr<SequenceFileReader> reader;
-
-                switch (fileOptions.format) {
-                case FileFormat::FASTQ:
-                    reader.reset(new FastqReader(fileOptions.inputfile));
-                    break;
-                default:
-                    assert(false && "inputfileformat");
-                    break;
-                }
+                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
                 Read read;
                 int target = 0;
@@ -733,12 +719,7 @@ namespace care{
 
             //single-threaded insertion
             if(nThreads == 1){
-                std::unique_ptr<SequenceFileReader> reader;
-
-                switch(fileOptions.format) {
-                    case FileFormat::FASTQ: reader.reset(new FastqReader(fileOptions.inputfile)); break;
-                    default: assert(false && "inputfileformat"); break;
-                }
+                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
                 Read read;
                 std::uint64_t progress = 0;
@@ -902,16 +883,7 @@ namespace care{
                     ));
                 }
 
-                std::unique_ptr<SequenceFileReader> reader;
-
-                switch (fileOptions.format) {
-                case FileFormat::FASTQ:
-                    reader.reset(new FastqReader(fileOptions.inputfile));
-                    break;
-                default:
-                    assert(false && "inputfileformat");
-                    break;
-                }
+                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
                 Read read;
                 int target = 0;

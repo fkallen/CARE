@@ -1,5 +1,5 @@
-#include "../include/sequencefileio.hpp"
-#include "../include/hpc_helpers.cuh"
+#include <sequencefileio.hpp>
+#include <hpc_helpers.cuh>
 #include <config.hpp>
 
 
@@ -17,7 +17,14 @@
 #include <experimental/filesystem>
 #include <future>
 
+#include <zlib.h>
+#include <fcntl.h> // open
+
+#include <klib/kseq.h>
+
 namespace care{
+
+//###### BEGIN READER IMPLEMENTATION
 
     bool SequenceFileReader::getNextRead(Read* read){
         if(read == nullptr) return false;
@@ -180,17 +187,268 @@ namespace care{
 		}
 	}
 
+    template<class KSEQ>
+    void setReadFromKseqPtr(Read* read, const KSEQ* kseq){
+        read->reset();
+
+        read->header = kseq->name.s;
+        if(kseq->comment.l > 0){
+            read->header += ' ';
+            read->header += kseq->comment.s;
+        }
+        read->sequence = kseq->seq.s;
+        read->quality = kseq->qual.s;
+    }
+
+    namespace ksequncompressed{
+        KSEQ_INIT(int, read)
+    }
+
+    namespace kseqgz{
+        KSEQ_INIT(gzFile, gzread)
+    }
+
+    KseqReader::KseqReader(const std::string& filename_) : SequenceFileReader(filename_){
+        fp = open(filename_.c_str(), O_RDONLY);
+        if(fp == -1){
+            throw std::runtime_error("could not open file " + filename_);
+        }
+        seq = (void*)ksequncompressed::kseq_init(fp);
+    }
+
+    KseqReader::~KseqReader(){
+        kseq_destroy((ksequncompressed::kseq_t*)seq);
+        close(fp);
+    }
+
+    bool KseqReader::getNextRead_impl(Read* read){
+        ksequncompressed::kseq_t* typedseq = (ksequncompressed::kseq_t*)seq;
+
+        int len = ksequncompressed::kseq_read(typedseq);
+        if(len < 0)
+            return false;
+
+        setReadFromKseqPtr(read, typedseq);
+
+        return true;
+    }
+
+    bool KseqReader::getNextReadUnsafe_impl(Read* read){
+        throw std::runtime_error("KseqReader::getNextReadUnsafe_impl not implemented");
+        return false;
+    }
+
+    void KseqReader::skipBytes_impl(std::uint64_t nBytes){
+        throw std::runtime_error("KseqReader::skipBytes_impl not implemented");
+    }
+
+    void KseqReader::skipReads_impl(std::uint64_t nReads){
+        throw std::runtime_error("KseqReader::skipReads_impl not implemented");
+    }
+
+    KseqGzReader::KseqGzReader(const std::string& filename_) : SequenceFileReader(filename_){
+        fp = gzopen(filename_.c_str(), "r");
+        if(fp == NULL){
+            throw std::runtime_error("could not open file " + filename_);
+        }
+        seq = (void*)kseqgz::kseq_init(fp);
+    }
+
+    KseqGzReader::~KseqGzReader(){
+        kseqgz::kseq_destroy((kseqgz::kseq_t*)seq);
+        gzclose(fp);
+    }
+
+    bool KseqGzReader::getNextRead_impl(Read* read){
+        kseqgz::kseq_t* typedseq = (kseqgz::kseq_t*)seq;
+
+        int len = kseqgz::kseq_read(typedseq);
+        if(len < 0)
+            return false;
+
+        setReadFromKseqPtr(read, typedseq);
+
+        return true;
+    }
+
+    bool KseqGzReader::getNextReadUnsafe_impl(Read* read){
+        throw std::runtime_error("KseqGzReader::getNextReadUnsafe_impl not implemented");
+        return false;
+    }
+
+    void KseqGzReader::skipBytes_impl(std::uint64_t nBytes){
+        throw std::runtime_error("KseqGzReader::skipBytes_impl not implemented");
+    }
+
+    void KseqGzReader::skipReads_impl(std::uint64_t nReads){
+        throw std::runtime_error("KseqGzReader::skipReads_impl not implemented");
+    }
+
+
+
+//###### END READER IMPLEMENTATION
+
+//###### BEGIN WRITER IMPLEMENTATION
+
+void SequenceFileWriter::writeRead(const std::string& header, const std::string& sequence, const std::string& quality){
+    //std::cerr << "Write " << header << "\n" << sequence << " " << "\n" << quality << "\n";
+    writeReadImpl(header, sequence, quality);
+}
+
+UncompressedWriter::UncompressedWriter(const std::string& filename, FileFormat format)
+        : SequenceFileWriter(filename), format(format){
+
+    assert(format == FileFormat::FASTA || format == FileFormat::FASTQ);
+
+    ofs = std::ofstream(filename);
+    if(!ofs){
+        throw std::runtime_error("Cannot open file " + filename + " for writing.");
+    }
+}
+
+void UncompressedWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
+    ofs << header << '\n'
+        << sequence << '\n';
+    if(format == FileFormat::FASTQ){
+        ofs << '+' << '\n'
+            << quality << '\n';
+    }
+}
+
+GZipWriter::GZipWriter(const std::string& filename, FileFormat format)
+        : SequenceFileWriter(filename), format(format){
+
+    assert(format == FileFormat::FASTAGZ || format == FileFormat::FASTQGZ);
+
+    fp = gzopen(filename.c_str(), "w");
+    if(fp == NULL){
+        throw std::runtime_error("Cannot open file " + filename + " for writing.");
+    }
+}
+
+GZipWriter::~GZipWriter(){
+    gzclose(fp);
+}
+
+void GZipWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
+    // std::string s;
+    // s.reserve(header.size() + sequence.size() + quality.size() + 5);
+    // s += header;
+    // s += '\n';
+    // s += sequence;
+    // s += '\n';
+    // if(format == FileFormat::FASTQ){
+    //     s += '+';
+    //     s += quality;
+    //     s += '\n';
+    // }
+    // gzwrite(fp, s.c_str(), s.size());
+    gzwrite(fp, header.c_str(), header.size());
+    gzwrite(fp, "\n", 1);
+    gzwrite(fp, sequence.c_str(), sequence.size());
+    gzwrite(fp, "\n", 1);
+    if(format == FileFormat::FASTQ){
+        gzwrite(fp, "+", 1);
+        gzwrite(fp, quality.c_str(), quality.size());
+        gzwrite(fp, "\n", 1);
+    }
+}
+
+
+//###### END WRITER IMPLEMENTATION
+
+
+    bool hasGzipHeader(const std::string& filename){
+        std::ifstream is(filename, std::ios_base::binary);
+        unsigned char buf[2];
+        is.read(reinterpret_cast<char*>(&buf[0]), 2);
+
+        if(buf[0] == 0x1f && buf[1] == 0x8b){
+            return true;
+        }else{
+            return false;
+        }
+    }
+
+    bool hasQualityScores(const std::unique_ptr<SequenceFileReader>& reader){
+        Read read;
+        int i = 0;
+        int n = 5;
+        int count = 0;
+        while (reader->getNextRead(&read) && i < n){
+            if(read.quality.size() > 0){
+                count++;
+            }
+            i++;
+        }
+        if(count > 0 && count == i){
+            return true;
+        }else if(count == 0){
+            return false;
+        }else{
+            throw std::runtime_error("Error. Some reads do not have quality scores");
+        }
+    }
+
+    FileFormat getFileFormat(const std::string& filename){
+        if(hasGzipHeader(filename)){
+            std::unique_ptr<SequenceFileReader> reader = std::make_unique<KseqGzReader>(filename);
+            if(hasQualityScores(reader)){
+                return FileFormat::FASTQGZ;
+            }else{
+                return FileFormat::FASTAGZ;
+            }
+        }else{
+            std::unique_ptr<SequenceFileReader> reader = std::make_unique<KseqReader>(filename);
+            if(hasQualityScores(reader)){
+                return FileFormat::FASTQ;
+            }else{
+                return FileFormat::FASTA;
+            }
+        }
+    }
+
+    std::unique_ptr<SequenceFileReader> makeSequenceReader(const std::string& filename, FileFormat fileFormat){
+        switch (fileFormat) {
+        case FileFormat::FASTA:
+        case FileFormat::FASTQ:
+            //reader.reset(new FastqReader(filename));
+            return std::make_unique<KseqReader>(filename);
+        case FileFormat::FASTAGZ:
+        case FileFormat::FASTQGZ:
+            return std::make_unique<KseqGzReader>(filename);
+    	default:
+    		throw std::runtime_error("makeSequenceReader: invalid format.");
+    	}
+    }
+
+    std::unique_ptr<SequenceFileWriter> makeSequenceWriter(const std::string& filename, FileFormat fileFormat){
+        switch (fileFormat) {
+        case FileFormat::FASTA:
+        case FileFormat::FASTQ:
+            return std::make_unique<UncompressedWriter>(filename, fileFormat);
+        case FileFormat::FASTAGZ:
+        case FileFormat::FASTQGZ:
+            return std::make_unique<GZipWriter>(filename, fileFormat);
+    	default:
+    		throw std::runtime_error("makeSequenceWriter: invalid format.");
+    	}
+    }
 
     SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format){
 #if 1
-        std::unique_ptr<SequenceFileReader> reader;
-        switch (format) {
+        std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+        /*switch (format) {
         case FileFormat::FASTQ:
-            reader.reset(new FastqReader(filename));
+            //reader.reset(new FastqReader(filename));
+            reader.reset(new KseqReader(filename));
+            break;
+        case FileFormat::GZIP:
+            reader.reset(new KseqGzReader(filename));
             break;
     	default:
     		throw std::runtime_error("care::getNumberOfReads: invalid format.");
-    	}
+    	}*/
 
         SequenceFileProperties prop;
 
@@ -380,14 +638,7 @@ namespace care{
 
 	std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format){
 
-		std::unique_ptr<SequenceFileReader> reader;
-        switch (format) {
-        case FileFormat::FASTQ:
-            reader.reset(new FastqReader(filename));
-            break;
-    	default:
-    		throw std::runtime_error("care::getNumberOfReads: invalid format.");
-    	}
+		std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
 
 		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
 
@@ -670,14 +921,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
     }
 
-    std::unique_ptr<SequenceFileReader> reader;
-    switch (originalFormat) {
-    case FileFormat::FASTQ:
-        reader.reset(new FastqReader(originalReadFile));
-        break;
-    default:
-        throw std::runtime_error("Merging: Invalid file format.");
-    }
+    //std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
+    std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
 
     std::ifstream correctionsstream(tempfile);
     std::ofstream outputstream(outputfile);

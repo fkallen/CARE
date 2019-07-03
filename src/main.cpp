@@ -47,8 +47,8 @@ int main(int argc, const char** argv){
 		("minalignmentoverlap", "Overlap between query and candidate must be at least this long", cxxopts::value<int>()->default_value("35")->implicit_value("35"))
 		("minalignmentoverlapratio", "Overlap between query and candidate must be at least as long as minalignmentoverlapratio * querylength",
 		cxxopts::value<float>()->default_value("0.35")->implicit_value("0.35"))
-		("fileformat", "Format of input file. Allowed values: {fastq}",
-		cxxopts::value<std::string>()->default_value("fastq")->implicit_value("fastq"))
+		("fileformat", "Format of input file. Overrides automatic detection. Allowed values: {fasta, fastq, fastagz, fastqgz}",
+		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
 
 		("coverage", "estimated coverage of input file",
 		cxxopts::value<float>()->default_value("20.0")->implicit_value("20.0"))

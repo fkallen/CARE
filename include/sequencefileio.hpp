@@ -8,10 +8,14 @@
 #include <string>
 #include <vector>
 #include <exception>
+#include <memory>
+
+#include <fcntl.h> // open
+#include <zlib.h> //gzFile
 
 namespace care{
 
-enum class FileFormat {FASTQ};
+enum class FileFormat {FASTA, FASTQ, FASTAGZ, FASTQGZ, NONE};
 
 struct SequenceFileProperties{
         std::uint64_t nReads{};
@@ -50,6 +54,40 @@ struct Read {
 		sequence.clear();
 		quality.clear();
 	}
+};
+
+struct SequenceFileWriter{
+    SequenceFileWriter(const std::string& filename_) : filename(filename_)
+	{
+	};
+	virtual ~SequenceFileWriter()
+	{
+	}
+
+    void writeRead(const std::string& header, const std::string& sequence, const std::string& quality);
+
+    virtual void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality) = 0;
+
+    std::string filename;
+};
+
+struct UncompressedWriter : public SequenceFileWriter{
+    UncompressedWriter(const std::string& filename, FileFormat format);
+
+    void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality);
+
+    std::ofstream ofs;
+    FileFormat format;
+};
+
+struct GZipWriter : public SequenceFileWriter{
+    GZipWriter(const std::string& filename, FileFormat format);
+    ~GZipWriter();
+
+    void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality);
+
+    gzFile fp;
+    FileFormat format;
 };
 
 struct SequenceFileReader {
@@ -108,6 +146,46 @@ public:
 	std::ifstream is;
 	std::string stmp;
 };
+
+struct KseqReader : public SequenceFileReader {
+public:
+	KseqReader(const std::string& filename);
+
+	~KseqReader() override;
+
+
+	bool getNextRead_impl(Read* read) override;
+    bool getNextReadUnsafe_impl(Read* read) override;
+	void skipBytes_impl(std::uint64_t nBytes) override;
+	void skipReads_impl(std::uint64_t nBytes) override;
+
+    int fp;
+    void* seq; //pointer to kseq_t
+};
+
+struct KseqGzReader : public SequenceFileReader {
+public:
+	KseqGzReader(const std::string& filename);
+
+	~KseqGzReader() override;
+
+
+	bool getNextRead_impl(Read* read) override;
+    bool getNextReadUnsafe_impl(Read* read) override;
+	void skipBytes_impl(std::uint64_t nBytes) override;
+	void skipReads_impl(std::uint64_t nBytes) override;
+
+    gzFile fp;
+    void* seq; //pointer to kseq_t
+};
+
+std::unique_ptr<SequenceFileReader> makeSequenceReader(const std::string& filename, FileFormat fileFormat);
+std::unique_ptr<SequenceFileWriter> makeSequenceWriter(const std::string& filename, FileFormat fileFormat);
+
+bool hasGzipHeader(const std::string& filename);
+bool hasQualityScores(const std::unique_ptr<SequenceFileReader>& reader);
+FileFormat getFileFormat(const std::string& filename);
+
 
 SequenceFileProperties getSequenceFileProperties(const std::string& filename, FileFormat format);
 std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format);

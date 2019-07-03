@@ -1,7 +1,8 @@
-#include "../include/args.hpp"
-#include "../include/hpc_helpers.cuh"
-#include "../include/util.hpp"
+#include <args.hpp>
+#include <hpc_helpers.cuh>
+#include <util.hpp>
 #include <config.hpp>
+#include <sequencefileio.hpp>
 
 
 #include <iostream>
@@ -140,10 +141,20 @@ namespace args{
 
 		result.fileformatstring = pr["fileformat"].as<std::string>();
 
-		if (result.fileformatstring == "fastq" || result.fileformatstring == "FASTQ" || result.fileformatstring == "fq" || result.fileformatstring == "FQ")
+        result.format = FileFormat::NONE;
+		if (result.fileformatstring == "fasta"){
+			result.format = FileFormat::FASTA;
+        }else if(result.fileformatstring == "fastq"){
 			result.format = FileFormat::FASTQ;
-		else
-			throw std::runtime_error("Set invalid file format : " + result.fileformatstring);
+        }else if(result.fileformatstring == "fastagz"){
+			result.format = FileFormat::FASTAGZ;
+        }else if(result.fileformatstring == "fastqgz"){
+			result.format = FileFormat::FASTQGZ;
+        };
+
+        if(result.format == FileFormat::NONE){
+            result.format = getFileFormat(result.inputfile);
+        }
 
 		result.nReads = pr["nReads"].as<std::uint64_t>();
         result.maximum_sequence_length = pr["max_length"].as<int>();
