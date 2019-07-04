@@ -457,6 +457,7 @@ void call_msa_correct_subject_implicit_kernel_async(
             const int* d_coverage,
             const int* d_origCoverages,
             const MSAColumnProperties* d_msa_column_properties,
+            const int* d_indices_per_subject,
             const char* d_subject_sequences_data,
             bool* d_is_high_quality_subject,
             char* d_corrected_subjects,
