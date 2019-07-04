@@ -923,8 +923,14 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
     }
 
-    //std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
-    std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
+    std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
+    //std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
+
+    bool isFastq = originalFormat == FileFormat::FASTQ || originalFormat == FileFormat::FASTQGZ;
+    char delimHeader = '>';
+    if(isFastq){
+        delimHeader = '@';
+    }
 
     std::ifstream correctionsstream(tempfile);
     std::ofstream outputstream(outputfile);
@@ -985,6 +991,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
 #else
+    auto isValidSequence = [](const std::string& s){
+        return std::all_of(s.begin(), s.end(), [](char c){
+            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+        });
+    };
+
     while(std::getline(correctionsstream, correctionline)){
         std::stringstream ss(correctionline);
         std::uint64_t correctionReadId;
@@ -999,9 +1011,13 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
             assert(valid);
 
-            outputstream << read.header << '\n' << read.sequence << '\n';
-            if (originalFormat == FileFormat::FASTQ)
+            assert(isValidSequence(read.sequence));
+
+            outputstream << delimHeader << read.header << '\n' << read.sequence << '\n';
+            if (isFastq){
+                assert(read.sequence.length() == read.quality.length());
                 outputstream << '+' << '\n' << read.quality << '\n';
+            }
 
             originalReadId = reader->getReadnum();
         }
@@ -1009,19 +1025,25 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         bool valid = reader->getNextRead(&read);
 
         assert(valid);
+        assert(isValidSequence(correctedSequence));
 
-        outputstream << read.header << '\n' << correctedSequence << '\n';
-        if (originalFormat == FileFormat::FASTQ)
+        outputstream << delimHeader <<  read.header << '\n' << correctedSequence << '\n';
+        if (isFastq){
+            assert(correctedSequence.length() == read.quality.length());
             outputstream << '+' << '\n' << read.quality << '\n';
+        }
     }
 #endif
     //copy remaining reads from original file
     Read read;
 
     while(reader->getNextRead(&read)){
-        outputstream << read.header << '\n' << read.sequence << '\n';
-        if (originalFormat == FileFormat::FASTQ)
+        assert(isValidSequence(read.sequence));
+        outputstream << delimHeader <<  read.header << '\n' << read.sequence << '\n';
+        if (isFastq){
+            assert(read.sequence.length() == read.quality.length());
             outputstream << '+' << '\n' << read.quality << '\n';
+        }
     }
 
     outputstream.flush();
