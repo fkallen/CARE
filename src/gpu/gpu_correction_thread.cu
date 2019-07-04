@@ -45,7 +45,7 @@
 #define MSA_IMPLICIT
 
 //#define REARRANGE_INDICES
-#define USE_MSA_MINIMIZATION
+//#define USE_MSA_MINIMIZATION
 
 #define USE_WAIT_FLAGS
 
@@ -2553,6 +2553,7 @@ namespace gpu{
                         dataArrays.d_coverage,
                         dataArrays.d_origCoverages,
                         dataArrays.d_msa_column_properties,
+                        dataArrays.d_indices_per_subject,
                         dataArrays.d_subject_sequences_data,
                         dataArrays.d_is_high_quality_subject,
                         dataArrays.d_corrected_subjects,
@@ -2976,6 +2977,17 @@ namespace gpu{
             if(task.corrected) {
                 const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];//task.subject_string.length();//dataArrays.h_subject_sequences_lengths[subject_index];
                 task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+
+                auto isValidSequence = [](const std::string& s){
+                    return std::all_of(s.begin(), s.end(), [](char c){
+                        return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                    });
+                };
+
+                if(!isValidSequence(task.corrected_subject)){
+                    std::cout << task.corrected_subject << std::endl;
+                }
+
 
                 //if(task.readId == 207){
                 //    std::cerr << "\n\ncorrected sequence: " << task.corrected_subject << "\n";
@@ -3437,6 +3449,13 @@ namespace gpu{
 		transFuncData.featurestream = &featurestream;
 		transFuncData.write_read_to_stream = [&](const read_number readId, const std::string& sequence){
 							     //std::cout << readId << " " << sequence << std::endl;
+                                 bool isvalid = std::all_of(sequence.begin(), sequence.end(), [](char c){
+                                     return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                                 });
+                                 if(!isvalid){
+                                     std::cout << sequence << std::endl;
+                                 }
+                                 assert(isvalid);
 							     auto& stream = outputstream;
     #if 1
 							     stream << readId << ' ' << sequence << '\n';
