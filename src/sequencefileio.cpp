@@ -41,7 +41,7 @@ namespace care{
             readnum++;
         return b;
     }
-
+#if 0
     FastqReader::FastqReader(const std::string& filename_) : SequenceFileReader(filename_){
 		is.open(filename);
 		if (!(bool)is)
@@ -186,15 +186,14 @@ namespace care{
 			++readnum;
 		}
 	}
-
+#endif
     template<class KSEQ>
     void setReadFromKseqPtr(Read* read, const KSEQ* kseq){
         read->reset();
 
-        read->header = kseq->name.s;
+        read->name = kseq->name.s;
         if(kseq->comment.l > 0){
-            read->header += ' ';
-            read->header += kseq->comment.s;
+            read->comment = kseq->comment.s;
         }
         read->sequence = kseq->seq.s;
         if(kseq->qual.l > 0){
@@ -292,13 +291,20 @@ namespace care{
 
 //###### BEGIN WRITER IMPLEMENTATION
 
-void SequenceFileWriter::writeRead(const std::string& header, const std::string& sequence, const std::string& quality){
+void SequenceFileWriter::writeRead(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
     //std::cerr << "Write " << header << "\n" << sequence << " " << "\n" << quality << "\n";
-    writeReadImpl(header, sequence, quality);
+    writeReadImpl(name, comment, sequence, quality);
+
+
+}
+
+void SequenceFileWriter::writeRead(const Read& read){
+    //std::cerr << "Write " << header << "\n" << sequence << " " << "\n" << quality << "\n";
+    writeRead(read.name, read.comment, read.sequence, read. quality);
 }
 
 UncompressedWriter::UncompressedWriter(const std::string& filename, FileFormat format)
-        : SequenceFileWriter(filename), format(format){
+        : SequenceFileWriter(filename, format){
 
     assert(format == FileFormat::FASTA || format == FileFormat::FASTQ);
 
@@ -306,10 +312,17 @@ UncompressedWriter::UncompressedWriter(const std::string& filename, FileFormat f
     if(!ofs){
         throw std::runtime_error("Cannot open file " + filename + " for writing.");
     }
+
+    isFastq = format == FileFormat::FASTQ || format == FileFormat::FASTQGZ;
+    delimHeader = '>';
+    if(isFastq){
+        delimHeader = '@';
+    }
+
 }
 
-void UncompressedWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
-    ofs << header << '\n'
+void UncompressedWriter::writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
+    ofs << delimHeader << name << ' ' << comment << '\n'
         << sequence << '\n';
     if(format == FileFormat::FASTQ){
         ofs << '+' << '\n'
@@ -317,8 +330,12 @@ void UncompressedWriter::writeReadImpl(const std::string& header, const std::str
     }
 }
 
+void UncompressedWriter::writeImpl(const std::string& data){
+    ofs << data;
+}
+
 GZipWriter::GZipWriter(const std::string& filename, FileFormat format)
-        : SequenceFileWriter(filename), format(format){
+        : SequenceFileWriter(filename, format){
 
     assert(format == FileFormat::FASTAGZ || format == FileFormat::FASTQGZ);
 
@@ -326,34 +343,58 @@ GZipWriter::GZipWriter(const std::string& filename, FileFormat format)
     if(fp == NULL){
         throw std::runtime_error("Cannot open file " + filename + " for writing.");
     }
+
+    isFastq = format == FileFormat::FASTQ || format == FileFormat::FASTQGZ;
+    delimHeader = '>';
+    if(isFastq){
+        delimHeader = '@';
+    }
 }
 
 GZipWriter::~GZipWriter(){
+    if(numBufferedReads > 0){
+        writeBufferedReads();
+    }
+    numBufferedReads = 0;
     gzclose(fp);
 }
 
-void GZipWriter::writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality){
-    // std::string s;
-    // s.reserve(header.size() + sequence.size() + quality.size() + 5);
-    // s += header;
-    // s += '\n';
-    // s += sequence;
-    // s += '\n';
-    // if(format == FileFormat::FASTQ){
-    //     s += '+';
-    //     s += quality;
-    //     s += '\n';
-    // }
-    // gzwrite(fp, s.c_str(), s.size());
-    gzwrite(fp, header.c_str(), header.size());
-    gzwrite(fp, "\n", 1);
-    gzwrite(fp, sequence.c_str(), sequence.size());
-    gzwrite(fp, "\n", 1);
-    if(format == FileFormat::FASTQ){
-        gzwrite(fp, "+", 1);
-        gzwrite(fp, quality.c_str(), quality.size());
-        gzwrite(fp, "\n", 1);
+void GZipWriter::writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
+    bufferRead(name, comment, sequence, quality);
+
+    if(numBufferedReads > maxBufferedReads){
+        writeBufferedReads();
     }
+
+// #if 1
+//     std::stringstream ss;
+//     ss << delimHeader << name << ' ' << comment << '\n'
+//         << sequence << '\n';
+//     if(format == FileFormat::FASTQGZ){
+//         ss << '+' << '\n'
+//             << quality << '\n';
+//     }
+//
+//     auto string = ss.str();
+//     gzwrite(fp, string.c_str(), string.size());
+// #else
+//     gzputc(fp, delimHeader);
+//     gzwrite(fp, name.c_str(), name.size());
+//     gzputc(fp, ' ');
+//     gzwrite(fp, comment.c_str(), comment.size());
+//     gzputc(fp, '\n');
+//     gzwrite(fp, sequence.c_str(), sequence.size());
+//     gzputc(fp, '\n');
+//     if(format == FileFormat::FASTQGZ){
+//         gzwrite(fp, "+\n", 2);
+//         gzwrite(fp, quality.c_str(), quality.size());
+//         gzputc(fp, '\n');
+//     }
+// #endif
+}
+
+void GZipWriter::writeImpl(const std::string& data){
+    gzwrite(fp, data.c_str(), data.size());
 }
 
 
@@ -826,80 +867,6 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
     bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
-#if 0
-    constexpr std::uint32_t chunksize = 5000000;
-
-    std::vector<Read> reads;
-    reads.reserve(chunksize);
-
-    Read read;
-
-    std::unique_ptr<SequenceFileReader> reader;
-    switch (originalFormat) {
-    case FileFormat::FASTQ:
-        reader.reset(new FastqReader(originalReadFile));
-        break;
-    default:
-        throw std::runtime_error("Merging: Invalid file format.");
-    }
-
-    std::ofstream outputstream(outputfile);
-
-    for(std::uint32_t i = 0; i < SDIV(expectedNumReads, chunksize); ++i){
-        const std::uint32_t readNumBegin = i * chunksize;
-        const std::uint32_t readNumEnd = std::min((i+1) * chunksize, expectedNumReads);
-        reads.resize(readNumEnd - readNumBegin);
-
-        for(const auto& filename : filesToMerge){
-            std::ifstream is(filename);
-            if(!is)
-                throw std::runtime_error("could not open tmp file: " + filename);
-
-            std::string num;
-            std::string seq;
-
-            while(true){
-                std::getline(is, num);
-                if (!is.good())
-                    break;
-                std::getline(is, seq);
-                if (!is.good())
-                    break;
-
-                auto readnum = std::stoull(num);
-                if(readNumBegin <= readnum && readnum < readNumEnd){
-                    reads[readnum - readNumBegin].sequence = std::move(seq);
-                    //std::cout << i << " " << readnum << std::endl;
-                }
-            }
-        }
-
-        while (reader->getNextRead(&read)) {
-            std::uint64_t readnum = reader->getReadnum() - 1;
-            if(readNumBegin <= readnum && readnum < readNumEnd){
-                reads[readnum - readNumBegin].header = std::move(read.header);
-                reads[readnum - readNumBegin].quality = std::move(read.quality);
-                if(reads[readnum - readNumBegin].sequence == ""){
-                    reads[readnum - readNumBegin].sequence = std::move(read.sequence);
-                }
-            }
-            if(readnum == readNumEnd - 1)
-                break;
-        }
-
-        for (const auto& read : reads) {
-            outputstream << read.header << '\n' << read.sequence << '\n';
-
-            if (originalFormat == FileFormat::FASTQ)
-                outputstream << '+' << '\n' << read.quality << '\n';
-        }
-
-        reads.clear();
-    }
-
-    outputstream.flush();
-    outputstream.close();
-#else
 
     std::string tempfile = outputfile + "mergetempfile";
     std::stringstream commandbuilder;
@@ -926,71 +893,21 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
     //std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
 
-    bool isFastq = originalFormat == FileFormat::FASTQ || originalFormat == FileFormat::FASTQGZ;
-    char delimHeader = '>';
-    if(isFastq){
-        delimHeader = '@';
-    }
+    //only output uncompressed for now
+    FileFormat outputformat = originalFormat;
+    if(outputformat == FileFormat::FASTQGZ)
+        outputformat = FileFormat::FASTQ;
+    if(outputformat == FileFormat::FASTAGZ)
+        outputformat = FileFormat::FASTA;
+
+    std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(outputfile, outputformat);
 
     std::ifstream correctionsstream(tempfile);
-    std::ofstream outputstream(outputfile);
 
     std::string correctionline;
     //loop over correction sequences
     TIMERSTARTCPU(actualmerging);
-#if 0
 
-    std::vector<std::string> correctionLines;
-    constexpr int maxCorrectionLines = 5000;
-    correctionLines.reserve(maxCorrectionLines);
-
-    while(std::getline(correctionsstream, correctionline)){
-        correctionLines.clear();
-
-        correctionLines.emplace_back(correctionline);
-        int lines = 1;
-
-        while(lines < maxCorrectionLines && std::getline(correctionsstream, correctionline)){
-            correctionLines.emplace_back(correctionline);
-            lines++;
-        }
-
-        for(int i = 0; i < lines; i++){
-            std::stringstream ss(correctionLines[i]);
-
-            std::uint64_t correctionReadId;
-            std::string correctedSequence;
-            ss >> correctionReadId >> correctedSequence;
-
-            std::uint64_t originalReadId = reader->getReadnum();
-            Read read;
-            //copy preceding reads from original file
-            while(originalReadId < correctionReadId){
-                bool valid = reader->getNextRead(&read);
-
-                assert(valid);
-
-                outputstream << read.header << '\n' << read.sequence << '\n';
-                if (originalFormat == FileFormat::FASTQ)
-                    outputstream << '+' << '\n' << read.quality << '\n';
-
-                originalReadId = reader->getReadnum();
-            }
-            //replace sequence of next read with corrected sequence
-            bool valid = reader->getNextRead(&read);
-
-            assert(valid);
-
-            outputstream << read.header << '\n' << correctedSequence << '\n';
-            if (originalFormat == FileFormat::FASTQ)
-                outputstream << '+' << '\n' << read.quality << '\n';
-        }
-
-    }
-
-
-
-#else
     auto isValidSequence = [](const std::string& s){
         return std::all_of(s.begin(), s.end(), [](char c){
             return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
@@ -1013,11 +930,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
             assert(isValidSequence(read.sequence));
 
-            outputstream << delimHeader << read.header << '\n' << read.sequence << '\n';
-            if (isFastq){
-                assert(read.sequence.length() == read.quality.length());
-                outputstream << '+' << '\n' << read.quality << '\n';
-            }
+            writer->writeRead(read);
 
             originalReadId = reader->getReadnum();
         }
@@ -1027,33 +940,21 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(valid);
         assert(isValidSequence(correctedSequence));
 
-        outputstream << delimHeader <<  read.header << '\n' << correctedSequence << '\n';
-        if (isFastq){
-            assert(correctedSequence.length() == read.quality.length());
-            outputstream << '+' << '\n' << read.quality << '\n';
-        }
+        writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
     }
-#endif
+
     //copy remaining reads from original file
     Read read;
 
     while(reader->getNextRead(&read)){
         assert(isValidSequence(read.sequence));
-        outputstream << delimHeader <<  read.header << '\n' << read.sequence << '\n';
-        if (isFastq){
-            assert(read.sequence.length() == read.quality.length());
-            outputstream << '+' << '\n' << read.quality << '\n';
-        }
-    }
 
-    outputstream.flush();
-    outputstream.close();
+        writer->writeRead(read);
+    }
 
     TIMERSTOPCPU(actualmerging);
 
     deleteFiles({tempfile});
-
-#endif
 
     std::ios::sync_with_stdio(oldsyncflag);
 }
@@ -1091,14 +992,7 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
         throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
     }
 
-    std::unique_ptr<SequenceFileReader> reader;
-    switch (originalFormat) {
-    case FileFormat::FASTQ:
-        reader.reset(new FastqReader(originalReadFile));
-        break;
-    default:
-        throw std::runtime_error("Merging: Invalid file format.");
-    }
+    std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
 
     std::ifstream correctionsstream(tempfile);
     std::ofstream outputstream(outputfile);
@@ -1141,7 +1035,7 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
 
                 assert(valid);
 
-                outstringstream << read.header << '\n' << read.sequence << '\n';
+                outstringstream << read.name << '\n' << read.sequence << '\n';
                 if (originalFormat == FileFormat::FASTQ)
                     outstringstream << '+' << '\n' << read.quality << '\n';
 
@@ -1161,7 +1055,7 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
 
             assert(valid);
 
-            outstringstream << read.header << '\n' << correctedSequence << '\n';
+            outstringstream << read.name << '\n' << correctedSequence << '\n';
             if (originalFormat == FileFormat::FASTQ)
                 outstringstream << '+' << '\n' << read.quality << '\n';
 
@@ -1191,7 +1085,7 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
 
     TIMERSTARTCPU(copy_remaining_reads);
     while(reader->getNextReadUnsafe(&read)){
-        outputstream << read.header << '\n' << read.sequence << '\n';
+        outputstream << read.name << '\n' << read.sequence << '\n';
         if (originalFormat == FileFormat::FASTQ)
             outputstream << '+' << '\n' << read.quality << '\n';
     }

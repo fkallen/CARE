@@ -9,6 +9,7 @@
 #include <vector>
 #include <exception>
 #include <memory>
+#include <sstream>
 
 #include <fcntl.h> // open
 #include <zlib.h> //gzFile
@@ -35,13 +36,14 @@ public:
 };
 
 struct Read {
-	std::string header = "";
+	std::string name = "";
+    std::string comment = "";
 	std::string sequence = "";
 	std::string quality = "";
 
 	bool operator==(const Read& other) const
 	{
-		return (header == other.header && sequence == other.sequence && quality == other.quality);
+		return (name == other.name && comment == other.comment && sequence == other.sequence && quality == other.quality);
 	}
 	bool operator!=(const Read& other) const
 	{
@@ -50,44 +52,87 @@ struct Read {
 
 	void reset()
 	{
-		header.clear();
+		name.clear();
+        comment.clear();
 		sequence.clear();
 		quality.clear();
 	}
 };
 
 struct SequenceFileWriter{
-    SequenceFileWriter(const std::string& filename_) : filename(filename_)
+
+    SequenceFileWriter(const std::string& filename_, FileFormat format_) : filename(filename_), format(format_)
 	{
+
 	};
 	virtual ~SequenceFileWriter()
 	{
+
 	}
 
-    void writeRead(const std::string& header, const std::string& sequence, const std::string& quality);
+    void writeRead(const Read& read);
 
-    virtual void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality) = 0;
+    void writeRead(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality);
+
+    virtual void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) = 0;
+
+    virtual void writeImpl(const std::string& data) = 0;
+
+protected:
 
     std::string filename;
+    FileFormat format;
+
 };
 
 struct UncompressedWriter : public SequenceFileWriter{
     UncompressedWriter(const std::string& filename, FileFormat format);
 
-    void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality);
+    void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) override;
+    void writeImpl(const std::string& data) override;
+
+    bool isFastq;
+    char delimHeader;
 
     std::ofstream ofs;
-    FileFormat format;
 };
 
 struct GZipWriter : public SequenceFileWriter{
+    static constexpr int maxBufferedReads = 128;
+
     GZipWriter(const std::string& filename, FileFormat format);
     ~GZipWriter();
 
-    void writeReadImpl(const std::string& header, const std::string& sequence, const std::string& quality);
+    void writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality) override;
+    void writeImpl(const std::string& data) override;
+
+private:
+
+    void bufferRead(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
+        buffer << delimHeader << name << ' ' << comment << '\n'
+            << sequence << '\n';
+        if(isFastq){
+            buffer << '+' << '\n'
+                << quality << '\n';
+        }
+
+        numBufferedReads++;
+    }
+
+    void writeBufferedReads(){
+        writeImpl(buffer.str());
+        numBufferedReads = 0;
+        buffer.str(std::string());
+        buffer.clear();
+    }
+
+    bool isFastq;
+    char delimHeader;
+
+    int numBufferedReads;
+    std::stringstream buffer;
 
     gzFile fp;
-    FileFormat format;
 };
 
 struct SequenceFileReader {
@@ -130,6 +175,7 @@ public:
     std::uint64_t readnum; // 1 bases read id of read returned by previous successful call to getNextRead
 };
 
+#if 0
 
 struct FastqReader : public SequenceFileReader {
 public:
@@ -146,6 +192,8 @@ public:
 	std::ifstream is;
 	std::string stmp;
 };
+
+#endif
 
 struct KseqReader : public SequenceFileReader {
 public:
