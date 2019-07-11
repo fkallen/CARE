@@ -1,7 +1,7 @@
 #include <sequencefileio.hpp>
 #include <hpc_helpers.cuh>
 #include <config.hpp>
-
+#include <threadsafe_buffer.hpp>
 
 #include <iostream>
 #include <limits>
@@ -861,6 +861,57 @@ void sortResultFileUsingDisk(const std::string& filename, std::uint32_t chunksiz
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+struct SequenceWriterThread{
+
+    std::unique_ptr<SequenceFileWriter> writer;
+
+    ThreadsafeBuffer<Read, 1000> queue;
+    std::thread t;
+
+    SequenceWriterThread(const std::string& filename, FileFormat format){
+        writer = std::move(makeSequenceWriter(filename, format));
+
+        t = std::move(std::thread([&](){
+
+            auto popresult = queue.getNew();
+            while(!popresult.foreverEmpty){
+                writer->writeRead(popresult.value);
+                popresult = std::move(queue.getNew());
+            }
+        }));
+    }
+
+    ~SequenceWriterThread(){
+        t.join();
+    }
+
+
+    void push(Read&& data){
+        queue.add(std::move(data));
+    }
+
+    void push(Read data){
+        queue.add(std::move(data));
+    }
+
+    void producerDone(){
+        queue.done();
+    }
+
+};
+
+
 void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                       FileFormat originalFormat,
                       const std::vector<std::string>& filesToMerge, const std::string& outputfile){
@@ -901,6 +952,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         outputformat = FileFormat::FASTA;
 
     std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(outputfile, outputformat);
+    //SequenceWriterThread swt(outputfile, outputformat);
 
     std::ifstream correctionsstream(tempfile);
 
@@ -931,6 +983,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             assert(isValidSequence(read.sequence));
 
             writer->writeRead(read);
+            //swt.push(read);
 
             originalReadId = reader->getReadnum();
         }
@@ -941,6 +994,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(isValidSequence(correctedSequence));
 
         writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
+        //read.sequence = std::move(correctedSequence);
+        //swt.push(read);
     }
 
     //copy remaining reads from original file
@@ -950,7 +1005,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(isValidSequence(read.sequence));
 
         writer->writeRead(read);
+        //swt.push(read);
     }
+
+    //swt.producerDone();
 
     TIMERSTOPCPU(actualmerging);
 
