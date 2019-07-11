@@ -192,7 +192,9 @@ void performCorrection(MinhashOptions minhashOptions,
                                                     readStorage,
                                                     sequenceFileProperties.nReads / 10,
                                                     correctionOptions.hits_per_candidate,
-                                                    runtimeOptions.threads);
+                                                    runtimeOptions.threads
+                                                    //,"ncandidates.txt"
+                                                    );
 
             std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
         }
