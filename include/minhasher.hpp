@@ -353,7 +353,7 @@ struct Minhasher {
     static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
-    static constexpr int maximum_number_of_maps = 16;
+    static constexpr int maximum_number_of_maps = 32;
     static constexpr int maximum_kmer_length = minhasherdetail::max_k<kmer_type>::value;
 
     struct Handle{
@@ -401,7 +401,7 @@ struct Minhasher {
 
 	void insertSequence(const std::string& sequence, read_number readnum);
 
-
+    std::pair<const Value_t*, const Value_t*> queryMap(int mapid, Map_t::Key_t key) const noexcept;
 
 
     std::vector<Result_t> getCandidates(const std::string& sequence,

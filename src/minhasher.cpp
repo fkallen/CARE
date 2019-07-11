@@ -19,7 +19,7 @@
 
 namespace care{
 
-
+    constexpr size_t numResultsPerMapQueryThreshold = 100;
 
 
     Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16}){}
@@ -208,6 +208,20 @@ namespace care{
 		}
 	}
 
+    std::pair<const Minhasher::Value_t*, const Minhasher::Value_t*>
+    Minhasher::queryMap(int mapid, Minhasher::Map_t::Key_t key) const noexcept{
+        assert(mapid < minparams.maps);
+
+        auto entries_range = minhashTables[mapid]->get_ranged(key);
+        std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+        if(n_entries > numResultsPerMapQueryThreshold){
+            return std::make_pair(entries_range.first, entries_range.first); //return empty range
+        }
+
+        return entries_range;
+    }
+
     std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& sequence,
                                         int num_hits,
                                         std::uint64_t max_number_candidates) const noexcept{
@@ -238,21 +252,19 @@ namespace care{
         minhashfunc(sequence, hashValues, isForwardStrand);
         //TIMERSTOPCPU(minhashfunc);
 
+        const size_t maximumResultSize = std::min(numResultsPerMapQueryThreshold * minparams.maps, max_number_candidates);
 
         std::vector<Value_t> allUniqueResults;
         std::vector<Value_t> tmp;
+        allUniqueResults.reserve(maximumResultSize);
+        tmp.reserve(maximumResultSize);
+
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
-            auto entries_range = minhashTables[map]->get_ranged(key);
+            auto entries_range = queryMap(map, key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
 
             tmp.resize(allUniqueResults.size() + n_entries);
             auto union_end = set_union_n_or_empty(entries_range.first,
@@ -264,7 +276,8 @@ namespace care{
             if(tmp.begin() == union_end){
                 return {};
             }else{
-                tmp.resize(std::distance(tmp.begin(), union_end));
+                //tmp.resize(std::distance(tmp.begin(), union_end));
+                tmp.erase(union_end, tmp.end());
                 std::swap(tmp, allUniqueResults);
             }
         }
