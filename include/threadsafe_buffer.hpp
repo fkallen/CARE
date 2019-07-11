@@ -1,9 +1,11 @@
 #ifndef THREADSAFE_BUFFER_HPP
 #define THREADSAFE_BUFFER_HPP
 
-#include <condition_variable>
-#include <mutex>
 #include <array>
+#include <condition_variable>
+#include <iostream>
+#include <mutex>
+#include <vector>
 
 namespace care{
 
