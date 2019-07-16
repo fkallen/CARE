@@ -232,6 +232,10 @@ public:
     		return num_sequences;
     	}
 
+        int getMaximumAllowedSequenceBytes() const{
+            return maximum_allowed_sequence_bytes;
+        }
+
         void saveToFile(const std::string& filename) const{
             std::ofstream stream(filename, std::ios::binary);
 
