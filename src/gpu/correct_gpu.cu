@@ -579,8 +579,7 @@ namespace gpu{
                     const char* d_candidate_sequences_data,
                     const int* d_subject_sequences_lengths,
                     const int* d_candidate_sequences_lengths,
-                    const char* d_subject_qualities,
-                    const char* d_candidate_qualities,
+                    SequenceQualitiesPointers d_qualityPointers,
                     const int* d_candidates_per_subject_prefixsum,
                     const int* d_indices,
                     const int* d_indices_per_subject,
@@ -634,8 +633,7 @@ namespace gpu{
                     d_candidate_sequences_data,
                     d_subject_sequences_lengths,
                     d_candidate_sequences_lengths,
-                    d_subject_qualities,
-                    d_candidate_qualities,
+                    d_qualityPointers,
                     d_msa_column_properties,
                     d_candidates_per_subject_prefixsum,
                     d_indices,
@@ -671,8 +669,7 @@ namespace gpu{
                     d_candidate_sequences_data,
                     d_subject_sequences_lengths,
                     d_candidate_sequences_lengths,
-                    d_subject_qualities,
-                    d_candidate_qualities,
+                    d_qualityPointers,
                     d_msa_column_properties,
                     d_candidates_per_subject_prefixsum,
                     d_indices,
@@ -1567,6 +1564,8 @@ namespace gpu{
                     //batch.maxSubjectLength,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
+
+        cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
 #if 0
         auto identity = [](auto i){return i;};
 
@@ -2190,9 +2189,7 @@ namespace gpu{
                         dataArrays.d_candidate_sequences_data,
                         dataArrays.d_subject_sequences_lengths,
                         dataArrays.d_candidate_sequences_lengths,
-                        dataArrays.d_subject_qualities,
-                        dataArrays.d_candidate_qualities,
-                        //dataArrays.d_candidate_qualities_transposed,
+                        dataArrays.getDeviceQualityPointers(),
                         dataArrays.d_candidates_per_subject_prefixsum,
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
@@ -2575,8 +2572,7 @@ namespace gpu{
                                 dataArrays.d_candidate_sequences_data,
                                 dataArrays.d_subject_sequences_lengths,
                                 dataArrays.d_candidate_sequences_lengths,
-                                dataArrays.d_subject_qualities,
-                                dataArrays.d_candidate_qualities,
+                                dataArrays.getDeviceQualityPointers(),
                                 dataArrays.d_candidates_per_subject_prefixsum,
                                 dataArrays.d_indices,
                                 d_indices_per_subject_tmp,

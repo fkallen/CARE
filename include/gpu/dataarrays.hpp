@@ -480,7 +480,27 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_indices_per_subject_prefixsum;
     SimpleAllocationDevice<int> d_num_indices;
 
-	std::size_t quality_pitch = 0;
+
+
+    SequenceQualitiesPointers getHostQualityPointers() const{
+        SequenceQualitiesPointers pointers{
+            h_subject_qualities.get(),
+            h_candidate_qualities.get(),
+            nullptr, //candidateQualitiesTransposed
+        };
+        return pointers;
+    }
+
+    SequenceQualitiesPointers getDeviceQualityPointers() const{
+        SequenceQualitiesPointers pointers{
+            d_subject_qualities.get(),
+            d_candidate_qualities.get(),
+            d_candidate_qualities_transposed.get(), //candidateQualitiesTransposed
+        };
+        return pointers;
+    }
+
+    std::size_t quality_pitch = 0;
 
     SimpleAllocationPinnedHost<char> h_subject_qualities;
     SimpleAllocationPinnedHost<char> h_candidate_qualities;

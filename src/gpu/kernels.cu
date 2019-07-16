@@ -704,8 +704,7 @@ namespace gpu{
                 const char* __restrict__ d_candidate_sequences_data,
                 const int* __restrict__ d_subject_sequences_lengths,
                 const int* __restrict__ d_candidate_sequences_lengths,
-                const char* __restrict__ d_subject_qualities,
-				const char* __restrict__ d_candidate_qualities,
+                SequenceQualitiesPointers d_qualityPointers,
     			const MSAColumnProperties*  __restrict__ d_msa_column_properties,
     			const int* __restrict__ d_candidates_per_subject_prefixsum,
     			const int* __restrict__ d_indices,
@@ -743,12 +742,12 @@ namespace gpu{
 		};
 
 		auto getSubjectQualityPtr = [&] (int subjectIndex){
-			const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
+			const char* result = d_qualityPointers.subjectQualities + std::size_t(subjectIndex) * quality_pitch;
 			return result;
 		};
 
 		auto getCandidateQualityPtr = [&] (int candidateIndex){
-			const char* result = d_candidate_qualities + std::size_t(candidateIndex) * quality_pitch;
+			const char* result = d_qualityPointers.candidateQualities + std::size_t(candidateIndex) * quality_pitch;
 			return result;
 		};
 
@@ -876,8 +875,7 @@ namespace gpu{
                 const char* __restrict__ d_candidate_sequences_data,
                 const int* __restrict__ d_subject_sequences_lengths,
                 const int* __restrict__ d_candidate_sequences_lengths,
-                const char* __restrict__ d_subject_qualities,
-				const char* __restrict__ d_candidate_qualities,
+                SequenceQualitiesPointers d_qualityPointers,
     			const MSAColumnProperties*  __restrict__ d_msa_column_properties,
     			const int* __restrict__ d_candidates_per_subject_prefixsum,
     			const int* __restrict__ d_indices,
@@ -923,17 +921,17 @@ namespace gpu{
 		};
 
 		auto getSubjectQualityPtr = [&] (int subjectIndex){
-			const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
+			const char* result = d_qualityPointers.subjectQualities + std::size_t(subjectIndex) * quality_pitch;
 			return result;
 		};
 #ifndef transposequal
 		auto getCandidateQualityPtr = [&] (int localCandidateIndex){
-			const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
+			const char* result = d_qualityPointers.candidateQualities + std::size_t(localCandidateIndex) * quality_pitch;
 			return result;
 		};
 #else
         auto getCandidateQualityPtr = [&] (int candidateIndex){
-            const char* result = d_candidate_qualities + std::size_t(candidateIndex);
+            const char* result = d_qualityPointers.candidateQualitiesTransposed + std::size_t(candidateIndex);
             return result;
         };
 #endif
@@ -1167,8 +1165,7 @@ namespace gpu{
         const char* __restrict__ d_candidate_sequences_data,
         const int* __restrict__ d_subject_sequences_lengths,
         const int* __restrict__ d_candidate_sequences_lengths,
-        const char* __restrict__ d_subject_qualities,
-        const char* __restrict__ d_candidate_qualities,
+        SequenceQualitiesPointers d_qualityPointers,
         const MSAColumnProperties*  __restrict__ d_msa_column_properties,
         const int* __restrict__ d_candidates_per_subject_prefixsum,
         const int* __restrict__ d_active_candidate_indices,
@@ -1216,17 +1213,17 @@ namespace gpu{
         };
 
         auto getSubjectQualityPtr = [&] (int subjectIndex){
-            const char* result = d_subject_qualities + std::size_t(subjectIndex) * quality_pitch;
+            const char* result = d_qualityPointers.subjectQualities + std::size_t(subjectIndex) * quality_pitch;
             return result;
         };
         #ifndef transposequal
         auto getCandidateQualityPtr = [&] (int localCandidateIndex){
-            const char* result = d_candidate_qualities + std::size_t(localCandidateIndex) * quality_pitch;
+            const char* result = d_qualityPointers.candidateQualities + std::size_t(localCandidateIndex) * quality_pitch;
             return result;
         };
         #else
         auto getCandidateQualityPtr = [&] (int candidateIndex){
-            const char* result = d_candidate_qualities + std::size_t(candidateIndex);
+            const char* result = d_qualityPointers.candidateQualitiesTransposed + std::size_t(candidateIndex);
             return result;
         };
         #endif
@@ -1453,8 +1450,7 @@ namespace gpu{
                                     const char* __restrict__ d_candidate_sequences_data,
                                     const int* __restrict__ d_subject_sequences_lengths,
                                     const int* __restrict__ d_candidate_sequences_lengths,
-                                    const char* __restrict__ d_subject_qualities,
-                                    const char* __restrict__ d_candidate_qualities,
+                                    SequenceQualitiesPointers d_qualityPointers,
                                     const MSAColumnProperties*  __restrict__ d_msa_column_properties,
                                     const int* __restrict__ d_candidates_per_subject_prefixsum,
                                     const int* __restrict__ d_indices,
@@ -1593,7 +1589,7 @@ namespace gpu{
 
                 //count bases of subject in chunk
                 const char* const subjectptr = &d_subject_sequences_data[encoded_sequence_pitch * subjectIndex];
-                const char* const subjectqualptr = &d_subject_qualities[quality_pitch * subjectIndex];
+                const char* const subjectqualptr = &d_qualityPointers.subjectQualities[quality_pitch * subjectIndex];
                 const int subjectLength = d_subject_sequences_lengths[subjectIndex];
                 //if(debug && columnForThisSubject == 0){
                 //    printf("subject singlecolkernel\n");
@@ -1607,7 +1603,7 @@ namespace gpu{
                 //count bases of candidates in chunk
                 const int numIndicesForThisSubject = d_indices_per_subject[subjectIndex];
                 const int* const indicesForThisSubject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-                const char* const qualitiesOfCandidates = d_candidate_qualities + (quality_pitch * d_indices_per_subject_prefixsum[subjectIndex]);
+                const char* const qualitiesOfCandidates = d_qualityPointers.candidateQualities + (quality_pitch * d_indices_per_subject_prefixsum[subjectIndex]);
 
                 for(int indexToIndices = 0; indexToIndices < numIndicesForThisSubject; indexToIndices++){
                     const int candidateIndex = indicesForThisSubject[indexToIndices];
@@ -3104,8 +3100,7 @@ namespace gpu{
                 const char* d_candidate_sequences_data,
                 const int* d_subject_sequences_lengths,
                 const int* d_candidate_sequences_lengths,
-                const char* d_subject_qualities,
-				const char* d_candidate_qualities,
+                SequenceQualitiesPointers d_qualityPointers,
     			const MSAColumnProperties*  d_msa_column_properties,
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
@@ -3214,8 +3209,7 @@ namespace gpu{
                                         d_candidate_sequences_data,
                                         d_subject_sequences_lengths,
                                         d_candidate_sequences_lengths,
-                                        d_subject_qualities,
-                        				d_candidate_qualities,
+                                        d_qualityPointers,
                                         d_msa_column_properties,
                                         d_candidates_per_subject_prefixsum,
                                         d_indices,
@@ -3248,8 +3242,7 @@ namespace gpu{
                 const char* d_candidate_sequences_data,
                 const int* d_subject_sequences_lengths,
                 const int* d_candidate_sequences_lengths,
-                const char* d_subject_qualities,
-				const char* d_candidate_qualities,
+                SequenceQualitiesPointers d_qualityPointers,
     			const MSAColumnProperties*  d_msa_column_properties,
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
@@ -3420,8 +3413,7 @@ namespace gpu{
                                             d_candidate_sequences_data,
                                             d_subject_sequences_lengths,
                                             d_candidate_sequences_lengths,
-                                            d_subject_qualities,
-                            				d_candidate_qualities,
+                                            d_qualityPointers,
                                             d_msa_column_properties,
                                             d_candidates_per_subject_prefixsum,
                                             d_indices,
@@ -3458,8 +3450,7 @@ namespace gpu{
         const char* d_candidate_sequences_data,
         const int* d_subject_sequences_lengths,
         const int* d_candidate_sequences_lengths,
-        const char* d_subject_qualities,
-        const char* d_candidate_qualities,
+        SequenceQualitiesPointers d_qualityPointers,
         const MSAColumnProperties*  d_msa_column_properties,
         const int* d_candidates_per_subject_prefixsum,
         const int* d_active_candidate_indices,
@@ -3629,8 +3620,7 @@ namespace gpu{
             d_candidate_sequences_data,
             d_subject_sequences_lengths,
             d_candidate_sequences_lengths,
-            d_subject_qualities,
-            d_candidate_qualities,
+            d_qualityPointers,
             d_msa_column_properties,
             d_candidates_per_subject_prefixsum,
             d_active_candidate_indices,
@@ -3669,8 +3659,7 @@ namespace gpu{
             const char* d_candidate_sequences_data,
             const int* d_subject_sequences_lengths,
             const int* d_candidate_sequences_lengths,
-            const char* d_subject_qualities,
-            const char* d_candidate_qualities,
+            SequenceQualitiesPointers d_qualityPointers,
             const MSAColumnProperties*  d_msa_column_properties,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
@@ -3821,8 +3810,7 @@ namespace gpu{
                     d_candidate_sequences_data,
                     d_subject_sequences_lengths,
                     d_candidate_sequences_lengths,
-                    d_subject_qualities,
-                    d_candidate_qualities,
+                    d_qualityPointers,
                     d_msa_column_properties,
                     d_candidates_per_subject_prefixsum,
                     d_indices,
@@ -3857,8 +3845,7 @@ namespace gpu{
                 const char* d_candidate_sequences_data,
                 const int* d_subject_sequences_lengths,
                 const int* d_candidate_sequences_lengths,
-                const char* d_subject_qualities,
-				const char* d_candidate_qualities,
+                SequenceQualitiesPointers d_qualityPointers,
     			const MSAColumnProperties*  d_msa_column_properties,
     			const int* d_candidates_per_subject_prefixsum,
     			const int* d_indices,
@@ -3895,8 +3882,7 @@ namespace gpu{
                                                             d_candidate_sequences_data,
                                                             d_subject_sequences_lengths,
                                                             d_candidate_sequences_lengths,
-                                                            d_subject_qualities,
-                                            				d_candidate_qualities,
+                                                            d_qualityPointers,
                                                             d_msa_column_properties,
                                                             d_candidates_per_subject_prefixsum,
                                                             d_indices,
@@ -3932,8 +3918,7 @@ namespace gpu{
                                                             d_candidate_sequences_data,
                                                             d_subject_sequences_lengths,
                                                             d_candidate_sequences_lengths,
-                                                            d_subject_qualities,
-                                            				d_candidate_qualities,
+                                                            d_qualityPointers,
                                                             d_msa_column_properties,
                                                             d_candidates_per_subject_prefixsum,
                                                             d_indices,
