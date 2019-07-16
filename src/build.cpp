@@ -631,6 +631,13 @@ namespace care{
                 }
 
                 result.data.insertRead(readIndex, read.sequence, read.quality);
+#if 0
+                const char* ptr = result.data.fetchSequenceData_ptr(readIndex);
+                int length = result.data.fetchSequenceLength(readIndex);
+
+                std::string s = get2BitHiLoString((const unsigned int*)ptr, length, [](auto i){return i;});
+                assert(s == read.sequence);
+#endif
             };
 
             if(nThreads == 1){
