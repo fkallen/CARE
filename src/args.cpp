@@ -109,7 +109,7 @@ namespace args{
         RuntimeOptions result;
 
 		result.threads = pr["threads"].as<int>();
-        result.threadsForGPUs = pr["threadsForGPUs"].as<int>();
+        //result.threadsForGPUs = pr["threadsForGPUs"].as<int>();
 		result.nInserterThreads = std::min(result.threads, (int)std::min(4u, std::thread::hardware_concurrency()));
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = pr["progress"].as<bool>();
@@ -253,15 +253,15 @@ namespace args{
             std::cout << "Error: threads must be > 0, is " + std::to_string(opt.threads) << std::endl;
         }
 
-        if(opt.threadsForGPUs < 0){
-            valid = false;
-            std::cout << "Error: threadsForGPUs must be >= 0, is " + std::to_string(opt.threadsForGPUs) << std::endl;
-        }
-
-        if(opt.threadsForGPUs > opt.threads){
-            valid = false;
-            std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
-        }
+        // if(opt.threadsForGPUs < 0){
+        //     valid = false;
+        //     std::cout << "Error: threadsForGPUs must be >= 0, is " + std::to_string(opt.threadsForGPUs) << std::endl;
+        // }
+        // 
+        // if(opt.threadsForGPUs > opt.threads){
+        //     valid = false;
+        //     std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
+        // }
 
         return valid;
     }

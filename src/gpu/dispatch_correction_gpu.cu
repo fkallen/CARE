@@ -31,7 +31,7 @@ namespace care{
                 			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
                 			std::size_t nLocksForProcessedFlags){
 
-        if(runtimeOptions.canUseGpu && runtimeOptions.deviceIds.size() > 0 && runtimeOptions.threadsForGPUs > 0) {
+        if(runtimeOptions.canUseGpu && runtimeOptions.deviceIds.size() > 0) {
             std::cout << "Running CARE GPU" << std::endl;
 
             std::cout << "Can use the following GPU device Ids: ";

@@ -60,7 +60,7 @@ namespace care{
 
 	struct RuntimeOptions{
 		int threads = 1;
-        int threadsForGPUs = 0;
+        //int threadsForGPUs = 0;
 		int nInserterThreads = 1;
 		int nCorrectorThreads = 1;
         bool showProgress = true;

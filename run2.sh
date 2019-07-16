@@ -31,17 +31,12 @@ fi
 
 if [ $# -gt 4 ]
 then
-	threadsgpu=$5
+	candidateCorrection=$5
 fi
 
 if [ $# -gt 5 ]
 then
-	candidateCorrection=$6
-fi
-
-if [ $# -gt 6 ]
-then
-	extractFeatures=$7
+	extractFeatures=$6
 fi
 
 
@@ -107,7 +102,7 @@ outputfilename="${inputfilename%.*}_"$nowstring"."$inputfileextension
 
 echo $inputfile
 echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
-                 --threadsForGPUs=$threadsgpu --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
+                 --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
@@ -116,7 +111,7 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
                  --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables
 
 $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
-                 --threadsForGPUs=$threadsgpu --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
+                 --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
