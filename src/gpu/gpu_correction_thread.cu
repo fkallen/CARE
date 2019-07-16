@@ -1,22 +1,32 @@
-#include <gpu/gpu_correction_thread.hpp>
+#if 1
 
+#include <gpu/correct_gpu.hpp>
+#include <gpu/readstorage.hpp>
+#include <gpu/qualityscoreweights.hpp>
 #include <gpu/nvvptimelinemarkers.hpp>
+#include <gpu/kernels.hpp>
+#include <gpu/dataarrays.hpp>
 
-#include <hpc_helpers.cuh>
-#include <options.hpp>
+#include <config.hpp>
+#include <qualityscoreweights.hpp>
 #include <tasktiming.hpp>
 #include <sequence.hpp>
 #include <featureextractor.hpp>
 #include <forestclassifier.hpp>
+#include <nn_classifier.hpp>
 #include <minhasher.hpp>
+#include <options.hpp>
+#include <candidatedistribution.hpp>
+#include <sequencefileio.hpp>
 #include <rangegenerator.hpp>
 
-#include <gpu/kernels.hpp>
-#include <gpu/dataarrays.hpp>
-#include <gpu/readstorage.hpp>
+#include <hpc_helpers.cuh>
 
-#include <config.hpp>
+#include <cuda_profiler_api.h>
 
+#include <memory>
+#include <sstream>
+#include <cstdlib>
 #include <thread>
 #include <vector>
 #include <string>
@@ -29,13 +39,13 @@
 #include <queue>
 #include <unordered_map>
 
-#ifdef __NVCC__
+#include <omp.h>
+
 #include <cub/cub.cuh>
 #include <cub/util_allocator.cuh>
 
 #include <thrust/inner_product.h>
 #include <thrust/iterator/counting_iterator.h>
-#endif
 
 //#define CARE_GPU_DEBUG
 //#define CARE_GPU_DEBUG_MEMCOPY
@@ -50,11 +60,522 @@
 #define USE_WAIT_FLAGS
 
 
-constexpr int nParallelBatches = 4;
-constexpr int sideBatchStepsPerWaitIter = 1;
-
 namespace care{
 namespace gpu{
+
+    constexpr int nParallelBatches = 4;
+    constexpr int sideBatchStepsPerWaitIter = 1;
+
+    constexpr int primary_stream_index = 0;
+    constexpr int secondary_stream_index = 1;
+    constexpr int nStreamsPerBatch = 2;
+
+    constexpr int alignments_finished_event_index = 0;
+    constexpr int quality_transfer_finished_event_index = 1;
+    constexpr int indices_transfer_finished_event_index = 2;
+    constexpr int correction_finished_event_index = 3;
+    constexpr int result_transfer_finished_event_index = 4;
+    constexpr int msadata_transfer_finished_event_index = 5;
+    constexpr int alignment_data_transfer_h2d_finished_event_index = 6;
+    constexpr int msa_build_finished_event_index = 7;
+    constexpr int indices_calculated_event_index = 8;
+    constexpr int num_indices_transfered_event_index = 9;
+    constexpr int nEventsPerBatch = 10;
+
+
+    struct CorrectionTask {
+        CorrectionTask(){
+        }
+
+        CorrectionTask(read_number readId)
+            :   active(true),
+            corrected(false),
+            readId(readId)
+        {
+        }
+
+        CorrectionTask(const CorrectionTask& other)
+            : active(other.active),
+            corrected(other.corrected),
+            readId(other.readId),
+            subject_string(other.subject_string),
+            candidate_read_ids(other.candidate_read_ids),
+            corrected_subject(other.corrected_subject),
+            corrected_candidates(other.corrected_candidates),
+            corrected_candidates_read_ids(other.corrected_candidates_read_ids){
+        }
+
+        CorrectionTask(CorrectionTask&& other){
+            operator=(other);
+        }
+
+        CorrectionTask& operator=(const CorrectionTask& other){
+            CorrectionTask tmp(other);
+            swap(*this, tmp);
+            return *this;
+        }
+
+        CorrectionTask& operator=(CorrectionTask&& other){
+            swap(*this, other);
+            return *this;
+        }
+
+        friend void swap(CorrectionTask& l, CorrectionTask& r) noexcept{
+            using std::swap;
+
+            swap(l.active, r.active);
+            swap(l.corrected, r.corrected);
+            swap(l.readId, r.readId);
+            swap(l.subject_string, r.subject_string);
+            swap(l.candidate_read_ids, r.candidate_read_ids);
+            swap(l.corrected_subject, r.corrected_subject);
+            swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
+        }
+
+        bool active;
+        bool corrected;
+        read_number readId;
+
+        std::vector<read_number> candidate_read_ids;
+
+        std::string subject_string;
+
+        std::string corrected_subject;
+        std::vector<std::string> corrected_candidates;
+        std::vector<read_number> corrected_candidates_read_ids;
+    };
+
+    enum class BatchState : int{
+		Unprepared,
+		CopyReads,
+		StartAlignment,
+        RearrangeIndices,
+		CopyQualities,
+		BuildMSA,
+        ImproveMSA,
+		StartClassicCorrection,
+		StartForestCorrection,
+        StartConvnetCorrection,
+		UnpackClassicResults,
+		WriteResults,
+		WriteFeatures,
+		Finished,
+		Aborted,
+	};
+
+    static constexpr int nBatchStates = static_cast<int>(BatchState::Aborted)+1;
+
+    struct Batch {
+        struct WaitCallbackData{
+            Batch* b{};
+            int index = -1;
+            WaitCallbackData(){}
+            WaitCallbackData(Batch* ptr, int i) : b(ptr), index(i){}
+        };
+		std::vector<CorrectionTask> tasks;
+		int initialNumberOfCandidates = 0;
+		BatchState state = BatchState::Unprepared;
+
+		int copiedTasks = 0;         // used if state == CandidatesPresent
+		int copiedCandidates = 0;         // used if state == CandidatesPresent
+
+        int copiedSubjects = 0;
+        bool handledReadIds = false;
+
+
+		std::vector<read_number> allReadIdsOfTasks;
+		std::vector<read_number> allReadIdsOfTasks_tmp;
+		std::vector<char> collectedCandidateReads;
+		int numsortedCandidateIds = 0;
+		int numsortedCandidateIdTasks = 0;
+
+		DataArrays* dataArrays;
+
+        bool doImproveMSA = false;
+        int numMinimizations = 0;
+        int previousNumIndices = 0;
+
+		std::array<cudaStream_t, nStreamsPerBatch>* streams;
+		std::array<cudaEvent_t, nEventsPerBatch>* events;
+
+        std::array<std::atomic_int, nBatchStates> waitCounts{};
+        int activeWaitIndex = 0;
+        //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
+
+        int id = -1;
+
+		KernelLaunchHandle kernelLaunchHandle;
+
+        bool isWaiting() const{
+        #ifdef USE_WAIT_FLAGS
+            return 0 != waitCounts[activeWaitIndex].load();
+        #else
+            return cudaEventQuery((*events)[activeWaitIndex]) == cudaErrorNotReady;
+        #endif
+        }
+
+        void addWaitSignal(BatchState state, cudaStream_t stream){
+            const int wait_index = static_cast<int>(state);
+            waitCounts[wait_index]++;
+
+            //std::cout << "batch " << id << ". wait_index " << wait_index << ", count increased to " << waitCounts[wait_index] << std::endl;
+
+            #define handlethis(s) {\
+                auto waitsuccessfunc = [](void* batch){ \
+                    Batch* b = static_cast<Batch*>(batch); \
+                    int old = b->waitCounts[static_cast<int>((s))]--; \
+                }; \
+                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR; \
+            }
+
+            #define mycase(s) case (s): handlethis((s)); break;
+
+            //assert(old > 0);
+            //std::cout << "batch " << b->id << ". wait_index " << static_cast<int>((s)) << ", count decreased to " << b->waitCounts[static_cast<int>((s))] << std::endl;
+
+            switch(state) {
+            mycase(BatchState::Unprepared)
+            mycase(BatchState::CopyReads)
+            mycase(BatchState::StartAlignment)
+            mycase(BatchState::RearrangeIndices)
+            mycase(BatchState::CopyQualities)
+            mycase(BatchState::BuildMSA)
+            mycase(BatchState::ImproveMSA)
+            mycase(BatchState::StartClassicCorrection)
+            mycase(BatchState::StartForestCorrection)
+            mycase(BatchState::StartConvnetCorrection)
+            mycase(BatchState::UnpackClassicResults)
+            mycase(BatchState::WriteResults)
+            mycase(BatchState::WriteFeatures)
+            mycase(BatchState::Finished)
+            mycase(BatchState::Aborted)
+            default: assert(false);
+            }
+
+            #undef mycase
+            #undef handlethis
+        }
+
+		void reset(){
+            tasks.clear();
+    		allReadIdsOfTasks.clear();
+    		allReadIdsOfTasks_tmp.clear();
+    		collectedCandidateReads.clear();
+
+    		initialNumberOfCandidates = 0;
+    		state = BatchState::Unprepared;
+    		copiedTasks = 0;
+    		copiedCandidates = 0;
+            copiedSubjects = 0;
+            handledReadIds = false;
+
+    		numsortedCandidateIds = 0;
+    		numsortedCandidateIdTasks = 0;
+
+            //assert(std::all_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i == 0;}));
+
+            activeWaitIndex = 0;
+
+            doImproveMSA = false;
+            numMinimizations = 0;
+            previousNumIndices = 0;
+        }
+
+        void waitUntilAllCallbacksFinished() const{
+            assert(std::any_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i >= 0;}));
+
+            while(std::any_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i > 0;})){
+                ;
+            }
+        }
+	};
+
+	struct AdvanceResult {
+		BatchState oldState = BatchState::Unprepared;
+		BatchState newState = BatchState::Unprepared;
+		bool noProgressBlocking = false;
+		bool noProgressLaunching = false;
+	};
+
+    struct TransitionFunctionData {
+        int deviceId;
+		cpu::RangeGenerator<read_number>* readIdGenerator;
+		std::vector<read_number>* readIdBuffer;
+        std::vector<CorrectionTask>* tmptasksBuffer;
+		const Minhasher* minhasher;
+		const gpu::ContiguousReadStorage* gpuReadStorage;
+		gpu::ContiguousReadStorage::GPUData readStorageGpuData;
+		std::mutex* locksForProcessedFlags;
+		std::size_t nLocksForProcessedFlags;
+		CorrectionOptions correctionOptions;
+        GoodAlignmentProperties goodAlignmentProperties;
+        SequenceFileProperties sequenceFileProperties;
+        RuntimeOptions runtimeOptions;
+        MinhashOptions minhashOptions;
+        AlignmentOptions alignmentOptions;
+        FileOptions fileOptions;
+		std::vector<char>* readIsCorrectedVector;
+		std::ofstream* featurestream;
+		std::function<void(const read_number, const std::string&)> write_read_to_stream;
+		std::function<void(const read_number)> lock;
+		std::function<void(const read_number)> unlock;
+
+        ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
+        NN_Correction_Classifier nnClassifier;
+	};
+
+    BatchState state_unprepared_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+    BatchState state_unprepared_func2(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_copyreads_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_startalignment_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+    BatchState state_rearrangeindices_func(Batch& batch,
+
+            bool isPausable,
+            TransitionFunctionData& transFuncData);
+
+	BatchState state_copyqualities_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_buildmsa_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+    BatchState state_improvemsa_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_startclassiccorrection_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_startforestcorrection_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+    BatchState state_startconvnetcorrection_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_unpackclassicresults_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_writeresults_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_writefeatures_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_finished_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+	BatchState state_aborted_func(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+    using FuncTableEntry = BatchState (*)(Batch& batch,
+
+				bool isPausable,
+				TransitionFunctionData&);
+
+    std::string nameOf(const BatchState& state){
+		switch(state) {
+		case BatchState::Unprepared: return "Unprepared";
+		case BatchState::CopyReads: return "CopyReads";
+		case BatchState::StartAlignment: return "StartAlignment";
+        case BatchState::RearrangeIndices: return "RearrangeIndices";
+		case BatchState::CopyQualities: return "CopyQualities";
+		case BatchState::BuildMSA: return "BuildMSA";
+        case BatchState::ImproveMSA: return "ImproveMSA";
+		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
+		case BatchState::StartForestCorrection: return "StartForestCorrection";
+        case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
+		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
+		case BatchState::WriteResults: return "WriteResults";
+		case BatchState::WriteFeatures: return "WriteFeatures";
+		case BatchState::Finished: return "Finished";
+		case BatchState::Aborted: return "Aborted";
+		default: assert(false); return "None";
+		}
+	}
+
+    std::unordered_map<BatchState, FuncTableEntry>
+    makeTransitionFunctionTable(){
+        std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
+
+		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func2;
+		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
+		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
+        transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
+		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
+		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
+        transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
+		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
+		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
+        transitionFunctionTable[BatchState::StartConvnetCorrection] = state_startconvnetcorrection_func;
+		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func;
+		transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
+		transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
+		transitionFunctionTable[BatchState::Finished] = state_finished_func;
+		transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
+
+        return transitionFunctionTable;
+	}
+
+    /*for each active read pair in tasks, if at least one read has more than threshold candidates:
+        1. find out candidates whose paired candidate is a candidate of the paired read
+        2. for each read with more than threshold candidates:
+             remove all candidates which are not found in step 1.
+
+        tasks without pair remain unchanged.
+        modified tasks with no candidates left are set inactive.
+        read pairs are identified by read id.
+        reads A and B are considered a pair if readIdA / 2 == readIdB / 2
+    */
+    void
+    removeNonPairedCandidatesFromHighCoverageTasks(std::vector<CorrectionTask>& tasks,
+                                        size_t threshold){
+        //paired reads have consecutive read ids, where the first read id of the read pair is even, the second read id is odd.
+        auto pairedReadId = [](read_number readId){
+            return readId / 2;
+        };
+        auto compByPairedReadId = [&](read_number l, read_number r){
+            return pairedReadId(l) < pairedReadId(r);
+        };
+
+        //for each read, only keep candidates whose pair is a candidate of the paired read
+        std::vector<read_number> candidatepairs;
+        std::vector<read_number> newcandidateids;
+        size_t index = 0;
+        while(index < tasks.size()){
+            if(index == tasks.size() -1 ){
+                //std::cerr << "no pair found\n";
+                tasks[index].active = false;
+
+                index += 1;
+                continue;
+            }
+            auto& taskl = tasks[index];
+            auto& taskr = tasks[index+1];
+
+            const read_number readIdl = taskl.readId;
+            const read_number readIdr = taskr.readId;
+
+            //check if tasks[index] and tasks[index+1] are a paired read.
+            if(taskl.active && taskr.active && pairedReadId(readIdl) == pairedReadId(readIdr)){
+                const size_t oldNumCandidatesl = taskl.candidate_read_ids.size();
+                const size_t oldNumCandidatesr = taskr.candidate_read_ids.size();
+
+                //check threshold
+                const bool updatel = oldNumCandidatesl > threshold;
+                const bool updater = oldNumCandidatesr > threshold;
+
+                if(updatel || updater){
+
+                    candidatepairs.clear();
+                    candidatepairs.resize(std::min(taskl.candidate_read_ids.size(), taskr.candidate_read_ids.size()));
+
+                    const auto pairsend = std::set_intersection(taskl.candidate_read_ids.begin(), taskl.candidate_read_ids.end(),
+                                                          taskr.candidate_read_ids.begin(), taskr.candidate_read_ids.end(),
+                                                          candidatepairs.begin(),
+                                                          compByPairedReadId);
+
+                    const size_t numcandidatepairs = std::distance(candidatepairs.begin(), pairsend);
+
+                    if(updatel){
+                        newcandidateids.clear();
+                        newcandidateids.resize(std::min(numcandidatepairs, taskl.candidate_read_ids.size()));
+
+                        const auto newcandidateidsend = std::set_intersection(taskl.candidate_read_ids.begin(), taskl.candidate_read_ids.end(),
+                                                                        candidatepairs.begin(), pairsend,
+                                                                        newcandidateids.begin(),
+                                                                        compByPairedReadId);
+                        newcandidateids.erase(newcandidateidsend, newcandidateids.end());
+                        std::swap(newcandidateids, taskl.candidate_read_ids);
+
+                        if(taskl.candidate_read_ids.size() == 0){
+                            taskl.active = false;
+                        }
+                    }
+
+                    if(updater){
+                        newcandidateids.clear();
+                        newcandidateids.resize(std::min(numcandidatepairs, taskr.candidate_read_ids.size()));
+
+                        const auto newcandidateidsend = std::set_intersection(taskr.candidate_read_ids.begin(), taskr.candidate_read_ids.end(),
+                                                                        candidatepairs.begin(), pairsend,
+                                                                        newcandidateids.begin(),
+                                                                        compByPairedReadId);
+                        newcandidateids.erase(newcandidateidsend, newcandidateids.end());
+                        std::swap(newcandidateids, taskr.candidate_read_ids);
+
+                        if(taskr.candidate_read_ids.size() == 0){
+                            taskr.active = false;
+                        }
+                    }
+
+                    /*assert(std::all_of(taskl.candidate_read_ids.begin(),
+                                        taskl.candidate_read_ids.end(),
+                                        [&](auto readId){
+                                            return readId < transFuncData.gpuReadStorage->cpuReadStorage->getNumberOfSequences();
+                                        }));
+
+                    assert(std::all_of(taskr.candidate_read_ids.begin(),
+                                        taskr.candidate_read_ids.end(),
+                                        [&](auto readId){
+                                            return readId < transFuncData.gpuReadStorage->cpuReadStorage->getNumberOfSequences();
+                                        }));*/
+
+                    //const size_t deltal = oldNumCandidatesl - taskl.candidate_read_ids.size();
+                    //const size_t deltar = oldNumCandidatesr - taskr.candidate_read_ids.size();
+
+                    //std::cerr << "removed " << deltal << "( " << oldNumCandidatesl << " ), " << deltar << "( " << oldNumCandidatesr << " )\n";
+
+                }
+
+                //assert(taskl.candidate_read_ids.size() <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+                //assert(taskr.candidate_read_ids.size() <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+                index += 2;
+            }else{
+                //std::cerr << "no pair found\n";
+
+                index += 1;
+            }
+        }
+    }
+
 
     // Caching allocator for device memory
     cub::CachingDeviceAllocator cubCachingAllocator(
@@ -64,7 +585,6 @@ namespace gpu{
                 cub::CachingDeviceAllocator::INVALID_SIZE,          ///< Maximum aggregate cached bytes per device (default is no limit)
                 true,                                               ///< Whether or not to skip a call to \p FreeAllCached() when the destructor is called (default is to deallocate)
                 false);                                             ///< Whether or not to print (de)allocation events to stdout (default is no stderr output)
-
 
 
     void build_msa_async(gpu::MSAColumnProperties* d_msa_column_properties,
@@ -210,317 +730,11 @@ namespace gpu{
     };
 
 
-
-
-
-
-    /*for each active read pair in tasks, if at least one read has more than threshold candidates:
-        1. find out candidates whose paired candidate is a candidate of the paired read
-        2. for each read with more than threshold candidates:
-             remove all candidates which are not found in step 1.
-
-        tasks without pair remain unchanged.
-        modified tasks with no candidates left are set inactive.
-        read pairs are identified by read id.
-        reads A and B are considered a pair if readIdA / 2 == readIdB / 2
-    */
-    void
-    removeNonPairedCandidatesFromHighCoverageTasks(std::vector<CorrectionTask>& tasks,
-                                        size_t threshold){
-        //paired reads have consecutive read ids, where the first read id of the read pair is even, the second read id is odd.
-        auto pairedReadId = [](read_number readId){
-            return readId / 2;
-        };
-        auto compByPairedReadId = [&](read_number l, read_number r){
-            return pairedReadId(l) < pairedReadId(r);
-        };
-
-        //for each read, only keep candidates whose pair is a candidate of the paired read
-        std::vector<read_number> candidatepairs;
-        std::vector<read_number> newcandidateids;
-        size_t index = 0;
-        while(index < tasks.size()){
-            if(index == tasks.size() -1 ){
-                //std::cerr << "no pair found\n";
-                tasks[index].active = false;
-
-                index += 1;
-                continue;
-            }
-            auto& taskl = tasks[index];
-            auto& taskr = tasks[index+1];
-
-            const read_number readIdl = taskl.readId;
-            const read_number readIdr = taskr.readId;
-
-            //check if tasks[index] and tasks[index+1] are a paired read.
-            if(taskl.active && taskr.active && pairedReadId(readIdl) == pairedReadId(readIdr)){
-                const size_t oldNumCandidatesl = taskl.candidate_read_ids.size();
-                const size_t oldNumCandidatesr = taskr.candidate_read_ids.size();
-
-                //check threshold
-                const bool updatel = oldNumCandidatesl > threshold;
-                const bool updater = oldNumCandidatesr > threshold;
-
-                if(updatel || updater){
-
-                    candidatepairs.clear();
-                    candidatepairs.resize(std::min(taskl.candidate_read_ids.size(), taskr.candidate_read_ids.size()));
-
-                    const auto pairsend = std::set_intersection(taskl.candidate_read_ids.begin(), taskl.candidate_read_ids.end(),
-                                                          taskr.candidate_read_ids.begin(), taskr.candidate_read_ids.end(),
-                                                          candidatepairs.begin(),
-                                                          compByPairedReadId);
-
-                    const size_t numcandidatepairs = std::distance(candidatepairs.begin(), pairsend);
-
-                    if(updatel){
-                        newcandidateids.clear();
-                        newcandidateids.resize(std::min(numcandidatepairs, taskl.candidate_read_ids.size()));
-
-                        const auto newcandidateidsend = std::set_intersection(taskl.candidate_read_ids.begin(), taskl.candidate_read_ids.end(),
-                                                                        candidatepairs.begin(), pairsend,
-                                                                        newcandidateids.begin(),
-                                                                        compByPairedReadId);
-                        newcandidateids.erase(newcandidateidsend, newcandidateids.end());
-                        std::swap(newcandidateids, taskl.candidate_read_ids);
-
-                        if(taskl.candidate_read_ids.size() == 0){
-                            taskl.active = false;
-                        }
-                    }
-
-                    if(updater){
-                        newcandidateids.clear();
-                        newcandidateids.resize(std::min(numcandidatepairs, taskr.candidate_read_ids.size()));
-
-                        const auto newcandidateidsend = std::set_intersection(taskr.candidate_read_ids.begin(), taskr.candidate_read_ids.end(),
-                                                                        candidatepairs.begin(), pairsend,
-                                                                        newcandidateids.begin(),
-                                                                        compByPairedReadId);
-                        newcandidateids.erase(newcandidateidsend, newcandidateids.end());
-                        std::swap(newcandidateids, taskr.candidate_read_ids);
-
-                        if(taskr.candidate_read_ids.size() == 0){
-                            taskr.active = false;
-                        }
-                    }
-
-                    /*assert(std::all_of(taskl.candidate_read_ids.begin(),
-                                        taskl.candidate_read_ids.end(),
-                                        [&](auto readId){
-                                            return readId < transFuncData.gpuReadStorage->cpuReadStorage->getNumberOfSequences();
-                                        }));
-
-                    assert(std::all_of(taskr.candidate_read_ids.begin(),
-                                        taskr.candidate_read_ids.end(),
-                                        [&](auto readId){
-                                            return readId < transFuncData.gpuReadStorage->cpuReadStorage->getNumberOfSequences();
-                                        }));*/
-
-                    //const size_t deltal = oldNumCandidatesl - taskl.candidate_read_ids.size();
-                    //const size_t deltar = oldNumCandidatesr - taskr.candidate_read_ids.size();
-
-                    //std::cerr << "removed " << deltal << "( " << oldNumCandidatesl << " ), " << deltar << "( " << oldNumCandidatesr << " )\n";
-
-                }
-
-                //assert(taskl.candidate_read_ids.size() <= std::size_t(transFuncData.max_candidates));
-                //assert(taskr.candidate_read_ids.size() <= std::size_t(transFuncData.max_candidates));
-
-                index += 2;
-            }else{
-                //std::cerr << "no pair found\n";
-
-                index += 1;
-            }
-        }
-    }
-
-
-
-
-
-
-
-
-
-    bool ErrorCorrectionThreadOnlyGPU::Batch::isWaiting() const{
-        #ifdef USE_WAIT_FLAGS
-            return 0 != waitCounts[activeWaitIndex].load();
-        #else
-            return cudaEventQuery((*events)[activeWaitIndex]) == cudaErrorNotReady;
-        #endif
-	}
-
-    void ErrorCorrectionThreadOnlyGPU::Batch::addWaitSignal(ErrorCorrectionThreadOnlyGPU::BatchState state, cudaStream_t stream){
-        const int wait_index = static_cast<int>(state);
-        waitCounts[wait_index]++;
-
-        //std::cout << "batch " << id << ". wait_index " << wait_index << ", count increased to " << waitCounts[wait_index] << std::endl;
-
-        #define handlethis(s) {\
-            auto waitsuccessfunc = [](void* batch){ \
-                Batch* b = static_cast<Batch*>(batch); \
-                int old = b->waitCounts[static_cast<int>((s))]--; \
-            }; \
-            cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR; \
-        }
-
-        #define mycase(s) case (s): handlethis((s)); break;
-
-        //assert(old > 0);
-        //std::cout << "batch " << b->id << ". wait_index " << static_cast<int>((s)) << ", count decreased to " << b->waitCounts[static_cast<int>((s))] << std::endl;
-
-        switch(state) {
-        mycase(BatchState::Unprepared)
-        mycase(BatchState::CopyReads)
-        mycase(BatchState::StartAlignment)
-        mycase(BatchState::RearrangeIndices)
-        mycase(BatchState::CopyQualities)
-        mycase(BatchState::BuildMSA)
-        mycase(BatchState::ImproveMSA)
-        mycase(BatchState::StartClassicCorrection)
-        mycase(BatchState::StartForestCorrection)
-        mycase(BatchState::StartConvnetCorrection)
-        mycase(BatchState::UnpackClassicResults)
-        mycase(BatchState::WriteResults)
-        mycase(BatchState::WriteFeatures)
-        mycase(BatchState::Finished)
-        mycase(BatchState::Aborted)
-        default: assert(false);
-        }
-
-        #undef mycase
-        #undef handlethis
-
-        /*auto dataptr = std::make_unique<WaitCallbackData>(this, wait_index);
-
-        auto waitsuccessfunc = [](void* d){
-            const WaitCallbackData* const data = static_cast<const WaitCallbackData*>(d);
-            Batch* const b = data->b;
-            b->waitCounts[data->index]--;
-        };
-
-        cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)dataptr); CUERR;
-        callbackDataList.emplace_back(dataptr);*/
-
-        /*if(wait_index == wait_before_copyqualites_index){
-            auto waitsuccessfunc = [](void* batch){
-                Batch* b = static_cast<Batch*>(batch);
-                b->waitCounts[wait_before_copyqualites_index]--;
-            };
-
-            cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
-        }else if(wait_index == wait_before_unpackclassicresults_index){
-            auto waitsuccessfunc = [](void* batch){
-                Batch* b = static_cast<Batch*>(batch);
-                b->waitCounts[wait_before_unpackclassicresults_index]--;
-            };
-
-            cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
-        }else if(wait_index == wait_before_startforestcorrection_index){
-            auto waitsuccessfunc = [](void* batch){
-                Batch* b = static_cast<Batch*>(batch);
-                b->waitCounts[wait_before_startforestcorrection_index]--;
-            };
-
-            cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR;
-        }else{
-            assert(false); //every case should be handled above
-        }*/
-
-
-    }
-
-	void ErrorCorrectionThreadOnlyGPU::Batch::reset(){
-		tasks.clear();
-		allReadIdsOfTasks.clear();
-		allReadIdsOfTasks_tmp.clear();
-		collectedCandidateReads.clear();
-
-		initialNumberOfCandidates = 0;
-		state = BatchState::Unprepared;
-		copiedTasks = 0;
-		copiedCandidates = 0;
-        copiedSubjects = 0;
-        handledReadIds = false;
-
-		numsortedCandidateIds = 0;
-		numsortedCandidateIdTasks = 0;
-
-        //assert(std::all_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i == 0;}));
-
-        activeWaitIndex = 0;
-
-        doImproveMSA = false;
-        numMinimizations = 0;
-        previousNumIndices = 0;
-	}
-
-    void ErrorCorrectionThreadOnlyGPU::Batch::waitUntilAllCallbacksFinished() const{
-        assert(std::any_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i >= 0;}));
-
-        while(std::any_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i > 0;})){
-            ;
-        }
-    }
-
-	void ErrorCorrectionThreadOnlyGPU::run(){
-		if(isRunning) throw std::runtime_error("ErrorCorrectionThreadOnlyGPU::run: Is already running.");
-		isRunning = true;
-		thread = std::move(std::thread(&ErrorCorrectionThreadOnlyGPU::execute, this));
-	}
-
-	void ErrorCorrectionThreadOnlyGPU::join(){
-		thread.join();
-		isRunning = false;
-	}
-
-	std::string ErrorCorrectionThreadOnlyGPU::nameOf(const BatchState& state) const {
-		switch(state) {
-		case BatchState::Unprepared: return "Unprepared";
-		case BatchState::CopyReads: return "CopyReads";
-		case BatchState::StartAlignment: return "StartAlignment";
-        case BatchState::RearrangeIndices: return "RearrangeIndices";
-		case BatchState::CopyQualities: return "CopyQualities";
-		case BatchState::BuildMSA: return "BuildMSA";
-        case BatchState::ImproveMSA: return "ImproveMSA";
-		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
-		case BatchState::StartForestCorrection: return "StartForestCorrection";
-        case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
-		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
-		case BatchState::WriteResults: return "WriteResults";
-		case BatchState::WriteFeatures: return "WriteFeatures";
-		case BatchState::Finished: return "Finished";
-		case BatchState::Aborted: return "Aborted";
-		default: assert(false); return "None";
-		}
-	}
-
-	void ErrorCorrectionThreadOnlyGPU::makeTransitionFunctionTable(){
-		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
-		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
-		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
-        transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
-		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
-		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
-        transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
-		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
-		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
-        transitionFunctionTable[BatchState::StartConvnetCorrection] = state_startconvnetcorrection_func;
-		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func;
-		transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
-		transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
-		transitionFunctionTable[BatchState::Finished] = state_finished_func;
-		transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
-	}
-
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_unprepared_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_unprepared_func(Batch& batch,
                 bool canBlock,
                 bool canLaunchKernel,
                 bool isPausable,
-                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+                const TransitionFunctionData& transFuncData){
 
         assert(batch.state == BatchState::Unprepared);
         assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
@@ -534,7 +748,7 @@ namespace gpu{
         //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
         std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
-        std::vector<CorrectionTask_t>* tmptasksBuffer = transFuncData.tmptasksBuffer;
+        std::vector<CorrectionTask>* tmptasksBuffer = transFuncData.tmptasksBuffer;
 
         auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
                         auto copybegin = position_to_erase;
@@ -548,7 +762,7 @@ namespace gpu{
 
         constexpr int num_simultaneous_tasks = 64;
 
-        std::vector<CorrectionTask_t> tmptasks;
+        std::vector<CorrectionTask> tmptasks;
         //std::vector<bool> tmpokflags(num_simultaneous_tasks);
 
         while(batch.initialNumberOfCandidates < transFuncData.minimum_candidates_per_batch
@@ -574,7 +788,7 @@ namespace gpu{
                     auto& task = tmptasks[tmptaskindex];
 
                     const read_number readId = (*readIdBuffer)[readIdsInBuffer - 1 - tmptaskindex];
-                    task = CorrectionTask_t(readId);
+                    task = CorrectionTask(readId);
 
                     bool ok = false;
                     if ((*transFuncData.readIsCorrectedVector)[readId] == 0) {
@@ -589,27 +803,15 @@ namespace gpu{
                         decode2BitHiLoSequence(&task.subject_string[0], (const unsigned int*)sequenceptr, sequencelength, identity);
                         task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.max_candidates);
 
-                        task.candidate_read_ids_begin = &(task.candidate_read_ids[0]);
-                        task.candidate_read_ids_end = &(task.candidate_read_ids[task.candidate_read_ids.size()]);
+                        auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
 
-                        auto readIdPos = std::lower_bound(task.candidate_read_ids_begin, task.candidate_read_ids_end, task.readId);
-
-                        if(readIdPos != task.candidate_read_ids_end && *readIdPos == task.readId) {
-
-                            task.candidate_read_ids_end = erase_from_range(task.candidate_read_ids_begin, task.candidate_read_ids_end, readIdPos);
-                            task.candidate_read_ids.resize(std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end));
+                        if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                            task.candidate_read_ids.erase(readIdPos);
                         }
 
-                        std::size_t myNumCandidates = std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
+                        std::size_t myNumCandidates = task.candidate_read_ids.size();
 
                         assert(myNumCandidates <= std::size_t(transFuncData.max_candidates));
-#ifdef CARE_GPU_DEBUG
-
-                        if(task.readId == 999013){
-                            std::cout << myNumCandidates << " candidates" << std::endl;
-                        }
-
-#endif
 
                         if(myNumCandidates == 0) {
                             task.active = false;
@@ -661,7 +863,7 @@ namespace gpu{
                     transFuncData.unlock(id);
 
                     if(ok){
-                        const size_t myNumCandidates = std::distance(task.candidate_read_ids_begin, task.candidate_read_ids_end);
+                        const size_t myNumCandidates = task.candidate_read_ids.size();
 
                         batch.tasks.emplace_back(task);
                         batch.initialNumberOfCandidates += int(myNumCandidates);
@@ -811,11 +1013,11 @@ namespace gpu{
     }
 
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_unprepared_func2(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_unprepared_func2(Batch& batch,
                 bool canBlock,
                 bool canLaunchKernel,
                 bool isPausable,
-                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+                const TransitionFunctionData& transFuncData){
 
         assert(batch.state == BatchState::Unprepared);
         assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
@@ -829,7 +1031,7 @@ namespace gpu{
         //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
         std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
-        std::vector<CorrectionTask_t>* tmptasksBuffer = transFuncData.tmptasksBuffer;
+        std::vector<CorrectionTask>* tmptasksBuffer = transFuncData.tmptasksBuffer;
 
         auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
                         auto copybegin = position_to_erase;
@@ -843,7 +1045,7 @@ namespace gpu{
 
         constexpr int num_simultaneous_tasks = 64;
 
-        std::vector<CorrectionTask_t> tmptasks;
+        std::vector<CorrectionTask> tmptasks;
         //std::vector<bool> tmpokflags(num_simultaneous_tasks);
 
         //ake the smallest even amount of tasks
@@ -871,7 +1073,7 @@ namespace gpu{
                     auto& task = tmptasks[tmptaskindex];
 
                     const read_number readId = (*readIdBuffer)[tmptaskindex];
-                    task = CorrectionTask_t(readId);
+                    task = CorrectionTask(readId);
                     //std::cout << readId << std::endl;
 
                     bool ok = false;
@@ -1078,11 +1280,11 @@ namespace gpu{
         }
     }
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_copyreads_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_copyreads_func(Batch& batch,
                 bool canBlock,
                 bool canLaunchKernel,
                 bool isPausable,
-                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+                const TransitionFunctionData& transFuncData){
 
         assert(batch.state == BatchState::CopyReads);
         assert(batch.copiedTasks <= int(batch.tasks.size()));
@@ -1352,11 +1554,11 @@ namespace gpu{
         return BatchState::StartAlignment;
     }
 
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startalignment_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+	BatchState state_startalignment_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
 		assert(batch.state == BatchState::StartAlignment);
 
@@ -1584,11 +1786,11 @@ namespace gpu{
         return BatchState::RearrangeIndices;
 	}
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_rearrangeindices_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_rearrangeindices_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
         DataArrays& dataArrays = *batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1716,11 +1918,11 @@ namespace gpu{
 
     }
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_copyqualities_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_copyqualities_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::CopyQualities;
 #ifdef USE_WAIT_FLAGS
@@ -1970,11 +2172,11 @@ namespace gpu{
 	}
 
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_buildmsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_buildmsa_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::BuildMSA;
 
@@ -2065,11 +2267,11 @@ namespace gpu{
 
 
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_improvemsa_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_improvemsa_func(Batch& batch,
                 bool canBlock,
                 bool canLaunchKernel,
                 bool isPausable,
-                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+                const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::ImproveMSA;
 
@@ -2583,11 +2785,11 @@ namespace gpu{
 
 
 
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startclassiccorrection_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+	BatchState state_startclassiccorrection_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
 		assert(batch.state == BatchState::StartClassicCorrection);
 		assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
@@ -2823,11 +3025,11 @@ namespace gpu{
 		}
 	}
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startconvnetcorrection_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_startconvnetcorrection_func(Batch& batch,
                 bool canBlock,
                 bool canLaunchKernel,
                 bool isPausable,
-                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+                const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::StartConvnetCorrection;
 #ifdef USE_WAIT_FLAGS
@@ -2966,11 +3168,11 @@ namespace gpu{
         return BatchState::WriteResults;
     }
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_startforestcorrection_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_startforestcorrection_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::StartForestCorrection;
 #ifdef USE_WAIT_FLAGS
@@ -3075,11 +3277,11 @@ namespace gpu{
 		return BatchState::WriteResults;
 	}
 
-    ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_unpackclassicresults_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+    BatchState state_unpackclassicresults_func(Batch& batch,
                 bool canBlock,
                 bool canLaunchKernel,
                 bool isPausable,
-                const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+                const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::UnpackClassicResults;
     #ifdef USE_WAIT_FLAGS
@@ -3193,11 +3395,11 @@ namespace gpu{
 
 
 
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_writeresults_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+	BatchState state_writeresults_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
 		assert(batch.state == BatchState::WriteResults);
 
@@ -3359,11 +3561,11 @@ namespace gpu{
 		return BatchState::Finished;
 	}
 
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_writefeatures_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+	BatchState state_writefeatures_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
         constexpr BatchState expectedState = BatchState::WriteFeatures;
 #ifdef USE_WAIT_FLAGS
@@ -3461,11 +3663,11 @@ namespace gpu{
 		return BatchState::Finished;
 	}
 
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_finished_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+	BatchState state_finished_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
 		assert(batch.state == BatchState::Finished);
 
@@ -3474,11 +3676,11 @@ namespace gpu{
 		return BatchState::Finished;
 	}
 
-	ErrorCorrectionThreadOnlyGPU::BatchState ErrorCorrectionThreadOnlyGPU::state_aborted_func(ErrorCorrectionThreadOnlyGPU::Batch& batch,
+	BatchState state_aborted_func(Batch& batch,
 				bool canBlock,
 				bool canLaunchKernel,
 				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
+				const TransitionFunctionData& transFuncData){
 
 		assert(batch.state == BatchState::Aborted);
 
@@ -3488,474 +3690,530 @@ namespace gpu{
 	}
 
 
-	ErrorCorrectionThreadOnlyGPU::AdvanceResult ErrorCorrectionThreadOnlyGPU::advance_one_step(ErrorCorrectionThreadOnlyGPU::Batch& batch,
-				bool canBlock,
-				bool canLaunchKernel,
-				bool isPausable,
-				const ErrorCorrectionThreadOnlyGPU::TransitionFunctionData& transFuncData){
 
-		AdvanceResult advanceResult;
+AdvanceResult advance_one_step(Batch& batch,
+			bool isPausable,
+			TransitionFunctionData& transFuncData,
+            const std::unordered_map<BatchState, FuncTableEntry>& transitionFunctionTable){
 
-		advanceResult.oldState = batch.state;
-		advanceResult.noProgressBlocking = false;
-		advanceResult.noProgressLaunching = false;
+	AdvanceResult advanceResult;
 
-		auto iter = transitionFunctionTable.find(batch.state);
-		if(iter != transitionFunctionTable.end()) {
-			batch.state = iter->second(batch, canBlock, canLaunchKernel, isPausable, transFuncData);
-		}else{
-			std::cout << nameOf(batch.state) << std::endl;
-			assert(false); // Every State should be handled above
-		}
+	advanceResult.oldState = batch.state;
+	advanceResult.noProgressBlocking = false;
+	advanceResult.noProgressLaunching = false;
 
-		advanceResult.newState = batch.state;
-
-		return advanceResult;
+	auto iter = transitionFunctionTable.find(batch.state);
+	if(iter != transitionFunctionTable.end()) {
+		batch.state = iter->second(batch, isPausable, transFuncData);
+	}else{
+		std::cout << nameOf(batch.state) << std::endl;
+		assert(false); // Every State should be handled above
 	}
 
+	advanceResult.newState = batch.state;
 
-	void ErrorCorrectionThreadOnlyGPU::execute() {
-		isRunning = true;
+	return advanceResult;
+}
 
-		assert(threadOpts.canUseGpu);
-		assert(max_candidates > 0);
-
-		makeTransitionFunctionTable();
-
-		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
-
-		std::ofstream outputstream(threadOpts.outputfile);
-		if(!outputstream)
-			throw std::runtime_error("Could not open output file");
-
-		std::ofstream featurestream(threadOpts.outputfile + "_features");
-		if(!featurestream)
-			throw std::runtime_error("Could not open output feature file");
-
-
-		cudaSetDevice(threadOpts.deviceId); CUERR;
-
-		//std::vector<read_number> readIds = threadOpts.batchGen->getNextReadIds();
-
-		std::vector<DataArrays > dataArrays;
-		//std::array<Batch, nParallelBatches> batches;
-		std::array<std::array<cudaStream_t, nStreamsPerBatch>, nParallelBatches> streams;
-		std::array<std::array<cudaEvent_t, nEventsPerBatch>, nParallelBatches> cudaevents;
-
-		std::queue<Batch> batchQueue;
-		std::queue<DataArrays*> freeDataArraysQueue;
-		std::queue<std::array<cudaStream_t, nStreamsPerBatch>*> freeStreamsQueue;
-		std::queue<std::array<cudaEvent_t, nEventsPerBatch>*> freeEventsQueue;
-
-		cudaStream_t computeStream;
-		cudaStreamCreate(&computeStream);
-
-		for(int i = 0; i < nParallelBatches; i++) {
-			dataArrays.emplace_back(threadOpts.deviceId);
-
-			//streams[i][0] = computeStream;
-
-			for(int j = 0; j < nStreamsPerBatch; ++j) {
-				cudaStreamCreate(&streams[i][j]); CUERR;
-			}
-
-			for(int j = 0; j < nEventsPerBatch; ++j) {
-				cudaEventCreateWithFlags(&cudaevents[i][j], cudaEventDisableTiming); CUERR;
-			}
-
-		}
-
-		for(auto& array : dataArrays)
-			freeDataArraysQueue.push(&array);
-		for(auto& streamArray : streams)
-			freeStreamsQueue.push(&streamArray);
-		for(auto& eventArray : cudaevents)
-			freeEventsQueue.push(&eventArray);
-
-		std::vector<read_number> readIdBuffer;
-        std::vector<CorrectionTask_t> tmptasksBuffer;
-
-		TransitionFunctionData transFuncData;
-
-		//transFuncData.mybatchgen = &mybatchgen;
-        transFuncData.threadOpts = threadOpts;
-		transFuncData.readIdGenerator = threadOpts.readIdGenerator;
-		transFuncData.readIdBuffer = &readIdBuffer;
-        transFuncData.tmptasksBuffer = &tmptasksBuffer;
-		transFuncData.minhasher = threadOpts.minhasher;
-		transFuncData.gpuReadStorage = threadOpts.gpuReadStorage;
-		transFuncData.readStorageGpuData = threadOpts.gpuReadStorage->getGPUData(threadOpts.deviceId);
-		transFuncData.min_overlap_ratio = goodAlignmentProperties.min_overlap_ratio;
-		transFuncData.min_overlap = goodAlignmentProperties.min_overlap;
-		transFuncData.estimatedErrorrate = correctionOptions.estimatedErrorrate;
-		transFuncData.maxErrorRate = goodAlignmentProperties.maxErrorRate;
-		transFuncData.estimatedCoverage = correctionOptions.estimatedCoverage;
-		transFuncData.m_coverage = correctionOptions.m_coverage;
-		transFuncData.new_columns_to_correct = correctionOptions.new_columns_to_correct;
-		transFuncData.correctCandidates = correctionOptions.correctCandidates;
-		transFuncData.correctionOptions.useQualityScores = correctionOptions.useQualityScores;
-		transFuncData.kmerlength = correctionOptions.kmerlength;
-		transFuncData.num_ids_per_add_tasks = num_ids_per_add_tasks;
-		transFuncData.minimum_candidates_per_batch = correctionOptions.batchsize;
-		transFuncData.max_candidates = max_candidates;
-		transFuncData.correctionOptions = correctionOptions;
-		transFuncData.maxSequenceLength = fileProperties.maxSequenceLength;
-		transFuncData.locksForProcessedFlags = threadOpts.locksForProcessedFlags;
-		transFuncData.nLocksForProcessedFlags = threadOpts.nLocksForProcessedFlags;
-		transFuncData.readIsCorrectedVector = threadOpts.readIsCorrectedVector;
-		transFuncData.featurestream = &featurestream;
-		transFuncData.write_read_to_stream = [&](const read_number readId, const std::string& sequence){
-							     //std::cout << readId << " " << sequence << std::endl;
-                                 bool isvalid = std::all_of(sequence.begin(), sequence.end(), [](char c){
-                                     return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-                                 });
-                                 if(!isvalid){
-                                     std::cout << sequence << std::endl;
-                                 }
-                                 assert(isvalid);
-							     auto& stream = outputstream;
-    #if 1
-							     stream << readId << ' ' << sequence << '\n';
-    #else
-							     stream << readId << '\n';
-							     stream << sequence << '\n';
-    #endif
-						     };
-		transFuncData.lock = [&](read_number readId){
-					     read_number index = readId % transFuncData.nLocksForProcessedFlags;
-					     transFuncData.locksForProcessedFlags[index].lock();
-				     };
-		transFuncData.unlock = [&](read_number readId){
-					       read_number index = readId % transFuncData.nLocksForProcessedFlags;
-					       transFuncData.locksForProcessedFlags[index].unlock();
-				       };
-
-        if(transFuncData.correctionOptions.correctionType == CorrectionType::Forest){
-           transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
-        }
-
-        NN_Correction_Classifier nnClassifier;
-
-        if(correctionOptions.correctionType == CorrectionType::Convnet){
-            transFuncData.nnClassifier = std::move(NN_Correction_Classifier{classifierBase});
-        }
+void correct_gpu(const MinhashOptions& minhashOptions,
+                  const AlignmentOptions& alignmentOptions,
+                  const GoodAlignmentProperties& goodAlignmentProperties,
+                  const CorrectionOptions& correctionOptions,
+                  const RuntimeOptions& runtimeOptions,
+                  const FileOptions& fileOptions,
+                  const SequenceFileProperties& sequenceFileProperties,
+                  Minhasher& minhasher,
+                  cpu::ContiguousReadStorage& cpuReadStorage,
+                  std::uint64_t maxCandidatesPerRead,
+                  std::vector<char>& readIsCorrectedVector,
+                  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+                  std::size_t nLocksForProcessedFlags){
 
 
-		std::array<Batch, nParallelBatches> batches;
-        std::array<Batch*, nParallelBatches> batchPointers;
+      assert(runtimeOptions.canUseGpu);
+      assert(runtimeOptions.max_candidates > 0);
+      assert(runtimeOptions.deviceIds.size() > 0);
 
-		for(int i = 0; i < nParallelBatches; ++i) {
+      std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
+      std::chrono::duration<double> runtime = std::chrono::seconds(0);
+
+      const auto& deviceIds = runtimeOptions.deviceIds;
+
+      std::vector<std::string> tmpfiles{fileOptions.outputfile + "_tmp"};
+
+      std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+
+      std::ofstream outputstream;
+      std::unique_ptr<SequenceFileWriter> writer;
+
+      //if candidate correction is not enabled, it is possible to write directly into the result file
+      // if(!correctionOptions.correctCandidates){
+      //     //writer = std::move(makeSequenceWriter(fileOptions.outputfile, FileFormat::FASTQGZ));
+      //     outputstream = std::move(std::ofstream(fileOptions.outputfile));
+      //     if(!outputstream){
+      //         throw std::runtime_error("Could not open output file " + tmpfiles[0]);
+      //     }
+      // }else{
+          outputstream = std::move(std::ofstream(tmpfiles[0]));
+          if(!outputstream){
+              throw std::runtime_error("Could not open output file " + tmpfiles[0]);
+          }
+     // }
+
+
+      std::ofstream featurestream;
+      //if(correctionOptions.extractFeatures){
+          featurestream = std::move(std::ofstream(tmpfiles[0] + "_features"));
+          if(!featurestream && correctionOptions.extractFeatures){
+              throw std::runtime_error("Could not open output feature file");
+          }
+      //}
+
+      std::mutex outputstreamlock;
+
+      Read readInFile;
+
+      cudaSetDevice(deviceIds[0]); CUERR;
+
+      gpu::init_weights(deviceIds);
+
+      gpu::ContiguousReadStorage gpuReadStorage(&cpuReadStorage, deviceIds);
+
+      gpuReadStorage.initGPUData();
+
+      std::cout << "Sequence Type: " << gpuReadStorage.getNameOfSequenceType() << std::endl;
+      std::cout << "Quality Type: " << gpuReadStorage.getNameOfQualityType() << std::endl;
+
+      auto readStorageGpuData = gpuReadStorage.getGPUData(deviceIds[0]);
+
+      auto transitionFunctionTable = makeTransitionFunctionTable();
+
+
+      std::vector<DataArrays > dataArrays;
+      std::array<std::array<cudaStream_t, nStreamsPerBatch>, nParallelBatches> streams;
+      std::array<std::array<cudaEvent_t, nEventsPerBatch>, nParallelBatches> cudaevents;
+
+      for(int i = 0; i < nParallelBatches; i++) {
+          dataArrays.emplace_back(deviceIds[0]);
+
+          for(int j = 0; j < nStreamsPerBatch; ++j) {
+              cudaStreamCreate(&streams[i][j]); CUERR;
+          }
+
+          for(int j = 0; j < nEventsPerBatch; ++j) {
+              cudaEventCreateWithFlags(&cudaevents[i][j], cudaEventDisableTiming); CUERR;
+          }
+      }
+
+      auto kernelLaunchHandle = make_kernel_launch_handle(deviceIds[0]);
+
+      int oldNumOMPThreads = 1;
+      #pragma omp parallel
+      {
+          #pragma omp single
+          oldNumOMPThreads = omp_get_num_threads();
+      }
+
+      omp_set_num_threads(runtimeOptions.nCorrectorThreads);
+
+
+
+      std::vector<read_number> readIdBuffer;
+      std::vector<CorrectionTask> tmptasksBuffer;
+
+      cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+
+      TransitionFunctionData transFuncData;
+
+      //transFuncData.mybatchgen = &mybatchgen;
+      transFuncData.deviceId = deviceIds[0];
+      transFuncData.goodAlignmentProperties = goodAlignmentProperties;
+      transFuncData.correctionOptions = correctionOptions;
+      transFuncData.runtimeOptions = runtimeOptions;
+      transFuncData.minhashOptions = minhashOptions;
+      transFuncData.alignmentOptions = alignmentOptions;
+      transFuncData.fileOptions = fileOptions;
+      transFuncData.sequenceFileProperties = sequenceFileProperties;
+
+      transFuncData.readIdGenerator = &readIdGenerator;
+      transFuncData.readIdBuffer = &readIdBuffer;
+      transFuncData.tmptasksBuffer = &tmptasksBuffer;
+      transFuncData.minhasher = &minhasher;
+      transFuncData.gpuReadStorage = &gpuReadStorage;
+      transFuncData.readStorageGpuData = readStorageGpuData;
+      transFuncData.locksForProcessedFlags = locksForProcessedFlags.get();
+      transFuncData.nLocksForProcessedFlags = nLocksForProcessedFlags;
+      transFuncData.readIsCorrectedVector = &readIsCorrectedVector;
+      transFuncData.featurestream = &featurestream;
+      transFuncData.write_read_to_stream = [&](const read_number readId, const std::string& sequence){
+                               //std::cout << readId << " " << sequence << std::endl;
+                               auto& stream = outputstream;
+  #if 1
+                               stream << readId << ' ' << sequence << '\n';
+  #else
+                               stream << readId << '\n';
+                               stream << sequence << '\n';
+  #endif
+                           };
+      transFuncData.lock = [&](read_number readId){
+                       read_number index = readId % transFuncData.nLocksForProcessedFlags;
+                       transFuncData.locksForProcessedFlags[index].lock();
+                   };
+      transFuncData.unlock = [&](read_number readId){
+                         read_number index = readId % transFuncData.nLocksForProcessedFlags;
+                         transFuncData.locksForProcessedFlags[index].unlock();
+                     };
+
+      if(transFuncData.correctionOptions.correctionType == CorrectionType::Forest){
+         transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
+      }
+
+      NN_Correction_Classifier_Base nnClassifierBase;
+      NN_Correction_Classifier nnClassifier;
+      if(correctionOptions.correctionType == CorrectionType::Convnet){
+          nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
+          nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
+      }
+
+      std::array<Batch, nParallelBatches> batches;
+      std::array<Batch*, nParallelBatches> batchPointers;
+
+      for(int i = 0; i < nParallelBatches; ++i) {
             batches[i].id = i;
-			batches[i].dataArrays = &dataArrays[i];
-			batches[i].streams = &streams[i];
-			batches[i].events = &cudaevents[i];
-			batches[i].kernelLaunchHandle = make_kernel_launch_handle(threadOpts.deviceId);
+        batches[i].dataArrays = &dataArrays[i];
+          batches[i].streams = &streams[i];
+          batches[i].events = &cudaevents[i];
+          batches[i].kernelLaunchHandle = make_kernel_launch_handle(deviceIds[0]);
             batchPointers[i] = &batches[i];
-		}
+      }
 
-		auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){
-					      return (currentBatchIndex + 1) % nParallelBatches;
-				      };
-
-		//int num_finished_batches = 0;
-
-		int stacksize = 0;
-
-		//while(!stopAndAbort && !(num_finished_batches == nParallelBatches && readIds.empty())){
-		while(!stopAndAbort &&
-		      !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
-					return batch.state == BatchState::Finished;
-				})
-		        && readIdBuffer.empty()
-		        && threadOpts.readIdGenerator->empty())) {
-
-			if(stacksize != 0)
-				assert(stacksize == 0);
+      auto nextBatchIndex = [](int currentBatchIndex, int nParallelBatches){
+                        return (currentBatchIndex + 1) % nParallelBatches;
+                    };
 
-			Batch& mainBatch = *batchPointers[0];
 
-			AdvanceResult mainBatchAdvanceResult;
-			bool popMain = false;
+      #ifdef DO_PROFILE
+          cudaProfilerStart();
+      #endif
 
 
 
-			assert(popMain == false);
-			push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
-			++stacksize;
-			popMain = true;
 
-			while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)) {
+      int stacksize = 0;
 
-				mainBatchAdvanceResult = advance_one_step(mainBatch,
-							true,                   //can block
-							true,                   //can launch kernels
-							false,                   //cannot be paused
-							transFuncData);
+      while(
+            !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
+                  return batch.state == BatchState::Finished;
+              })
+              && readIdBuffer.empty()
+              && readIdGenerator.empty())) {
 
-				if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)) {
-					pop_range("main inner");
-					popMain = false;
-					--stacksize;
-
-					assert(popMain == false);
-					push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
-					++stacksize;
-					popMain = true;
-				}
+          if(stacksize != 0)
+              assert(stacksize == 0);
 
+          Batch& mainBatch = *batchPointers[0];
 
-#if 1
+          AdvanceResult mainBatchAdvanceResult;
+          bool popMain = false;
 
-				while(mainBatch.isWaiting()) {
-					/*
-					    Prepare next batch while waiting for the mainBatch gpu work to finish
-					 */
-					if(nParallelBatches > 1) {
+          runtime = std::chrono::system_clock::now() - timepoint_begin;
 
-						// 0 <= sideBatchIndex < nParallelBatches - 1
-						// index in batches array is sideBatchIndex + 1;
-						int localSideBatchIndex = 0;
-						const int nSideBatches = nParallelBatches - 1;
+  #ifndef DO_PROFILE
+          if(runtimeOptions.showProgress){
+              printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                      readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+                      int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                      int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                      int(runtime.count()) % 60);
+          }
+  #endif
 
-						bool popSide = false;
-						bool firstSideIter = true;
 
-						AdvanceResult sideBatchAdvanceResult;
 
-						while(mainBatch.isWaiting()) {
-							const int globalBatchIndex = localSideBatchIndex + 1;
+          assert(popMain == false);
+          push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
+          ++stacksize;
+          popMain = true;
 
-							Batch& sideBatch = *batchPointers[globalBatchIndex];
+          while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)) {
 
-							if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
-								continue;
-							}
+              mainBatchAdvanceResult = advance_one_step(mainBatch,
+                          false,                   //cannot be paused
+                          transFuncData,
+                            transitionFunctionTable);
 
-							for(int i = 0; i < sideBatchStepsPerWaitIter; ++i) {
-								if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
-									break;
-								}
+              if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)) {
+                  pop_range("main inner");
+                  popMain = false;
+                  --stacksize;
 
-								if(firstSideIter) {
-									assert(popSide == false);
-									push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
-									++stacksize;
-									popSide = true;
-								}else{
-									if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-										assert(popSide == false);
-										push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
-										++stacksize;
-										popSide = true;
-									}
-								}
+                  assert(popMain == false);
+                  push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
+                  ++stacksize;
+                  popMain = true;
+              }
 
-								//auto curstate = sideBatch.state;
-								//if(curstate == BatchState::Unprepared){
-								//    push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
-								//}
-								sideBatchAdvanceResult = advance_one_step(sideBatch,
-											false,                                                                 //must not block
-											true,                                                                 //can launch kernels
-											true,                   //can be paused
-											transFuncData);
 
-								//if(curstate == BatchState::Unprepared){
-								//    pop_range();
-								//}
+      #if 1
 
-								if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-									pop_range("side inner");
-									popSide = false;
-									--stacksize;
-								}
+              while(mainBatch.isWaiting()) {
+                  /*
+                      Prepare next batch while waiting for the mainBatch gpu work to finish
+                   */
+                  if(nParallelBatches > 1) {
 
+                      // 0 <= sideBatchIndex < nParallelBatches - 1
+                      // index in batches array is sideBatchIndex + 1;
+                      int localSideBatchIndex = 0;
+                      const int nSideBatches = nParallelBatches - 1;
 
+                      bool popSide = false;
+                      bool firstSideIter = true;
 
-								firstSideIter = false;
-							}
+                      AdvanceResult sideBatchAdvanceResult;
 
-							if(sideBatch.isWaiting()) {
-								//current side batch is waiting, move to next side batch
-								localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
+                      while(mainBatch.isWaiting()) {
+                          const int globalBatchIndex = localSideBatchIndex + 1;
 
-								if(popSide) {
-									pop_range("switch sidebatch");
-									popSide = false;
-									--stacksize;
-								}
+                          Batch& sideBatch = *batchPointers[globalBatchIndex];
 
-								firstSideIter = true;
-								sideBatchAdvanceResult = AdvanceResult{};
-							}
-						}
+                          if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
+                              continue;
+                          }
 
-						if(popSide) {
-							pop_range("side outer");
-							popSide = false;
-							--stacksize;
-						}
+                          for(int i = 0; i < sideBatchStepsPerWaitIter; ++i) {
+                              if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
+                                  break;
+                              }
 
-						//assert(eventquerystatus == cudaSuccess);
-					}else{
+                              if(firstSideIter) {
+                                  assert(popSide == false);
+                                  push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
+                                  ++stacksize;
+                                  popSide = true;
+                              }else{
+                                  if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
+                                      assert(popSide == false);
+                                      push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
+                                      ++stacksize;
+                                      popSide = true;
+                                  }
+                              }
 
-                    }
+                              //auto curstate = sideBatch.state;
+                              //if(curstate == BatchState::Unprepared){
+                              //    push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
+                              //}
+                              sideBatchAdvanceResult = advance_one_step(sideBatch,
+                                          true,                   //can be paused
+                                          transFuncData,
+                                            transitionFunctionTable);
 
+                              //if(curstate == BatchState::Unprepared){
+                              //    pop_range();
+                              //}
 
-				}
-#endif
+                              if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
+                                  pop_range("side inner");
+                                  popSide = false;
+                                  --stacksize;
+                              }
 
 
-			}
 
-			if(popMain) {
-				pop_range("main outer");
-				popMain = false;
-				--stacksize;
-			}
+                              firstSideIter = false;
+                          }
 
-			assert(stacksize == 0);
+                          if(sideBatch.isWaiting()) {
+                              //current side batch is waiting, move to next side batch
+                              localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
 
-			assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
+                              if(popSide) {
+                                  pop_range("switch sidebatch");
+                                  popSide = false;
+                                  --stacksize;
+                              }
 
-            if(!(threadOpts.readIdGenerator->empty() && readIdBuffer.empty() && tmptasksBuffer.empty())) {
-				//there are reads left to correct, so this batch can be reused again
-				mainBatch.reset();
-			}else{
-				mainBatch.state = BatchState::Finished;
-			}
+                              firstSideIter = true;
+                              sideBatchAdvanceResult = AdvanceResult{};
+                          }
+                      }
 
-			//nProcessedReads = threadOpts.readIdGenerator->.currentId - mybatchgen.firstId;
+                      if(popSide) {
+                          pop_range("side outer");
+                          popSide = false;
+                          --stacksize;
+                      }
 
-			//rotate left to position next batch at index 0
-			std::rotate(batchPointers.begin(), batchPointers.begin()+1, batchPointers.end());
+                      //assert(eventquerystatus == cudaSuccess);
+                  }else{
 
+                  }
 
 
+              }
+      #endif
 
 
+          }
 
-//#ifdef CARE_GPU_DEBUG
-			//stopAndAbort = true; //remove
-//#endif
+          if(popMain) {
+              pop_range("main outer");
+              popMain = false;
+              --stacksize;
+          }
 
+          assert(stacksize == 0);
 
-		} // end batch processing
+          assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
+          if(!(readIdGenerator.empty() && readIdBuffer.empty() && tmptasksBuffer.empty())) {
+              //there are reads left to correct, so this batch can be reused again
+              mainBatch.reset();
+          }else{
+              mainBatch.state = BatchState::Finished;
+          }
 
-		outputstream.flush();
-		featurestream.flush();
+          //nProcessedReads = threadOpts.readIdGenerator->.currentId - mybatchgen.firstId;
 
-        for(auto& batch : batches){
-            batch.waitUntilAllCallbacksFinished();
-        }
+          //rotate left to position next batch at index 0
+          std::rotate(batchPointers.begin(), batchPointers.begin()+1, batchPointers.end());
 
-        assert(stopAndAbort || tmptasksBuffer.empty());
 
-		std::cout << "GPU worker (device " << threadOpts.deviceId << ") finished" << std::endl;
 
-	#if 0
-		{
-			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
-
-			std::cout << "thread " << threadOpts.threadId << " processed " << nProcessedQueries
-			          << " queries" << std::endl;
-			std::cout << "thread " << threadOpts.threadId << " corrected "
-			          << nCorrectedCandidates << " candidates" << std::endl;
-			std::cout << "thread " << threadOpts.threadId << " avgsupportfail "
-			          << avgsupportfail << std::endl;
-			std::cout << "thread " << threadOpts.threadId << " minsupportfail "
-			          << minsupportfail << std::endl;
-			std::cout << "thread " << threadOpts.threadId << " mincoveragefail "
-			          << mincoveragefail << std::endl;
-			std::cout << "thread " << threadOpts.threadId << " sobadcouldnotcorrect "
-			          << sobadcouldnotcorrect << std::endl;
-			std::cout << "thread " << threadOpts.threadId << " verygoodalignment "
-			          << verygoodalignment << std::endl;
-			/*std::cout << "thread " << threadOpts.threadId
-			                << " CPU alignments " << cpuAlignments
-			                << " GPU alignments " << gpuAlignments << std::endl;*/
-
-			//   std::cout << "thread " << threadOpts.threadId << " savedAlignments "
-			//           << savedAlignments << " performedAlignments " << performedAlignments << std::endl;
-		}
-	#endif
-
-	#if 0
-		{
-			TaskTimings tmp;
-			for(std::uint64_t i = 0; i < threadOpts.batchGen->batchsize; i++)
-				tmp += batchElems[i].findCandidatesTiming;
-
-			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
-			std::cout << "thread " << threadOpts.threadId << " findCandidatesTiming:\n";
-			std::cout << tmp << std::endl;
-		}
-	#endif
-
-	#if 0
-		{
-			std::lock_guard < std::mutex > lg(*threadOpts.coutLock);
-
-			std::cout << "thread " << threadOpts.threadId
-			          << " : preparation timings detail "
-			          << da.count() << " " << db.count() << " " << dc.count()<< '\n';
-
-
-			std::cout << "thread " << threadOpts.threadId
-			          << " : init batch elems "
-			          << initIdTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId
-			          << " : find candidates time "
-			          << mapMinhashResultsToSequencesTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : alignment time "
-			          << getAlignmentsTimeTotal.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId
-			          << " : determine good alignments time "
-			          << determinegoodalignmentsTime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId
-			          << " : fetch good candidates time "
-			          << fetchgoodcandidatesTime.count() << '\n';
-			std::cout << "thread " << threadOpts.threadId << " : correction time "
-			          << readcorrectionTimeTotal.count() << '\n';
-
-			std::cout << "thread " << threadOpts.threadId << " : detailed correction time " << '\n'
-			          << detailedCorrectionTimings << '\n';
-
-
-	#if 0
-			if (correctionOptions.correctionMode == CorrectionMode::Hamming) {
-				std::cout << "thread " << threadOpts.threadId << " : pileup vote "
-				          << pileupImage.timings.findconsensustime.count() << '\n';
-				std::cout << "thread " << threadOpts.threadId << " : pileup correct "
-				          << pileupImage.timings.correctiontime.count() << '\n';
-
-			} else if (correctionOptions.correctionMode == CorrectionMode::Graph) {
-				std::cout << "thread " << threadOpts.threadId << " : graph build "
-				          << graphbuildtime.count() << '\n';
-				std::cout << "thread " << threadOpts.threadId << " : graph correct "
-				          << graphcorrectiontime.count() << '\n';
-			}
-	#endif
-		}
-	#endif
-
-		for(auto& array : dataArrays) {
-			array.reset();
-		}
-
-		cudaStreamDestroy(computeStream); CUERR;
-
-		for(auto& streamarray : streams) {
-			for(int i = 1; i < nStreamsPerBatch; ++i)
-				cudaStreamDestroy(streamarray[i]); CUERR;
-		}
-
-		for(auto& eventarray : cudaevents) {
-			for(auto& event : eventarray)
-				cudaEventDestroy(event); CUERR;
-		}
-	}
+      } // end batch processing
+
+
+      outputstream.flush();
+      featurestream.flush();
+
+      for(auto& batch : batches){
+          batch.waitUntilAllCallbacksFinished();
+      }
+
+      assert(tmptasksBuffer.empty());
+
+
+
+
+
+
+
+
+
+
+
+      #ifdef DO_PROFILE
+          cudaProfilerStop();
+      #endif
+
+      runtime = std::chrono::system_clock::now() - timepoint_begin;
+      if(runtimeOptions.showProgress){
+          printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\n",
+                  sequenceFileProperties.nReads, sequenceFileProperties.nReads,
+                  int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                  int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                  int(runtime.count()) % 60);
+      }
+
+      for(auto& array : dataArrays) {
+          array.reset();
+      }
+
+      for(auto& streamarray : streams) {
+          for(int i = 1; i < nStreamsPerBatch; ++i)
+              cudaStreamDestroy(streamarray[i]); CUERR;
+      }
+
+      for(auto& eventarray : cudaevents) {
+          for(auto& event : eventarray)
+              cudaEventDestroy(event); CUERR;
+      }
+
+      omp_set_num_threads(oldNumOMPThreads);
+
+
+      size_t occupiedMemory = minhasher.numBytes() + cpuReadStorage.size();
+
+      minhasher.destroy();
+      cpuReadStorage.destroy();
+      gpuReadStorage.destroy();
+
+      #ifndef DO_PROFILE
+
+      //if candidate correction is enabled, only the read id and corrected sequence of corrected reads is written to outputfile
+      //outputfile needs to be sorted by read id
+      //then, the corrected reads from the output file have to be merged with the original input file to get headers, uncorrected reads, and quality scores
+      if(true || correctionOptions.correctCandidates){
+
+          std::cout << "begin merge" << std::endl;
+
+          if(!correctionOptions.extractFeatures){
+
+              std::cout << "begin merging reads" << std::endl;
+
+              TIMERSTARTCPU(merge);
+
+              mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+              //mergeResultFiles2(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, occupiedMemory);
+
+              TIMERSTOPCPU(merge);
+
+              std::cout << "end merging reads" << std::endl;
+
+          }
+
+          deleteFiles(tmpfiles);
+      }
+
+      std::vector<std::string> featureFiles(tmpfiles);
+      for(auto& s : featureFiles)
+          s = s + "_features";
+
+      //concatenate feature files of each thread into one file
+
+      if(correctionOptions.extractFeatures){
+          std::cout << "begin merging features" << std::endl;
+
+          std::stringstream commandbuilder;
+
+          commandbuilder << "cat";
+
+          for(const auto& featureFile : featureFiles){
+              commandbuilder << " \"" << featureFile << "\"";
+          }
+
+          commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
+
+          const std::string command = commandbuilder.str();
+          TIMERSTARTCPU(concat_feature_files);
+          int r1 = std::system(command.c_str());
+          TIMERSTOPCPU(concat_feature_files);
+
+          if(r1 != 0){
+              std::cerr << "Warning. Feature files could not be concatenated!\n";
+              std::cerr << "This command returned a non-zero error value: \n";
+              std::cerr << command +  '\n';
+              std::cerr << "Please concatenate the following files manually\n";
+              for(const auto& s : featureFiles)
+                  std::cerr << s << '\n';
+          }else{
+              deleteFiles(featureFiles);
+          }
+
+          std::cout << "end merging features" << std::endl;
+      }else{
+          deleteFiles(featureFiles);
+      }
+
+      std::cout << "end merge" << std::endl;
+
+      #endif
+
+
+
+}
+
 
 
 
@@ -3964,555 +4222,5 @@ namespace gpu{
 
 
 
-
-#if 0
-
-
-
-
-        /*cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                    dataArrays.d_msa_column_properties,
-                    dataArrays.n_subjects * sizeof(MSAColumnProperties),
-                    D2H,
-                    streams[primary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.h_alignment_shifts,
-                    dataArrays.d_alignment_shifts,
-                    dataArrays.n_queries * sizeof(int),
-                    D2H,
-                    streams[primary_stream_index]); CUERR;
-
-        cudaDeviceSynchronize(); CUERR;
-
-        std::cout << "Columns to check" << std::endl;
-        for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
-            std::cout << batch.tasks[subject_index].readId << " " << dataArrays.h_msa_column_properties[subject_index].columnsToCheck << std::endl;
-
-            const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
-
-            for(int i = 0; i < dataArrays.h_indices_per_subject[subject_index]; i++){
-                const int index = indices[i];
-                std::cout << index << " " << dataArrays.h_candidate_sequences_lengths[index] << " " << dataArrays.h_alignment_shifts[index] << std::endl;
-            }
-        }
-
-        for(int subject_index = 0; subject_index < dataArrays.n_subjects; subject_index++){
-            if(batch.tasks[subject_index].readId == 817 || batch.tasks[subject_index].readId == 830){
-
-                std::cout << "readId == " << batch.tasks[subject_index].readId << std::endl;
-
-                int num_indices = dataArrays.h_indices_per_subject[subject_index];
-                const int* indices = dataArrays.h_indices + dataArrays.h_indices_per_subject_prefixsum[subject_index];
-
-                std::vector<char> bestCandidateStrings;
-                bestCandidateStrings.resize(num_indices * transFuncData.maxSequenceLength);
-                std::vector<char> bestCandidateQualityData;
-                bestCandidateQualityData.resize(num_indices * dataArrays.quality_pitch);
-                std::vector<int> bestCandidateLengths(num_indices);
-                std::vector<int> bestAlignmentShifts(num_indices);
-
-                for(int i = 0; i < num_indices; i++){
-                    const int index = indices[i];
-
-                    const char* ptr = dataArrays.h_candidate_sequences_data + index * dataArrays.encoded_sequence_pitch;
-                    const int length = dataArrays.h_candidate_sequences_lengths[index];
-                    decode2BitHiLoSequence(&bestCandidateStrings[i * transFuncData.maxSequenceLength],
-                                            (const unsigned int*)ptr,
-                                            length,
-                                            [](auto i){return i;});
-                    std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
-                              dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
-                              &bestCandidateQualityData[i * dataArrays.quality_pitch]);
-
-                    std::copy(dataArrays.h_candidate_qualities + i * dataArrays.quality_pitch,
-                            dataArrays.h_candidate_qualities + (i+1) * dataArrays.quality_pitch,
-                            std::ostream_iterator<char>(std::cout, "")); std::cout << std::endl;
-
-                    bestCandidateLengths[i] = length;
-                    bestAlignmentShifts[i] = dataArrays.h_alignment_shifts[index];
-                }
-
-                std::cout << "sequences" << std::endl;
-                printSequencesInMSA(std::cout,
-                                    batch.tasks[subject_index].subject_string.c_str(),
-                                    batch.tasks[subject_index].subject_string.length(),
-                                    bestCandidateStrings.data(),
-                                    bestCandidateLengths.data(),
-                                    num_indices,
-                                    bestAlignmentShifts.data(),
-                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
-                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
-                                    dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
-                                    transFuncData.maxSequenceLength);
-
-                std::cout << "qualities" << std::endl;
-                printSequencesInMSA(std::cout,
-                                    batch.tasks[subject_index].subject_string.c_str(),
-                                    batch.tasks[subject_index].subject_string.length(),
-                                    dataArrays.h_candidate_qualities,
-                                    bestCandidateLengths.data(),
-                                    num_indices,
-                                    bestAlignmentShifts.data(),
-                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl,
-                                    dataArrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl,
-                                    dataArrays.h_msa_column_properties[subject_index].columnsToCheck,
-                                    dataArrays.quality_pitch);
-                std::cout << "ASDAF"<< std::endl;
-            }
-        }*/
-
-#endif
-
-
-
-
-
-
-
-
-
-
-#if 0
-
-
-	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_MEMCOPY
-		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-		//DEBUGGING
-		cudaMemcpyAsync(dataArrays.msa_data_host,
-					dataArrays.msa_data_device,
-					dataArrays.msa_data_usable_size,
-					D2H,
-					streams[primary_stream_index]); CUERR;
-		cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-		//DEBUGGING
-		cudaMemcpyAsync(dataArrays.alignment_result_data_host,
-					dataArrays.alignment_result_data_device,
-					dataArrays.alignment_result_data_usable_size,
-					D2H,
-					streams[primary_stream_index]); CUERR;
-		cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-		//DEBUGGING
-		cudaMemcpyAsync(dataArrays.subject_indices_data_host,
-					dataArrays.subject_indices_data_device,
-					dataArrays.subject_indices_data_usable_size,
-					D2H,
-					streams[primary_stream_index]); CUERR;
-		cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-		cudaMemcpyAsync(dataArrays.indices_transfer_data_host,
-					dataArrays.indices_transfer_data_device,
-					dataArrays.indices_transfer_data_usable_size,
-					D2H,
-					streams[primary_stream_index]); CUERR;
-		cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.qualities_transfer_data_host,
-                        dataArrays.qualities_transfer_data_device,
-                        dataArrays.qualities_transfer_data_usable_size,
-                        D2H,
-                        streams[primary_stream_index]); CUERR;
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-	    #endif
-
-	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_ARRAYS
-    if(batch.tasks[0].readId == 436){
-        std::cout << "subject read ids" << std::endl;
-        for(int i = 0; i< dataArrays.n_subjects; i++) {
-            std::cout << dataArrays.h_subject_read_ids[i]<< std::endl;
-        }
-
-        std::cout << "candidate read ids" << std::endl;
-        for(int i = 0; i< dataArrays.n_queries; i++) {
-            std::cout << dataArrays.h_candidate_read_ids[i]<< std::endl;
-        }
-
-        std::cout << "subject quality scores" << std::endl;
-        for(int i = 0; i< dataArrays.n_subjects; i++) {
-            for(size_t k = 0; k < dataArrays.quality_pitch; k++){
-                std::cout << dataArrays.h_subject_qualities[i * dataArrays.quality_pitch + k];
-            }
-            std::cout << std::endl;
-        }
-
-        std::cout << "candidate quality scores" << std::endl;
-        for(int i = 0; i< dataArrays.h_num_indices[0]; i++) {
-            for(size_t k = 0; k < dataArrays.quality_pitch; k++){
-                std::cout << dataArrays.h_candidate_qualities[i * dataArrays.quality_pitch + k];
-            }
-            std::cout << std::endl;
-        }
-
-		//DEBUGGING
-		std::cout << "alignment scores" << std::endl;
-		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
-			std::cout << dataArrays.h_alignment_scores[i] << "\t";
-		}
-		std::cout << std::endl;
-		//DEBUGGING
-		std::cout << "alignment overlaps" << std::endl;
-		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
-			std::cout << dataArrays.h_alignment_overlaps[i] << "\t";
-		}
-		std::cout << std::endl;
-		//DEBUGGING
-		std::cout << "alignment shifts" << std::endl;
-		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
-			std::cout << dataArrays.h_alignment_shifts[i] << "\t";
-		}
-		std::cout << std::endl;
-		//DEBUGGING
-		std::cout << "alignment nOps" << std::endl;
-		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
-			std::cout << dataArrays.h_alignment_nOps[i] << "\t";
-		}
-		std::cout << std::endl;
-		//DEBUGGING
-		std::cout << "alignment isvalid" << std::endl;
-		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
-			std::cout << dataArrays.h_alignment_isValid[i] << "\t";
-		}
-		std::cout << std::endl;
-		//DEBUGGING
-		std::cout << "alignment flags" << std::endl;
-		for(int i = 0; i< dataArrays.n_queries * 2; i++) {
-			std::cout << int(dataArrays.h_alignment_best_alignment_flags[i]) << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_candidates_per_subject_prefixsum" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects +1; i++) {
-			std::cout << dataArrays.h_candidates_per_subject_prefixsum[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_num_indices" << std::endl;
-		for(int i = 0; i< 1; i++) {
-			std::cout << dataArrays.h_num_indices[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_indices" << std::endl;
-		for(int i = 0; i< dataArrays.h_num_indices[0]; i++) {
-			std::cout << dataArrays.h_indices[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_indices_per_subject" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects; i++) {
-			std::cout << dataArrays.h_indices_per_subject[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_indices_per_subject_prefixsum" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects; i++) {
-			std::cout << dataArrays.h_indices_per_subject_prefixsum[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_high_quality_subject_indices" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects; i++) {
-			std::cout << dataArrays.h_high_quality_subject_indices[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_is_high_quality_subject" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects; i++) {
-			std::cout << dataArrays.h_is_high_quality_subject[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_num_high_quality_subject_indices" << std::endl;
-		for(int i = 0; i< 1; i++) {
-			std::cout << dataArrays.h_num_high_quality_subject_indices[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_num_corrected_candidates" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects; i++) {
-			std::cout << dataArrays.h_num_corrected_candidates[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_subject_is_corrected" << std::endl;
-		for(int i = 0; i< dataArrays.n_subjects; i++) {
-			std::cout << dataArrays.h_subject_is_corrected[i] << "\t";
-		}
-		std::cout << std::endl;
-
-		//DEBUGGING
-		std::cout << "h_indices_of_corrected_candidates" << std::endl;
-		for(int i = 0; i< dataArrays.h_num_indices[0]; i++) {
-			std::cout << dataArrays.h_indices_of_corrected_candidates[i] << "\t";
-		}
-		std::cout << std::endl;
-    }
-	    #endif
-
-	    #if defined CARE_GPU_DEBUG && defined CARE_GPU_DEBUG_PRINT_MSA
-#if 0
-        for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
-            auto& task = batch.tasks[subject_index];
-            auto& arrays = dataArrays;
-
-            const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
-            const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
-            const char* const my_multiple_sequence_alignment = arrays.h_multiple_sequence_alignments + offset1;
-            const char* const my_consensus = arrays.h_consensus + subject_index * arrays.msa_pitch;
-            const int subjectColumnsBegin_incl = arrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl;
-			const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
-            const int ncolumns = arrays.h_msa_column_properties[subject_index].columnsToCheck;
-            const int msa_rows = 1 + arrays.h_indices_per_subject[subject_index];
-            bool isHQ = arrays.h_is_high_quality_subject[subject_index];
-            bool isCorrected = arrays.h_subject_is_corrected[subject_index];
-
-            const char* const my_corrected_subject_data = arrays.h_corrected_subjects + subject_index * arrays.sequence_pitch;
-            const char* const my_corrected_candidates_data = arrays.h_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index] * arrays.sequence_pitch;
-            const int* const my_indices_of_corrected_candidates = arrays.h_indices_of_corrected_candidates + arrays.h_indices_per_subject_prefixsum[subject_index];
-
-            auto mismatch = std::mismatch(task.subject_string.begin(), task.subject_string.end(), &my_consensus[subjectColumnsBegin_incl]);
-            bool subjectAndConsensusDiffer = !(mismatch.first == task.subject_string.end() || mismatch.second == &my_consensus[subjectColumnsEnd_excl]);
-
-
-
-            std::string corrected_subject;
-            bool more_candidates_after_correction = false;
-            if(isCorrected){
-                const int subject_length = task.subject_string.length();
-                corrected_subject = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
-                const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
-                auto newCandidateList = transFuncData.minhasher->getCandidates(corrected_subject, hits_per_candidate, transFuncData.max_candidates);
-                auto readIdPos = std::lower_bound(newCandidateList.begin(), newCandidateList.end(), task.readId);
-                if(readIdPos != newCandidateList.end() && *readIdPos == task.readId) {
-                    newCandidateList.erase(readIdPos);
-                }
-                if(newCandidateList.size() > task.candidate_read_ids.size())
-                    more_candidates_after_correction = true;
-            }
-
-
-
-            int comp = -1;
-            if(!subjectAndConsensusDiffer && !isCorrected)
-                comp = 0;
-            else if(!subjectAndConsensusDiffer && isCorrected)
-                comp = 1;
-            else if(subjectAndConsensusDiffer && !isCorrected)
-                comp = 2;
-            else if(subjectAndConsensusDiffer && isCorrected)
-                comp = 3;
-
-            auto get_shift_of_row = [&](int row){
-                if(row == 0) return 0;
-                const int queryIndex = indices_for_this_subject[row-1];
-                return arrays.h_alignment_shifts[queryIndex];
-            };
-
-            std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns << ", HQ-MSA: " << (isHQ ? "True" : "False")
-                        << ", comp " << comp << ", more cand: " << (more_candidates_after_correction ? "True" : "False")
-                        << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << '\n';
-            if(isCorrected){
-                const int subject_length = task.subject_string.length();
-                std::string s{my_corrected_subject_data, my_corrected_subject_data + subject_length};
-                std::cout << s << '\n';
-            }
-            print_multiple_sequence_alignment_sorted_by_shift(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, arrays.msa_pitch, get_shift_of_row);
-            std::cout << '\n';
-            print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::cout, my_multiple_sequence_alignment, my_consensus,
-                                                                            msa_rows, ncolumns, arrays.msa_pitch, get_shift_of_row);
-            //print_multiple_sequence_alignment(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, arrays.msa_pitch);
-            std::cout << '\n';
-        }
-#else
-		//DEBUGGING
-		for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
-			auto& task = batch.tasks[subject_index];
-			auto& arrays = dataArrays;
-
-            if(task.readId == 999013){
-
-			const size_t msa_weights_pitch_floats = arrays.msa_weights_pitch / sizeof(float);
-
-			const unsigned offset1 = arrays.msa_pitch * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
-			const unsigned offset2 = msa_weights_pitch_floats * (subject_index + arrays.h_indices_per_subject_prefixsum[subject_index]);
-
-			const char* const my_multiple_sequence_alignment = arrays.h_multiple_sequence_alignments + offset1;
-			const float* const my_multiple_sequence_alignment_weight = arrays.h_multiple_sequence_alignment_weights + offset2;
-
-			char* const my_consensus = arrays.h_consensus + subject_index * arrays.msa_pitch;
-			float* const my_support = arrays.h_support + subject_index * msa_weights_pitch_floats;
-			int* const my_coverage = arrays.h_coverage + subject_index * msa_weights_pitch_floats;
-
-            const int* my_countsA = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
-            const int* my_countsC = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
-            const int* my_countsG = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
-            const int* my_countsT = arrays.h_counts + 4 * subject_index * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
-
-            const float* my_weightsA = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 0 * msa_weights_pitch_floats;
-            const float* my_weightsC = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 1 * msa_weights_pitch_floats;
-            const float* my_weightsG = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 2 * msa_weights_pitch_floats;
-            const float* my_weightsT = arrays.h_weights + 4 * subject_index * msa_weights_pitch_floats + 3 * msa_weights_pitch_floats;
-
-			float* const my_orig_weights = arrays.h_origWeights + subject_index * msa_weights_pitch_floats;
-			int* const my_orig_coverage = arrays.h_origCoverages + subject_index * msa_weights_pitch_floats;
-
-			const int subjectColumnsBegin_incl = arrays.h_msa_column_properties[subject_index].subjectColumnsBegin_incl;
-			const int subjectColumnsEnd_excl = arrays.h_msa_column_properties[subject_index].subjectColumnsEnd_excl;
-			const int columnsToCheck = arrays.h_msa_column_properties[subject_index].columnsToCheck;
-
-			// const unsigned offset1 = msa_row_pitch * (subjectIndex + candidates_before_this_subject);
-			// char* const multiple_sequence_alignment = d_multiple_sequence_alignments + offset1;
-
-			const int msa_rows = 1 + arrays.h_indices_per_subject[subject_index];
-
-			const int* const indices_for_this_subject = arrays.h_indices + arrays.h_indices_per_subject_prefixsum[subject_index];
-
-			std::cout << "ReadId " << task.readId << ": msa rows = " << msa_rows << ", columnsToCheck = " << columnsToCheck << ", subjectColumnsBegin_incl = " << subjectColumnsBegin_incl << ", subjectColumnsEnd_excl = " << subjectColumnsEnd_excl << std::endl;
-			/*std::cout << "MSA:" << std::endl;
-			for(int row = 0; row < msa_rows; row++) {
-				for(int col = 0; col < columnsToCheck; col++) {
-					//multiple_sequence_alignment[row * msa_row_pitch + globalIndex]
-					char c = my_multiple_sequence_alignment[row * arrays.msa_pitch + col];
-					assert(c != 'F');
-					std::cout << (c == '\0' ? '0' : c);
-					if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-						std::cout << " ";
-				}
-				if(row > 0) {
-					const int queryIndex = indices_for_this_subject[row-1];
-					const int shift = arrays.h_alignment_shifts[queryIndex];
-
-					std::cout << " shift " << shift;
-				}
-				std::cout << std::endl;
-			}
-			std::cout << std::endl;*/
-
-            std::cout << "countsA: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_countsA[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "countsC: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_countsC[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "countsG: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_countsG[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "countsT: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_countsT[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "weightsA: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_weightsA[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "weightsC: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_weightsC[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "weightsG: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_weightsG[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-            std::cout << "weightsT: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_weightsT[col] << " ";
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-			std::cout << "Consensus: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				char c = my_consensus[col];
-				std::cout << (c == '\0' ? '0' : c);
-				if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-					std::cout << " ";
-			}
-			std::cout << std::endl;
-
-			/*std::cout << "MSA weights:" << std::endl;
-			for(int row = 0; row < msa_rows; row++) {
-				for(int col = 0; col < columnsToCheck; col++) {
-					float f = my_multiple_sequence_alignment_weight[row * msa_weights_pitch_floats + col];
-					std::cout << f << " ";
-					if(col == subjectColumnsBegin_incl - 1 || col == subjectColumnsEnd_excl - 1)
-						std::cout << " ";
-				}
-				std::cout << std::endl;
-			}
-			std::cout << std::endl;*/
-
-			std::cout << "Support: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_support[col] << " ";
-			}
-			std::cout << std::endl;
-
-			std::cout << "Coverage: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_coverage[col] << " ";
-			}
-			std::cout << std::endl;
-
-			std::cout << "Orig weights: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_orig_weights[col] << " ";
-			}
-			std::cout << std::endl;
-
-			std::cout << "Orig coverage: "<< std::endl;
-			for(int col = 0; col < columnsToCheck; col++) {
-				std::cout << my_orig_coverage[col] << " ";
-			}
-			std::cout << std::endl;
-
-            std::exit(0);
-            }
-		}
-#endif
-	    #endif
 
 #endif
