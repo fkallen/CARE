@@ -45,7 +45,7 @@
 #define MSA_IMPLICIT
 
 //#define REARRANGE_INDICES
-//#define USE_MSA_MINIMIZATION
+#define USE_MSA_MINIMIZATION
 
 #define USE_WAIT_FLAGS
 
@@ -569,7 +569,7 @@ namespace gpu{
 
                 tmptasks.resize(max_tmp_tasks);
 
-                #pragma omp parallel for num_threads(4)
+                #pragma omp parallel for num_threads(8)
                 for(int tmptaskindex = 0; tmptaskindex < max_tmp_tasks; tmptaskindex++){
                     auto& task = tmptasks[tmptaskindex];
 
@@ -1396,8 +1396,98 @@ namespace gpu{
                     //batch.maxSubjectLength,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
+#if 0
+        auto identity = [](auto i){return i;};
 
+        cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
+                        dataArrays.d_alignment_best_alignment_flags,
+                        dataArrays.d_alignment_best_alignment_flags.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_alignment_scores,
+                        dataArrays.d_alignment_scores,
+                        dataArrays.d_alignment_scores.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_alignment_overlaps,
+                        dataArrays.d_alignment_overlaps,
+                        dataArrays.d_alignment_overlaps.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_alignment_shifts,
+                    dataArrays.d_alignment_shifts,
+                    dataArrays.d_alignment_shifts.sizeInBytes(),
+                    D2H,
+                    streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_alignment_nOps,
+                    dataArrays.d_alignment_nOps,
+                    dataArrays.d_alignment_nOps.sizeInBytes(),
+                    D2H,
+                    streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_alignment_isValid,
+                    dataArrays.d_alignment_isValid,
+                    dataArrays.d_alignment_isValid.sizeInBytes(),
+                    D2H,
+                    streams[primary_stream_index]); CUERR;
 
+                    cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+                                    dataArrays.d_subject_sequences_data,
+                                    dataArrays.d_subject_sequences_data.sizeInBytes(),
+                                    D2H,
+                                    streams[primary_stream_index]); CUERR;
+
+                    cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
+                                    dataArrays.d_candidate_sequences_data,
+                                    dataArrays.d_candidate_sequences_data.sizeInBytes(),
+                                    D2H,
+                                    streams[primary_stream_index]); CUERR;
+
+                    cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
+                                    dataArrays.d_subject_sequences_lengths,
+                                    dataArrays.d_subject_sequences_lengths.sizeInBytes(),
+                                    D2H,
+                                    streams[primary_stream_index]); CUERR;
+
+                    cudaMemcpyAsync(dataArrays.h_candidate_sequences_lengths,
+                                    dataArrays.d_candidate_sequences_lengths,
+                                    dataArrays.d_candidate_sequences_lengths.sizeInBytes(),
+                                    D2H,
+                                    streams[primary_stream_index]); CUERR;
+
+        cudaDeviceSynchronize(); CUERR;
+
+        for(int i = 0; i < dataArrays.n_subjects; i++){
+            std::string s; s.resize(128);
+            decode2BitHiLoSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
+            std::cout << "Subject  : " << s << " " << batch.tasks[i].readId << std::endl;
+
+            if(dataArrays.n_queries > 0){
+                for(int j = 0; j < dataArrays.n_queries; j++){
+                    //std::string s; s.resize(128);
+                    //decode2BitHiLoSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
+                    const char* hostptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(batch.tasks[i].candidate_read_ids[j]);
+                    std::string hostsequence = get2BitHiLoString((const unsigned int*)hostptr, 100, identity);
+                    std::string s = get2BitHiLoString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
+                    if(hostsequence != s){
+                        std::cout << "host " << hostsequence << std::endl;
+                        std::cout << "device " << s << std::endl;
+                    }
+                    std::cout << "Candidate  : " << s << " " << batch.tasks[i].candidate_read_ids[j] << std::endl;
+                    std::cout << "Fwd alignment: " << dataArrays.h_alignment_scores[j] << " "
+                                << dataArrays.h_alignment_overlaps[j] << " "
+                                << dataArrays.h_alignment_shifts[j] << " "
+                                << dataArrays.h_alignment_nOps[j] << " "
+                                << dataArrays.h_alignment_isValid[j] << std::endl;
+                    std::cout << "Rev alignment: " << dataArrays.h_alignment_scores[j + dataArrays.n_queries] << " "
+                                << dataArrays.h_alignment_overlaps[j + dataArrays.n_queries] << " "
+                                << dataArrays.h_alignment_shifts[j + dataArrays.n_queries] << " "
+                                << dataArrays.h_alignment_nOps[j + dataArrays.n_queries] << " "
+                                << dataArrays.h_alignment_isValid[j + dataArrays.n_queries] << std::endl;
+                }
+            }
+        }
+        std::exit(0);
+#endif
 		//Step 5. Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
 		//    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
 
@@ -2515,46 +2605,112 @@ namespace gpu{
 			// coverage is always >= 1
 			const float min_coverage_threshold = std::max(1.0f,
 						transFuncData.m_coverage / 6.0f * transFuncData.estimatedCoverage);
+            const float max_coverage_threshold = 0.5 * transFuncData.estimatedCoverage;
 			const int new_columns_to_correct = transFuncData.new_columns_to_correct;
 
 			// correct subjects
+#if 0
+            cudaMemcpyAsync(dataArrays.h_num_indices,
+                            dataArrays.d_num_indices,
+                            dataArrays.d_num_indices.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
 
-#ifndef MSA_IMPLICIT
-			call_msa_correct_subject_kernel_async(
-						dataArrays.d_consensus,
-						dataArrays.d_support,
-						dataArrays.d_coverage,
-						dataArrays.d_origCoverages,
-						dataArrays.d_multiple_sequence_alignments,
-						dataArrays.d_msa_column_properties,
-						dataArrays.d_indices_per_subject_prefixsum,
-						dataArrays.d_is_high_quality_subject,
-						dataArrays.d_corrected_subjects,
-						dataArrays.d_subject_is_corrected,
-						dataArrays.n_subjects,
-						dataArrays.n_queries,
-						dataArrays.d_num_indices,
-						dataArrays.sequence_pitch,
-						dataArrays.msa_pitch,
-						dataArrays.msa_weights_pitch,
-						transFuncData.estimatedErrorrate,
-						avg_support_threshold,
-						min_support_threshold,
-						min_coverage_threshold,
-						transFuncData.kmerlength,
-						dataArrays.maximum_sequence_length,
-						streams[primary_stream_index],
-						batch.kernelLaunchHandle);
-#else
+            cudaMemcpyAsync(dataArrays.h_indices,
+                            dataArrays.d_indices,
+                            dataArrays.d_indices.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_indices_per_subject,
+                            dataArrays.d_indices_per_subject,
+                            dataArrays.d_indices_per_subject.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_indices_per_subject_prefixsum,
+                            dataArrays.d_indices_per_subject_prefixsum,
+                            dataArrays.d_indices_per_subject_prefixsum.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_msa_column_properties,
+                            dataArrays.d_msa_column_properties,
+                            dataArrays.d_msa_column_properties.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_alignment_shifts,
+                            dataArrays.d_alignment_shifts,
+                            dataArrays.d_alignment_shifts.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+                            dataArrays.d_subject_sequences_data,
+                            dataArrays.d_subject_sequences_data.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
+                            dataArrays.d_candidate_sequences_data,
+                            dataArrays.d_candidate_sequences_data.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+            cudaDeviceSynchronize(); CUERR;
+
+            auto identity = [](auto i){return i;};
+
+
+            for(int i = 0; i < dataArrays.n_subjects; i++){
+                std::string s; s.resize(128);
+                decode2BitHiLoSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
+                std::cout << "Subject  : " << s << ", subject id " <<  batch.tasks[i].readId << std::endl;
+                int numind = dataArrays.h_indices_per_subject[i];
+                if(numind > 0){
+                    std::vector<char> cands;
+                    cands.resize(128 * numind, 'F');
+                    std::vector<int> candlengths;
+                    candlengths.resize(numind);
+                    std::vector<int> candshifts;
+                    candshifts.resize(numind);
+                    for(int j = 0; j < numind; j++){
+                        int index = dataArrays.h_indices[dataArrays.h_indices_per_subject_prefixsum[i] + j];
+                        char* dst = cands.data() + 128 * j;
+                        candlengths[j] = dataArrays.h_candidate_sequences_lengths[index];
+                        candshifts[j] = dataArrays.h_alignment_shifts[index];
+                        const char* candidateSequencePtr = dataArrays.h_candidate_sequences_data.get() + index * dataArrays.encoded_sequence_pitch;
+                        decode2BitHiLoSequence(dst, (const unsigned int*)candidateSequencePtr, 100, identity);
+                        //std::cout << "Candidate: " << s << std::endl;
+                    }
+
+                    printSequencesInMSA(std::cout,
+                                             s.c_str(),
+                                             dataArrays.h_subject_sequences_lengths[i],
+                                             cands.data(),
+                                             candlengths.data(),
+                                             numind,
+                                             candshifts.data(),
+                                             dataArrays.h_msa_column_properties[i].subjectColumnsBegin_incl,
+                                             dataArrays.h_msa_column_properties[i].subjectColumnsEnd_excl,
+                                             dataArrays.h_msa_column_properties[i].lastColumn_excl - dataArrays.h_msa_column_properties[i].firstColumn_incl,
+                                             128);
+
+                    //std::exit(0);
+                }
+            }
+
+            std::cout << std::endl;
+            std::cout << std::endl;
+            std::cout << std::endl;
+#endif
 
             call_msa_correct_subject_implicit_kernel_async(
-                        dataArrays.d_consensus,
-                        dataArrays.d_support,
-                        dataArrays.d_coverage,
-                        dataArrays.d_origCoverages,
-                        dataArrays.d_msa_column_properties,
+                        dataArrays.getDeviceMSAPointers(),
+                        dataArrays.getDeviceAlignmentResultPointers(),
+                        dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
+                        dataArrays.d_indices_per_subject_prefixsum,
                         dataArrays.d_subject_sequences_data,
+                        dataArrays.d_candidate_sequences_data,
+                        dataArrays.d_candidate_sequences_lengths,
                         dataArrays.d_is_high_quality_subject,
                         dataArrays.d_corrected_subjects,
                         dataArrays.d_subject_is_corrected,
@@ -2564,15 +2720,16 @@ namespace gpu{
                         dataArrays.msa_pitch,
                         dataArrays.msa_weights_pitch,
                         transFuncData.estimatedErrorrate,
+                        transFuncData.maxErrorRate,
                         avg_support_threshold,
                         min_support_threshold,
                         min_coverage_threshold,
+                        max_coverage_threshold,
                         transFuncData.kmerlength,
                         dataArrays.maximum_sequence_length,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
 
-#endif
 			if(transFuncData.correctionOptions.correctCandidates) {
 
 

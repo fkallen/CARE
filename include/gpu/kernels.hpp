@@ -25,6 +25,26 @@ struct MSAColumnProperties{
     int lastColumn_excl;
 };
 
+struct AlignmentResultPointers{
+    int* scores;
+    int* overlaps;
+    int* shifts;
+    int* nOps;
+    bool* isValid;
+    BestAlignment_t* bestAlignmentFlags;
+};
+
+struct MSAPointers{
+    char* consensus;
+    float* support;
+    int* coverage;
+    float* origWeights;
+    int* origCoverages;
+    MSAColumnProperties* msaColumnProperties;
+    int* counts;
+    float* weights;
+};
+
 
 enum class KernelId {
     PopcountSHDTiled,
@@ -165,44 +185,6 @@ void call_msa_update_properties_kernel_async(
             size_t msa_weights_pitch,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
-
-
-
-void call_msa_add_sequences_kernel_exp_async(
-            char* d_multiple_sequence_alignments,
-            float* d_multiple_sequence_alignment_weights,
-            const int* d_alignment_shifts,
-            const BestAlignment_t* d_alignment_best_alignment_flags,
-            const int* d_alignment_overlaps,
-            const int* d_alignment_nOps,
-            const char* d_subject_sequences_data,
-            const char* d_candidate_sequences_data,
-            const int* d_subject_sequences_lengths,
-            const int* d_candidate_sequences_lengths,
-            const char* d_subject_qualities,
-            const char* d_candidate_qualities,
-            const MSAColumnProperties*  d_msa_column_properties,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_indices,
-            const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
-            int n_subjects,
-            int n_queries,
-            const int* h_num_indices,
-            const int* d_num_indices,
-            bool canUseQualityScores,
-            float desiredAlignmentMaxErrorRate,
-            int maximum_sequence_length,
-            int max_sequence_bytes,
-            size_t encoded_sequence_pitch,
-            size_t quality_pitch,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
-
-
-
 
 
 void call_msa_add_sequences_kernel_implicit_shared_async(
@@ -384,29 +366,6 @@ void call_msa_add_sequences_kernel_implicit_async(
             bool debug = false);
 
 
-void call_msa_find_consensus_kernel_async(
-            char* d_consensus,
-            float* d_support,
-            int* d_coverage,
-            float* d_origWeights,
-            int* d_origCoverages,
-            int* d_counts,
-            float* d_weights,
-            const char* d_multiple_sequence_alignments,
-            const float* d_multiple_sequence_alignment_weights,
-            const MSAColumnProperties* d_msa_column_properties,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
-            int n_subjects,
-            int n_queries,
-            const int* d_num_indices,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
-            int msa_max_column_count,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
-
 void call_msa_find_consensus_implicit_kernel_async(
             const int* d_counts,
             const float* d_weights,
@@ -425,56 +384,34 @@ void call_msa_find_consensus_implicit_kernel_async(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-void call_msa_correct_subject_kernel_async(
-			const char* d_consensus,
-			const float* d_support,
-			const int* d_coverage,
-			const int* d_origCoverages,
-			const char* d_multiple_sequence_alignments,
-			const MSAColumnProperties* d_msa_column_properties,
-			const int* d_indices_per_subject_prefixsum,
-			bool* d_is_high_quality_subject,
-			char* d_corrected_subjects,
-			bool* d_subject_is_corrected,
-			int n_subjects,
-			int n_queries,
-			const int* d_num_indices,
-			size_t sequence_pitch,
-			size_t msa_pitch,
-			size_t msa_weights_pitch,
-			float estimatedErrorrate,
-			float avg_support_threshold,
-			float min_support_threshold,
-			float min_coverage_threshold,
-			int k_region,
-			int maximum_sequence_length,
-			cudaStream_t stream,
-			KernelLaunchHandle& handle);
 
 void call_msa_correct_subject_implicit_kernel_async(
-            const char* d_consensus,
-            const float* d_support,
-            const int* d_coverage,
-            const int* d_origCoverages,
-            const MSAColumnProperties* d_msa_column_properties,
-            const int* d_indices_per_subject,
-            const char* d_subject_sequences_data,
-            bool* d_is_high_quality_subject,
-            char* d_corrected_subjects,
-            bool* d_subject_is_corrected,
-            int n_subjects,
-            size_t encoded_sequence_pitch,
-            size_t sequence_pitch,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
-            float estimatedErrorrate,
-            float avg_support_threshold,
-            float min_support_threshold,
-            float min_coverage_threshold,
-            int k_region,
-            int maximum_sequence_length,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle);
+                        MSAPointers d_msapointers,
+                        AlignmentResultPointers d_alignmentresultpointers,
+                        const int* d_indices,
+                        const int* d_indices_per_subject,
+                        const int* d_indices_per_subject_prefixsum,
+                        const char* d_subject_sequences_data,
+                        const char* d_candidate_sequences_data,
+                        const int* d_candidate_sequences_lengths,
+                        bool* d_is_high_quality_subject,
+                        char* d_corrected_subjects,
+                        bool* d_subject_is_corrected,
+                        int n_subjects,
+                        size_t encoded_sequence_pitch,
+                        size_t sequence_pitch,
+                        size_t msa_pitch,
+                        size_t msa_weights_pitch,
+                        float estimatedErrorrate,
+                        float desiredAlignmentMaxErrorRate,
+                        float avg_support_threshold,
+                        float min_support_threshold,
+                        float min_coverage_threshold,
+                        float max_coverage_threshold,
+                        int k_region,
+                        int maximum_sequence_length,
+                        cudaStream_t stream,
+                        KernelLaunchHandle& handle);
 
 void call_msa_correct_candidates_kernel_async_exp(
             const char* d_consensus,

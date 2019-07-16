@@ -7,7 +7,7 @@
 #include "utility_kernels.cuh"
 #include <gpu/thrust_custom_allocators.hpp>
 #include <gpu/simpleallocation.cuh>
-
+#include <gpu/kernels.hpp>
 #include <config.hpp>
 
 #ifdef __NVCC__
@@ -27,8 +27,6 @@ namespace care {
 namespace gpu {
 
 #ifdef __NVCC__
-
-
 
 
 struct DataArrays {
@@ -511,6 +509,30 @@ struct DataArrays {
 
 	//alignment results
 
+    AlignmentResultPointers getHostAlignmentResultPointers() const{
+        AlignmentResultPointers pointers{
+            h_alignment_scores.get(),
+            h_alignment_overlaps.get(),
+            h_alignment_shifts.get(),
+            h_alignment_nOps.get(),
+            h_alignment_isValid.get(),
+            h_alignment_best_alignment_flags.get(),
+        };
+        return pointers;
+    }
+
+    AlignmentResultPointers getDeviceAlignmentResultPointers() const{
+        AlignmentResultPointers pointers{
+            d_alignment_scores.get(),
+            d_alignment_overlaps.get(),
+            d_alignment_shifts.get(),
+            d_alignment_nOps.get(),
+            d_alignment_isValid.get(),
+            d_alignment_best_alignment_flags.get(),
+        };
+        return pointers;
+    }
+
     SimpleAllocationPinnedHost<int> h_alignment_scores;
     SimpleAllocationPinnedHost<int> h_alignment_overlaps;
     SimpleAllocationPinnedHost<int> h_alignment_shifts;
@@ -533,6 +555,34 @@ struct DataArrays {
 
 	std::size_t msa_pitch = 0;
 	std::size_t msa_weights_pitch = 0;
+
+    MSAPointers getHostMSAPointers() const{
+        MSAPointers ptrs{
+            h_consensus.get(),
+            h_support.get(),
+            h_coverage.get(),
+            h_origWeights.get(),
+            h_origCoverages.get(),
+            h_msa_column_properties.get(),
+            h_counts.get(),
+            h_weights.get(),
+        };
+        return  ptrs;
+    }
+
+    MSAPointers getDeviceMSAPointers() const{
+        MSAPointers ptrs{
+            d_consensus.get(),
+            d_support.get(),
+            d_coverage.get(),
+            d_origWeights.get(),
+            d_origCoverages.get(),
+            d_msa_column_properties.get(),
+            d_counts.get(),
+            d_weights.get(),
+        };
+        return  ptrs;
+    }
 
     SimpleAllocationPinnedHost<char> h_consensus;
     SimpleAllocationPinnedHost<float> h_support;
