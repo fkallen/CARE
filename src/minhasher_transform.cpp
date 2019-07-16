@@ -32,9 +32,11 @@ namespace care{
 
     void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds){
         for (std::size_t i = 0; i < minhasher.minhashTables.size(); ++i){
-            std::cout << "Transforming table " << i << std::endl;
             auto& tableptr = minhasher.minhashTables[i];
-            transform_keyvaluemap(*tableptr, deviceIds);
+            if(!tableptr->noMoreWrites){
+                std::cerr << "Transforming table " << i << std::endl;
+                transform_keyvaluemap(*tableptr, deviceIds);
+            }
         }
     }
 

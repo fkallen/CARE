@@ -127,6 +127,21 @@ namespace care{
                                         histogramEndIterators.second,
                                         d_histogram_counts_prefixsum.begin() + 1);
 
+                // auto largercount = thrust::count_if(d_histogram_counts.begin(), d_histogram_counts.end(), []__device__(auto i){
+                //     return i > 100;
+                // });
+                //
+                // auto affectedlargercountvalues = thrust::transform_reduce(d_histogram_counts.begin(),
+                //                                                             d_histogram_counts.end(),
+                //                                                             []__device__(auto i){
+                //                                                                 return i <= 100 ? 0 : i;
+                //                                                             },
+                //                                                             0,
+                //                                                             thrust::plus<int>{});
+                //
+                // std::cerr << "largercount " << largercount << std::endl;
+                // std::cerr << "affectedlargercountvalues " << affectedlargercountvalues << std::endl;
+
                 countsPrefixSum.resize(nUniqueKeys+1);
                 thrust::copy(d_histogram_counts_prefixsum.begin(),
                             d_histogram_counts_prefixsum.end(),
@@ -203,9 +218,11 @@ namespace care{
 
     void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds){
         for (std::size_t i = 0; i < minhasher.minhashTables.size(); ++i){
-            std::cout << "Transforming table " << i << std::endl;
             auto& tableptr = minhasher.minhashTables[i];
-            transform_keyvaluemap(*tableptr, deviceIds);
+            if(!tableptr->noMoreWrites){
+                std::cerr << "Transforming table " << i << std::endl;
+                transform_keyvaluemap(*tableptr, deviceIds);
+            }
         }
     }
 
