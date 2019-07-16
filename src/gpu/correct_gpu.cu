@@ -764,7 +764,7 @@ namespace gpu{
 
                 tmptasks.resize(max_tmp_tasks);
 
-                #pragma omp parallel for num_threads(8)
+                #pragma omp parallel for
                 for(int tmptaskindex = 0; tmptaskindex < max_tmp_tasks; tmptaskindex++){
                     auto& task = tmptasks[tmptaskindex];
 
@@ -1047,7 +1047,7 @@ namespace gpu{
 
                 tmptasks.resize(max_tmp_tasks);
 
-                #pragma omp parallel for num_threads(4)
+                #pragma omp parallel for
                 for(int tmptaskindex = 0; tmptaskindex < max_tmp_tasks; tmptaskindex++){
                     auto& task = tmptasks[tmptaskindex];
 
@@ -1381,7 +1381,7 @@ namespace gpu{
 
                 //std::cout << batch.id << " subject chunk [" << loop_begin << ", " << loop_end_excl << "]" << std::endl;
 
-                #pragma omp parallel for num_threads(4)
+                #pragma omp parallel for
                 for(int subjectIndex = loop_begin; subjectIndex < loop_end_excl; subjectIndex++){
 
                     if(subjectIndex + prefetch_distance < loop_end_excl) {
@@ -1420,7 +1420,7 @@ namespace gpu{
                 const int loop_begin = firstCandidateIndex + chunkoffset;
                 const int loop_end_excl = std::min(loop_begin + candidateschunksize, lastCandidateIndexExcl);
 
-                #pragma omp parallel for num_threads(4)
+                #pragma omp parallel for
                 for(int candidateIndex = loop_begin; candidateIndex < loop_end_excl; candidateIndex++){
 
                     if(candidateIndex + prefetch_distance < loop_end_excl) {
@@ -2035,7 +2035,7 @@ namespace gpu{
 
                     //std::cout << batch.id << " subject chunk [" << loop_begin << ", " << loop_end_excl << "]" << std::endl;
 
-                    #pragma omp parallel for num_threads(4)
+                    #pragma omp parallel for
                     for(int subjectIndex = loop_begin; subjectIndex < loop_end_excl; subjectIndex++){
 
                         if(subjectIndex + prefetch_distance < loop_end_excl) {
@@ -2071,7 +2071,7 @@ namespace gpu{
                     const int loop_begin = firstCandidateIndex + chunkoffset;
                     const int loop_end_excl = std::min(loop_begin + candidateschunksize, lastCandidateIndexExcl);
 
-                    #pragma omp parallel for num_threads(4)
+                    #pragma omp parallel for
                     for(int index = loop_begin; index < loop_end_excl; index++){
                         const int candidateIndex = dataArrays.h_indices[index];
 
@@ -3185,7 +3185,7 @@ namespace gpu{
         constexpr float maxgini = 0.05f;
         constexpr float forest_correction_fraction = 0.5f;
 
-        #pragma omp parallel for num_threads(4) schedule(dynamic,2)
+        #pragma omp parallel for schedule(dynamic,2)
         for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
             auto& task = batch.tasks[subject_index];
             task.corrected_subject = task.subject_string;
@@ -3273,7 +3273,7 @@ namespace gpu{
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
-        //#pragma omp parallel for num_threads(4)
+        //#pragma omp parallel for
         for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
             auto& task = batch.tasks[subject_index];
             const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * dataArrays.sequence_pitch;
@@ -3304,7 +3304,7 @@ namespace gpu{
 
         if(transFuncData.correctionOptions.correctCandidates) {
 
-            #pragma omp parallel for num_threads(4) schedule(dynamic, 4)
+            #pragma omp parallel for schedule(dynamic, 4)
             for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
                 auto& task = batch.tasks[subject_index];
                 const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
