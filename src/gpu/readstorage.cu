@@ -195,6 +195,8 @@ namespace gpu {
     				if(data.isValidSequenceData()) {
     					//verify sequence data
     					{
+                            int maximum_allowed_sequence_bytes = cpuReadStorage->getMaximumAllowedSequenceBytes();
+
     						char* h_test, *d_test;
     						cudaMallocHost(&h_test, maximum_allowed_sequence_bytes); CUERR;
     						cudaMalloc(&d_test, maximum_allowed_sequence_bytes); CUERR;
@@ -213,10 +215,10 @@ namespace gpu {
     							const char* sequence = fetchSequenceData_ptr(readId);
     							const int len = fetchSequenceLength(readId);
 
-    							int result = std::memcmp(sequence, h_test, Sequence_t::getNumBytes(len));
+    							int result = std::memcmp(sequence, h_test, getEncodedNumInts2BitHiLo(len) * int(sizeof(int)));
     							if(result != 0) {
     								std::cout << readId << std::endl;
-    								for(int k = 0; k < Sequence_t::getNumBytes(len); ++k)
+    								for(int k = 0; k < getEncodedNumInts2BitHiLo(len) * int(sizeof(int)); ++k)
     									std::cout << int(sequence[k]) << " " << int(h_test[k]) << std::endl;
     							}
     							assert(result == 0);
@@ -435,12 +437,42 @@ namespace gpu {
 
             dim3 grid(SDIV(nReadIds, 128),1,1);
             dim3 block(128,1,1);
+            //dim3 grid(1,1,1);
+            //dim3 block(1,1,1);
+            //const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
 
             generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
                 const int intiters = out_sequence_pitch / sizeof(int);
 
+                constexpr char A_enc = 0x00;
+                constexpr char C_enc = 0x01;
+                constexpr char G_enc = 0x02;
+                constexpr char T_enc = 0x03;
+
+                auto to_nuc = [](char c){
+                    switch(c){
+                    case A_enc: return 'A';
+                    case C_enc: return 'C';
+                    case G_enc: return 'G';
+                    case T_enc: return 'T';
+                    default: return 'F';
+                    }
+                };
+                auto get = [] (const char* data, int length, int index){
+        			//return Sequence_t::get_as_nucleotide(data, length, index);
+                    return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        		};
+
                 for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
                     const read_number readId = d_readIds[index];
+                    // printf("%d, %u kernel\n", index, readId);
+                    // const int length = rs_sequence_lengths[readId];
+                    // const char* ptr = &rs_sequence_data[size_t(readId) * rs_sequence_pitch];
+                    // for(int i = 0; i < length; i++){
+                    //     printf("%c", to_nuc(get(ptr, length, i)));
+                    // }
+                    // printf("\n");
+
 
                     for(int k = 0; k < intiters; k++){
                         ((int*)&d_sequence_data[index * out_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * rs_sequence_pitch])[k];
@@ -448,6 +480,12 @@ namespace gpu {
                     for(int k = intiters * sizeof(int); k < out_sequence_pitch; k++){
                         d_sequence_data[index * out_sequence_pitch + k] = rs_sequence_data[size_t(readId) * rs_sequence_pitch + k];
                     }
+
+                    // const char* ptr2 = &d_sequence_data[index * out_sequence_pitch];
+                    // for(int i = 0; i < length; i++){
+                    //     printf("%c", to_nuc(get(ptr2, length, i)));
+                    // }
+                    // printf("\n");
                 }
             });
         }
