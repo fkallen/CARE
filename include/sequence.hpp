@@ -9,12 +9,12 @@
 
 namespace care{
 
-    constexpr std::uint32_t encodedbaseA = 0x00000000;
-    constexpr std::uint32_t encodedbaseC = 0x00000001;
-    constexpr std::uint32_t encodedbaseG = 0x00000002;
-    constexpr std::uint32_t encodedbaseT = 0x00000003;
+    constexpr unsigned int encodedbaseA = 0x00000000;
+    constexpr unsigned int encodedbaseC = 0x00000001;
+    constexpr unsigned int encodedbaseG = 0x00000002;
+    constexpr unsigned int encodedbaseT = 0x00000003;
 
-    constexpr int basesPerInt2BitNew = sizeof(unsigned int) * 8 / 2;
+    constexpr int basesPerInt2Bit = sizeof(unsigned int) * 8 / 2;
 
 
     //###########################
@@ -68,24 +68,24 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    int getEncodedNumInts2BitNew(int sequenceLength){
-        return SDIV(sequenceLength, basesPerInt2BitNew);
+    int getEncodedNumInts2Bit(int sequenceLength){
+        return SDIV(sequenceLength, basesPerInt2Bit);
     }
 
     HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
-    void encodeSequence2BitNew(unsigned int* out, const char* sequence, int sequenceLength, IndexTransformation indextrafo){
+    void encodeSequence2Bit(unsigned int* out, const char* sequence, int sequenceLength, IndexTransformation indextrafo){
 
-        const int nInts = getEncodedNumInts2BitNew(sequenceLength);
+        const int nInts = getEncodedNumInts2Bit(sequenceLength);
 
         for(int i = 0; i < nInts; i++){
             out[indextrafo(i)] = 0;
         }
 
         for(int nucIndex = 0; nucIndex < sequenceLength; nucIndex++){
-            const int intIndex = nucIndex / basesPerInt2BitNew;
-            const int pos = nucIndex % basesPerInt2BitNew;
+            const int intIndex = nucIndex / basesPerInt2Bit;
+            const int pos = nucIndex % basesPerInt2Bit;
             switch(sequence[nucIndex]) {
             case 'A':
                 out[indextrafo(intIndex)] |= encodedbaseA << (2*pos);
@@ -106,23 +106,37 @@ namespace care{
         }
     }
 
-    HD_WARNING_DISABLE
-    template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
-    unsigned int getEncodedNuc2BitNew(const unsigned int* data, int sequenceLength, int i, IndexTransformation indextrafo){
-        const int intIndex = i / basesPerInt2BitNew;
-        const int pos = i % basesPerInt2BitNew;
-        return ((data[indextrafo(intIndex)] >> (2*pos)) & 0x00000003);
+    __inline__
+    void encodeSequence2Bit(unsigned int* outencoded, const char* sequence, int sequenceLength){
+        auto identity = [](auto i){return i;};
+        encodeSequence2Bit(outencoded, sequence, sequenceLength, identity);
     }
 
     HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
-    void decode2BitNewSequence(char* sequence, const unsigned int* encoded, int sequenceLength, IndexTransformation indextrafo){
+    unsigned int getEncodedNuc2Bit(const unsigned int* data, int sequenceLength, int i, IndexTransformation indextrafo){
+        const int intIndex = i / basesPerInt2Bit;
+        const int pos = i % basesPerInt2Bit;
+        return ((data[indextrafo(intIndex)] >> (2*pos)) & 0x00000003);
+    }
+
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void getEncodedNuc2Bit(const unsigned int* encodedsequence,
+                                int length,
+                                int position){
+        auto identity = [](auto i){return i;};
+        getEncodedNuc2Bit(encodedsequence, length, position, identity);
+    }
+
+    HD_WARNING_DISABLE
+    template<class IndexTransformation>
+    HOSTDEVICEQUALIFIER
+    void decode2BitSequence(char* sequence, const unsigned int* encoded, int sequenceLength, IndexTransformation indextrafo){
         for(int i = 0; i < sequenceLength; i++){
-            const int intIndex = i / basesPerInt2BitNew;
-            const int pos = i % basesPerInt2BitNew;
-            const int base = getEncodedNuc2BitNew(encoded, sequenceLength, i, indextrafo);
+            const int base = getEncodedNuc2Bit(encoded, sequenceLength, i, indextrafo);
             switch(base){
             case encodedbaseA: sequence[i] = 'A'; break;
             case encodedbaseC: sequence[i] = 'C'; break;
@@ -133,10 +147,34 @@ namespace care{
         }
     }
 
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void decode2BitSequence(char* sequence,
+                                const unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        decode2BitSequence(sequence, encodedsequence, length, identity);
+    }
+
+    template<class IndexTransformation>
+    std::string get2BitString(const unsigned int* encoded, int sequenceLength, IndexTransformation indextrafo){
+        std::string s;
+        s.resize(sequenceLength);
+        decode2BitSequence(&s[0], encoded, sequenceLength, indextrafo);
+        return s;
+    }
+
+    __inline__
+    std::string get2BitString(const unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        return get2BitString(encodedsequence, length, identity);
+    }
+
     HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
-    void reverseComplementInplace2BitNew(unsigned int* encodedsequence, int sequenceLength, IndexTransformation indextrafo){
+    void reverseComplementInplace2Bit(unsigned int* encodedsequence, int sequenceLength, IndexTransformation indextrafo){
 
         auto make_reverse_complement_int = [](unsigned int s){
             s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
@@ -146,12 +184,12 @@ namespace care{
             return ((unsigned int)(-1) - s) >> (8 * sizeof(s) - (16 << 1));
         };
 
-        const int nInts = getEncodedNumInts2BitNew(sequenceLength);
-        const int unusedPositions = nInts * basesPerInt2BitNew - sequenceLength;
+        const int nInts = getEncodedNumInts2Bit(sequenceLength);
+        const int unusedPositions = nInts * basesPerInt2Bit - sequenceLength;
 
         for(int i = 0; i < nInts/2; i++){
-            const std::uint32_t front = make_reverse_complement_int(encodedsequence[indextrafo(i)]);
-            const std::uint32_t back = make_reverse_complement_int(encodedsequence[indextrafo(nInts - 1 - i)]);
+            const unsigned int front = make_reverse_complement_int(encodedsequence[indextrafo(i)]);
+            const unsigned int back = make_reverse_complement_int(encodedsequence[indextrafo(nInts - 1 - i)]);
             encodedsequence[indextrafo(i)] = back;
             encodedsequence[indextrafo(nInts - 1 - i)] = front;
         }
@@ -164,28 +202,45 @@ namespace care{
         if(unusedPositions > 0){
             for(int i = 0; i < nInts-1; i++){
                 encodedsequence[indextrafo(i)] = (encodedsequence[indextrafo(i)] >> (2*unusedPositions))
-                                               | (encodedsequence[indextrafo(i+1)] << (2 * (basesPerInt2BitNew-unusedPositions)));
+                                               | (encodedsequence[indextrafo(i+1)] << (2 * (basesPerInt2Bit-unusedPositions)));
 
             }
     	encodedsequence[indextrafo(nInts-1)] >>= (2*unusedPositions);
         }
     }
 
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void reverseComplementInplace2Bit(unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        reverseComplementInplace2Bit(encodedsequence, length, identity);
+    }
+
     HD_WARNING_DISABLE
     template<class RcIndexTransformation, class IndexTransformation>
     HOSTDEVICEQUALIFIER
-    void reverseComplement2BitNew(unsigned int* rcencodedsequence,
+    void reverseComplement2Bit(unsigned int* rcencodedsequence,
                                     const unsigned int* encodedsequence,
                                     int sequenceLength,
                                     RcIndexTransformation rcindextrafo,
                                     IndexTransformation indextrafo){
 
-        const int nInts = getEncodedNumInts2BitNew(sequenceLength);
+        const int nInts = getEncodedNumInts2Bit(sequenceLength);
         for(int i = 0; i < nInts; i++){
             rcencodedsequence[rcindextrafo(i)] = encodedsequence[indextrafo(i)];
         }
 
-        reverseComplementInplace2BitNew(rcencodedsequence, sequenceLength, rcindextrafo);
+        reverseComplementInplace2Bit(rcencodedsequence, sequenceLength, rcindextrafo);
+    }
+
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void reverseComplement2Bit(unsigned int* rcencodedsequence,
+                                const unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        reverseComplement2Bit(rcencodedsequence, encodedsequence, length, identity, identity);
     }
 
 
@@ -241,6 +296,13 @@ namespace care{
         }
     }
 
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void encodeSequence2BitHiLo(unsigned int* outencoded, const char* sequence, int sequenceLength){
+        auto identity = [](auto i){return i;};
+        encodeSequence2BitHiLo(outencoded, sequence, sequenceLength, identity);
+    }
+
     HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
@@ -259,6 +321,16 @@ namespace care{
         return base;
     }
 
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void getEncodedNuc2BitHiLo(const unsigned int* encodedsequence,
+                                int length,
+                                int position){
+        auto identity = [](auto i){return i;};
+        getEncodedNuc2BitHiLo(encodedsequence, length, position, identity);
+    }
+
+
     HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
@@ -274,6 +346,30 @@ namespace care{
             default: sequence[i] = '_'; break; // cannot happen
             }
         }
+    }
+
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void decode2BitHiLoSequence(char* sequence,
+                                const unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        decode2BitHiLoSequence(sequence, encodedsequence, length, identity);
+    }
+
+    template<class IndexTransformation>
+    std::string get2BitHiLoString(const unsigned int* encoded, int sequenceLength, IndexTransformation indextrafo){
+        std::string s;
+        s.resize(sequenceLength);
+        decode2BitHiLoSequence(&s[0], encoded, sequenceLength, indextrafo);
+        return s;
+    }
+
+    __inline__
+    std::string get2BitHiLoString(const unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        return get2BitHiLoString(encodedsequence, length, identity);
     }
 
     HD_WARNING_DISABLE
@@ -324,6 +420,14 @@ namespace care{
         }
     }
 
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void reverseComplementInplace2BitHiLo(unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        reverseComplementInplace2BitHiLo(encodedsequence, length, identity);
+    }
+
     HD_WARNING_DISABLE
     template<class RcIndexTransformation, class IndexTransformation>
     HOSTDEVICEQUALIFIER
@@ -341,7 +445,136 @@ namespace care{
         reverseComplementInplace2BitHiLo(rcencodedsequence, sequenceLength, rcindextrafo);
     }
 
+    HOSTDEVICEQUALIFIER
+    __inline__
+    void reverseComplement2BitHiLo(unsigned int* rcencodedsequence,
+                                const unsigned int* encodedsequence,
+                                int length){
+        auto identity = [](auto i){return i;};
+        reverseComplement2BitHiLo(rcencodedsequence, encodedsequence, length, identity, identity);
+    }
 
+//#########################################
+
+HOSTDEVICEQUALIFIER
+__inline__
+unsigned int extractEvenBits(unsigned int x){
+    x = x & 0x55555555;
+    x = (x | (x >> 1)) & 0x33333333;
+    x = (x | (x >> 2)) & 0x0F0F0F0F;
+    x = (x | (x >> 4)) & 0x00FF00FF;
+    x = (x | (x >> 8)) & 0x0000FFFF;
+    return x;
+}
+
+HOSTDEVICEQUALIFIER
+__inline__
+unsigned int reverseBits(unsigned int n) {
+    n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+    n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+    n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+    n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+    n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+    return n;
+}
+
+HOSTDEVICEQUALIFIER
+__inline__
+unsigned int extractEvenBitsReversed(unsigned int x){
+    x = extractEvenBits(x);
+    x = reverseBits(x);
+    return x;
+}
+
+HD_WARNING_DISABLE
+template<class InIndexTransformation, class OutIndexTransformation>
+HOSTDEVICEQUALIFIER
+void convert2BitTo2BitHiLo(unsigned int* out,
+                            const unsigned int* in,
+                            int length,
+                            InIndexTransformation inindextrafo,
+                            OutIndexTransformation outindextrafo){
+
+	const int inInts = getEncodedNumInts2Bit(length);
+	const int outInts = getEncodedNumInts2BitHiLo(length);
+
+	unsigned int* const outHi = out;
+	unsigned int* const outLo = out + outindextrafo(outInts/2);
+
+	for(int i = 0; i < outInts; i++){
+		out[outindextrafo(i)] = 0;
+	}
+
+	for(int i = 0; i < inInts; i++){
+        const int inindex = inindextrafo(i);
+        const int outindex = outindextrafo(i/2);
+
+        const unsigned int even16 = extractEvenBitsReversed(in[inindex]);
+        const unsigned int odd16 = extractEvenBitsReversed(in[inindex] >> 1);
+
+        if(i % 2 == 0){
+                outHi[outindex] = odd16 >> 16;
+                outLo[outindex] = even16 >> 16;
+        }else{
+                outHi[outindex] |= odd16;
+                outLo[outindex] |= even16;
+        }
+	}
+}
+
+HOSTDEVICEQUALIFIER
+__inline__
+void convert2BitTo2BitHiLo(unsigned int* out,
+                            const unsigned int* in,
+                            int length){
+    auto identity = [](auto i){return i;};
+    convert2BitTo2BitHiLo(out, in, length, identity, identity);
+}
+
+HD_WARNING_DISABLE
+template<class InIndexTransformation, class OutIndexTransformation>
+HOSTDEVICEQUALIFIER
+void convert2BitNewTo2BitHiLo(unsigned int* out,
+                            const unsigned int* in,
+                            int length,
+                            InIndexTransformation inindextrafo,
+                            OutIndexTransformation outindextrafo){
+
+    const int inInts = getEncodedNumInts2Bit(length);
+	const int outInts = getEncodedNumInts2BitHiLo(length);
+
+    unsigned int* const outHi = out;
+	unsigned int* const outLo = out + outindextrafo(outInts/2);
+
+    for(int i = 0; i < outInts; i++){
+		out[outindextrafo(i)] = 0;
+	}
+
+    for(int i = 0; i < inInts; i++){
+        const int inindex = inindextrafo(i);
+        const int outindex = outindextrafo(i/2);
+
+        unsigned int even16 = extractEvenBits(in[inindex]);
+        unsigned int odd16 = extractEvenBits(in[inindex] >> 1);
+
+        if(i % 2 == 0){
+            outHi[outindex] = odd16;
+            outLo[outindex] = even16;
+        }else{
+            outHi[outindex] = outHi[outindex] | (odd16 << 16);
+            outLo[outindex] = outLo[outindex] | (even16 << 16) ;
+        }
+    }
+}
+
+HOSTDEVICEQUALIFIER
+__inline__
+void convert2BitNewTo2BitHiLo(unsigned int* out,
+                            const unsigned int* in,
+                            int length){
+    auto identity = [](auto i){return i;};
+    convert2BitNewTo2BitHiLo(out, in, length, identity, identity);
+}
 
 
 }
