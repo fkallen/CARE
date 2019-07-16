@@ -5,7 +5,7 @@
 
 if [ $# -lt 3 ]
 then
-	echo "Usage: ./run2.sh exetype datainfofile outputfolder [num_threads num_threads_for_gpus candidatecorrection extracfeatures]"
+	echo "Usage: ./run2.sh exetype datainfofile outputfolder [num_threads candidatecorrection extractfeatures]"
 	exit
 fi
 
@@ -70,7 +70,7 @@ showProgress=true
 #kmer length
 k=16
 #hashmaps (one kmer hash value per map)
-maps=8
+maps=32
 
 num_hits=1
 
@@ -87,7 +87,9 @@ inputfile=${array[0]}${array[1]}
 num_reads=${array[2]}
 coverage=${array[3]}
 max_readlength=${array[4]}
-candidates=${array[5]}
+#candidates=${array[5]}
+candidates=$(echo "($maps * 2.5 * $coverage)/1" | bc)
+#candidates=$(($maps * 2.5 * $coverage))
 
 bin_reads=${array[8]}${array[9]}
 bin_tables=${array[8]}${array[10]}
@@ -108,7 +110,7 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
 		 --nnmodel=$nnmodel\
-                 --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables
+                 --load-binary-reads-from=$bin_reads # --load-hashtables-from=$bin_tables
 
 $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
                  --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
@@ -117,4 +119,4 @@ $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --o
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
 		 --nnmodel=$nnmodel\
-                 --load-binary-reads-from=$bin_reads --load-hashtables-from=$bin_tables
+                 --load-binary-reads-from=$bin_reads # --load-hashtables-from=$bin_tables

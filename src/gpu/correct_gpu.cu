@@ -737,6 +737,7 @@ namespace gpu{
         const auto* gpuReadStorage = transFuncData.gpuReadStorage;
         const auto& minhasher = transFuncData.minhasher;
 
+        const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
 
         constexpr int num_simultaneous_tasks = 64;
 
@@ -779,7 +780,10 @@ namespace gpu{
 
                         task.subject_string.resize(sequencelength);
                         decode2BitHiLoSequence(&task.subject_string[0], (const unsigned int*)sequenceptr, sequencelength, identity);
-                        task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.runtimeOptions.max_candidates);
+                        task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                            hits_per_candidate,
+                                                                            transFuncData.runtimeOptions.max_candidates,
+                                                                            maxNumResultsPerMapQuery);
 
                         auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
 
@@ -1018,6 +1022,7 @@ namespace gpu{
         const auto* gpuReadStorage = transFuncData.gpuReadStorage;
         const auto& minhasher = transFuncData.minhasher;
 
+        const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
 
         constexpr int num_simultaneous_tasks = 64;
 
@@ -1063,7 +1068,10 @@ namespace gpu{
 
                         task.subject_string.resize(sequencelength);
                         decode2BitHiLoSequence(&task.subject_string[0], (const unsigned int*)sequenceptr, sequencelength, identity);
-                        task.candidate_read_ids = minhasher->getCandidates(task.subject_string, hits_per_candidate, transFuncData.runtimeOptions.max_candidates);
+                        task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                            hits_per_candidate,
+                                                                            transFuncData.runtimeOptions.max_candidates,
+                                                                            maxNumResultsPerMapQuery);
 
                         auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
 

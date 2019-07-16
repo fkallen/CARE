@@ -19,9 +19,6 @@
 
 namespace care{
 
-    constexpr size_t numResultsPerMapQueryThreshold = 100; //TODO this should be determined at runtime and depend on the dataset coverage
-
-
     Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16}){}
 
     Minhasher::Minhasher(const MinhashOptions& parameters)
@@ -209,7 +206,7 @@ namespace care{
 	}
 
     std::pair<const Minhasher::Value_t*, const Minhasher::Value_t*>
-    Minhasher::queryMap(int mapid, Minhasher::Map_t::Key_t key) const noexcept{
+    Minhasher::queryMap(int mapid, Minhasher::Map_t::Key_t key, size_t numResultsPerMapQueryThreshold) const noexcept{
         assert(mapid < minparams.maps);
 
         auto entries_range = minhashTables[mapid]->get_ranged(key);
@@ -224,22 +221,24 @@ namespace care{
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept{
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept{
         std::vector<Result_t> result;
 
         if(num_hits == 1){
-            result = getCandidates_any_map(sequence, max_number_candidates);
+            result = getCandidates_any_map(sequence, max_number_candidates, numResultsPerMapQueryThreshold);
         }else if(num_hits == minparams.maps){
-            result = getCandidates_all_maps(sequence, max_number_candidates);
+            result = getCandidates_all_maps(sequence, max_number_candidates, numResultsPerMapQueryThreshold);
         }else{
-            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
+            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates, numResultsPerMapQueryThreshold);
         }
 
         return result;
     }
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_any_map(const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept{
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
         if(sequence.size() < unsigned(minparams.k))
@@ -263,14 +262,13 @@ namespace care{
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
-            auto entries_range = queryMap(map, key);
+            auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
 
-            std::vector<Value_t> backup(allUniqueResults);
+            //std::vector<Value_t> backup(allUniqueResults);
 
             if(n_entries == 0){
                 continue;
-                //n_entries = 0;
             }
 
             tmp.resize(allUniqueResults.size() + n_entries);
@@ -281,7 +279,7 @@ namespace care{
                                                 max_number_candidates,
                                                 tmp.begin());
             if(tmp.begin() == union_end){
-                //assert(n_entries != 0);
+                //assert(n_entries != 0 || (allUniqueResults.size() == 0 && n_entries == 0));
                 return {};
             }else{
                 //tmp.resize(std::distance(tmp.begin(), union_end));
@@ -300,7 +298,8 @@ namespace care{
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_some_maps2(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept{
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
         if(sequence.size() < unsigned(minparams.k))
@@ -322,7 +321,7 @@ namespace care{
         for(int map = 0; map < minparams.maps; ++map){
             kmer_type key = hashValues[map] & key_mask;
 
-            auto entries_range = minhashTables[map]->get_ranged(key);
+            auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
 
             iters.emplace_back(entries_range.first);
             iters.emplace_back(entries_range.second);
@@ -352,7 +351,8 @@ namespace care{
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_some_maps(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept{
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
         if(sequence.size() < unsigned(minparams.k))
@@ -368,19 +368,22 @@ namespace care{
         minhashfunc(sequence, hashValues, isForwardStrand);
         //TIMERSTOPCPU(minhashfunc);
 
+        const size_t maximumResultSize = std::min(numResultsPerMapQueryThreshold * minparams.maps, max_number_candidates);
+
         std::vector<Value_t> allUniqueResults;
         std::vector<Value_t> tmp;
+        allUniqueResults.reserve(maximumResultSize);
+        tmp.reserve(maximumResultSize);
+
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
-            auto entries_range = minhashTables[map]->get_ranged(key);
+            auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
 
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
+            if(n_entries == 0){
+                continue;
             }
 
             tmp.resize(allUniqueResults.size() + n_entries);
@@ -420,7 +423,8 @@ namespace care{
 
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_all_maps(const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept{
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
         if(sequence.size() < unsigned(minparams.k))
@@ -433,20 +437,19 @@ namespace care{
         minhashfunc(sequence, hashValues, isForwardStrand);
         //TIMERSTOPCPU(minhashfunc);
 
+        const size_t maximumResultSize = std::min(numResultsPerMapQueryThreshold * minparams.maps, max_number_candidates);
+
         std::vector<Value_t> allUniqueResults;
         std::vector<Value_t> tmp;
+        allUniqueResults.reserve(maximumResultSize);
+        tmp.reserve(maximumResultSize);
+
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
-            auto entries_range = minhashTables[map]->get_ranged(key);
+            auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                //allUniqueResults.reserve(minparams.maps * entries.size());
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
 
             tmp.resize(allUniqueResults.size() + n_entries);
             auto intersection_end = set_intersection_n_or_empty(entries_range.first,
@@ -480,11 +483,11 @@ namespace care{
         std::vector<Result_t> result;
 
         if(num_hits == 1){
-            result = getCandidates_any_map(sequence, max_number_candidates);
+            result = getCandidates_any_map(sequence, max_number_candidates, max_number_candidates);
         }else if(num_hits == minparams.maps){
-            result = getCandidates_all_maps(sequence, max_number_candidates);
+            result = getCandidates_all_maps(sequence, max_number_candidates, max_number_candidates);
         }else{
-            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
+            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates, max_number_candidates);
         }
 
         assert(result.size() <= std::numeric_limits<std::int64_t>::max());

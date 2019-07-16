@@ -67,6 +67,7 @@ namespace cpu{
                             const Minhasher& minhasher,
                             int maxNumberOfCandidates,
                             int requiredHitsPerCandidate,
+                            size_t maxNumResultsPerMapQuery,
                             int numThreads = 1){
 
             omp_set_num_threads(numThreads);
@@ -76,7 +77,8 @@ namespace cpu{
                 auto& task = tasks[i];
                 task.candidate_read_ids = minhasher.getCandidates(task.subject_string,
                                                                    requiredHitsPerCandidate,
-                                                                   maxNumberOfCandidates);
+                                                                   maxNumberOfCandidates,
+                                                                   maxNumResultsPerMapQuery);
 
                 //remove our own read id from candidate list. candidate_read_ids is sorted.
                 auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(),
@@ -246,10 +248,13 @@ namespace cpu{
 #endif
                     const int candidate_limit = clippingIters > 1 ? std::numeric_limits<int>::max() : max_candidates;
 
+                    const size_t maxNumResultsPerMapQuery = correctionOptions.estimatedCoverage * 2.5;
+
                     getCandidates(correctionTasks,
                                     *threadOpts.minhasher,
                                     candidate_limit,
                                     correctionOptions.hits_per_candidate,
+                                    maxNumResultsPerMapQuery,
                                     1);
 
 

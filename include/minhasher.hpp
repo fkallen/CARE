@@ -401,88 +401,39 @@ struct Minhasher {
 
 	void insertSequence(const std::string& sequence, read_number readnum);
 
-    std::pair<const Value_t*, const Value_t*> queryMap(int mapid, Map_t::Key_t key) const noexcept;
+    std::pair<const Value_t*, const Value_t*> queryMap(int mapid,
+                                                        Map_t::Key_t key,
+                                                        size_t numResultsPerMapQueryThreshold) const noexcept;
 
 
     std::vector<Result_t> getCandidates(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept;
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept;
 
     std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept;
-
-    template<class Iter>
-    Iter getCandidates_any_map(Iter begin, Iter end, const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept{
-        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-
-        const std::size_t totalresultrangesize = std::distance(begin, end);
-
-        // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return begin;
-
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
-        //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
-        //TIMERSTOPCPU(minhashfunc);
-
-        //Iter curBegin = begin;
-        Iter curEnd = begin;
-
-        //std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && std::uint64_t(std::distance(begin, curEnd)) < max_number_candidates; ++map) {
-            kmer_type key = hashValues[map] & key_mask;
-
-            auto entries_range = minhashTables[map]->get_ranged(key);
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
-            if(map == 0){
-                tmp.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-                //allUniqueResults.reserve(std::min(max_number_candidates, minparams.maps * n_entries));
-            }
-
-            tmp.resize(std::distance(begin, curEnd) + n_entries);
-            auto union_end = set_union_n_or_empty(entries_range.first,
-                                                entries_range.second,
-                                                begin,
-                                                curEnd,
-                                                max_number_candidates,
-                                                tmp.begin());
-            if(tmp.begin() == union_end){
-                return begin;
-            }else{
-                tmp.resize(std::distance(tmp.begin(), union_end));
-                if(tmp.size() > totalresultrangesize)
-                    std::cout << tmp.size() << " > " << totalresultrangesize << std::endl;
-                assert(tmp.size() <= totalresultrangesize);
-                curEnd = std::swap_ranges(tmp.begin(), tmp.end(), begin);
-            }
-        }
-
-        return curEnd;
-    }
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept;
 
     /*
         This version of getCandidates returns only read ids which are found in at least num_hits maps
     */
     std::vector<Result_t> getCandidates_some_maps2(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept;
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept;
 
     std::vector<Result_t> getCandidates_some_maps(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept;
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept;
 
     /*
         This version of getCandidates returns only read ids which are found in all maps
     */
     std::vector<Result_t> getCandidates_all_maps(const std::string& sequence,
-                                        std::uint64_t max_number_candidates) const noexcept;
+                                        std::uint64_t max_number_candidates,
+                                        size_t numResultsPerMapQueryThreshold) const noexcept;
 
 // #############################
 
