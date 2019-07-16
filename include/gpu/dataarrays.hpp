@@ -446,6 +446,8 @@ struct DataArrays {
 
 	// alignment input
 
+    struct
+
 	std::size_t encoded_sequence_pitch = 0;
 
     SimpleAllocationPinnedHost<char> h_subject_sequences_data;
@@ -482,8 +484,8 @@ struct DataArrays {
 
 
 
-    SequenceQualitiesPointers getHostQualityPointers() const{
-        SequenceQualitiesPointers pointers{
+    ReadQualitiesPointers getHostQualityPointers() const{
+        ReadQualitiesPointers pointers{
             h_subject_qualities.get(),
             h_candidate_qualities.get(),
             nullptr, //candidateQualitiesTransposed
@@ -491,8 +493,8 @@ struct DataArrays {
         return pointers;
     }
 
-    SequenceQualitiesPointers getDeviceQualityPointers() const{
-        SequenceQualitiesPointers pointers{
+    ReadQualitiesPointers getDeviceQualityPointers() const{
+        ReadQualitiesPointers pointers{
             d_subject_qualities.get(),
             d_candidate_qualities.get(),
             d_candidate_qualities_transposed.get(), //candidateQualitiesTransposed

@@ -45,7 +45,7 @@ struct MSAPointers{
     float* weights;
 };
 
-struct SequenceQualitiesPointers{
+struct ReadQualitiesPointers{
     char* subjectQualities;
     char* candidateQualities;
     char* candidateQualitiesTransposed;
@@ -205,7 +205,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
             const char* d_candidate_sequences_data,
             const int* d_subject_sequences_lengths,
             const int* d_candidate_sequences_lengths,
-            SequenceQualitiesPointers qualityPointers,
+            ReadQualitiesPointers qualityPointers,
             const MSAColumnProperties*  d_msa_column_properties,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
@@ -239,7 +239,7 @@ void call_msa_add_sequences_kernel_implicit_shared_testwithsubjectselection_asyn
     const char* d_candidate_sequences_data,
     const int* d_subject_sequences_lengths,
     const int* d_candidate_sequences_lengths,
-    SequenceQualitiesPointers qualityPointers,
+    ReadQualitiesPointers qualityPointers,
     const MSAColumnProperties*  d_msa_column_properties,
     const int* d_candidates_per_subject_prefixsum,
     const int* d_active_candidate_indices,
@@ -276,7 +276,7 @@ void call_msa_add_sequences_kernel_implicit_global_async(
             const char* d_candidate_sequences_data,
             const int* d_subject_sequences_lengths,
             const int* d_candidate_sequences_lengths,
-            SequenceQualitiesPointers qualityPointers,
+            ReadQualitiesPointers qualityPointers,
             const MSAColumnProperties*  d_msa_column_properties,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
@@ -311,7 +311,7 @@ void call_msa_add_sequences_implicit_singlecol_kernel_async(
             const char* d_candidate_sequences_data,
             const int* d_subject_sequences_lengths,
             const int* d_candidate_sequences_lengths,
-            SequenceQualitiesPointers qualityPointers,
+            ReadQualitiesPointers qualityPointers,
             const MSAColumnProperties*  d_msa_column_properties,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
@@ -343,7 +343,7 @@ void call_msa_add_sequences_kernel_implicit_async(
             const char* d_candidate_sequences_data,
             const int* d_subject_sequences_lengths,
             const int* d_candidate_sequences_lengths,
-            SequenceQualitiesPointers qualityPointers,
+            ReadQualitiesPointers qualityPointers,
             const MSAColumnProperties*  d_msa_column_properties,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_indices,
