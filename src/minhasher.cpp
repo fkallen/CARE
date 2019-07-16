@@ -19,7 +19,7 @@
 
 namespace care{
 
-    constexpr size_t numResultsPerMapQueryThreshold = 100;
+    constexpr size_t numResultsPerMapQueryThreshold = 100; //TODO this should be determined at runtime and depend on the dataset coverage
 
 
     Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16}){}
@@ -266,6 +266,13 @@ namespace care{
             auto entries_range = queryMap(map, key);
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
 
+            std::vector<Value_t> backup(allUniqueResults);
+
+            if(n_entries == 0){
+                continue;
+                //n_entries = 0;
+            }
+
             tmp.resize(allUniqueResults.size() + n_entries);
             auto union_end = set_union_n_or_empty(entries_range.first,
                                                 entries_range.second,
@@ -274,12 +281,16 @@ namespace care{
                                                 max_number_candidates,
                                                 tmp.begin());
             if(tmp.begin() == union_end){
+                //assert(n_entries != 0);
                 return {};
             }else{
                 //tmp.resize(std::distance(tmp.begin(), union_end));
                 tmp.erase(union_end, tmp.end());
                 std::swap(tmp, allUniqueResults);
             }
+            //if(n_entries == 0){
+            //    assert(backup == allUniqueResults);
+            //}
         }
 
         return allUniqueResults;
