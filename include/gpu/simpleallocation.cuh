@@ -209,7 +209,15 @@ namespace detail{
 		}
 
         size_t sizeInBytes() const{
-            return size_ * sizeof(T);
+            return size() * sizeof(T);
+        }
+
+        size_t capacity() const{
+            return capacity_;
+        }
+
+        size_t capacityInBytes() const{
+            return capacity() * sizeof(T);
         }
 	};
 

@@ -268,6 +268,17 @@ struct DataArrays {
         d_counts.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
         d_weights.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
 
+        // size_t hostSizeBytes = hostArraysSizeInBytes();
+        // size_t deviceSizeBytes = deviceArraysSizeInBytes();
+        // size_t hostCapacityBytes = hostArraysCapacityInBytes();
+        // size_t deviceCapacityBytes = deviceArraysCapacityInBytes();
+        //
+        // auto MB = [](auto bytes){
+        //     return bytes / 1024. / 1024;
+        // };
+        //
+        // std::cerr << "Resize: Host " << MB(hostSizeBytes) << " " << MB(hostCapacityBytes);
+        // std::cerr << " Device " << MB(deviceSizeBytes) << " " << MB(deviceCapacityBytes) << '\n';
 	}
 
 
@@ -422,6 +433,220 @@ struct DataArrays {
 		sequence_pitch = 0;
 		msa_pitch = 0;
 		msa_weights_pitch = 0;
+	}
+
+    size_t hostArraysSizeInBytes() const{
+        auto f = [](const auto& v){
+            return v.size();
+        };
+        size_t bytes = 0;
+        bytes += f(h_subject_sequences_data);
+        bytes += f(h_candidate_sequences_data);
+        bytes += f(h_subject_sequences_lengths);
+        bytes += f(h_candidate_sequences_lengths);
+        bytes += f(h_candidates_per_subject);
+        bytes += f(h_candidates_per_subject_prefixsum);
+        bytes += f(h_subject_read_ids);
+        bytes += f(h_candidate_read_ids);
+
+        bytes += f(h_subject_qualities);
+        bytes += f(h_candidate_qualities);
+
+        bytes += f(h_consensus);
+        bytes += f(h_support);
+        bytes += f(h_coverage);
+        bytes += f(h_origWeights);
+        bytes += f(h_origCoverages);
+        bytes += f(h_msa_column_properties);
+        bytes += f(h_counts);
+        bytes += f(h_weights);
+
+        bytes += f(h_alignment_scores);
+        bytes += f(h_alignment_overlaps);
+        bytes += f(h_alignment_shifts);
+        bytes += f(h_alignment_nOps);
+        bytes += f(h_alignment_isValid);
+        bytes += f(h_alignment_best_alignment_flags);
+
+        bytes += f(h_corrected_subjects);
+        bytes += f(h_corrected_candidates);
+        bytes += f(h_num_corrected_candidates);
+        bytes += f(h_subject_is_corrected);
+        bytes += f(h_indices_of_corrected_candidates);
+        bytes += f(h_is_high_quality_subject);
+        bytes += f(h_high_quality_subject_indices);
+        bytes += f(h_num_high_quality_subject_indices);
+
+        bytes += f(h_indices);
+        bytes += f(h_indices_per_subject);
+        bytes += f(h_indices_per_subject_prefixsum);
+        bytes += f(h_num_indices);
+
+        return bytes;
+	}
+
+    size_t deviceArraysSizeInBytes() const{
+        auto f = [](const auto& v){
+            return v.size();
+        };
+        size_t bytes = 0;
+
+        bytes += f(d_subject_sequences_data);
+        bytes += f(d_candidate_sequences_data);
+        bytes += f(d_subject_sequences_data_transposed);
+        bytes += f(d_candidate_sequences_data_transposed);
+        bytes += f(d_subject_sequences_lengths);
+        bytes += f(d_candidate_sequences_lengths);
+        bytes += f(d_candidates_per_subject);
+        bytes += f(d_candidates_per_subject_prefixsum);
+        bytes += f(d_subject_read_ids);
+        bytes += f(d_candidate_read_ids);
+
+        bytes += f(d_subject_qualities);
+        bytes += f(d_candidate_qualities);
+        bytes += f(d_candidate_qualities_transposed);
+        bytes += f(d_candidate_qualities_tmp);
+
+        bytes += f(d_consensus);
+        bytes += f(d_support);
+        bytes += f(d_coverage);
+        bytes += f(d_origWeights);
+        bytes += f(d_origCoverages);
+        bytes += f(d_msa_column_properties);
+        bytes += f(d_counts);
+        bytes += f(d_weights);
+
+        bytes += f(d_alignment_scores);
+        bytes += f(d_alignment_overlaps);
+        bytes += f(d_alignment_shifts);
+        bytes += f(d_alignment_nOps);
+        bytes += f(d_alignment_isValid);
+        bytes += f(d_alignment_best_alignment_flags);
+
+        bytes += f(d_corrected_subjects);
+        bytes += f(d_corrected_candidates);
+        bytes += f(d_num_corrected_candidates);
+        bytes += f(d_subject_is_corrected);
+        bytes += f(d_indices_of_corrected_candidates);
+        bytes += f(d_is_high_quality_subject);
+        bytes += f(d_high_quality_subject_indices);
+        bytes += f(d_num_high_quality_subject_indices);
+
+        bytes += f(d_indices);
+        bytes += f(d_indices_per_subject);
+        bytes += f(d_indices_per_subject_prefixsum);
+        bytes += f(d_num_indices);
+
+        bytes += f(d_cub_temp_storage);
+
+        return bytes;
+	}
+
+    size_t hostArraysCapacityInBytes() const{
+        auto f = [](const auto& v){
+            return v.capacity();
+        };
+        size_t bytes = 0;
+        bytes += f(h_subject_sequences_data);
+        bytes += f(h_candidate_sequences_data);
+        bytes += f(h_subject_sequences_lengths);
+        bytes += f(h_candidate_sequences_lengths);
+        bytes += f(h_candidates_per_subject);
+        bytes += f(h_candidates_per_subject_prefixsum);
+        bytes += f(h_subject_read_ids);
+        bytes += f(h_candidate_read_ids);
+
+        bytes += f(h_subject_qualities);
+        bytes += f(h_candidate_qualities);
+
+        bytes += f(h_consensus);
+        bytes += f(h_support);
+        bytes += f(h_coverage);
+        bytes += f(h_origWeights);
+        bytes += f(h_origCoverages);
+        bytes += f(h_msa_column_properties);
+        bytes += f(h_counts);
+        bytes += f(h_weights);
+
+        bytes += f(h_alignment_scores);
+        bytes += f(h_alignment_overlaps);
+        bytes += f(h_alignment_shifts);
+        bytes += f(h_alignment_nOps);
+        bytes += f(h_alignment_isValid);
+        bytes += f(h_alignment_best_alignment_flags);
+
+        bytes += f(h_corrected_subjects);
+        bytes += f(h_corrected_candidates);
+        bytes += f(h_num_corrected_candidates);
+        bytes += f(h_subject_is_corrected);
+        bytes += f(h_indices_of_corrected_candidates);
+        bytes += f(h_is_high_quality_subject);
+        bytes += f(h_high_quality_subject_indices);
+        bytes += f(h_num_high_quality_subject_indices);
+
+        bytes += f(h_indices);
+        bytes += f(h_indices_per_subject);
+        bytes += f(h_indices_per_subject_prefixsum);
+        bytes += f(h_num_indices);
+
+        return bytes;
+	}
+
+    size_t deviceArraysCapacityInBytes() const{
+        auto f = [](const auto& v){
+            return v.capacity();
+        };
+        size_t bytes = 0;
+
+        bytes += f(d_subject_sequences_data);
+        bytes += f(d_candidate_sequences_data);
+        bytes += f(d_subject_sequences_data_transposed);
+        bytes += f(d_candidate_sequences_data_transposed);
+        bytes += f(d_subject_sequences_lengths);
+        bytes += f(d_candidate_sequences_lengths);
+        bytes += f(d_candidates_per_subject);
+        bytes += f(d_candidates_per_subject_prefixsum);
+        bytes += f(d_subject_read_ids);
+        bytes += f(d_candidate_read_ids);
+
+        bytes += f(d_subject_qualities);
+        bytes += f(d_candidate_qualities);
+        bytes += f(d_candidate_qualities_transposed);
+        bytes += f(d_candidate_qualities_tmp);
+
+        bytes += f(d_consensus);
+        bytes += f(d_support);
+        bytes += f(d_coverage);
+        bytes += f(d_origWeights);
+        bytes += f(d_origCoverages);
+        bytes += f(d_msa_column_properties);
+        bytes += f(d_counts);
+        bytes += f(d_weights);
+
+        bytes += f(d_alignment_scores);
+        bytes += f(d_alignment_overlaps);
+        bytes += f(d_alignment_shifts);
+        bytes += f(d_alignment_nOps);
+        bytes += f(d_alignment_isValid);
+        bytes += f(d_alignment_best_alignment_flags);
+
+        bytes += f(d_corrected_subjects);
+        bytes += f(d_corrected_candidates);
+        bytes += f(d_num_corrected_candidates);
+        bytes += f(d_subject_is_corrected);
+        bytes += f(d_indices_of_corrected_candidates);
+        bytes += f(d_is_high_quality_subject);
+        bytes += f(d_high_quality_subject_indices);
+        bytes += f(d_num_high_quality_subject_indices);
+
+        bytes += f(d_indices);
+        bytes += f(d_indices_per_subject);
+        bytes += f(d_indices_per_subject_prefixsum);
+        bytes += f(d_num_indices);
+
+        bytes += f(d_cub_temp_storage);
+
+        return bytes;
 	}
 
 	int deviceId = -1;
