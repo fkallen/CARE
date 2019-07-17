@@ -147,11 +147,19 @@ namespace care{
                             d_histogram_counts_prefixsum.end(),
                             countsPrefixSum.begin());
 
-                auto newKeysEnd = thrust::copy(d_histogram_keys.begin(),
+                {
+                    std::vector<Key_t> tmp;
+                    keys.swap(tmp);
+                }
+
+                keys.resize(nUniqueKeys);
+
+                //auto newKeysEnd =
+                thrust::copy(d_histogram_keys.begin(),
                             d_histogram_keys.end(),
                             keys.begin());
 
-                keys.erase(newKeysEnd, keys.end());
+                //keys.erase(newKeysEnd, keys.end());
 
                 success = true;
 
@@ -216,13 +224,19 @@ namespace care{
         }*/
     }
 
+    void transform_minhasher(Minhasher& minhasher, int map, const std::vector<int>& deviceIds){
+        assert(map < int(minhasher.minhashTables.size()));
+
+        auto& tableptr = minhasher.minhashTables[map];
+        if(!tableptr->noMoreWrites){
+            std::cerr << "Transforming table " << map << std::endl;
+            transform_keyvaluemap(*tableptr, deviceIds);
+        }
+    }
+
     void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds){
         for (std::size_t i = 0; i < minhasher.minhashTables.size(); ++i){
-            auto& tableptr = minhasher.minhashTables[i];
-            if(!tableptr->noMoreWrites){
-                std::cerr << "Transforming table " << i << std::endl;
-                transform_keyvaluemap(*tableptr, deviceIds);
-            }
+            transform_minhasher(minhasher, i, deviceIds);
         }
     }
 

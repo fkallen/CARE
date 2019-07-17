@@ -27,7 +27,8 @@
 
 namespace care{
 
-    void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds = {});
+    void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds);
+    void transform_minhasher(Minhasher& minhasher, int map, const std::vector<int>& deviceIds);
 
 
     template<class Key_t, class Value_t, class Index_t>

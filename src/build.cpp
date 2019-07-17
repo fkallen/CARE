@@ -958,16 +958,36 @@ namespace care{
             const int oldnumthreads = omp_get_thread_num();
 
             omp_set_num_threads(runtimeOptions.threads);
+            constexpr int numMapsPerBatch = 16;
 
-            #pragma omp parallel for
-            for(std::size_t readId = 0; readId < readStorage.getNumberOfSequences(); readId++){
-                //const auto& seq = readStorage.sequences[readId];
-				const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
-				const int sequencelength = readStorage.fetchSequenceLength(readId);
-				std::string sequencestring;
-                sequencestring.resize(sequencelength);
-                decode2BitHiLoSequence(&sequencestring[0], (const unsigned int*)sequenceptr, sequencelength, identity);
-                minhasher.insertSequence(sequencestring, readId);
+            const int numBatches = SDIV(minhashOptions.maps, numMapsPerBatch);
+
+            for(int batch = 0; batch < numBatches; batch++){
+                const int firstMap = batch * numMapsPerBatch;
+                const int lastMap = std::min(minhashOptions.maps, (batch+1) * numMapsPerBatch);
+                const int numMaps = lastMap - firstMap;
+                std::vector<int> mapIds(numMaps);
+                std::iota(mapIds.begin(), mapIds.end(), firstMap);
+
+                for(auto mapId : mapIds){
+                    minhasher.initMap(mapId);
+                }
+
+                #pragma omp parallel for
+                for(std::size_t readId = 0; readId < readStorage.getNumberOfSequences(); readId++){
+                    //const auto& seq = readStorage.sequences[readId];
+    				const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
+    				const int sequencelength = readStorage.fetchSequenceLength(readId);
+    				std::string sequencestring;
+                    sequencestring.resize(sequencelength);
+                    decode2BitHiLoSequence(&sequencestring[0], (const unsigned int*)sequenceptr, sequencelength, identity);
+                    minhasher.insertSequence(sequencestring, readId, mapIds);
+                }
+
+                for(auto mapId : mapIds){
+                    transform_minhasher(minhasher, mapId, runtimeOptions.deviceIds);
+                }
+
             }
 
             omp_set_num_threads(oldnumthreads);
@@ -1039,11 +1059,11 @@ namespace care{
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);
         TIMERSTOPCPU(build_minhasher);
 
-        auto& minhasher = result.builtMinhasher.data;
+        //auto& minhasher = result.builtMinhasher.data;
 
-        TIMERSTARTCPU(finalize_hashtables);
-        transform_minhasher(minhasher, runtimeOptions.deviceIds);
-        TIMERSTOPCPU(finalize_hashtables);
+        //TIMERSTARTCPU(finalize_hashtables);
+        //transform_minhasher(minhasher, runtimeOptions.deviceIds);
+        //TIMERSTOPCPU(finalize_hashtables);
 
         return result;
 

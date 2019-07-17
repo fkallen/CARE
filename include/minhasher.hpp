@@ -394,12 +394,16 @@ struct Minhasher {
     void loadFromFile(const std::string& filename);
 
 	void init(std::uint64_t nReads);
+    void initMap(int map);
 
 	void clear();
 
 	void destroy();
 
+    void insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds);
+
 	void insertSequence(const std::string& sequence, read_number readnum);
+
 
     std::pair<const Value_t*, const Value_t*> queryMap(int mapid,
                                                         Map_t::Key_t key,
@@ -455,6 +459,8 @@ private:
 	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept;
 
     void minhashfunc_other(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept;
+
+    void insertTupleIntoMap(int map, const std::uint64_t* hashValues, read_number readNumber);
 };
 
 
