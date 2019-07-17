@@ -159,8 +159,7 @@ void call_msa_init_kernel_async_exp(
             KernelLaunchHandle& handle);
 
 void call_msa_update_properties_kernel_async(
-            MSAColumnProperties* d_msa_column_properties,
-            const int* d_coverage,
+            MSAPointers d_msapointers,
             const int* d_indices_per_subject,
             int n_subjects,
             size_t msa_weights_pitch,
@@ -312,12 +311,10 @@ void call_msa_find_consensus_implicit_kernel_async(
 void call_msa_correct_subject_implicit_kernel_async(
                         MSAPointers d_msapointers,
                         AlignmentResultPointers d_alignmentresultpointers,
+                        ReadSequencesPointers d_sequencePointers,
                         const int* d_indices,
                         const int* d_indices_per_subject,
                         const int* d_indices_per_subject_prefixsum,
-                        const char* d_subject_sequences_data,
-                        const char* d_candidate_sequences_data,
-                        const int* d_candidate_sequences_lengths,
                         bool* d_is_high_quality_subject,
                         char* d_corrected_subjects,
                         bool* d_subject_is_corrected,
@@ -338,19 +335,14 @@ void call_msa_correct_subject_implicit_kernel_async(
                         KernelLaunchHandle& handle);
 
 void call_msa_correct_candidates_kernel_async_exp(
-            const char* d_consensus,
-            const float* d_support,
-            const int* d_coverage,
-            const int* d_origCoverages,
-            const MSAColumnProperties* d_msa_column_properties,
-            const int* d_candidate_sequences_lengths,
+            MSAPointers d_msapointers,
+            AlignmentResultPointers d_alignmentresultpointers,
+            ReadSequencesPointers d_sequencePointers,
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_indices_per_subject_prefixsum,
             const int* d_high_quality_subject_indices,
             const int* d_num_high_quality_subject_indices,
-            const int* d_alignment_shifts,
-            const BestAlignment_t* d_alignment_best_alignment_flags,
             int* d_num_corrected_candidates,
             char* d_corrected_candidates,
             int* d_indices_of_corrected_candidates,
@@ -368,22 +360,15 @@ void call_msa_correct_candidates_kernel_async_exp(
             KernelLaunchHandle& handle);
 
 void call_msa_findCandidatesOfDifferentRegion_kernel_async(
+            MSAPointers d_msapointers,
+            AlignmentResultPointers d_alignmentresultpointers,
+            ReadSequencesPointers d_sequencePointers,
             bool* d_shouldBeKept,
-            const char* d_subject_sequences_data,
-            const char* d_candidate_sequences_data,
-            const int* d_subject_sequences_lengths,
-            const int* d_candidate_sequences_lengths,
             const int* d_candidates_per_subject_prefixsum,
-            const int* d_alignment_shifts,
-            const BestAlignment_t* d_alignment_best_alignment_flags,
             int n_subjects,
             int n_candidates,
             int max_sequence_bytes,
             size_t encodedsequencepitch,
-            const char* d_consensus,
-            const int* d_counts,
-            const float* d_weights,
-            const MSAColumnProperties* d_msa_column_properties,
             size_t msa_pitch,
             size_t msa_weights_pitch,
             const int* d_indices,
