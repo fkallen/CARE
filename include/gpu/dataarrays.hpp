@@ -659,16 +659,6 @@ struct DataArrays {
 	int min_overlap = 1;
     bool useQualityScores = false;
 
-	//subject indices
-
-    SimpleAllocationPinnedHost<bool> h_is_high_quality_subject;
-    SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;
-    SimpleAllocationPinnedHost<int> h_num_high_quality_subject_indices;
-
-    SimpleAllocationDevice<bool> d_is_high_quality_subject;
-    SimpleAllocationDevice<int> d_high_quality_subject_indices;
-    SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
-
 	// alignment input
 
     ReadSequencesPointers getHostSequencePointers() const{
@@ -761,6 +751,34 @@ struct DataArrays {
 
 	//correction results output
 
+    CorrectionResultPointers getHostCorrectionResultPointers() const{
+        CorrectionResultPointers pointers{
+            h_corrected_subjects.get(),
+            h_corrected_candidates.get(),
+            h_num_corrected_candidates.get(),
+            h_subject_is_corrected.get(),
+            h_indices_of_corrected_candidates.get(),
+            h_is_high_quality_subject.get(),
+            h_high_quality_subject_indices.get(),
+            h_num_high_quality_subject_indices.get(),
+        };
+        return pointers;
+    }
+
+    CorrectionResultPointers getDeviceCorrectionResultPointers() const{
+        CorrectionResultPointers pointers{
+            d_corrected_subjects.get(),
+            d_corrected_candidates.get(),
+            d_num_corrected_candidates.get(),
+            d_subject_is_corrected.get(),
+            d_indices_of_corrected_candidates.get(),
+            d_is_high_quality_subject.get(),
+            d_high_quality_subject_indices.get(),
+            d_num_high_quality_subject_indices.get(),
+        };
+        return pointers;
+    }
+
 	std::size_t sequence_pitch = 0;
 
     SimpleAllocationPinnedHost<char> h_corrected_subjects;
@@ -774,6 +792,14 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_num_corrected_candidates;
     SimpleAllocationDevice<bool> d_subject_is_corrected;
     SimpleAllocationDevice<int> d_indices_of_corrected_candidates;
+
+    SimpleAllocationPinnedHost<bool> h_is_high_quality_subject;
+    SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;
+    SimpleAllocationPinnedHost<int> h_num_high_quality_subject_indices;
+
+    SimpleAllocationDevice<bool> d_is_high_quality_subject;
+    SimpleAllocationDevice<int> d_high_quality_subject_indices;
+    SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
 
 
 	//alignment results

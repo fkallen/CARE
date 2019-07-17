@@ -1606,12 +1606,10 @@ namespace gpu{
                             MSAPointers msapointers,
                             AlignmentResultPointers alignmentresultpointers,
                             ReadSequencesPointers d_sequencePointers,
+                            CorrectionResultPointers d_correctionResultPointers,
                             const int* __restrict__ d_indices,
                             const int* __restrict__ d_indices_per_subject,
                             const int* __restrict__ d_indices_per_subject_prefixsum,
-                            bool* __restrict__ d_is_high_quality_subject,
-                            char* __restrict__ d_corrected_subjects,
-                            bool* __restrict__ d_subject_is_corrected,
                             int n_subjects,
                             size_t encoded_sequence_pitch,
                             size_t sequence_pitch,
@@ -1690,11 +1688,10 @@ namespace gpu{
                 const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
                 const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
                 const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
-                char* const my_corrected_subject = d_corrected_subjects + subjectIndex * sequence_pitch;
+                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
 
                 const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
                 const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-                //const int firstColumn_incl = d_msa_column_properties[subjectIndex].firstColumn_incl;
                 const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
 
                 float avg_support = 0;
@@ -1729,7 +1726,7 @@ namespace gpu{
 
                 if(threadIdx.x == 0){
                     broadcastbuffer = isHQ;
-                    d_is_high_quality_subject[subjectIndex] = isHQ;
+                    d_correctionResultPointers.isHighQualitySubject[subjectIndex] = isHQ;
                 }
                 __syncthreads();
 
@@ -1741,7 +1738,7 @@ namespace gpu{
                         my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                     }
                     if(threadIdx.x == 0){
-                        d_subject_is_corrected[subjectIndex] = true;
+                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;
                     }
                 }else{
 
@@ -1898,7 +1895,7 @@ namespace gpu{
                     __syncthreads();
 
                     if(threadIdx.x == 0){
-                        d_subject_is_corrected[subjectIndex] = foundAColumn;
+                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = foundAColumn;
                     }
                 }
             }
@@ -1912,14 +1909,10 @@ namespace gpu{
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
+                CorrectionResultPointers d_correctionResultPointers,
                 const int* __restrict__ d_indices,
                 const int* __restrict__ d_indices_per_subject,
                 const int* __restrict__ d_indices_per_subject_prefixsum,
-                const int* __restrict__ d_high_quality_subject_indices,
-                const int* __restrict__ d_num_high_quality_subject_indices,
-                int* __restrict__ d_num_corrected_candidates,
-                char* __restrict__ d_corrected_candidates,
-                int* __restrict__ d_indices_of_corrected_candidates,
                 int n_subjects,
                 int n_queries,
                 const int* __restrict__ d_num_indices,
@@ -1940,11 +1933,11 @@ namespace gpu{
         };
 
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-        const int num_high_quality_subject_indices = *d_num_high_quality_subject_indices;
+        const int num_high_quality_subject_indices = *d_correctionResultPointers.numHighQualitySubjectIndices;
         //const int n_indices = *d_num_indices;
 
         for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x) {
-            const int subjectIndex = d_high_quality_subject_indices[index];
+            const int subjectIndex = d_correctionResultPointers.highQualitySubjectIndices[index];
             const int my_num_candidates = d_indices_per_subject[subjectIndex];
 
             const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
@@ -1952,8 +1945,8 @@ namespace gpu{
             //const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
             const char* const my_consensus = d_msapointers.consensus + msa_pitch  * subjectIndex;
             const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-            char* const my_corrected_candidates = d_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
-            int* const my_indices_of_corrected_candidates = d_indices_of_corrected_candidates + d_indices_per_subject_prefixsum[subjectIndex];
+            char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
+            int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + d_indices_per_subject_prefixsum[subjectIndex];
 
             const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
@@ -2025,7 +2018,7 @@ namespace gpu{
             //printf("%d %d\n", subjectIndex, n_corrected_candidates);
 
             if(threadIdx.x == 0) {
-                d_num_corrected_candidates[subjectIndex] = n_corrected_candidates;
+                d_correctionResultPointers.numCorrectedCandidates[subjectIndex] = n_corrected_candidates;
                 //printf("%d %d\n", subjectIndex, n_corrected_candidates);
             }
         }
@@ -3712,12 +3705,10 @@ namespace gpu{
                             MSAPointers d_msapointers,
                             AlignmentResultPointers d_alignmentresultpointers,
                             ReadSequencesPointers d_sequencePointers,
+                            CorrectionResultPointers d_correctionResultPointers,
                             const int* d_indices,
                             const int* d_indices_per_subject,
                             const int* d_indices_per_subject_prefixsum,
-                            bool* d_is_high_quality_subject,
-                            char* d_corrected_subjects,
-                            bool* d_subject_is_corrected,
                             int n_subjects,
                             size_t encoded_sequence_pitch,
                             size_t sequence_pitch,
@@ -3791,12 +3782,10 @@ namespace gpu{
                                     d_msapointers, \
                                     d_alignmentresultpointers, \
                                     d_sequencePointers, \
+                                    d_correctionResultPointers, \
                                     d_indices, \
                                     d_indices_per_subject, \
                                     d_indices_per_subject_prefixsum, \
-                                    d_is_high_quality_subject, \
-                                    d_corrected_subjects, \
-                                    d_subject_is_corrected, \
                                     n_subjects, \
                                     encoded_sequence_pitch, \
                                     sequence_pitch, \
@@ -3836,14 +3825,10 @@ namespace gpu{
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
+                CorrectionResultPointers d_correctionResultPointers,
     			const int* d_indices,
     			const int* d_indices_per_subject,
     			const int* d_indices_per_subject_prefixsum,
-    			const int* d_high_quality_subject_indices,
-    			const int* d_num_high_quality_subject_indices,
-    			int* d_num_corrected_candidates,
-    			char* d_corrected_candidates,
-    			int* d_indices_of_corrected_candidates,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -3913,14 +3898,10 @@ namespace gpu{
             d_msapointers, \
             d_alignmentresultpointers, \
             d_sequencePointers, \
+            d_correctionResultPointers, \
     		d_indices, \
     		d_indices_per_subject, \
     		d_indices_per_subject_prefixsum, \
-    		d_high_quality_subject_indices, \
-    		d_num_high_quality_subject_indices, \
-    		d_num_corrected_candidates, \
-    		d_corrected_candidates, \
-    		d_indices_of_corrected_candidates, \
     		n_subjects, \
     		n_queries, \
     		d_num_indices, \

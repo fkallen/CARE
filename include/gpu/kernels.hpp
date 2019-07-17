@@ -46,18 +46,29 @@ struct MSAPointers{
 };
 
 struct ReadSequencesPointers{
-        char* subjectSequencesData;
-        char* candidateSequencesData;
-        char* subjectSequencesDataTransposed;
-        char* candidateSequencesDataTransposed;
-        int* subjectSequencesLength;
-        int* candidateSequencesLength;
+    char* subjectSequencesData;
+    char* candidateSequencesData;
+    char* subjectSequencesDataTransposed;
+    char* candidateSequencesDataTransposed;
+    int* subjectSequencesLength;
+    int* candidateSequencesLength;
 };
 
 struct ReadQualitiesPointers{
     char* subjectQualities;
     char* candidateQualities;
     char* candidateQualitiesTransposed;
+};
+
+struct CorrectionResultPointers{
+        char* correctedSubjects;
+        char* correctedCandidates;
+        int* numCorrectedCandidates;
+        bool* subjectIsCorrected;
+        int* indicesOfCorrectedCandidates;
+        bool* isHighQualitySubject;
+        int* highQualitySubjectIndices;
+        int* numHighQualitySubjectIndices;
 };
 
 
@@ -309,43 +320,37 @@ void call_msa_find_consensus_implicit_kernel_async(
 
 
 void call_msa_correct_subject_implicit_kernel_async(
-                        MSAPointers d_msapointers,
-                        AlignmentResultPointers d_alignmentresultpointers,
-                        ReadSequencesPointers d_sequencePointers,
-                        const int* d_indices,
-                        const int* d_indices_per_subject,
-                        const int* d_indices_per_subject_prefixsum,
-                        bool* d_is_high_quality_subject,
-                        char* d_corrected_subjects,
-                        bool* d_subject_is_corrected,
-                        int n_subjects,
-                        size_t encoded_sequence_pitch,
-                        size_t sequence_pitch,
-                        size_t msa_pitch,
-                        size_t msa_weights_pitch,
-                        float estimatedErrorrate,
-                        float desiredAlignmentMaxErrorRate,
-                        float avg_support_threshold,
-                        float min_support_threshold,
-                        float min_coverage_threshold,
-                        float max_coverage_threshold,
-                        int k_region,
-                        int maximum_sequence_length,
-                        cudaStream_t stream,
-                        KernelLaunchHandle& handle);
+            MSAPointers d_msapointers,
+            AlignmentResultPointers d_alignmentresultpointers,
+            ReadSequencesPointers d_sequencePointers,
+            CorrectionResultPointers d_correctionResultPointers,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_indices_per_subject_prefixsum,
+            int n_subjects,
+            size_t encoded_sequence_pitch,
+            size_t sequence_pitch,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            float estimatedErrorrate,
+            float desiredAlignmentMaxErrorRate,
+            float avg_support_threshold,
+            float min_support_threshold,
+            float min_coverage_threshold,
+            float max_coverage_threshold,
+            int k_region,
+            int maximum_sequence_length,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
 
 void call_msa_correct_candidates_kernel_async_exp(
             MSAPointers d_msapointers,
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
+            CorrectionResultPointers d_correctionResultPointers,
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_indices_per_subject_prefixsum,
-            const int* d_high_quality_subject_indices,
-            const int* d_num_high_quality_subject_indices,
-            int* d_num_corrected_candidates,
-            char* d_corrected_candidates,
-            int* d_indices_of_corrected_candidates,
             int n_subjects,
             int n_queries,
             const int* d_num_indices,

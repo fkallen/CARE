@@ -2778,12 +2778,10 @@ namespace gpu{
                     dataArrays.getDeviceMSAPointers(),
                     dataArrays.getDeviceAlignmentResultPointers(),
                     dataArrays.getDeviceSequencePointers(),
+                    dataArrays.getDeviceCorrectionResultPointers(),
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.d_is_high_quality_subject,
-                    dataArrays.d_corrected_subjects,
-                    dataArrays.d_subject_is_corrected,
                     dataArrays.n_subjects,
                     dataArrays.encoded_sequence_pitch,
                     dataArrays.sequence_pitch,
@@ -2821,14 +2819,10 @@ namespace gpu{
                     dataArrays.getDeviceMSAPointers(),
                     dataArrays.getDeviceAlignmentResultPointers(),
                     dataArrays.getDeviceSequencePointers(),
+                    dataArrays.getDeviceCorrectionResultPointers(),
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.d_high_quality_subject_indices,
-                    dataArrays.d_num_high_quality_subject_indices,
-                    dataArrays.d_num_corrected_candidates,
-                    dataArrays.d_corrected_candidates,
-                    dataArrays.d_indices_of_corrected_candidates,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.d_num_indices,
@@ -3760,6 +3754,18 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               assert(stacksize == 0);
 
           Batch& mainBatch = *batchPointers[0];
+
+          // size_t hostSizeBytes = mainBatch.dataArrays->hostArraysSizeInBytes();
+          // size_t deviceSizeBytes = mainBatch.dataArrays->deviceArraysSizeInBytes();
+          // size_t hostCapacityBytes = mainBatch.dataArrays->hostArraysCapacityInBytes();
+          // size_t deviceCapacityBytes = mainBatch.dataArrays->deviceArraysCapacityInBytes();
+          //
+          // auto MB = [](auto bytes){
+          //     return bytes / 1024. / 1024;
+          // };
+          //
+          // std::cerr << "Resize: Host " << MB(hostSizeBytes) << " " << MB(hostCapacityBytes);
+          // std::cerr << " Device " << MB(deviceSizeBytes) << " " << MB(deviceCapacityBytes) << '\n';
 
           AdvanceResult mainBatchAdvanceResult;
           bool popMain = false;
