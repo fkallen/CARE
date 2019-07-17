@@ -45,6 +45,15 @@ struct MSAPointers{
     float* weights;
 };
 
+struct ReadSequencesPointers{
+        char* subjectSequencesData;
+        char* candidateSequencesData;
+        char* subjectSequencesDataTransposed;
+        char* candidateSequencesDataTransposed;
+        int* subjectSequencesLength;
+        int* candidateSequencesLength;
+};
+
 struct ReadQualitiesPointers{
     char* subjectQualities;
     char* candidateQualities;
@@ -93,21 +102,6 @@ struct KernelLaunchHandle {
 
 KernelLaunchHandle make_kernel_launch_handle(int deviceId);
 
-void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-			BestAlignment_t* d_alignment_best_alignment_flags,
-			const int* d_alignment_overlaps,
-			const int* d_alignment_nOps,
-			const int* d_indices,
-			const int* d_indices_per_subject,
-			const int* d_indices_per_subject_prefixsum,
-			int n_subjects,
-			int n_candidates,
-			const int* d_num_indices,
-			float mismatchratioBaseFactor,
-			float goodAlignmentsCountThreshold,
-			cudaStream_t stream,
-			KernelLaunchHandle& handle);
-
 
 void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
             int* d_alignment_scores,
@@ -115,10 +109,7 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_asyn
             int* d_alignment_shifts,
             int* d_alignment_nOps,
             bool* d_alignment_isValid,
-            const char* __restrict__ subject_sequences_data,
-            const char* __restrict__ candidate_sequences_data,
-            const int* __restrict__ subject_sequences_lengths,
-            const int* __restrict__ candidate_sequences_lengths,
+            ReadSequencesPointers d_sequencePointers,
             const int* d_candidates_per_subject_prefixsum,
             const int* h_candidates_per_subject,
             const int* d_candidates_per_subject,
@@ -131,8 +122,6 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_asyn
             float min_overlap_ratio,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
-
-
 
 
 
@@ -157,9 +146,7 @@ void call_cuda_find_best_alignment_kernel_async_exp(
 
 
 void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-            BestAlignment_t* d_alignment_best_alignment_flags,
-            const int* d_alignment_overlaps,
-            const int* d_alignment_nOps,
+            AlignmentResultPointers d_alignmentresultpointers,
             const int* d_candidates_per_subject_prefixsum,
             int n_subjects,
             int n_candidates,

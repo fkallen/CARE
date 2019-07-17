@@ -446,7 +446,29 @@ struct DataArrays {
 
 	// alignment input
 
-    struct
+    ReadSequencesPointers getHostSequencePointers() const{
+        ReadSequencesPointers pointers{
+            h_subject_sequences_data.get(),
+            h_candidate_sequences_data.get(),
+            nullptr,
+            nullptr,
+            h_subject_sequences_lengths.get(),
+            h_candidate_sequences_lengths.get(),
+        };
+        return pointers;
+    }
+
+    ReadSequencesPointers getDeviceSequencePointers() const{
+        ReadSequencesPointers pointers{
+            d_subject_sequences_data.get(),
+            d_candidate_sequences_data.get(),
+            d_subject_sequences_data_transposed.get(),
+            d_candidate_sequences_data_transposed.get(),
+            d_subject_sequences_lengths.get(),
+            d_candidate_sequences_lengths.get(),
+        };
+        return pointers;
+    }
 
 	std::size_t encoded_sequence_pitch = 0;
 

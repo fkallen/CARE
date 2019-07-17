@@ -52,10 +52,7 @@ namespace gpu{
                 int* __restrict__ alignment_shifts,
                 int* __restrict__ alignment_nOps,
                 bool* __restrict__ alignment_isValid,
-                const char* __restrict__ subject_sequences_data,
-                const char* __restrict__ candidate_sequences_data,
-                const int* __restrict__ subject_sequences_lengths,
-                const int* __restrict__ candidate_sequences_lengths,
+                ReadSequencesPointers d_sequencePointers,
                 const int* __restrict__ candidates_per_subject_prefixsum,
                 const int* __restrict__ tiles_per_subject_prefixsum,
                 int n_subjects,
@@ -204,8 +201,8 @@ namespace gpu{
                     blockIdx.x, globalTileId, threadIdx.x, globalTileId, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
                     candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
-            const int subjectbases = subject_sequences_lengths[subjectIndex];
-            const char* subjectptr = subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
+            const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
+            const char* subjectptr = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedsequencepitch;
             //transposed
             //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
@@ -224,10 +221,10 @@ namespace gpu{
                         blockIdx.x, globalTileId, threadIdx.x, logicalTileId, requiredTiles, isReverseComplement, forwardTileId,
                         candidatesBeforeThisSubject, tileForThisSubject, subjectIndex, queryIndex, resultIndex);*/
 
-                const int querybases = candidate_sequences_lengths[queryIndex];
+                const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
                 //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
                 //transposed
-                const char* candidateptr = (const char*)((unsigned int*)(candidate_sequences_data) + std::size_t(queryIndex));
+                const char* candidateptr = (const char*)((unsigned int*)(d_sequencePointers.candidateSequencesDataTransposed) + std::size_t(queryIndex));
 
                 //save query in shared memory
                 for(int i = 0; i < max_sequence_ints; i += 1) {
@@ -439,9 +436,7 @@ namespace gpu{
     template<int BLOCKSIZE>
     __global__
     void cuda_filter_alignments_by_mismatchratio_kernel(
-                BestAlignment_t* __restrict__ d_alignment_best_alignment_flags,
-                const int* __restrict__ d_alignment_overlaps,
-                const int* __restrict__ d_alignment_nOps,
+                AlignmentResultPointers d_alignmentresultpointers,
                 const int* __restrict__ d_candidates_per_subject_prefixsum,
                 int n_subjects,
                 int n_candidates,
@@ -474,14 +469,14 @@ namespace gpu{
             for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
 
                 const int candidate_index = firstIndex + index;
-                if(d_alignment_best_alignment_flags[candidate_index] != BestAlignment_t::None) {
+                if(d_alignmentresultpointers.bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
 
-                    const int alignment_overlap = d_alignment_overlaps[candidate_index];
-                    const int alignment_nops = d_alignment_nOps[candidate_index];
+                    const int alignment_overlap = d_alignmentresultpointers.overlaps[candidate_index];
+                    const int alignment_nops = d_alignmentresultpointers.nOps[candidate_index];
 
                     const float mismatchratio = float(alignment_nops) / alignment_overlap;
                     if(mismatchratio >= 4 * mismatchratioBaseFactor) {
-                        d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
+                        d_alignmentresultpointers.bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
                     }else{
 
                             #pragma unroll
@@ -533,17 +528,17 @@ namespace gpu{
             // Invalidate all alignments for subject with mismatchratio >= mismatchratioThreshold
             for(int index = threadIdx.x; index < candidatesForSubject; index += blockDim.x) {
                 const int candidate_index = firstIndex + index;
-                if(d_alignment_best_alignment_flags[candidate_index] != BestAlignment_t::None) {
+                if(d_alignmentresultpointers.bestAlignmentFlags[candidate_index] != BestAlignment_t::None) {
 
-                    const int alignment_overlap = d_alignment_overlaps[candidate_index];
-                    const int alignment_nops = d_alignment_nOps[candidate_index];
+                    const int alignment_overlap = d_alignmentresultpointers.overlaps[candidate_index];
+                    const int alignment_nops = d_alignmentresultpointers.nOps[candidate_index];
 
                     const float mismatchratio = float(alignment_nops) / alignment_overlap;
 
-                    const bool remove = mismatchratio >= mismatchratioThreshold;
-                    if(remove)
-                        d_alignment_best_alignment_flags[candidate_index] = BestAlignment_t::None;
-
+                    const bool doRemove = mismatchratio >= mismatchratioThreshold;
+                    if(doRemove){
+                        d_alignmentresultpointers.bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
+                    }
                 }
             }
         }
@@ -2611,10 +2606,7 @@ namespace gpu{
     			int* d_alignment_shifts,
     			int* d_alignment_nOps,
     			bool* d_alignment_isValid,
-                const char* d_subject_sequences_data,
-                const char* d_candidate_sequences_data,
-                const int* d_subject_sequences_lengths,
-                const int* d_candidate_sequences_lengths,
+                ReadSequencesPointers d_sequencePointers,
     			const int* d_candidates_per_subject_prefixsum,
                 const int* h_candidates_per_subject,
                 const int* d_candidates_per_subject,
@@ -2737,10 +2729,7 @@ namespace gpu{
                                         		d_alignment_shifts, \
                                         		d_alignment_nOps, \
                                         		d_alignment_isValid, \
-                                                d_subject_sequences_data, \
-                                                d_candidate_sequences_data, \
-                                                d_subject_sequences_lengths, \
-                                                d_candidate_sequences_lengths, \
+                                                d_sequencePointers, \
                                         		d_candidates_per_subject_prefixsum, \
                                                 d_tiles_per_subject_prefixsum, \
                                         		n_subjects, \
@@ -2850,9 +2839,7 @@ namespace gpu{
 
 
     void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
-    			BestAlignment_t* d_alignment_best_alignment_flags,
-    			const int* d_alignment_overlaps,
-    			const int* d_alignment_nOps,
+    			AlignmentResultPointers d_alignmentresultpointers,
     			const int* d_candidates_per_subject_prefixsum,
     			int n_subjects,
     			int n_candidates,
@@ -2912,9 +2899,7 @@ namespace gpu{
 
     	#define mycall(blocksize) cuda_filter_alignments_by_mismatchratio_kernel<(blocksize)> \
     	        <<<grid, block, smem, stream>>>( \
-    		d_alignment_best_alignment_flags, \
-    		d_alignment_overlaps, \
-    		d_alignment_nOps, \
+    		d_alignmentresultpointers, \
     		d_candidates_per_subject_prefixsum, \
     		n_subjects, \
     		n_candidates, \
