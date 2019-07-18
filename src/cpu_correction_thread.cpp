@@ -1188,17 +1188,37 @@ namespace cpu{
                                                                         correctionOptions.estimatedCoverage,
                                                                         correctionOptions.m_coverage);
 
+                        // auto correctionResult = getCorrectedSubject(multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
+                        //                                             multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
+                        //                                             multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
+                        //                                             multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
+                        //                                             int(correctionTasks[0].subject_string.size()),
+                        //                                             correctionTasks[0].subject_string.c_str(),
+                        //                                             msaProperties.isHQ,
+                        //                                             correctionOptions.estimatedErrorrate,
+                        //                                             correctionOptions.estimatedCoverage,
+                        //                                             correctionOptions.m_coverage,
+                        //                                             correctionOptions.kmerlength);
+
                         auto correctionResult = getCorrectedSubject(multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
                                                                     multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
                                                                     multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
                                                                     multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
                                                                     int(correctionTasks[0].subject_string.size()),
                                                                     correctionTasks[0].subject_string.c_str(),
+                                                                    subjectColumnsBegin_incl,
+                                                                    bestCandidateStrings.data(),
+                                                                    int(bestAlignmentWeights.size()),
+                                                                    bestAlignmentWeights.data(),
+                                                                    bestCandidateLengths.data(),
+                                                                    bestAlignmentShifts.data(),
+                                                                    fileProperties.maxSequenceLength,
                                                                     msaProperties.isHQ,
                                                                     correctionOptions.estimatedErrorrate,
                                                                     correctionOptions.estimatedCoverage,
                                                                     correctionOptions.m_coverage,
                                                                     correctionOptions.kmerlength);
+
 
     #ifdef ENABLE_TIMING
                         msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;

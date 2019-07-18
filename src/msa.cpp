@@ -1,6 +1,7 @@
 #include <msa.hpp>
 
 #include <qualityscoreweights.hpp>
+#include <bestalignment.hpp>
 
 namespace care{
 
@@ -429,6 +430,123 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                 if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
                     result.correctedSequence[column] = consensus[column];
                     foundAColumn = true;
+                }
+            }
+        }
+
+        result.isCorrected = foundAColumn;
+    }
+
+    return result;
+}
+
+
+CorrectionResult getCorrectedSubject(const char* consensus,
+                                    const float* support,
+                                    const int* coverage,
+                                    const int* originalCoverage,
+                                    int nColumns,
+                                    const char* subject,
+                                    int subjectColumnsBegin_incl,
+                                    const char* candidates,
+                                    int nCandidates,
+                                    const float* candidateAlignmentWeights,
+                                    const int* candidateLengths,
+                                    const int* candidateShifts,
+                                    size_t candidatesPitch,
+                                    bool isHQ,
+                                    float estimatedErrorrate,
+                                    float estimatedCoverage,
+                                    float m_coverage,
+                                    int neighborRegionSize){
+
+    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+    //const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+
+    CorrectionResult result;
+    result.isCorrected = false;
+    result.correctedSequence.resize(nColumns);
+
+    if(isHQ){
+        //corrected sequence = consensus;
+
+        std::copy(consensus,
+                  consensus + nColumns,
+                  result.correctedSequence.begin());
+        result.isCorrected = true;
+    }else{
+        //set corrected sequence to original subject. then search for positions with good properties. correct these positions
+        std::copy(subject,
+                  subject + nColumns,
+                  result.correctedSequence.begin());
+
+        bool foundAColumn = false;
+        for(int column = 0; column < nColumns; column++){
+            const int origCoverage = originalCoverage[column];
+            const char origBase = subject[column];
+            const char cons = consensus[column];
+
+            const int globalIndex = subjectColumnsBegin_incl + column;
+
+            if(origBase != cons
+                    && support[column] > 0.5f
+                    //&& origCoverage <= 7){
+                ){
+                bool canCorrect = true;
+                if(canCorrect && origCoverage > 1){
+                    int numFoundCandidates = 0;
+                    for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
+
+                        const char* candidateptr = candidates + candidatenr * candidatesPitch;
+                        const int candidateLength = candidateLengths[candidatenr];
+                        const int candidateShift = candidateShifts[candidatenr];
+                        const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
+                        if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
+                            //char candidateBase = 'F';
+
+                            //if(bestAlignmentFlags[candidatenr] == cpu::BestAlignment_t::ReverseComplement){
+                            //    candidateBase = candidateptr[candidateLength - candidateBasePosition-1];
+                            //}else{
+                            const char candidateBase = candidateptr[candidateBasePosition];
+                            //}
+
+                            const float overlapweight = candidateAlignmentWeights[candidatenr];
+                            assert(overlapweight <= 1.0f);
+                            assert(overlapweight >= 0.0f);
+
+                            if(origBase == candidateBase){
+                                numFoundCandidates++;
+
+                                 if(overlapweight >= 0.90f){
+                                     canCorrect = false;
+                                     //break;
+                                 }
+                            }
+                        }
+                    }
+                    assert(numFoundCandidates+1 == origCoverage);
+                }
+
+                if(canCorrect){
+
+                    float avgsupportkregion = 0;
+                    int c = 0;
+                    bool neighborregioncoverageisgood = true;
+
+                    for(int neighborcolumn = column - neighborRegionSize/2; neighborcolumn <= column + neighborRegionSize/2 && neighborregioncoverageisgood; neighborcolumn++){
+                        if(neighborcolumn != column && neighborcolumn >= 0 && neighborcolumn < nColumns){
+                            avgsupportkregion += support[neighborcolumn];
+                            neighborregioncoverageisgood &= (coverage[neighborcolumn] >= min_coverage_threshold);
+                            c++;
+                        }
+                    }
+
+                    avgsupportkregion /= c;
+                    if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                        result.correctedSequence[column] = consensus[column];
+                        foundAColumn = true;
+                    }
                 }
             }
         }

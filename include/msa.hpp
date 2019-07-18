@@ -5,7 +5,7 @@
 
 #include <util.hpp>
 #include <qualityscoreweights.hpp>
-
+#include <bestalignment.hpp>
 #include <string>
 #include <cassert>
 #include <vector>
@@ -130,6 +130,27 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                                     const int* originalCoverage,
                                     int nColumns,
                                     const char* subject,
+                                    bool isHQ,
+                                    float estimatedErrorrate,
+                                    float estimatedCoverage,
+                                    float m_coverage,
+                                    int neighborRegionSize);
+
+//candidates is a 2d array of size candidatesPitch * nCandidates.
+//candidates with reverse complement alignment must be reverse complement in this array.
+CorrectionResult getCorrectedSubject(const char* consensus,
+                                    const float* support,
+                                    const int* coverage,
+                                    const int* originalCoverage,
+                                    int nColumns,
+                                    const char* subject,
+                                    int subjectColumnsBegin_incl,
+                                    const char* candidates,
+                                    int nCandidates,
+                                    const float* candidateAlignmentWeights,
+                                    const int* candidateLengths,
+                                    const int* candidateShifts,
+                                    size_t candidatesPitch,
                                     bool isHQ,
                                     float estimatedErrorrate,
                                     float estimatedCoverage,
