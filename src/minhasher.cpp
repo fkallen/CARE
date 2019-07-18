@@ -218,7 +218,7 @@ namespace care{
 	}
 
     void Minhasher::insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds){
-        assert(int(mapIds.size()) < minparams.maps);
+        assert(int(mapIds.size()) <= minparams.maps);
 
 		if(readnum >= nReads)
 			throw std::runtime_error("Minhasher::insertSequence: read number too large. "
