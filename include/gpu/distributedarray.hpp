@@ -1585,16 +1585,28 @@ public:
 
             //std::cout << "permute: sizeOfElement" << sizeOfElement << " resultPitch " << resultPitch << std::endl;
 
-            dim3 block(128,1,1);
-            dim3 grid(SDIV(n, block.x),1,1);
+            // dim3 block(128,1,1);
+            // dim3 grid(SDIV(n, block.x),1,1);
+
+            // generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+            //     for(Index_t i = threadIdx.x + Index_t(blockIdx.x) * blockDim.x; i < n; i += Index_t(blockDim.x) * gridDim.x){
+            //         const Index_t srcindex = indices[i];
+            // 	    for(size_t b = 0; b < numCols; b++){
+            //             //printf("i %u b %lu, copy src[%lu] to dest[%lu] %d\n", i, b, srcindex * size + b, i * resultPitch + b, int(src[srcindex * size + b]));
+            //             dest[i * resultPitchValueTs + b] = src[srcindex * numCols + b];
+            //         }
+            //     }
+            // });
+
+            dim3 block(256,1,1);
+            dim3 grid(std::min(65535ul, SDIV(n * numCols, block.x)),1,1);
 
             generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
-                for(Index_t i = threadIdx.x + Index_t(blockIdx.x) * blockDim.x; i < n; i += Index_t(blockDim.x) * gridDim.x){
-                    const Index_t srcindex = indices[i];
-            	    for(size_t b = 0; b < numCols; b++){
-                        //printf("i %u b %lu, copy src[%lu] to dest[%lu] %d\n", i, b, srcindex * size + b, i * resultPitch + b, int(src[srcindex * size + b]));
-                        dest[i * resultPitchValueTs + b] = src[srcindex * numCols + b];
-                    }
+                for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < n * numCols; i += size_t(blockDim.x) * gridDim.x){
+                    const Index_t outputrow = i / numCols;
+                    const Index_t inputrow = indices[outputrow];
+                    const Index_t col = i % numCols;
+                    dest[outputrow * resultPitchValueTs + col] = src[inputrow * numCols + col];
                 }
             });
 
@@ -1646,23 +1658,35 @@ public:
 
         const Value_t* const gpuData = dataPtrPerLocation[gpu];
 
-        dim3 grid(SDIV(nIndices, 128),1,1);
-        dim3 block(128,1,1);
+        // dim3 grid(SDIV(nIndices, 128),1,1);
+        // dim3 block(128,1,1);
+        //
+        // generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+        //     //const int intiters = resultPitch / sizeof(int);
+        //
+        //     for(Index_t k = threadIdx.x + Index_t(blockIdx.x) * blockDim.x; k < nIndices; k += Index_t(blockDim.x) * gridDim.x){
+        //         const Index_t index = d_indices[k] + indexOffset;
+        //         for(int b = 0; b < numCols; b++){
+        //             d_result[k * resultPitchValueTs + b] = gpuData[index * numCols + b];
+        //         }
+        //
+        //         // for(size_t b = 0; b < sizeOfElement_; b++){
+        //         //     d_result[k * resultPitch + b] = gpuData[index * sizeOfElement_ + b];
+        //         // }
+        //     }
+        // }); CUERR;
 
-        generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
-            //const int intiters = resultPitch / sizeof(int);
+        dim3 block(256,1,1);
+        dim3 grid(std::min(65535ul, SDIV(nIndices * numCols, block.x)),1,1);
 
-            for(Index_t k = threadIdx.x + Index_t(blockIdx.x) * blockDim.x; k < nIndices; k += Index_t(blockDim.x) * gridDim.x){
-                const Index_t index = d_indices[k] + indexOffset;
-                for(int b = 0; b < numCols; b++){
-                    d_result[k * resultPitchValueTs + b] = gpuData[index * numCols + b];
-                }
-
-                // for(size_t b = 0; b < sizeOfElement_; b++){
-                //     d_result[k * resultPitch + b] = gpuData[index * sizeOfElement_ + b];
-                // }
+        generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+                const Index_t outputrow = i / numCols;
+                const Index_t inputrow = d_indices[outputrow] + indexOffset;
+                const Index_t col = i % numCols;
+                d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
             }
-        }); CUERR;
+        });
 
         cudaSetDevice(oldDevice); CUERR;
     }
@@ -1685,27 +1709,41 @@ public:
 
         const Value_t* const gpuData = dataPtrPerLocation[gpu];
 
-        dim3 grid(SDIV(nIndices, 128),1,1);
-        dim3 block(128,1,1);
-
         cudaSetDevice(resultDevice); CUERR;
 
-        generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
-            //const int intiters = resultPitch / sizeof(int);
+        // dim3 grid(SDIV(nIndices, 128),1,1);
+        // dim3 block(128,1,1);
+        //
+        //
+        //
+        // generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
+        //     //const int intiters = resultPitch / sizeof(int);
+        //
+        //     for(Index_t k = threadIdx.x + Index_t(blockDim.x) * blockIdx.x; k < nIndices; k += Index_t(blockDim.x) * gridDim.x){
+        //         const Index_t index = d_indices[k] + indexOffset;
+        //
+        //         for(int b = 0; b < numCols; b++){
+        //             d_result[k * resultPitchValueTs + b] = gpuData[index * numCols + b];
+        //         }
+        //
+        //         // for(size_t b = 0; b < sizeOfElement_; b++){
+        //         //     //printf("gather k %u b %lu, copy src[%lu] to dest[%lu] %d\n", k, b, index * sizeOfElement_ + b, k * resultPitch + b, int(gpuData[index * sizeOfElement_ + b]));
+        //         //     d_result[k * resultPitch + b] = gpuData[index * sizeOfElement_ + b];
+        //         // }
+        //     }
+        // }); CUERR;
 
-            for(Index_t k = threadIdx.x + Index_t(blockDim.x) * blockIdx.x; k < nIndices; k += Index_t(blockDim.x) * gridDim.x){
-                const Index_t index = d_indices[k] + indexOffset;
+        dim3 block(256,1,1);
+        dim3 grid(std::min(65535ul, SDIV(nIndices * numCols, block.x)),1,1);
 
-                for(int b = 0; b < numCols; b++){
-                    d_result[k * resultPitchValueTs + b] = gpuData[index * numCols + b];
-                }
-
-                // for(size_t b = 0; b < sizeOfElement_; b++){
-                //     //printf("gather k %u b %lu, copy src[%lu] to dest[%lu] %d\n", k, b, index * sizeOfElement_ + b, k * resultPitch + b, int(gpuData[index * sizeOfElement_ + b]));
-                //     d_result[k * resultPitch + b] = gpuData[index * sizeOfElement_ + b];
-                // }
+        generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
+            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
+                const Index_t outputrow = i / numCols;
+                const Index_t inputrow = d_indices[outputrow] + indexOffset;
+                const Index_t col = i % numCols;
+                d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
             }
-        }); CUERR;
+        });
 
         cudaSetDevice(oldDevice); CUERR;
     }
