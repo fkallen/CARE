@@ -3,7 +3,7 @@
 
 #include "../hpc_helpers.cuh"
 #include <readstorage.hpp>
-
+#include <gpu/distributedarray.hpp>
 #include <config.hpp>
 
 #include <iostream>
@@ -29,6 +29,7 @@ struct ContiguousReadStorage {
     using Length_t = cpu::ContiguousReadStorage::Length_t;
 
 	using SequenceStatistics = cpu::SequenceStatistics;
+    using GatherHandle = DistributedArray<read_number>::GatherHandle;
 
 	static constexpr bool has_reverse_complement = false;
 	static constexpr int serialization_id = 100000;
@@ -79,6 +80,8 @@ struct ContiguousReadStorage {
 	char* d_sequence_data = nullptr;
 	Length_t* d_sequence_lengths = nullptr;
 	char* d_quality_data = nullptr;
+
+    DistributedArray<read_number> distributedSequenceData;
 
 
 
@@ -147,6 +150,18 @@ struct ContiguousReadStorage {
 
     void copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const;
 
+
+    GatherHandle makeGatherHandle() const;
+
+    void gatherSequenceDataToGpuBufferAsync(
+                                const GatherHandle& handle,
+                                char* d_sequence_data,
+                                size_t out_sequence_pitch,
+                                const read_number* h_readIds,
+                                const read_number* d_readIds,
+                                int nReadIds,
+                                int deviceId,
+                                cudaStream_t stream) const;
 };
 
 #endif

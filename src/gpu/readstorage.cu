@@ -45,7 +45,10 @@ namespace gpu {
 
     		dataProperties = findDataProperties(requiredSequenceMem, requiredQualityMem);
 
-
+            std::vector<float> maxFreeMemFractions(deviceIds.size(), 0.9f);
+            size_t numReads = cpuReadStorage->getNumberOfSequences();
+            size_t sequencepitch = cpuReadStorage->getMaximumAllowedSequenceBytes();
+            distributedSequenceData = std::move(DistributedArray<read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch));
     	}
 
     	ContiguousReadStorage::ContiguousReadStorage(ContiguousReadStorage&& other){
@@ -59,6 +62,8 @@ namespace gpu {
     		deviceIds = std::move(other.deviceIds);
             gpuData = std::move(other.gpuData);
     		hasMoved = other.hasMoved;
+
+            distributedSequenceData = std::move(other.distributedSequenceData);
 
     		other.destroy();
     		other.hasMoved = true;
@@ -134,6 +139,9 @@ namespace gpu {
     		int oldId;
     		cudaGetDevice(&oldId); CUERR;
 
+
+            distributedSequenceData.set(0, getNumberOfSequences(), cpuReadStorage->h_sequence_data.get());
+
     		for(auto deviceId : deviceIds) {
     			auto datait = gpuData.find(deviceId);
     			if(datait == gpuData.end()) {
@@ -151,6 +159,24 @@ namespace gpu {
                         cudaMemcpy(data.d_sequence_lengths, cpuReadStorage->h_sequence_lengths.get(), cpuReadStorage->sequence_lengths_bytes, H2D); CUERR;
 
     					data.sequenceType = ContiguousReadStorage::Type::Full;
+
+                        {
+                            auto bytes = cpuReadStorage->sequence_data_bytes;
+                            char* oldptr = data.d_sequence_data;
+                            char* newptr = distributedSequenceData.dataPtrPerLocation[0];
+                            //generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>([=]__device__(){
+                            generic_kernel<<<65535,128>>>([=]__device__(){
+                                for(size_t k = threadIdx.x + blockIdx.x * blockDim.x; k < bytes; k += blockDim.x * gridDim.x){
+                                    char oldval = oldptr[k];
+                                    char newval = newptr[k];
+                                    if(oldval != newval){
+                                        printf("error readstorage %lu %d %d\n", k, oldval, newval);
+                                    }
+                                }
+                            });
+
+                            cudaDeviceSynchronize(); CUERR; printf("rstest done\n");
+                        }
     				}
 
     				if(dataProperties.qualityType == ContiguousReadStorage::Type::Full) {
@@ -382,7 +408,6 @@ namespace gpu {
 
             //result.sequenceType = ContiguousReadStorage::Type::None;
             //result.qualityType = ContiguousReadStorage::Type::None;
-
     		return result;
     	}
 
@@ -427,6 +452,31 @@ namespace gpu {
             });
         }
 
+        ContiguousReadStorage::GatherHandle ContiguousReadStorage::makeGatherHandle() const{
+            return distributedSequenceData.makeGatherHandle();
+        }
+
+        void ContiguousReadStorage::gatherSequenceDataToGpuBufferAsync(
+                                    const ContiguousReadStorage::GatherHandle& handle,
+                                    char* d_sequence_data,
+                                    size_t out_sequence_pitch,
+                                    const read_number* h_readIds,
+                                    const read_number* d_readIds,
+                                    int nReadIds,
+                                    int deviceId,
+                                    cudaStream_t stream) const{
+
+            distributedSequenceData.gatherElementsInGpuMemAsync(handle,
+                                                                h_readIds,
+                                                                d_readIds,
+                                                                nReadIds,
+                                                                deviceId,
+                                                                d_sequence_data,
+                                                                out_sequence_pitch,
+                                                                stream);
+
+        }
+
         void ContiguousReadStorage::copyGpuSequenceDataToGpuBufferAsync(char* d_sequence_data, size_t out_sequence_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             assert(size_t(cpuReadStorage->maximum_allowed_sequence_bytes) <= out_sequence_pitch);
 
@@ -437,55 +487,21 @@ namespace gpu {
 
             dim3 grid(SDIV(nReadIds, 128),1,1);
             dim3 block(128,1,1);
-            //dim3 grid(1,1,1);
-            //dim3 block(1,1,1);
-            //const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
 
             generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
                 const int intiters = out_sequence_pitch / sizeof(int);
 
-                constexpr char A_enc = 0x00;
-                constexpr char C_enc = 0x01;
-                constexpr char G_enc = 0x02;
-                constexpr char T_enc = 0x03;
-
-                auto to_nuc = [](char c){
-                    switch(c){
-                    case A_enc: return 'A';
-                    case C_enc: return 'C';
-                    case G_enc: return 'G';
-                    case T_enc: return 'T';
-                    default: return 'F';
-                    }
-                };
-                auto get = [] (const char* data, int length, int index){
-        			//return Sequence_t::get_as_nucleotide(data, length, index);
-                    return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
-        		};
-
                 for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
                     const read_number readId = d_readIds[index];
-                    // printf("%d, %u kernel\n", index, readId);
-                    // const int length = rs_sequence_lengths[readId];
-                    // const char* ptr = &rs_sequence_data[size_t(readId) * rs_sequence_pitch];
-                    // for(int i = 0; i < length; i++){
-                    //     printf("%c", to_nuc(get(ptr, length, i)));
-                    // }
-                    // printf("\n");
-
 
                     for(int k = 0; k < intiters; k++){
                         ((int*)&d_sequence_data[index * out_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * rs_sequence_pitch])[k];
                     }
                     for(int k = intiters * sizeof(int); k < out_sequence_pitch; k++){
+                    //for(int k = 0; k < out_sequence_pitch; k++){
+                    //   printf("rs index %d k %d, copy src[%lu] to dest[%lu] %d\n", index, k, size_t(readId) * rs_sequence_pitch + k, index * out_sequence_pitch + k, int(rs_sequence_data[size_t(readId) * rs_sequence_pitch + k]));
                         d_sequence_data[index * out_sequence_pitch + k] = rs_sequence_data[size_t(readId) * rs_sequence_pitch + k];
                     }
-
-                    // const char* ptr2 = &d_sequence_data[index * out_sequence_pitch];
-                    // for(int i = 0; i < length; i++){
-                    //     printf("%c", to_nuc(get(ptr2, length, i)));
-                    // }
-                    // printf("\n");
                 }
             });
         }
