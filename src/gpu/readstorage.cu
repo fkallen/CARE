@@ -52,7 +52,7 @@ namespace gpu {
             assert(sequencepitch % sizeof(int) == 0);
             distributedSequenceData2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch / sizeof(int)));
             distributedSequenceLengths2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, 1));
-            distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, maxFreeMemFractions, numReads, getQualityPitch()));
+            distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, {0.05}, numReads, getQualityPitch()));
     	}
 
     	ContiguousReadStorage::ContiguousReadStorage(ContiguousReadStorage&& other){
@@ -156,7 +156,7 @@ namespace gpu {
 
             }
 
-
+#if 0
     		for(auto deviceId : deviceIds) {
     			auto datait = gpuData.find(deviceId);
     			if(datait == gpuData.end()) {
@@ -362,7 +362,7 @@ namespace gpu {
     	    #endif
     			}
     		}
-
+#endif
     		cudaSetDevice(oldId); CUERR;
     	}
 
@@ -596,7 +596,8 @@ namespace gpu {
                                     const read_number* d_readIds,
                                     int nReadIds,
                                     int deviceId,
-                                    cudaStream_t stream) const{
+                                    cudaStream_t stream,
+                                    int numCpuThreads) const{
 
             distributedSequenceData2.gatherElementsInGpuMemAsync(handle,
                                                                 h_readIds,
@@ -605,7 +606,8 @@ namespace gpu {
                                                                 deviceId,
                                                                 (int*)d_sequence_data,
                                                                 out_sequence_pitch,
-                                                                stream);
+                                                                stream,
+                                                                numCpuThreads);
 
         }
 
@@ -619,7 +621,8 @@ namespace gpu {
                                     const read_number* d_readIds,
                                     int nReadIds,
                                     int deviceId,
-                                    cudaStream_t stream) const{
+                                    cudaStream_t stream,
+                                    int numCpuThreads) const{
 
             distributedSequenceLengths2.gatherElementsInGpuMemAsync(handle,
                                                                 h_readIds,
@@ -628,7 +631,8 @@ namespace gpu {
                                                                 deviceId,
                                                                 d_lengths,
                                                                 sizeof(int),
-                                                                stream);
+                                                                stream,
+                                                                numCpuThreads);
 
         }
 
@@ -640,7 +644,8 @@ namespace gpu {
                                     const read_number* d_readIds,
                                     int nReadIds,
                                     int deviceId,
-                                    cudaStream_t stream) const{
+                                    cudaStream_t stream,
+                                    int numCpuThreads) const{
 
             distributedQualities2.gatherElementsInGpuMemAsync(handle,
                                                                 h_readIds,
@@ -649,7 +654,8 @@ namespace gpu {
                                                                 deviceId,
                                                                 d_quality_data,
                                                                 out_quality_pitch,
-                                                                stream);
+                                                                stream,
+                                                                numCpuThreads);
 
         }
 

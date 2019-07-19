@@ -63,7 +63,7 @@
 namespace care{
 namespace gpu{
 
-    constexpr int nParallelBatches = 1;
+    constexpr int nParallelBatches = 4;
     constexpr int sideBatchStepsPerWaitIter = 1;
 
     constexpr int primary_stream_index = 0;
@@ -349,6 +349,10 @@ namespace gpu{
 				bool isPausable,
 				TransitionFunctionData& transFuncData);
 
+    BatchState state_copyreads_func2(Batch& batch,
+                bool isPausable,
+                TransitionFunctionData& transFuncData);
+
 	BatchState state_startalignment_func(Batch& batch,
 				bool isPausable,
 				TransitionFunctionData& transFuncData);
@@ -358,6 +362,10 @@ namespace gpu{
             TransitionFunctionData& transFuncData);
 
 	BatchState state_copyqualities_func(Batch& batch,
+				bool isPausable,
+				TransitionFunctionData& transFuncData);
+
+    BatchState state_copyqualities_func2(Batch& batch,
 				bool isPausable,
 				TransitionFunctionData& transFuncData);
 
@@ -431,10 +439,10 @@ namespace gpu{
         std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
 
 		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
-		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
+		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func2;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
         transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
-		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
+		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func2;
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
         transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
@@ -1306,14 +1314,18 @@ namespace gpu{
                                                                          dataArrays.h_subject_read_ids,
                                                                          dataArrays.d_subject_read_ids,
                                                                          dataArrays.n_subjects,
-                                                                         transFuncData.deviceId, streams[primary_stream_index]);
+                                                                         transFuncData.deviceId,
+                                                                         streams[primary_stream_index],
+                                                                         transFuncData.runtimeOptions.nCorrectorThreads);
 
             transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.candidateLengthGatherHandle2,
                                                                       dataArrays.d_candidate_sequences_lengths,
                                                                       dataArrays.h_candidate_read_ids,
                                                                       dataArrays.d_candidate_read_ids,
                                                                       dataArrays.n_queries,
-                                                                      transFuncData.deviceId, streams[primary_stream_index]);
+                                                                      transFuncData.deviceId,
+                                                                      streams[primary_stream_index],
+                                                                      transFuncData.runtimeOptions.nCorrectorThreads);
 
             // transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
             //                                                              dataArrays.d_subject_read_ids,
@@ -1344,20 +1356,24 @@ namespace gpu{
 //             cudaMemsetAsync(tmpptr2, 0, dataArrays.encoded_sequence_pitch * dataArrays.n_queries, streams[primary_stream_index]);
 
             transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.subjectSequenceGatherHandle2,
-                                                                         dataArrays.d_subject_sequences_data,
-                                                                         dataArrays.encoded_sequence_pitch,
-                                                                         dataArrays.h_subject_read_ids,
-                                                                         dataArrays.d_subject_read_ids,
-                                                                         dataArrays.n_subjects,
-                                                                         transFuncData.deviceId, streams[primary_stream_index]);
+                                                                             dataArrays.d_subject_sequences_data,
+                                                                             dataArrays.encoded_sequence_pitch,
+                                                                             dataArrays.h_subject_read_ids,
+                                                                             dataArrays.d_subject_read_ids,
+                                                                             dataArrays.n_subjects,
+                                                                             transFuncData.deviceId,
+                                                                             streams[primary_stream_index],
+                                                                             transFuncData.runtimeOptions.nCorrectorThreads);
 
             transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.candidateSequenceGatherHandle2,
-                                                                      dataArrays.d_candidate_sequences_data,
-                                                                      dataArrays.encoded_sequence_pitch,
-                                                                      dataArrays.h_candidate_read_ids,
-                                                                      dataArrays.d_candidate_read_ids,
-                                                                      dataArrays.n_queries,
-                                                                      transFuncData.deviceId, streams[primary_stream_index]);
+                                                                              dataArrays.d_candidate_sequences_data,
+                                                                              dataArrays.encoded_sequence_pitch,
+                                                                              dataArrays.h_candidate_read_ids,
+                                                                              dataArrays.d_candidate_read_ids,
+                                                                              dataArrays.n_queries,
+                                                                              transFuncData.deviceId,
+                                                                              streams[primary_stream_index],
+                                                                              transFuncData.runtimeOptions.nCorrectorThreads);
 
             // transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data,
             //                                                              dataArrays.encoded_sequence_pitch,
@@ -1596,6 +1612,160 @@ namespace gpu{
 
         return BatchState::StartAlignment;
     }
+
+
+    BatchState state_copyreads_func2(Batch& batch,
+                bool isPausable,
+                TransitionFunctionData& transFuncData){
+
+        assert(batch.state == BatchState::CopyReads);
+        assert(batch.copiedTasks <= int(batch.tasks.size()));
+
+        DataArrays& dataArrays = *batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+
+
+        const bool handledReadIds = batch.handledReadIds;
+
+        if(!handledReadIds){
+
+            dataArrays.h_candidates_per_subject_prefixsum[0] = 0;
+            for(size_t i = 0; i < batch.tasks.size(); i++){
+                const size_t num = batch.tasks[i].candidate_read_ids.size();
+                dataArrays.h_candidates_per_subject[i] = num;
+                dataArrays.h_candidates_per_subject_prefixsum[i+1] = dataArrays.h_candidates_per_subject_prefixsum[i] + num;
+            }
+
+            for(size_t i = 0; i < batch.tasks.size(); i++){
+                const auto& task = batch.tasks[i];
+                dataArrays.h_subject_read_ids[i] = task.readId;
+
+                const int offset = dataArrays.h_candidates_per_subject_prefixsum[i];
+                std::copy(task.candidate_read_ids.begin(),
+                            task.candidate_read_ids.end(),
+                            dataArrays.h_candidate_read_ids + offset);
+            }
+
+            cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                            dataArrays.h_subject_read_ids,
+                            dataArrays.h_subject_read_ids.sizeInBytes(),
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.d_candidate_read_ids,
+                            dataArrays.h_candidate_read_ids,
+                            dataArrays.h_candidate_read_ids.sizeInBytes(),
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.d_candidates_per_subject,
+                            dataArrays.h_candidates_per_subject,
+                            dataArrays.h_candidates_per_subject.sizeInBytes(),
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.d_candidates_per_subject_prefixsum,
+                            dataArrays.h_candidates_per_subject_prefixsum,
+                            dataArrays.h_candidates_per_subject_prefixsum.sizeInBytes(),
+                            H2D,
+                            streams[primary_stream_index]); CUERR;
+
+            batch.handledReadIds = true;
+        }
+
+        transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.subjectLengthGatherHandle2,
+                                                                     dataArrays.d_subject_sequences_lengths,
+                                                                     dataArrays.h_subject_read_ids,
+                                                                     dataArrays.d_subject_read_ids,
+                                                                     dataArrays.n_subjects,
+                                                                     transFuncData.deviceId,
+                                                                     streams[primary_stream_index],
+                                                                     transFuncData.runtimeOptions.nCorrectorThreads);
+
+        transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.candidateLengthGatherHandle2,
+                                                                  dataArrays.d_candidate_sequences_lengths,
+                                                                  dataArrays.h_candidate_read_ids,
+                                                                  dataArrays.d_candidate_read_ids,
+                                                                  dataArrays.n_queries,
+                                                                  transFuncData.deviceId,
+                                                                  streams[primary_stream_index],
+                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
+
+        transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.subjectSequenceGatherHandle2,
+                                                                         dataArrays.d_subject_sequences_data,
+                                                                         dataArrays.encoded_sequence_pitch,
+                                                                         dataArrays.h_subject_read_ids,
+                                                                         dataArrays.d_subject_read_ids,
+                                                                         dataArrays.n_subjects,
+                                                                         transFuncData.deviceId,
+                                                                         streams[primary_stream_index],
+                                                                         transFuncData.runtimeOptions.nCorrectorThreads);
+
+        transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.candidateSequenceGatherHandle2,
+                                                                          dataArrays.d_candidate_sequences_data,
+                                                                          dataArrays.encoded_sequence_pitch,
+                                                                          dataArrays.h_candidate_read_ids,
+                                                                          dataArrays.d_candidate_read_ids,
+                                                                          dataArrays.n_queries,
+                                                                          transFuncData.deviceId,
+                                                                          streams[primary_stream_index],
+                                                                          transFuncData.runtimeOptions.nCorrectorThreads);
+
+        assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
+
+        call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
+                         (const int*)dataArrays.d_subject_sequences_data.get(),
+                         dataArrays.n_subjects,
+                         getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
+                         dataArrays.encoded_sequence_pitch / sizeof(int),
+                         streams[primary_stream_index]);
+
+        call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
+                         (const int*)dataArrays.d_candidate_sequences_data.get(),
+                         dataArrays.n_queries,
+                         getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
+                         dataArrays.encoded_sequence_pitch / sizeof(int),
+                         streams[primary_stream_index]);
+
+        cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;
+
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0) ;
+
+        cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+                        dataArrays.d_subject_sequences_data,
+                        dataArrays.d_subject_sequences_data.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_candidate_sequences_data,
+                        dataArrays.d_candidate_sequences_data,
+                        dataArrays.d_candidate_sequences_data.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
+                        dataArrays.d_subject_sequences_lengths,
+                        dataArrays.d_subject_sequences_lengths.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_candidate_sequences_lengths,
+                        dataArrays.d_candidate_sequences_lengths,
+                        dataArrays.d_candidate_sequences_lengths.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        batch.copiedTasks = 0;
+        batch.copiedCandidates = 0;
+        batch.copiedSubjects = 0;
+        batch.handledReadIds = false;
+
+        return BatchState::StartAlignment;
+    }
+
+
 
 	BatchState state_startalignment_func(Batch& batch,
 												bool isPausable,
@@ -1979,27 +2149,16 @@ namespace gpu{
 		if(transFuncData.correctionOptions.useQualityScores) {
 
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
-                // char* tmpptr = nullptr;
-                //
-                // cubCachingAllocator.DeviceAllocate((void**)&tmpptr,
-                //                                  dataArrays.quality_pitch * dataArrays.n_subjects,
-                //                                  streams[primary_stream_index]); CUERR;
-                // cudaMemsetAsync(tmpptr, 0, dataArrays.quality_pitch * dataArrays.n_subjects, streams[primary_stream_index]);
-                //
-                // char* tmpptr2 = nullptr;
-                //
-                // cubCachingAllocator.DeviceAllocate((void**)&tmpptr2,
-                //                                  dataArrays.quality_pitch * dataArrays.n_queries,
-                //                                  streams[primary_stream_index]); CUERR;
-                // cudaMemsetAsync(tmpptr2, 0, dataArrays.quality_pitch * dataArrays.n_queries, streams[primary_stream_index]);
 
                 gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.subjectQualitiesGatherHandle2,
-                                                                          dataArrays.d_subject_qualities,
-                                                                          dataArrays.quality_pitch,
-                                                                          dataArrays.h_subject_read_ids,
-                                                                          dataArrays.d_subject_read_ids,
-                                                                          dataArrays.n_subjects,
-                                                                          transFuncData.deviceId, streams[primary_stream_index]);
+                                                                  dataArrays.d_subject_qualities,
+                                                                  dataArrays.quality_pitch,
+                                                                  dataArrays.h_subject_read_ids,
+                                                                  dataArrays.d_subject_read_ids,
+                                                                  dataArrays.n_subjects,
+                                                                  transFuncData.deviceId,
+                                                                  streams[primary_stream_index],
+                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
 
                // gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
                //                                                    dataArrays.quality_pitch,
@@ -2026,12 +2185,14 @@ namespace gpu{
                 }
 
                 gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.candidateQualitiesGatherHandle2,
-                                                                          dataArrays.d_candidate_qualities,
-                                                                          dataArrays.quality_pitch,
-                                                                          h_tmp_read_ids.data(),
-                                                                          d_tmp_read_ids,
-                                                                          dataArrays.h_num_indices[0],
-                                                                          transFuncData.deviceId, streams[primary_stream_index]);
+                                                                  dataArrays.d_candidate_qualities,
+                                                                  dataArrays.quality_pitch,
+                                                                  h_tmp_read_ids.data(),
+                                                                  d_tmp_read_ids,
+                                                                  dataArrays.h_num_indices[0],
+                                                                  transFuncData.deviceId,
+                                                                  streams[primary_stream_index],
+                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
 
                 // gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
                 //                                                   dataArrays.quality_pitch,
@@ -2216,6 +2377,110 @@ namespace gpu{
                 batch.copiedCandidates = 0;
                 return BatchState::BuildMSA;
             }
+
+        }else{
+            return BatchState::BuildMSA;
+        }
+	}
+
+
+    BatchState state_copyqualities_func2(Batch& batch,
+												bool isPausable,
+				TransitionFunctionData& transFuncData){
+
+        constexpr BatchState expectedState = BatchState::CopyQualities;
+#ifdef USE_WAIT_FLAGS
+        constexpr int wait_index = static_cast<int>(expectedState);
+#endif
+		assert(batch.state == expectedState);
+
+        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+#ifdef USE_WAIT_FLAGS
+        if(batch.waitCounts[wait_index] != 0){
+            batch.activeWaitIndex = wait_index;
+            return expectedState;
+        }
+#else
+        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+        if(status == cudaErrorNotReady){
+            batch.activeWaitIndex = indices_transfer_finished_event_index;
+            return expectedState;
+        }
+#endif
+
+
+
+
+        DataArrays& dataArrays = *batch.dataArrays;
+
+        //if there are no good candidates, clean up batch and discard reads
+        if(dataArrays.h_num_indices[0] == 0){
+            return BatchState::WriteResults;
+        }
+
+		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+
+		const auto* gpuReadStorage = transFuncData.gpuReadStorage;
+
+		if(transFuncData.correctionOptions.useQualityScores) {
+
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.subjectQualitiesGatherHandle2,
+                                                              dataArrays.d_subject_qualities,
+                                                              dataArrays.quality_pitch,
+                                                              dataArrays.h_subject_read_ids,
+                                                              dataArrays.d_subject_read_ids,
+                                                              dataArrays.n_subjects,
+                                                              transFuncData.deviceId,
+                                                              streams[primary_stream_index],
+                                                              transFuncData.runtimeOptions.nCorrectorThreads);
+
+            read_number* d_tmp_read_ids = nullptr;
+            cubCachingAllocator.DeviceAllocate((void**)&d_tmp_read_ids, dataArrays.n_queries * sizeof(read_number), streams[primary_stream_index]); CUERR;
+
+            call_compact_kernel_async(d_tmp_read_ids,
+                                        dataArrays.d_candidate_read_ids.get(),
+                                        dataArrays.d_indices,
+                                        dataArrays.h_num_indices[0],
+                                        streams[primary_stream_index]);
+
+            std::vector<read_number> h_tmp_read_ids(dataArrays.h_num_indices[0]);
+            for(int i = 0; i < dataArrays.h_num_indices[0]; i++){
+                h_tmp_read_ids[i] = dataArrays.h_candidate_read_ids[dataArrays.h_indices[i]];
+            }
+
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.candidateQualitiesGatherHandle2,
+                                                              dataArrays.d_candidate_qualities,
+                                                              dataArrays.quality_pitch,
+                                                              h_tmp_read_ids.data(),
+                                                              d_tmp_read_ids,
+                                                              dataArrays.h_num_indices[0],
+                                                              transFuncData.deviceId,
+                                                              streams[primary_stream_index],
+                                                              transFuncData.runtimeOptions.nCorrectorThreads);
+
+            cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
+
+            assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
+
+            cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_subject_qualities,
+                            dataArrays.d_subject_qualities,
+                            dataArrays.d_subject_qualities.sizeInBytes(),
+                            D2H,
+                            streams[secondary_stream_index]);
+
+            cudaMemcpyAsync(dataArrays.h_candidate_qualities,
+                            dataArrays.d_candidate_qualities,
+                            dataArrays.d_candidate_qualities.sizeInBytes(),
+                            D2H,
+                            streams[secondary_stream_index]);
+
+            return BatchState::BuildMSA;
+
 
         }else{
             return BatchState::BuildMSA;

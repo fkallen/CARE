@@ -181,7 +181,8 @@ struct ContiguousReadStorage {
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream) const;
+                                cudaStream_t stream,
+                                int numCpuThreads) const;
 
     GatherHandleLengths makeGatherHandleLengths() const;
 
@@ -192,7 +193,8 @@ struct ContiguousReadStorage {
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream) const;
+                                cudaStream_t stream,
+                                int numCpuThreads) const;
 
     GatherHandleQualities makeGatherHandleQualities() const;
 
@@ -204,7 +206,8 @@ struct ContiguousReadStorage {
                                 const read_number* d_readIds,
                                 int nReadIds,
                                 int deviceId,
-                                cudaStream_t stream) const;
+                                cudaStream_t stream,
+                                int numCpuThreads) const;
 };
 
 #endif

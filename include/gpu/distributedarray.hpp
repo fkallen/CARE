@@ -16,7 +16,7 @@
 #include <map>
 #include <future>
 #include <cassert>
-
+#include <omp.h>
 
 struct PeerAccess{
     int numGpus;
@@ -1392,20 +1392,64 @@ public:
                                     int deviceId,
                                     Value_t* d_result,
                                     size_t resultPitch, // result element i begins at offset i * resultPitch
-                                    cudaStream_t stream) const{
+                                    cudaStream_t stream,
+                                    int numCpuThreads) const{
 
         assert(resultPitch >= sizeOfElement);
 
         if(numIds == 0) return;
 
+
+        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+        int deviceIdLocation = -1;
+        if(deviceIdIter != deviceIds.end()){
+            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
+        }
+        //fastpath, if all elements of distributed array reside on the gpu with device id deviceId
+        if(deviceIdLocation != -1 && numRows == elementsPerLocation[deviceIdLocation]){
+            if(debug) std::cerr << "single location array fasthpath " << deviceId << '\n';
+            copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[deviceIdLocation]);
+            return;
+        }
+
+        int oldNumOMPThreads = numCpuThreads;
+        #pragma omp parallel
+        {
+            #pragma omp single
+            oldNumOMPThreads = omp_get_num_threads();
+        }
+        omp_set_num_threads(numCpuThreads);
+
+
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
 //TIMERSTARTCPU(countHitsPerLocation);
-    	std::vector<Index_t> hitsPerLocation(numLocations, 0);
-    	for(Index_t i = 0; i < numIds; i++){
-    		int location = getLocation(indices[i]);
-    		hitsPerLocation[location]++;
-    	}
+    	// std::vector<Index_t> hitsPerLocation(numLocations, 0);
+    	// for(Index_t i = 0; i < numIds; i++){
+    	// 	int location = getLocation(indices[i]);
+    	// 	hitsPerLocation[location]++;
+    	// }
+        std::vector<Index_t> hitsPerLocation(numLocations, 0);
+        const int threadlocoffset = SDIV(numLocations,32) * 32;
+        std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            Index_t* hitsptr = hitsPerLocationPerThread.data() + threadlocoffset * tid;
+            #pragma omp for
+            for(Index_t i = 0; i < numIds; i++){
+                int location = getLocation(indices[i]);
+                hitsptr[location]++;
+            }
+        }
+
+        for(int k = 0; k < numCpuThreads; k++){
+            for(int l = 0; l < numLocations; l++){
+                hitsPerLocation[l] += hitsPerLocationPerThread[threadlocoffset * k + l];
+            }
+        }
+
+
 //TIMERSTOPCPU(countsHitPerLocation);
 
         if(debug){
@@ -1416,10 +1460,8 @@ public:
 
         //shortcut. if all elements reside on the gpu with device id deviceId, perform a simple gather on the gpu, avoiding copies to host and from host.
         bool simpleGatherOnSameDevice = true;
-        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
-        int deviceIdLocation = -1;
-        if(deviceIdIter != deviceIds.end()){
-            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
+
+        if(deviceIdLocation != -1){
             for(int i = 0; i < numLocations && simpleGatherOnSameDevice; i++){
                 if(i != deviceIdLocation && hitsPerLocation[i] > 0){
                     simpleGatherOnSameDevice = false;
@@ -1551,6 +1593,7 @@ public:
             const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[hostLocation];
             Value_t* hostResult = offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[hostLocation]);
 
+            #pragma omp parallel for
             for(Index_t k = 0; k < numHits; k++){
                 const Index_t localId = hostLocalIds[k];
                 const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
@@ -1636,6 +1679,7 @@ public:
         // std::cerr << "\n";
 
         cudaSetDevice(oldDevice); CUERR;
+        omp_set_num_threads(oldNumOMPThreads);
 
     }
 
