@@ -202,24 +202,24 @@ namespace gpu {
 
     					data.qualityType = ContiguousReadStorage::Type::Full;
 
-                        {
-                            auto bytes = cpuReadStorage->quality_data_bytes;
-                            char* oldptr = data.d_quality_data;
-                            char* newptr = distributedQualities2.dataPtrPerLocation[0];
-                            //generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>([=]__device__(){
-                            generic_kernel<<<65535,128>>>([=]__device__(){
-                                for(size_t k = threadIdx.x + blockIdx.x * blockDim.x; k < bytes; k += blockDim.x * gridDim.x){
-                                    char oldval = oldptr[k];
-                                    char newval = newptr[k];
-                                    if(oldval != newval){
-                                        printf("error qual %lu %d %d\n", k, oldval, newval);
-                                        break;
-                                    }
-                                }
-                            });
-
-                            cudaDeviceSynchronize(); CUERR; printf("rs qual test done\n");
-                        }
+                        // {
+                        //     auto bytes = cpuReadStorage->quality_data_bytes;
+                        //     char* oldptr = data.d_quality_data;
+                        //     char* newptr = distributedQualities2.dataPtrPerLocation[0];
+                        //     //generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>([=]__device__(){
+                        //     generic_kernel<<<65535,128>>>([=]__device__(){
+                        //         for(size_t k = threadIdx.x + blockIdx.x * blockDim.x; k < bytes; k += blockDim.x * gridDim.x){
+                        //             char oldval = oldptr[k];
+                        //             char newval = newptr[k];
+                        //             if(oldval != newval){
+                        //                 printf("error qual %lu %d %d\n", k, oldval, newval);
+                        //                 break;
+                        //             }
+                        //         }
+                        //     });
+                        //
+                        //     cudaDeviceSynchronize(); CUERR; printf("rs qual test done\n");
+                        // }
 
                         /*std::cerr << "checking quality nullbytes\n";
 
