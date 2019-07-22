@@ -52,7 +52,7 @@ namespace gpu {
             assert(sequencepitch % sizeof(int) == 0);
             distributedSequenceData2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch / sizeof(int)));
             distributedSequenceLengths2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, 1));
-            distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, {0.05}, numReads, getQualityPitch()));
+            distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, maxFreeMemFractions, numReads, getQualityPitch()));
     	}
 
     	ContiguousReadStorage::ContiguousReadStorage(ContiguousReadStorage&& other){
