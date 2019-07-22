@@ -12,6 +12,10 @@
 #include "sequence.hpp"
 #include "threadsafe_buffer.hpp"
 
+#ifdef __NVCC__
+#include <gpu/distributedreadstorage.hpp>
+#endif
+
 #include <stdexcept>
 #include <iostream>
 #include <limits>
@@ -40,6 +44,8 @@ namespace care{
     };
 
 
+
+
     BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
                                                 const RuntimeOptions& runtimeOptions,
                                                 bool useQualityScores,
@@ -56,6 +62,36 @@ namespace care{
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
                                 			const FileOptions& fileOptions);
+
+#ifdef __NVCC__
+
+    namespace gpu{
+
+        struct BuiltGpuDataStructures{
+            BuiltDataStructure<DistributedReadStorage> builtReadStorage;
+            BuiltDataStructure<Minhasher> builtMinhasher;
+
+            SequenceFileProperties sequenceFileProperties;
+        };
+
+        BuiltDataStructure<DistributedReadStorage> buildGpuReadStorage(const FileOptions& fileOptions,
+                                                                        const RuntimeOptions& runtimeOptions,
+                                                                        bool useQualityScores,
+                                                                        read_number expectedNumberOfReads,
+                                                                        int expectedMaximumReadLength);
+
+        BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
+                                    			   const RuntimeOptions& runtimeOptions,
+                                    			   std::uint64_t nReads,
+                                                   const MinhashOptions& minhashOptions,
+                                    			   const DistributedReadStorage& readStorage);
+
+        BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
+                                    			const CorrectionOptions& correctionOptions,
+                                    			const RuntimeOptions& runtimeOptions,
+                                    			const FileOptions& fileOptions);
+    }
+#endif
 }
 
 
