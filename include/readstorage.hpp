@@ -157,6 +157,12 @@ namespace cpu{
             return result;
         }
 
+    	void resize(read_number nReads){
+    		assert(getNumberOfSequences() >= nReads);
+
+            num_sequences = nReads;
+    	}
+
     	void destroy(){
             h_sequence_data.reset();
             h_sequence_lengths.reset();
