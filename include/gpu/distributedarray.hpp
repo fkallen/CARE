@@ -978,73 +978,76 @@ public:
         elementsPerLocationPS.resize(numLocations+1, 0);
         dataPtrPerLocation.resize(numLocations, nullptr);
 
-        std::vector<size_t> freeMemPerGpu(numGpus);
+        if(numRows > 0 && numColumns > 0){
 
-        int oldId; cudaGetDevice(&oldId); CUERR;
+            std::vector<size_t> freeMemPerGpu(numGpus);
 
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
+            int oldId; cudaGetDevice(&oldId); CUERR;
 
-            size_t total;
-            cudaMemGetInfo(&freeMemPerGpu[gpu], &total); CUERR;
-        }
-
-        size_t totalRequiredMemory = numRows * sizeOfElement;
-
-        bool preferedLocationIsSufficient = false;
-
-        if(preferedLocation != -1 && preferedLocation != hostLocation){
-            if(freeMemPerGpu[preferedLocation] * maxFreeMemFraction[preferedLocation] <= totalRequiredMemory){
-                preferedLocationIsSufficient = true;
-            }
-        }
-
-        if(preferedLocationIsSufficient){
-            cudaSetDevice(deviceIds[preferedLocation]); CUERR;
-            elementsPerLocation[preferedLocation] = numRows;
-            cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory); CUERR;
-        }else{
-            std::vector<size_t> freeMemPerGpuTreshold(freeMemPerGpu.size());
-            size_t remainingElements = numRows;
-
-            for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
+            for(int gpu = 0; gpu < numGpus; gpu++){
                 cudaSetDevice(deviceIds[gpu]); CUERR;
-                freeMemPerGpuTreshold[gpu] = freeMemPerGpu[gpu] * maxFreeMemFraction[gpu];
-                size_t rows = std::min(remainingElements, freeMemPerGpuTreshold[gpu] / sizeOfElement);
-                elementsPerLocation[gpu] = rows;
-                if(rows == 0){
-                    continue;
+
+                size_t total;
+                cudaMemGetInfo(&freeMemPerGpu[gpu], &total); CUERR;
+            }
+
+            size_t totalRequiredMemory = numRows * sizeOfElement;
+
+            bool preferedLocationIsSufficient = false;
+
+            if(preferedLocation != -1 && preferedLocation != hostLocation){
+                if(freeMemPerGpu[preferedLocation] * maxFreeMemFraction[preferedLocation] <= totalRequiredMemory){
+                    preferedLocationIsSufficient = true;
                 }
-                //std::cerr << "cudamalloc on device " << deviceIds[gpu] << '\n';
-                //std::cerr << "bytes: " << (elements * sizeOfElement) << '\n';
-                cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
-
-                //std::cerr << "dataptr: " << static_cast<void*>(dataPtrPerLocation[gpu]) <<'\n';
-
-                remainingElements -= rows;
             }
 
-            //remaining elements are stored in host memory
-            if(remainingElements > 0){
-                dataPtrPerLocation[hostLocation] = new Value_t[remainingElements * numColumns];
-                elementsPerLocation[hostLocation] = remainingElements;
+            if(preferedLocationIsSufficient){
+                cudaSetDevice(deviceIds[preferedLocation]); CUERR;
+                elementsPerLocation[preferedLocation] = numRows;
+                cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory); CUERR;
+            }else{
+                std::vector<size_t> freeMemPerGpuTreshold(freeMemPerGpu.size());
+                size_t remainingElements = numRows;
+
+                for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
+                    cudaSetDevice(deviceIds[gpu]); CUERR;
+                    freeMemPerGpuTreshold[gpu] = freeMemPerGpu[gpu] * maxFreeMemFraction[gpu];
+                    size_t rows = std::min(remainingElements, freeMemPerGpuTreshold[gpu] / sizeOfElement);
+                    elementsPerLocation[gpu] = rows;
+                    if(rows == 0){
+                        continue;
+                    }
+                    //std::cerr << "cudamalloc on device " << deviceIds[gpu] << '\n';
+                    //std::cerr << "bytes: " << (elements * sizeOfElement) << '\n';
+                    cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
+
+                    //std::cerr << "dataptr: " << static_cast<void*>(dataPtrPerLocation[gpu]) <<'\n';
+
+                    remainingElements -= rows;
+                }
+
+                //remaining elements are stored in host memory
+                if(remainingElements > 0){
+                    dataPtrPerLocation[hostLocation] = new Value_t[remainingElements * numColumns];
+                    elementsPerLocation[hostLocation] = remainingElements;
+                }
             }
+
+            std::partial_sum(elementsPerLocation.begin(), elementsPerLocation.end(), elementsPerLocationPS.begin()+1);
+
+            if(true){
+                std::cerr << "DistributedArray2:\n";
+                std::cerr << "device ids: [";
+                std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));
+                std::cerr << "]\n";
+
+                std::cerr << "elements per location: [";
+                std::copy(elementsPerLocation.begin(), elementsPerLocation.end(), std::ostream_iterator<Index_t>(std::cerr, " "));
+                std::cerr << "]\n";
+            }
+
+            cudaSetDevice(oldId); CUERR;
         }
-
-        std::partial_sum(elementsPerLocation.begin(), elementsPerLocation.end(), elementsPerLocationPS.begin()+1);
-
-        if(true){
-            std::cerr << "DistributedArray2:\n";
-            std::cerr << "device ids: [";
-            std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));
-            std::cerr << "]\n";
-
-            std::cerr << "elements per location: [";
-            std::copy(elementsPerLocation.begin(), elementsPerLocation.end(), std::ostream_iterator<Index_t>(std::cerr, " "));
-            std::cerr << "]\n";
-        }
-
-        cudaSetDevice(oldId); CUERR;
     }
 
     DistributedArray2(const DistributedArray2&) = delete;
@@ -1258,7 +1261,7 @@ public:
 
         const auto instance = this;
         auto future = std::async(std::launch::async, [=](const GatherHandle& handle){
-                                    instance->gatherElementsInHostMem(handle, indices, numIds, result);
+                                    instance->gatherElementsInHostMem(handle, indices, numIds, result, resultPitch);
                                 }, std::ref(handle));
         return future;
     }
@@ -1395,7 +1398,11 @@ public:
                                     cudaStream_t stream,
                                     int numCpuThreads) const{
 
-        assert(resultPitch >= sizeOfElement);
+        // if(resultPitch < sizeOfElement){
+        //     std::cerr << "resultPitch " << resultPitch << ", sizeOfElement " << sizeOfElement << '\n';
+        //     assert(resultPitch >= sizeOfElement);
+        // }
+        // assert(resultPitch >= sizeOfElement);
 
         if(numIds == 0) return;
 
@@ -1685,7 +1692,7 @@ public:
 
     //d_result, d_indices must point to memory of device deviceId. d_indices[i] + indexOffset must be a local element index for this device
     void copyDataToGpuBufferAsync(Value_t* d_result, size_t resultPitch, const Index_t* d_indices, Index_t nIndices, int deviceId, cudaStream_t stream, Index_t indexOffset) const{
-        assert(resultPitch >= sizeOfElement);
+        // assert(resultPitch >= sizeOfElement);
         assert(resultPitch % sizeof(Value_t) == 0);
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
@@ -1738,7 +1745,7 @@ public:
     //d_result points to memory of resultDevice, d_indices points to memory of sourceDevice. Gathers array elements of sourceDevice to resultDevice
     // if resultDevice != sourceDevice, peer access must be enabled
     void copyDataToGpuBufferAsync(Value_t* d_result, size_t resultPitch, int resultDevice, const Index_t* d_indices, Index_t nIndices, int sourceDevice, cudaStream_t stream, Index_t indexOffset) const{
-        assert(resultPitch >= sizeOfElement);
+        //assert(resultPitch >= sizeOfElement);
         assert(resultPitch % sizeof(Value_t) == 0);
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
