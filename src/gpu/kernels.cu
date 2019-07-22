@@ -1871,6 +1871,8 @@ namespace gpu{
                                 float avgsupportkregion = 0;
                                 int c = 0;
                                 bool kregioncoverageisgood = true;
+
+
                                 for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
                                     if(j != i && j >= 0 && j < subjectLength){
                                         avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
@@ -1881,10 +1883,29 @@ namespace gpu{
                                 }
                                 avgsupportkregion /= c;
 
-                                if(kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                                if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
                                     my_corrected_subject[i] = my_consensus[globalIndex];
                                     foundAColumn = true;
                                 }
+
+                                // bool goodconsensusregion = true;
+                                // for(int j = i - k_region/2; j <= i + k_region/2 && goodconsensusregion; j++){
+                                //     if(j != i && j >= 0 && j < subjectLength){
+                                //         const char cons = my_consensus[subjectColumnsBegin_incl + j];
+                                //         const char orig = my_corrected_subject[j];
+                                //         goodconsensusregion &= (cons == orig);
+                                //     }
+                                // }
+
+                                // if(goodconsensusregion){
+                                //     my_corrected_subject[i] = my_consensus[globalIndex];
+                                //     foundAColumn = true;
+                                // }
+
+                                // if(goodconsensusregion && kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                                //     my_corrected_subject[i] = my_consensus[globalIndex];
+                                //     foundAColumn = true;
+                                // }
                             }
 #endif
 
