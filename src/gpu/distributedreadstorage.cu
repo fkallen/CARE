@@ -9,6 +9,7 @@
 #include <sequencefileio.hpp>
 
 #include <fstream>
+#include <omp.h>
 
 #ifdef __NVCC__
 
@@ -31,7 +32,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
         const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthLimit);
 
-        distributedSequenceData2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, intsPerSequence));
+        distributedSequenceData2 = std::move(DistributedArray2<unsigned int, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, intsPerSequence));
         distributedSequenceLengths2 = std::move(DistributedArray2<Length_t, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, 1));
 
         if(useQualityScores){
@@ -78,9 +79,10 @@ DistributedReadStorage::Statistics DistributedReadStorage::getStatistics() const
 void DistributedReadStorage::destroy(){
     numberOfReads = 0;
     sequenceLengthLimit = 0;
-    distributedSequenceData2 = std::move(DistributedArray2<int, read_number>(deviceIds, {0}, 0, 0));
-    distributedSequenceLengths2 = std::move(DistributedArray2<Length_t, read_number>(deviceIds, {0}, 0, 0));
-    distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, {0}, 0, 0));
+    std::vector<float> fractions(deviceIds.size(), 0.0f);
+    distributedSequenceData2 = std::move(DistributedArray2<unsigned int, read_number>(deviceIds, fractions, 0, 0));
+    distributedSequenceLengths2 = std::move(DistributedArray2<Length_t, read_number>(deviceIds, fractions, 0, 0));
+    distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, fractions, 0, 0));
     statistics = Statistics{};
 }
 
@@ -113,7 +115,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     assert(indices.size() > 0);
     assert(reads.size() == indices.size());
     assert(std::all_of(indices.begin(), indices.end(), [&](auto i){ return i < getNumberOfReads();}));
-    assert(std::all_of(reads.begin(), reads.end(), [&](const auto& r){ return Length_t(r.sequence.length()) < getSequenceLengthLimit();}));
+    assert(std::all_of(reads.begin(), reads.end(), [&](const auto& r){ return Length_t(r.sequence.length()) <= getSequenceLengthLimit();}));
     assert(std::all_of(reads.begin(), reads.end(), [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
 
     auto minmax = std::minmax_element(reads.begin(), reads.end(), [](const auto& r1, const auto& r2){
@@ -138,6 +140,16 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
         qualityData.resize(getSequenceLengthLimit() * numReads, 0);
     }
 
+    int oldNumOMPThreads = 1;
+    #pragma omp parallel
+    {
+        #pragma omp single
+        oldNumOMPThreads = omp_get_num_threads();
+    }
+
+    omp_set_num_threads(numThreads);
+
+    #pragma omp parallel for
     for(size_t i = 0; i < numReads; i++){
         const Read& r = reads[i];
 
@@ -151,6 +163,8 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
         }
     }
 
+    omp_set_num_threads(oldNumOMPThreads);
+
     setSequences(indices, sequenceData.data());
     setSequenceLenghts(indices, sequenceLengths.data());
     if(canUseQualityScores()){
@@ -159,27 +173,27 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
 }
 
 void DistributedReadStorage::setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data){
-    distributedSequenceData2.set(firstIndex, lastIndex_excl, reinterpret_cast<const int*>(data));
+    distributedSequenceData2.setSafe(firstIndex, lastIndex_excl, reinterpret_cast<const unsigned int*>(data));
 }
 
 void DistributedReadStorage::setSequences(const std::vector<read_number>& indices, const char* data){
-    distributedSequenceData2.set(indices, reinterpret_cast<const int*>(data));
+    distributedSequenceData2.setSafe(indices, reinterpret_cast<const unsigned int*>(data));
 }
 
 void DistributedReadStorage::setSequenceLenghts(read_number firstIndex, read_number lastIndex_excl, const Length_t* data){
-    distributedSequenceLengths2.set(firstIndex, lastIndex_excl, data);
+    distributedSequenceLengths2.setSafe(firstIndex, lastIndex_excl, data);
 }
 
 void DistributedReadStorage::setSequenceLenghts(const std::vector<read_number>& indices, const Length_t* data){
-    distributedSequenceLengths2.set(indices, data);
+    distributedSequenceLengths2.setSafe(indices, data);
 }
 
 void DistributedReadStorage::setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data){
-    distributedQualities2.set(firstIndex, lastIndex_excl, data);
+    distributedQualities2.setSafe(firstIndex, lastIndex_excl, data);
 }
 
 void DistributedReadStorage::setQualities(const std::vector<read_number>& indices, const char* data){
-    distributedQualities2.set(indices, data);
+    distributedQualities2.setSafe(indices, data);
 }
 
 DistributedReadStorage::GatherHandleSequences DistributedReadStorage::makeGatherHandleSequences() const{
@@ -210,7 +224,7 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync2(
                                                         d_readIds,
                                                         nReadIds,
                                                         deviceId,
-                                                        (int*)d_sequence_data,
+                                                        (unsigned int*)d_sequence_data,
                                                         out_sequence_pitch,
                                                         stream,
                                                         numCpuThreads);
@@ -277,7 +291,7 @@ std::future<void> DistributedReadStorage::gatherSequenceDataToHostBufferAsync(
     return distributedSequenceData2.gatherElementsInHostMemAsync(handle,
                                                         h_readIds,
                                                         nReadIds,
-                                                        (int*)h_sequence_data,
+                                                        (unsigned int*)h_sequence_data,
                                                         out_sequence_pitch);
 }
 
