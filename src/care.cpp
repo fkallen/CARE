@@ -280,4 +280,102 @@ void performCorrection(MinhashOptions minhashOptions,
 }
 
 
+
+
+
+void performCorrection2(MinhashOptions minhashOptions,
+			AlignmentOptions alignmentOptions,
+			CorrectionOptions correctionOptions,
+			RuntimeOptions runtimeOptions,
+			FileOptions fileOptions,
+			GoodAlignmentProperties goodAlignmentProperties){
+
+	filesys::create_directories(fileOptions.outputdirectory);
+
+	std::vector<char> readIsCorrectedVector;
+	std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+
+	auto thread_id = std::this_thread::get_id();
+	std::string thread_id_string;
+	{
+		std::stringstream ss;
+		ss << thread_id;
+		thread_id_string = ss.str();
+	}
+
+	FileOptions iterFileOptions = fileOptions;
+
+	iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
+
+    std::cout << "loading file and building data structures..." << std::endl;
+
+    TIMERSTARTCPU(load_and_build);
+
+    BuiltDataStructures dataStructures = buildDataStructures(minhashOptions,
+                                                            correctionOptions,
+                                                            runtimeOptions,
+                                                            iterFileOptions);
+
+    TIMERSTOPCPU(load_and_build);
+
+    auto& readStorage = dataStructures.builtReadStorage.data;
+    auto& minhasher = dataStructures.builtMinhasher.data;
+    auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
+
+    saveReadStorageToFile(readStorage, iterFileOptions);
+    saveMinhasherToFile(minhasher, iterFileOptions);
+
+    printFileProperties(fileOptions.inputfile, sequenceFileProperties);
+
+    TIMERSTARTCPU(candidateestimation);
+    std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
+
+    if(maxCandidatesPerRead == 0){
+        maxCandidatesPerRead = calculateMaxCandidatesPerReadThreshold(minhasher,
+                                                readStorage,
+                                                sequenceFileProperties.nReads / 10,
+                                                correctionOptions.hits_per_candidate,
+                                                runtimeOptions.threads
+                                                //,"ncandidates.txt"
+                                                );
+
+        std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
+    }
+
+
+
+    TIMERSTOPCPU(candidateestimation);
+
+    readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
+
+    std::cerr << "readIsCorrectedVector bytes: " << readIsCorrectedVector.size() / 1024. / 1024. << " MB\n";
+
+    printDataStructureMemoryUsage(minhasher, readStorage);
+
+    dispatch_correction(minhashOptions, alignmentOptions,
+                        goodAlignmentProperties, correctionOptions,
+                        runtimeOptions, iterFileOptions, sequenceFileProperties,
+                        minhasher, readStorage,
+                        maxCandidatesPerRead,
+                        readIsCorrectedVector, locksForProcessedFlags,
+                        nLocksForProcessedFlags);
+
+    TIMERSTARTCPU(finalizing_files);
+
+	std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
+	std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
+
+    //rename feature file
+    if(correctionOptions.extractFeatures){
+        std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
+        std::string outputfeaturename = fileOptions.outputfile + "_features";
+
+		std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
+    }
+
+    TIMERSTOPCPU(finalizing_files);
+}
+
+
 }
