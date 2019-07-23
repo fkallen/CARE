@@ -30,7 +30,7 @@ struct ContiguousReadStorage {
 
 	using SequenceStatistics = cpu::SequenceStatistics;
     using GatherHandle = DistributedArray<read_number>::GatherHandle;
-    using GatherHandleSequences = DistributedArray2<int, read_number>::GatherHandle;
+    using GatherHandleSequences = DistributedArray2<unsigned int, read_number>::GatherHandle;
     using GatherHandleLengths = DistributedArray2<int, read_number>::GatherHandle;
     using GatherHandleQualities = DistributedArray2<char, read_number>::GatherHandle;
 
@@ -85,7 +85,7 @@ struct ContiguousReadStorage {
 	char* d_quality_data = nullptr;
 
     DistributedArray<read_number> distributedSequenceData;
-    DistributedArray2<int, read_number> distributedSequenceData2;
+    DistributedArray2<unsigned int, read_number> distributedSequenceData2;
     DistributedArray2<int, read_number> distributedSequenceLengths2;
     DistributedArray2<char, read_number> distributedQualities2;
 

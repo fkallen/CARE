@@ -50,7 +50,7 @@ namespace gpu {
             size_t sequencepitch = getSequencePitch();
             //distributedSequenceData = std::move(DistributedArray<read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch));
             assert(sequencepitch % sizeof(int) == 0);
-            distributedSequenceData2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch / sizeof(int)));
+            distributedSequenceData2 = std::move(DistributedArray2<unsigned int, read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch / sizeof(unsigned int)));
             distributedSequenceLengths2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, 1));
             distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, maxFreeMemFractions, numReads, getQualityPitch()));
     	}
@@ -148,7 +148,7 @@ namespace gpu {
 
 
             //distributedSequenceData.set(0, getNumberOfSequences(), cpuReadStorage->h_sequence_data.get());
-            distributedSequenceData2.set(0, getNumberOfSequences(), (const int*)cpuReadStorage->h_sequence_data.get());
+            distributedSequenceData2.set(0, getNumberOfSequences(), (const unsigned int*)cpuReadStorage->h_sequence_data.get());
             distributedSequenceLengths2.set(0, getNumberOfSequences(), cpuReadStorage->h_sequence_lengths.get());
             if(useQualityScores()){
                 distributedQualities2.set(0, getNumberOfSequences(), cpuReadStorage->h_quality_data.get());
@@ -604,7 +604,7 @@ namespace gpu {
                                                                 d_readIds,
                                                                 nReadIds,
                                                                 deviceId,
-                                                                (int*)d_sequence_data,
+                                                                (unsigned int*)d_sequence_data,
                                                                 out_sequence_pitch,
                                                                 stream,
                                                                 numCpuThreads);
