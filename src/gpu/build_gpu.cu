@@ -37,7 +37,7 @@ namespace gpu{
 
 
 
-        if(fileOptions.load_binary_reads_from != ""){
+        if(false && fileOptions.load_binary_reads_from != ""){
             BuiltDataStructure<DistributedReadStorage> result;
             auto& readStorage = result.data;
 
@@ -53,7 +53,8 @@ namespace gpu{
 
             return result;
         }else{
-            int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
+            //int nThreads = std::max(1, std::min(runtimeOptions.threads, 2));
+            const int nThreads = std::max(1, runtimeOptions.threads);
 
             constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
             int Ncount = 0;
@@ -64,11 +65,12 @@ namespace gpu{
             readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
             result.builtType = BuiltType::Constructed;
 
-            constexpr size_t maxbuffersize = 10000000;
+            constexpr size_t maxbuffersize = 1000000;
 
             auto flushBuffers = [&](std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
-                if(indicesBuffer.size() > maxbuffersize){
-                    readstorage.setReads(indicesBuffer, readsBuffer, 1);
+                if(indicesBuffer.size() > 0){
+                    std::cerr << "flush\n";
+                    readstorage.setReads(indicesBuffer, readsBuffer, nThreads);
                     indicesBuffer.clear();
                     readsBuffer.clear();
                 }
@@ -108,76 +110,67 @@ namespace gpu{
                 }
             };
 
-            if(nThreads == 1){
-                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+            // if(nThreads == 1){
+            //     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+            //
+            //     Read read;
+            //
+            //     std::vector<read_number> indicesBuffer;
+            //     std::vector<Read> readsBuffer;
+            //     indicesBuffer.reserve(maxbuffersize);
+            //     readsBuffer.reserve(maxbuffersize);
+            //
+            //     while (reader->getNextRead(&read)) {
+            //         std::uint64_t readIndex = reader->getReadnum() - 1;
+            //
+            //         handle_read(readIndex, read, indicesBuffer, readsBuffer);
+            //     }
+            //
+            //     if(indicesBuffer.size() > 0){
+            //         flushBuffers(indicesBuffer, readsBuffer);
+            //     }
+            //
+            // }else{
 
-                Read read;
+                using CommunicationBuffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
+                CommunicationBuffer_t commBuffer;
 
-                std::vector<read_number> indicesBuffer;
-                std::vector<Read> readsBuffer;
-                indicesBuffer.reserve(maxbuffersize);
-                readsBuffer.reserve(maxbuffersize);
+                auto inserterFunc = [&](){
+                    std::vector<read_number> indicesBuffer;
+                    std::vector<Read> readsBuffer;
+                    indicesBuffer.reserve(maxbuffersize);
+                    readsBuffer.reserve(maxbuffersize);
 
-                while (reader->getNextRead(&read)) {
-                    std::uint64_t readIndex = reader->getReadnum() - 1;
+                    auto pair = commBuffer.get();
 
-                    handle_read(readIndex, read, indicesBuffer, readsBuffer);
-                }
+                    while (pair != commBuffer.defaultValue) {
+                        Read& read = pair.first;
+                        const std::uint64_t readIndex = pair.second;
 
-                if(indicesBuffer.size() > 0){
-                    flushBuffers(indicesBuffer, readsBuffer);
-                }
+                        handle_read(readIndex, read, indicesBuffer, readsBuffer);
 
-            }else{
+                        pair = commBuffer.get();
+                    }
 
-                using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
+                    if(indicesBuffer.size() > 0){
+                        flushBuffers(indicesBuffer, readsBuffer);
+                    }
+                };
 
-                std::vector<std::thread> threads;
-                std::vector<Buffer_t> buffers(nThreads);
-
-                for(int i = 0; i < nThreads; i++){
-                    threads.emplace_back([&, i]{
-
-                            std::vector<read_number> indicesBuffer;
-                            std::vector<Read> readsBuffer;
-                            indicesBuffer.reserve(maxbuffersize);
-                            readsBuffer.reserve(maxbuffersize);
-
-                            auto pair = buffers[i].get();
-
-                            while (pair != buffers[i].defaultValue) {
-                                Read& read = pair.first;
-                                const std::uint64_t readIndex = pair.second;
-
-                                handle_read(readIndex, read, indicesBuffer, readsBuffer);
-
-                                pair = buffers[i].get();
-                            }
-
-                            if(indicesBuffer.size() > 0){
-                                flushBuffers(indicesBuffer, readsBuffer);
-                            }
-                        });
-                }
+                auto inserterThread = std::async(std::launch::async, inserterFunc);
 
                 std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
                 Read read;
-                int target = 0;
                 while (reader->getNextRead(&read)) {
                     std::uint64_t readnum = reader->getReadnum()-1;
-                    target = readnum % nThreads;
-                    buffers[target].add( { read, readnum });
+                    commBuffer.add( { std::move(read), readnum });
                 }
 
-                for (auto& b : buffers) {
-                    b.done();
-                }
+                commBuffer.done();
 
-                for(auto& thread : threads){
-                    thread.join();
-                }
-            }
+                inserterThread.wait();
+            //}
 
             return result;
         }
@@ -267,12 +260,12 @@ namespace gpu{
         				const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
         				const int sequencelength = lengths[localId];
         				std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
-                        minhasher.insertSequence(sequencestring, localId, mapIds);
+                        minhasher.insertSequence(sequencestring, readId, mapIds);
                     }
+                }
 
-                    for(auto mapId : mapIds){
-                        transform_minhasher(minhasher, mapId, runtimeOptions.deviceIds);
-                    }
+                for(auto mapId : mapIds){
+                    transform_minhasher(minhasher, mapId, runtimeOptions.deviceIds);
                 }
             }
 
@@ -297,7 +290,7 @@ namespace gpu{
 
         auto& sequenceFileProperties = result.sequenceFileProperties;
 
-        if(fileOptions.load_binary_reads_from == "") {
+        if(true || fileOptions.load_binary_reads_from == "") {
             if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
                 std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
                 sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
