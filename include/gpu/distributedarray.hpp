@@ -1138,15 +1138,28 @@ public:
         set(indices, data);
     }
 
+    void setSafe(Index_t firstIndex, Index_t lastIndex_excl, const Value_t* data){
+        std::vector<Index_t> indices(lastIndex_excl - firstIndex);
+        std::iota(indices.begin(), indices.end(), firstIndex);
+
+        setSafe(indices, data);
+    }
+
     //indices must be strictly increasing sequence where indices[i+1] == indices[i]+1
     void set(const std::vector<Index_t>& indices, const Value_t* data){
-        assert(std::is_sorted(indices.begin(), indices.end(),
-            [](auto l, auto r){
-                if(r == l+1)
-                    return true;
-                return false;
+        {
+            bool isOk = true;
+            for(size_t i = 0; i < indices.size()-1; i++){
+                if(indices[i] + 1 != indices[i+1]){
+                    isOk = false;
+                    break;
+                }
             }
-        ));
+
+            if(!isOk){
+                setSafe(indices, data);
+            }
+        }
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
         std::vector<int> firstLocalIndices(numLocations, -1);
@@ -1179,11 +1192,63 @@ public:
                 Value_t* destPtr = offsetPtr(dataPtrPerLocation[location], firstLocalIndices[location]);
                 int numHits = hitsPerLocation[location];
 
+                std::cerr << "set copy from " << (void*)srcPtr << " to " << (void*)destPtr << "\n";
+                std::cerr << indices[0] << " " << indices[1] << " " << indices[2] << '\n';
+
                 if(location == hostLocation){
                     std::copy_n(srcPtr, numColumns * numHits, destPtr);
                 }else{
                     cudaSetDevice(deviceIds[location]); CUERR;
                     cudaMemcpy(destPtr, srcPtr, sizeOfElement * numHits, H2D); CUERR;
+                }
+            }
+        }
+
+        cudaSetDevice(oldDevice); CUERR;
+    }
+
+    void setSafe(const std::vector<Index_t>& indices, const Value_t* data){
+        assert(std::is_sorted(indices.begin(), indices.end()));
+
+        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+
+        std::vector<int> localIndices(indices.size(), -1);
+        std::vector<int> hitsPerLocation(numLocations, 0);
+
+        for(size_t i = 0; i < size_t(indices.size()); i++){
+            int location = getLocation(indices[i]);
+            Index_t localIndex = indices[i] - elementsPerLocationPS[location];
+            localIndices[i] = localIndex;
+            hitsPerLocation[location]++;
+        }
+
+        std::vector<int> hitsPerLocationPrefixSum(numLocations+1,0);
+        std::partial_sum(hitsPerLocation.begin(), hitsPerLocation.end(), hitsPerLocationPrefixSum.begin()+1);
+
+        for(int location = 0; location < numLocations; location++){
+            if(hitsPerLocation[location] > 0){
+                int numHits = hitsPerLocation[location];
+                int psOffset = hitsPerLocationPrefixSum[location];
+                int num = 0;
+                while(num < numHits){
+                    int from = num;
+                    int to = num+1;
+                    while(to < numHits && localIndices[psOffset+from] + 1 == localIndices[psOffset+to]){
+                        to++;
+                    }
+
+                    //copy elements [psOffset+from, psOffset+to[ to array
+                    size_t srcOffset = (psOffset+from) * numColumns;
+                    const Value_t* srcPtr = data + srcOffset;
+                    Value_t* destPtr = offsetPtr(dataPtrPerLocation[location], localIndices[psOffset+from]);
+                    if(location == hostLocation){
+                        std::copy_n(srcPtr, numColumns * (to-from), destPtr);
+                    }else{
+                        cudaSetDevice(deviceIds[location]); CUERR;
+                        cudaMemcpy(destPtr, srcPtr, sizeOfElement * (to-from), H2D); CUERR;
+                    }
+
+                    num = to;
                 }
             }
         }
@@ -1350,7 +1415,8 @@ public:
             for(Index_t k = 0; k < numHits; k++){
                 const Index_t localId = hostLocalIds[k];
                 const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                std::copy_n(srcPtr, numColumns, &hostResult[k * sizeOfElement]);
+                Value_t* destPtr = (Value_t*)(((const char*)(hostResult)) + sizeOfElement * k);
+                std::copy_n(srcPtr, numColumns, destPtr);
             }
         }
 
@@ -1362,7 +1428,7 @@ public:
         for(Index_t dstindex = 0; dstindex < numIds; dstindex++){
             const Index_t srcindex = handle->pinnedPermutationIndices[dstindex];
             const Value_t* srcPtr = offsetPtr(handle->pinnedResultData.get(), srcindex);
-            Value_t* destPtr = result + dstindex * resultPitch;
+            Value_t* destPtr = (Value_t*)(((const char*)(result)) + resultPitch * dstindex);
             std::copy_n(srcPtr, numColumns, destPtr);
         }
     }
