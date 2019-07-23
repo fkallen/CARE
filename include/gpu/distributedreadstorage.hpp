@@ -144,8 +144,8 @@ public:
 
         void setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setSequences(const std::vector<read_number>& indices, const char* data);
-        void setSequenceLenghts(read_number firstIndex, read_number lastIndex_excl, const Length_t* data);
-        void setSequenceLenghts(const std::vector<read_number>& indices, const Length_t* data);
+        void setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data);
+        void setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data);
         void setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setQualities(const std::vector<read_number>& indices, const char* data);
 };

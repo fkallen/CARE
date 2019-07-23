@@ -148,6 +148,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     }
 
     omp_set_num_threads(numThreads);
+    std::cerr << "setReads omp_set_num_threads " << numThreads << "\n";
 
     #pragma omp parallel for
     for(size_t i = 0; i < numReads; i++){
@@ -164,9 +165,10 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     }
 
     omp_set_num_threads(oldNumOMPThreads);
+    std::cerr << "setReads omp_set_num_threads end " << oldNumOMPThreads << "\n";
 
     setSequences(indices, sequenceData.data());
-    setSequenceLenghts(indices, sequenceLengths.data());
+    setSequenceLengths(indices, sequenceLengths.data());
     if(canUseQualityScores()){
         setQualities(indices, qualityData.data());
     }
@@ -180,11 +182,11 @@ void DistributedReadStorage::setSequences(const std::vector<read_number>& indice
     distributedSequenceData2.setSafe(indices, reinterpret_cast<const unsigned int*>(data));
 }
 
-void DistributedReadStorage::setSequenceLenghts(read_number firstIndex, read_number lastIndex_excl, const Length_t* data){
+void DistributedReadStorage::setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data){
     distributedSequenceLengths2.setSafe(firstIndex, lastIndex_excl, data);
 }
 
-void DistributedReadStorage::setSequenceLenghts(const std::vector<read_number>& indices, const Length_t* data){
+void DistributedReadStorage::setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data){
     distributedSequenceLengths2.setSafe(indices, data);
 }
 
@@ -514,7 +516,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
             assert(totalMemoryRead <= totalLengthMemory);
 
-            setSequenceLenghts(begin, end, data.data());
+            setSequenceLengths(begin, end, data.data());
         }
 
         assert(totalMemoryRead == totalLengthMemory);
