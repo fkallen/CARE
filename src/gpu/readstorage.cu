@@ -156,7 +156,7 @@ namespace gpu {
 
             }
 
-#if 0
+#if 1
     		for(auto deviceId : deviceIds) {
     			auto datait = gpuData.find(deviceId);
     			if(datait == gpuData.end()) {
@@ -477,7 +477,7 @@ namespace gpu {
 
     	void ContiguousReadStorage::copyGpuLengthsToGpuBufferAsync(Length_t* d_lengths, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             auto gpuData = getGPUData(deviceId);
-            assert(false);
+            //assert(false);
             const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;
 
             dim3 grid(SDIV(nReadIds, 128),1,1);
@@ -493,7 +493,7 @@ namespace gpu {
 
         void ContiguousReadStorage::copyGpuSequenceDataToGpuBufferAsync(char* d_sequence_data, size_t out_sequence_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             assert(size_t(cpuReadStorage->maximum_allowed_sequence_bytes) <= out_sequence_pitch);
-            assert(false);
+            //assert(false);
             auto gpuData = getGPUData(deviceId);
 
             const char* const rs_sequence_data = gpuData.d_sequence_data;
@@ -523,7 +523,7 @@ namespace gpu {
         void ContiguousReadStorage::copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const{
             //std::cout << size_t(cpuReadStorage->maximum_allowed_sequence_length) <<  " "  << out_quality_pitch << std::endl;
             //assert(size_t(cpuReadStorage->maximum_allowed_sequence_length) <= out_quality_pitch);
-            assert(false);
+            //assert(false);
             auto gpuData = getGPUData(deviceId);
 
             const int* const rs_sequence_lengths = gpuData.d_sequence_lengths;

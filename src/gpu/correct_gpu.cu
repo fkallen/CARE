@@ -452,10 +452,10 @@ namespace gpu{
         std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
 
 		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
-		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func2;
+		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
 		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
         transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
-		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func2;
+		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
 		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
         transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
 		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
@@ -1638,33 +1638,33 @@ namespace gpu{
         if(transFuncData.readStorageGpuData.isValidSequenceData()) {
 
 
-            transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.subjectLengthGatherHandle2,
-                                                                         dataArrays.d_subject_sequences_lengths,
-                                                                         dataArrays.h_subject_read_ids,
-                                                                         dataArrays.d_subject_read_ids,
-                                                                         dataArrays.n_subjects,
-                                                                         transFuncData.deviceId,
-                                                                         streams[primary_stream_index],
-                                                                         transFuncData.runtimeOptions.nCorrectorThreads);
-
-            transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.candidateLengthGatherHandle2,
-                                                                      dataArrays.d_candidate_sequences_lengths,
-                                                                      dataArrays.h_candidate_read_ids,
-                                                                      dataArrays.d_candidate_read_ids,
-                                                                      dataArrays.n_queries,
-                                                                      transFuncData.deviceId,
-                                                                      streams[primary_stream_index],
-                                                                      transFuncData.runtimeOptions.nCorrectorThreads);
-
-            // transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
+            // transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.subjectLengthGatherHandle2,
+            //                                                              dataArrays.d_subject_sequences_lengths,
+            //                                                              dataArrays.h_subject_read_ids,
             //                                                              dataArrays.d_subject_read_ids,
             //                                                              dataArrays.n_subjects,
-            //                                                              transFuncData.deviceId, streams[primary_stream_index]);
+            //                                                              transFuncData.deviceId,
+            //                                                              streams[primary_stream_index],
+            //                                                              transFuncData.runtimeOptions.nCorrectorThreads);
             //
-            // transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_candidate_sequences_lengths,
-            //                                                              dataArrays.d_candidate_read_ids,
-            //                                                              dataArrays.n_queries,
-            //                                                              transFuncData.deviceId, streams[primary_stream_index]);
+            // transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.candidateLengthGatherHandle2,
+            //                                                           dataArrays.d_candidate_sequences_lengths,
+            //                                                           dataArrays.h_candidate_read_ids,
+            //                                                           dataArrays.d_candidate_read_ids,
+            //                                                           dataArrays.n_queries,
+            //                                                           transFuncData.deviceId,
+            //                                                           streams[primary_stream_index],
+            //                                                           transFuncData.runtimeOptions.nCorrectorThreads);
+
+            transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_subject_sequences_lengths,
+                                                                         dataArrays.d_subject_read_ids,
+                                                                         dataArrays.n_subjects,
+                                                                         transFuncData.deviceId, streams[primary_stream_index]);
+
+            transFuncData.gpuReadStorage->copyGpuLengthsToGpuBufferAsync(dataArrays.d_candidate_sequences_lengths,
+                                                                         dataArrays.d_candidate_read_ids,
+                                                                         dataArrays.n_queries,
+                                                                         transFuncData.deviceId, streams[primary_stream_index]);
 
 
 
@@ -1684,37 +1684,37 @@ namespace gpu{
 //                                              streams[primary_stream_index]); CUERR;
 //             cudaMemsetAsync(tmpptr2, 0, dataArrays.encoded_sequence_pitch * dataArrays.n_queries, streams[primary_stream_index]);
 
-            transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.subjectSequenceGatherHandle2,
-                                                                             dataArrays.d_subject_sequences_data,
-                                                                             dataArrays.encoded_sequence_pitch,
-                                                                             dataArrays.h_subject_read_ids,
-                                                                             dataArrays.d_subject_read_ids,
-                                                                             dataArrays.n_subjects,
-                                                                             transFuncData.deviceId,
-                                                                             streams[primary_stream_index],
-                                                                             transFuncData.runtimeOptions.nCorrectorThreads);
-
-            transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.candidateSequenceGatherHandle2,
-                                                                              dataArrays.d_candidate_sequences_data,
-                                                                              dataArrays.encoded_sequence_pitch,
-                                                                              dataArrays.h_candidate_read_ids,
-                                                                              dataArrays.d_candidate_read_ids,
-                                                                              dataArrays.n_queries,
-                                                                              transFuncData.deviceId,
-                                                                              streams[primary_stream_index],
-                                                                              transFuncData.runtimeOptions.nCorrectorThreads);
-
-            // transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data,
-            //                                                              dataArrays.encoded_sequence_pitch,
-            //                                                              dataArrays.d_subject_read_ids,
-            //                                                              dataArrays.n_subjects,
-            //                                                              transFuncData.deviceId, streams[primary_stream_index]);
+            // transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.subjectSequenceGatherHandle2,
+            //                                                                  dataArrays.d_subject_sequences_data,
+            //                                                                  dataArrays.encoded_sequence_pitch,
+            //                                                                  dataArrays.h_subject_read_ids,
+            //                                                                  dataArrays.d_subject_read_ids,
+            //                                                                  dataArrays.n_subjects,
+            //                                                                  transFuncData.deviceId,
+            //                                                                  streams[primary_stream_index],
+            //                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
             //
-            // transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_candidate_sequences_data,
-            //                                                              dataArrays.encoded_sequence_pitch,
-            //                                                              dataArrays.d_candidate_read_ids,
-            //                                                              dataArrays.n_queries,
-            //                                                              transFuncData.deviceId, streams[primary_stream_index]);
+            // transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.candidateSequenceGatherHandle2,
+            //                                                                   dataArrays.d_candidate_sequences_data,
+            //                                                                   dataArrays.encoded_sequence_pitch,
+            //                                                                   dataArrays.h_candidate_read_ids,
+            //                                                                   dataArrays.d_candidate_read_ids,
+            //                                                                   dataArrays.n_queries,
+            //                                                                   transFuncData.deviceId,
+            //                                                                   streams[primary_stream_index],
+            //                                                                   transFuncData.runtimeOptions.nCorrectorThreads);
+
+            transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_subject_sequences_data,
+                                                                         dataArrays.encoded_sequence_pitch,
+                                                                         dataArrays.d_subject_read_ids,
+                                                                         dataArrays.n_subjects,
+                                                                         transFuncData.deviceId, streams[primary_stream_index]);
+
+            transFuncData.gpuReadStorage->copyGpuSequenceDataToGpuBufferAsync(dataArrays.d_candidate_sequences_data,
+                                                                         dataArrays.encoded_sequence_pitch,
+                                                                         dataArrays.d_candidate_read_ids,
+                                                                         dataArrays.n_queries,
+                                                                         transFuncData.deviceId, streams[primary_stream_index]);
 //cudaDeviceSynchronize(); CUERR;
 
             // {
@@ -2630,22 +2630,22 @@ namespace gpu{
 
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
 
-                gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.subjectQualitiesGatherHandle2,
-                                                                  dataArrays.d_subject_qualities,
+                // gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.subjectQualitiesGatherHandle2,
+                //                                                   dataArrays.d_subject_qualities,
+                //                                                   dataArrays.quality_pitch,
+                //                                                   dataArrays.h_subject_read_ids,
+                //                                                   dataArrays.d_subject_read_ids,
+                //                                                   dataArrays.n_subjects,
+                //                                                   transFuncData.deviceId,
+                //                                                   streams[primary_stream_index],
+                //                                                   transFuncData.runtimeOptions.nCorrectorThreads);
+
+               gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
                                                                   dataArrays.quality_pitch,
-                                                                  dataArrays.h_subject_read_ids,
                                                                   dataArrays.d_subject_read_ids,
                                                                   dataArrays.n_subjects,
                                                                   transFuncData.deviceId,
-                                                                  streams[primary_stream_index],
-                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
-
-               // gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_subject_qualities,
-               //                                                    dataArrays.quality_pitch,
-               //                                                    dataArrays.d_subject_read_ids,
-               //                                                    dataArrays.n_subjects,
-               //                                                    transFuncData.deviceId,
-               //                                                    streams[primary_stream_index]);
+                                                                  streams[primary_stream_index]);
 
 
                 //batch.batchDataDevice.tmpStorage[0].resize(sizeof(read_number) * dataArrays.h_num_indices[0]);
@@ -2664,22 +2664,22 @@ namespace gpu{
                     h_tmp_read_ids[i] = dataArrays.h_candidate_read_ids[dataArrays.h_indices[i]];
                 }
 
-                gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.candidateQualitiesGatherHandle2,
-                                                                  dataArrays.d_candidate_qualities,
-                                                                  dataArrays.quality_pitch,
-                                                                  h_tmp_read_ids.data(),
-                                                                  d_tmp_read_ids,
-                                                                  dataArrays.h_num_indices[0],
-                                                                  transFuncData.deviceId,
-                                                                  streams[primary_stream_index],
-                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
-
-                // gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
+                // gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.candidateQualitiesGatherHandle2,
+                //                                                   dataArrays.d_candidate_qualities,
                 //                                                   dataArrays.quality_pitch,
+                //                                                   h_tmp_read_ids.data(),
                 //                                                   d_tmp_read_ids,
                 //                                                   dataArrays.h_num_indices[0],
                 //                                                   transFuncData.deviceId,
-                //                                                   streams[primary_stream_index]);
+                //                                                   streams[primary_stream_index],
+                //                                                   transFuncData.runtimeOptions.nCorrectorThreads);
+
+                gpuReadStorage->copyGpuQualityDataToGpuBufferAsync(dataArrays.d_candidate_qualities,
+                                                                  dataArrays.quality_pitch,
+                                                                  d_tmp_read_ids,
+                                                                  dataArrays.h_num_indices[0],
+                                                                  transFuncData.deviceId,
+                                                                  streams[primary_stream_index]);
 
 
 
@@ -4731,8 +4731,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.readIdGenerator = &readIdGenerator;
       transFuncData.readIdBuffer = &readIdBuffer;
       transFuncData.tmptasksBuffer = &tmptasksBuffer;
-      //transFuncData.minhasher = &minhasher;
-      transFuncData.minhasher = &newMinhasher;
+      transFuncData.minhasher = &minhasher;
+      //transFuncData.minhasher = &newMinhasher;
       transFuncData.gpuReadStorage = &gpuReadStorage;
       transFuncData.readStorage = &newReadStorage;
       transFuncData.readStorageGpuData = readStorageGpuData;
