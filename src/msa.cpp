@@ -543,7 +543,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                     }
 
                     avgsupportkregion /= c;
-                    if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
+                    if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
                         result.correctedSequence[column] = consensus[column];
                         foundAColumn = true;
                     }
