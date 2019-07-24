@@ -60,17 +60,31 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     return *this;
 }
 
-DistributedReadStorage::MemoryInfo DistributedReadStorage::getHostMemoryInfo() const{
-    MemoryInfo info{0};
-    //TODO
+DistributedReadStorage::MemoryInfo DistributedReadStorage::getMemoryInfo() const{
+    MemoryInfo info;
+    info.deviceSizeInBytes.resize(deviceIds.size(),0);
+    info.deviceIds = deviceIds;
+
+    auto handlearray = [&](const auto& array){
+        const auto partitions = array.getPartitions();
+
+        for(int location = 0; location < distributedSequenceData2.numLocations; location++){
+            size_t bytes = partitions[location] * array.sizeOfElement;
+            if(location == array.hostLocation){
+                info.hostSizeInBytes += bytes;
+            }else{
+                info.deviceSizeInBytes[location] += bytes;
+            }
+        }
+    };
+
+    handlearray(distributedSequenceData2);
+    handlearray(distributedSequenceLengths2);
+    handlearray(distributedQualities2);
+
     return info;
 }
 
-DistributedReadStorage::MemoryInfo DistributedReadStorage::getDeviceMemoryInfo(int deviceId) const{
-    MemoryInfo info{0};
-    //TODO
-    return info;
-}
 
 DistributedReadStorage::Statistics DistributedReadStorage::getStatistics() const{
     return statistics;
@@ -123,7 +137,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     });
 
     statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(minmax.first->sequence.length()));
-    statistics.maximumSequenceLength = std::min(statistics.maximumSequenceLength, int(minmax.second->sequence.length()));
+    statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(minmax.second->sequence.length()));
 
     std::vector<char> sequenceData;
     std::vector<Length_t> sequenceLengths;
@@ -148,7 +162,6 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     }
 
     omp_set_num_threads(numThreads);
-    std::cerr << "setReads omp_set_num_threads " << numThreads << "\n";
 
     #pragma omp parallel for
     for(size_t i = 0; i < numReads; i++){
@@ -165,7 +178,6 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     }
 
     omp_set_num_threads(oldNumOMPThreads);
-    std::cerr << "setReads omp_set_num_threads end " << oldNumOMPThreads << "\n";
 
     setSequences(indices, sequenceData.data());
     setSequenceLengths(indices, sequenceLengths.data());
@@ -321,6 +333,52 @@ std::future<void> DistributedReadStorage::gatherQualitiesToHostBufferAsync(
                             int numCpuThreads) const{
 
     return distributedQualities2.gatherElementsInHostMemAsync(handle,
+                                                        h_readIds,
+                                                        nReadIds,
+                                                        h_quality_data,
+                                                        out_quality_pitch);
+}
+
+
+void DistributedReadStorage::gatherSequenceDataToHostBuffer(
+                            const GatherHandleSequences& handle,
+                            char* h_sequence_data,
+                            size_t out_sequence_pitch,
+                            const read_number* h_readIds,
+                            int nReadIds,
+                            int numCpuThreads) const{
+
+    return distributedSequenceData2.gatherElementsInHostMem(handle,
+                                                        h_readIds,
+                                                        nReadIds,
+                                                        (unsigned int*)h_sequence_data,
+                                                        out_sequence_pitch);
+}
+
+void DistributedReadStorage::gatherSequenceLengthsToHostBuffer(
+                            const GatherHandleLengths& handle,
+                            int* h_lengths,
+                            const read_number* h_readIds,
+                            int nReadIds,
+                            int numCpuThreads) const{
+
+    return distributedSequenceLengths2.gatherElementsInHostMem(handle,
+                                                        h_readIds,
+                                                        nReadIds,
+                                                        h_lengths,
+                                                        sizeof(int));
+
+}
+
+void DistributedReadStorage::gatherQualitiesToHostBuffer(
+                            const GatherHandleQualities& handle,
+                            char* h_quality_data,
+                            size_t out_quality_pitch,
+                            const read_number* h_readIds,
+                            int nReadIds,
+                            int numCpuThreads) const{
+
+    return distributedQualities2.gatherElementsInHostMem(handle,
                                                         h_readIds,
                                                         nReadIds,
                                                         h_quality_data,
@@ -517,6 +575,13 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
             assert(totalMemoryRead <= totalLengthMemory);
 
             setSequenceLengths(begin, end, data.data());
+
+            auto minmax = std::minmax_element(data.begin(), data.end(), [](const auto& l1, const auto& l2){
+                return l1 < l2;
+            });
+
+            statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(*minmax.first));
+            statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(*minmax.second));
         }
 
         assert(totalMemoryRead == totalLengthMemory);

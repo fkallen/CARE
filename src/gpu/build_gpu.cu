@@ -37,7 +37,7 @@ namespace gpu{
 
 
 
-        if(false && fileOptions.load_binary_reads_from != ""){
+        if(fileOptions.load_binary_reads_from != ""){
             BuiltDataStructure<DistributedReadStorage> result;
             auto& readStorage = result.data;
 
@@ -69,7 +69,6 @@ namespace gpu{
 
             auto flushBuffers = [&](std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
                 if(indicesBuffer.size() > 0){
-                    std::cerr << "flush\n";
                     readstorage.setReads(indicesBuffer, readsBuffer, nThreads);
                     indicesBuffer.clear();
                     readsBuffer.clear();
@@ -201,9 +200,16 @@ namespace gpu{
         }else{
             result.builtType = BuiltType::Constructed;
 
-            const int oldnumthreads = omp_get_thread_num();
+            int oldnumthreads = 1;
+            #pragma omp parallel
+            {
+                #pragma omp single
+                oldnumthreads = omp_get_num_threads();
+            }
 
             omp_set_num_threads(runtimeOptions.threads);
+            //std::cerr << "setReads omp_set_num_threads end " << runtimeOptions.threads << "\n";
+
             constexpr int numMapsPerBatch = 16;
             constexpr read_number parallelReads = 10000000;
 
@@ -268,8 +274,8 @@ namespace gpu{
                     transform_minhasher(minhasher, mapId, runtimeOptions.deviceIds);
                 }
             }
-
             omp_set_num_threads(oldnumthreads);
+
         }
 
         //TIMERSTARTCPU(finalize_hashtables);
@@ -290,7 +296,7 @@ namespace gpu{
 
         auto& sequenceFileProperties = result.sequenceFileProperties;
 
-        if(true || fileOptions.load_binary_reads_from == "") {
+        if(fileOptions.load_binary_reads_from == "") {
             if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
                 std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
                 sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
@@ -311,11 +317,11 @@ namespace gpu{
 
         const auto& readStorage = result.builtReadStorage.data;
 
-        if(result.builtReadStorage.builtType == BuiltType::Loaded) {
+        //if(result.builtReadStorage.builtType == BuiltType::Loaded) {
             sequenceFileProperties.nReads = readStorage.getNumberOfReads();
             sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
             sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
-        }
+        //}
 
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);

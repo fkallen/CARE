@@ -19,7 +19,9 @@ struct DistributedReadStorage {
 public:
 
     struct MemoryInfo{
-        size_t sizeInBytes;
+        size_t hostSizeInBytes{};
+        std::vector<size_t> deviceSizeInBytes{};
+        std::vector<int> deviceIds{};
     };
 
     struct Statistics{
@@ -58,8 +60,7 @@ public:
 
 	DistributedReadStorage& operator=(DistributedReadStorage&& other);
 
-	MemoryInfo getHostMemoryInfo() const;
-    MemoryInfo getDeviceMemoryInfo(int deviceId) const;
+	MemoryInfo getMemoryInfo() const;
 
     Statistics getStatistics() const;
 
@@ -131,6 +132,29 @@ public:
                                 int numCpuThreads) const;
 
     std::future<void> gatherQualitiesToHostBufferAsync(
+                                const GatherHandleQualities& handle,
+                                char* h_quality_data,
+                                size_t out_quality_pitch,
+                                const read_number* h_readIds,
+                                int nReadIds,
+                                int numCpuThreads) const;
+
+    void gatherSequenceDataToHostBuffer(
+                                const GatherHandleSequences& handle,
+                                char* h_sequence_data,
+                                size_t out_sequence_pitch,
+                                const read_number* h_readIds,
+                                int nReadIds,
+                                int numCpuThreads) const;
+
+    void gatherSequenceLengthsToHostBuffer(
+                                const GatherHandleLengths& handle,
+                                int* h_lengths,
+                                const read_number* h_readIds,
+                                int nReadIds,
+                                int numCpuThreads) const;
+
+    void gatherQualitiesToHostBuffer(
                                 const GatherHandleQualities& handle,
                                 char* h_quality_data,
                                 size_t out_quality_pitch,

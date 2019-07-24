@@ -1233,7 +1233,7 @@ public:
                 while(num < numHits){
                     int from = num;
                     int to = num+1;
-                    while(to < numHits && localIndices[psOffset+from] + 1 == localIndices[psOffset+to]){
+                    while(to < numHits && localIndices[psOffset+to-1] + 1 == localIndices[psOffset+to]){
                         to++;
                     }
 
@@ -1338,7 +1338,7 @@ public:
                                 size_t resultPitch // result element i begins at offset i * resultPitch
                                 ) const{
 
-        assert(resultPitch >= sizeOfElement);
+        //assert(resultPitch >= sizeOfElement);
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
@@ -1492,7 +1492,6 @@ public:
             oldNumOMPThreads = omp_get_num_threads();
         }
         omp_set_num_threads(numCpuThreads);
-
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
@@ -1868,6 +1867,10 @@ public:
     //d_result, d_indices must point to memory of device deviceId. d_indices[i] must be a local element index for this device
     void copyDataToGpuBufferAsync(Value_t* d_result, size_t resultPitch, const Index_t* d_indices, Index_t nIndices, int deviceId, cudaStream_t stream) const{
         copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, nIndices, deviceId, stream, 0);
+    }
+
+    std::vector<Index_t> getPartitions() const{
+        return elementsPerLocation;
     }
 
 private:
