@@ -1,9 +1,10 @@
-#include <care.hpp>
+
 #include <config.hpp>
 
-#include "../include/cxxopts/cxxopts.hpp"
-#include "../include/args.hpp"
-#include "../include/options.hpp"
+#include <cxxopts/cxxopts.hpp>
+#include <args.hpp>
+#include <options.hpp>
+#include <dispatch_care.hpp>
 
 #include <cpugpuproxy.hpp>
 
@@ -13,7 +14,7 @@
 
 using namespace care;
 
-int main(int argc, const char** argv){
+int main(int argc, char** argv){
 
 	bool help = false;
 
@@ -139,7 +140,7 @@ int main(int argc, const char** argv){
     runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
 
-	care::performCorrection(minhashOptions,
+    care::performCorrection(minhashOptions,
 				alignmentOptions,
 				correctionOptions,
 				runtimeOptions,
