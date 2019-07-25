@@ -23,14 +23,14 @@ LDFLAGSCPU = -lpthread -lgomp -lstdc++fs -ldl -lz -lpython2.7
 
 # sources which are used by both cpu version and gpu version
 SOURCES_CPU_AND_GPU_ = $(wildcard src/*.cpp)
-SOURCES_CPU_AND_GPU = $(filter-out src/cpugpuproxy_cpu.cpp src/dispatch_correction_cpu.cpp src/minhasher_transform.cpp,$(SOURCES_CPU_AND_GPU_))
+SOURCES_CPU_AND_GPU = $(filter-out src/cpugpuproxy_cpu.cpp src/dispatch_care_cpu.cpp src/minhasher_transform.cpp,$(SOURCES_CPU_AND_GPU_))
 
 # sources which are used by gpu version exclusively
 SOURCES_ONLY_GPU = $(wildcard src/gpu/*.cu)
 #SOURCES_ONLY_GPU = $(filter-out src/gpu/correct_gpu.cu, $(SOURCES_ONLY_GPU_))
 
 # sources which are used by cpu version exclusively
-SOURCES_ONLY_CPU = src/cpugpuproxy_cpu.cpp src/dispatch_correction_cpu.cpp src/minhasher_transform.cpp
+SOURCES_ONLY_CPU = src/cpugpuproxy_cpu.cpp src/dispatch_care_cpu.cpp src/minhasher_transform.cpp
 
 
 OBJECTS_CPU_AND_GPU = $(patsubst src/%.cpp, buildcpu/%.o, $(SOURCES_CPU_AND_GPU))

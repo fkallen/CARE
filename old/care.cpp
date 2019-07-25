@@ -22,12 +22,6 @@
 
 namespace filesys = std::experimental::filesystem;
 
-
-#ifdef __NVCC__
-#include "../include/gpu/correct.hpp"
-#include "../include/gpu/readstorage.hpp"
-#endif
-
 namespace care {
 
 
@@ -209,14 +203,15 @@ void performCorrection(MinhashOptions minhashOptions,
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        dispatch_correction(minhashOptions, alignmentOptions,
-                            goodAlignmentProperties, correctionOptions,
-                            runtimeOptions, iterFileOptions, sequenceFileProperties,
-                            minhasher, readStorage,
-                            maxCandidatesPerRead,
-                            readIsCorrectedVector, locksForProcessedFlags,
-                            nLocksForProcessedFlags);
+        std::cout << "Running CARE CPU" << std::endl;
 
+        cpu::correct_cpu(minhashOptions, alignmentOptions,
+                    goodAlignmentProperties, correctionOptions,
+                    runtimeOptions, fileOptions, sequenceFileProperties,
+                    minhasher, readStorage,
+                    maxCandidatesPerRead,
+                    readIsCorrectedVector, locksForProcessedFlags,
+                    nLocksForProcessedFlags);
 
 		iter++;
 
