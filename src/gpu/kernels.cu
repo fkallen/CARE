@@ -2,6 +2,7 @@
 #include <gpu/bestalignment.hpp>
 #include <gpu/qualityscoreweights.hpp>
 #include <gpu/utility_kernels.cuh>
+#include <gpu/cubcachingallocator.cuh>
 
 #include <msa.hpp>
 #include <sequence.hpp>
@@ -15,7 +16,6 @@
 
 
 #include <cub/cub.cuh>
-#include <cub/util_allocator.cuh>
 
 #include <cooperative_groups.h>
 
@@ -26,11 +26,6 @@ namespace cg = cooperative_groups;
 
 namespace care{
 namespace gpu{
-
-#ifdef __NVCC__
-
-    extern cub::CachingDeviceAllocator cubCachingAllocator;
-
 
     KernelLaunchHandle make_kernel_launch_handle(int deviceId){
         KernelLaunchHandle handle;
@@ -4272,7 +4267,7 @@ void make_candidates_per_hq_subject_prefixsum(void* d_temp_storage,
 
 #endif
 
-#endif
+
 
 }
 }
