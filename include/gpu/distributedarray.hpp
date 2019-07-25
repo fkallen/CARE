@@ -97,7 +97,7 @@ struct PeerAccess{
 
 
 template<class Value_t, class Index_t = size_t>
-struct DistributedArray2{
+struct DistributedArray{
 public:
 
     struct GatherHandleStruct{
@@ -138,11 +138,11 @@ public:
     std::vector<Value_t*> dataPtrPerLocation; // the storage of each location. dataPtrPerLocation[hostLocation] is the host data. dataPtrPerLocation[gpu] is device data
     PeerAccess peerAccess;
 
-    DistributedArray2()
-        : DistributedArray2({},{},0,0,-1){
+    DistributedArray()
+        : DistributedArray({},{},0,0,-1){
     }
 
-    DistributedArray2(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, Index_t numRows_, Index_t numCols_, int preferedLocation_ = -1)
+    DistributedArray(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, Index_t numRows_, Index_t numCols_, int preferedLocation_ = -1)
                     : debug(false),
                     numGpus(deviceIds_.size()),
                     numLocations(numGpus+1),
@@ -225,7 +225,7 @@ public:
             singlePartitionInfo.locationId = std::distance(elementsPerLocation.begin(), singlepartitioniter);
 
             if(true){
-                std::cerr << "DistributedArray2:\n";
+                std::cerr << "DistributedArray:\n";
                 std::cerr << "device ids: [";
                 std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));
                 std::cerr << "]\n";
@@ -239,14 +239,14 @@ public:
         }
     }
 
-    DistributedArray2(const DistributedArray2&) = delete;
-    DistributedArray2(DistributedArray2&& rhs){
+    DistributedArray(const DistributedArray&) = delete;
+    DistributedArray(DistributedArray&& rhs){
         operator=(std::move(rhs));
     }
 
-    DistributedArray2& operator=(const DistributedArray2&) = delete;
+    DistributedArray& operator=(const DistributedArray&) = delete;
 
-    DistributedArray2& operator=(DistributedArray2&& rhs){
+    DistributedArray& operator=(DistributedArray&& rhs){
         destroy();
         debug = rhs.debug;
         numGpus = rhs.numGpus;
@@ -281,7 +281,7 @@ public:
         return *this;
     }
 
-    ~DistributedArray2(){
+    ~DistributedArray(){
         destroy();
     }
 

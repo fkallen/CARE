@@ -158,7 +158,7 @@ void checkBuiltDataStructures(BuiltGpuDataStructures& gpudata, BuiltDataStructur
         SimpleAllocationDevice<char> d_datanew;
         d_datanew.resize(maxlen * num);
         cudaMemset(d_datanew.get(), 0, sizeof(char) * maxlen * num); CUERR;
-        gpurs.gatherSequenceDataToGpuBufferAsync2(
+        gpurs.gatherSequenceDataToGpuBufferAsync(
                                     handle,
                                     d_datanew.get(),
                                     maxlen,

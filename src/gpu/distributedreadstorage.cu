@@ -32,11 +32,11 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
         const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthLimit);
 
-        distributedSequenceData2 = std::move(DistributedArray2<unsigned int, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, intsPerSequence));
-        distributedSequenceLengths2 = std::move(DistributedArray2<Length_t, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, 1));
+        distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, intsPerSequence));
+        distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, 1));
 
         if(useQualityScores){
-            distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, sequenceLengthLimit));
+            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, sequenceLengthLimit));
         }
     }
 }
@@ -94,9 +94,9 @@ void DistributedReadStorage::destroy(){
     numberOfReads = 0;
     sequenceLengthLimit = 0;
     std::vector<float> fractions(deviceIds.size(), 0.0f);
-    distributedSequenceData2 = std::move(DistributedArray2<unsigned int, read_number>(deviceIds, fractions, 0, 0));
-    distributedSequenceLengths2 = std::move(DistributedArray2<Length_t, read_number>(deviceIds, fractions, 0, 0));
-    distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, fractions, 0, 0));
+    distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, 0, 0));
+    distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, 0, 0));
+    distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, fractions, 0, 0));
     statistics = Statistics{};
 }
 
@@ -222,7 +222,7 @@ DistributedReadStorage::GatherHandleQualities DistributedReadStorage::makeGather
     return distributedQualities2.makeGatherHandle();
 }
 
-void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync2(
+void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             const DistributedReadStorage::GatherHandleSequences& handle,
                             char* d_sequence_data,
                             size_t out_sequence_pitch,
@@ -248,7 +248,7 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync2(
 
 
 
-void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync2(
+void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync(
                             const GatherHandleLengths& handle,
                             int* d_lengths,
                             const read_number* h_readIds,
@@ -270,7 +270,7 @@ void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync2(
 
 }
 
-void DistributedReadStorage::gatherQualitiesToGpuBufferAsync2(
+void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             const GatherHandleQualities& handle,
                             char* d_quality_data,
                             size_t out_quality_pitch,

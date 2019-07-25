@@ -1595,7 +1595,7 @@ namespace gpu{
         if(transFuncData.readStorageGpuData.isValidSequenceData()) {
 
 
-            // transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.subjectLengthGatherHandle2,
+            // transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(batch.subjectLengthGatherHandle2,
             //                                                              dataArrays.d_subject_sequences_lengths,
             //                                                              dataArrays.h_subject_read_ids,
             //                                                              dataArrays.d_subject_read_ids,
@@ -1604,7 +1604,7 @@ namespace gpu{
             //                                                              streams[primary_stream_index],
             //                                                              transFuncData.runtimeOptions.nCorrectorThreads);
             //
-            // transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.candidateLengthGatherHandle2,
+            // transFuncData.gpuReadStorage->gatherSequenceLengthsToGpuBufferAsync(batch.candidateLengthGatherHandle2,
             //                                                           dataArrays.d_candidate_sequences_lengths,
             //                                                           dataArrays.h_candidate_read_ids,
             //                                                           dataArrays.d_candidate_read_ids,
@@ -1641,7 +1641,7 @@ namespace gpu{
 //                                              streams[primary_stream_index]); CUERR;
 //             cudaMemsetAsync(tmpptr2, 0, dataArrays.encoded_sequence_pitch * dataArrays.n_queries, streams[primary_stream_index]);
 
-            // transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.subjectSequenceGatherHandle2,
+            // transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync(batch.subjectSequenceGatherHandle2,
             //                                                                  dataArrays.d_subject_sequences_data,
             //                                                                  dataArrays.encoded_sequence_pitch,
             //                                                                  dataArrays.h_subject_read_ids,
@@ -1651,7 +1651,7 @@ namespace gpu{
             //                                                                  streams[primary_stream_index],
             //                                                                  transFuncData.runtimeOptions.nCorrectorThreads);
             //
-            // transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync2(batch.candidateSequenceGatherHandle2,
+            // transFuncData.gpuReadStorage->gatherSequenceDataToGpuBufferAsync(batch.candidateSequenceGatherHandle2,
             //                                                                   dataArrays.d_candidate_sequences_data,
             //                                                                   dataArrays.encoded_sequence_pitch,
             //                                                                   dataArrays.h_candidate_read_ids,
@@ -1961,7 +1961,7 @@ namespace gpu{
             batch.handledReadIds = true;
         }
 
-        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.subjectLengthGatherHandle2,
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(batch.subjectLengthGatherHandle2,
                                                                      dataArrays.d_subject_sequences_lengths,
                                                                      dataArrays.h_subject_read_ids,
                                                                      dataArrays.d_subject_read_ids,
@@ -1970,7 +1970,7 @@ namespace gpu{
                                                                      streams[primary_stream_index],
                                                                      transFuncData.runtimeOptions.nCorrectorThreads);
 
-        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync2(batch.candidateLengthGatherHandle2,
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(batch.candidateLengthGatherHandle2,
                                                                   dataArrays.d_candidate_sequences_lengths,
                                                                   dataArrays.h_candidate_read_ids,
                                                                   dataArrays.d_candidate_read_ids,
@@ -1979,7 +1979,7 @@ namespace gpu{
                                                                   streams[primary_stream_index],
                                                                   transFuncData.runtimeOptions.nCorrectorThreads);
 
-        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync2(batch.subjectSequenceGatherHandle2,
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(batch.subjectSequenceGatherHandle2,
                                                                          dataArrays.d_subject_sequences_data,
                                                                          dataArrays.encoded_sequence_pitch,
                                                                          dataArrays.h_subject_read_ids,
@@ -1989,7 +1989,7 @@ namespace gpu{
                                                                          streams[primary_stream_index],
                                                                          transFuncData.runtimeOptions.nCorrectorThreads);
 
-        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync2(batch.candidateSequenceGatherHandle2,
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(batch.candidateSequenceGatherHandle2,
                                                                           dataArrays.d_candidate_sequences_data,
                                                                           dataArrays.encoded_sequence_pitch,
                                                                           dataArrays.h_candidate_read_ids,
@@ -2436,7 +2436,7 @@ namespace gpu{
 
 			if(transFuncData.readStorageGpuData.isValidQualityData()) {
 
-                // gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.subjectQualitiesGatherHandle2,
+                // gpuReadStorage->gatherQualitiesToGpuBufferAsync(batch.subjectQualitiesGatherHandle2,
                 //                                                   dataArrays.d_subject_qualities,
                 //                                                   dataArrays.quality_pitch,
                 //                                                   dataArrays.h_subject_read_ids,
@@ -2470,7 +2470,7 @@ namespace gpu{
                     h_tmp_read_ids[i] = dataArrays.h_candidate_read_ids[dataArrays.h_indices[i]];
                 }
 
-                // gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.candidateQualitiesGatherHandle2,
+                // gpuReadStorage->gatherQualitiesToGpuBufferAsync(batch.candidateQualitiesGatherHandle2,
                 //                                                   dataArrays.d_candidate_qualities,
                 //                                                   dataArrays.quality_pitch,
                 //                                                   h_tmp_read_ids.data(),
@@ -2710,7 +2710,7 @@ namespace gpu{
 
 		if(transFuncData.correctionOptions.useQualityScores) {
 
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.subjectQualitiesGatherHandle2,
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(batch.subjectQualitiesGatherHandle2,
                                                               dataArrays.d_subject_qualities,
                                                               dataArrays.quality_pitch,
                                                               dataArrays.h_subject_read_ids,
@@ -2734,7 +2734,7 @@ namespace gpu{
                 h_tmp_read_ids[i] = dataArrays.h_candidate_read_ids[dataArrays.h_indices[i]];
             }
 
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync2(batch.candidateQualitiesGatherHandle2,
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(batch.candidateQualitiesGatherHandle2,
                                                               dataArrays.d_candidate_qualities,
                                                               dataArrays.quality_pitch,
                                                               h_tmp_read_ids.data(),

@@ -31,18 +31,18 @@ public:
 
     using Length_t = int;
 
-    using GatherHandleSequences = DistributedArray2<unsigned int, read_number>::GatherHandle;
-    using GatherHandleLengths = DistributedArray2<Length_t, read_number>::GatherHandle;
-    using GatherHandleQualities = DistributedArray2<char, read_number>::GatherHandle;
+    using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
+    using GatherHandleLengths = DistributedArray<Length_t, read_number>::GatherHandle;
+    using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
 
     std::vector<int> deviceIds;
     read_number numberOfReads;
     int sequenceLengthLimit;
     bool useQualityScores;
 
-    DistributedArray2<unsigned int, read_number> distributedSequenceData2;
-    DistributedArray2<Length_t, read_number> distributedSequenceLengths2;
-    DistributedArray2<char, read_number> distributedQualities2;
+    DistributedArray<unsigned int, read_number> distributedSequenceData2;
+    DistributedArray<Length_t, read_number> distributedSequenceLengths2;
+    DistributedArray<char, read_number> distributedQualities2;
 
     Statistics statistics;
 
@@ -83,7 +83,7 @@ public:
 
     GatherHandleQualities makeGatherHandleQualities() const;
 
-    void gatherSequenceDataToGpuBufferAsync2(
+    void gatherSequenceDataToGpuBufferAsync(
                                 const GatherHandleSequences& handle,
                                 char* d_sequence_data,
                                 size_t out_sequence_pitch,
@@ -94,7 +94,7 @@ public:
                                 cudaStream_t stream,
                                 int numCpuThreads) const;
 
-    void gatherSequenceLengthsToGpuBufferAsync2(
+    void gatherSequenceLengthsToGpuBufferAsync(
                                 const GatherHandleLengths& handle,
                                 int* d_lengths,
                                 const read_number* h_readIds,
@@ -104,7 +104,7 @@ public:
                                 cudaStream_t stream,
                                 int numCpuThreads) const;
 
-    void gatherQualitiesToGpuBufferAsync2(
+    void gatherQualitiesToGpuBufferAsync(
                                 const GatherHandleQualities& handle,
                                 char* d_quality_data,
                                 size_t out_quality_pitch,
