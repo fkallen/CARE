@@ -59,6 +59,12 @@
 
 #define USE_WAIT_FLAGS
 
+//#define DO_PROFILE
+
+#ifdef DO_PROFILE
+    constexpr size_t num_reads_to_profile = 50000;
+#endif
+
 
 namespace care{
 namespace gpu{
@@ -336,6 +342,9 @@ namespace gpu{
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         NN_Correction_Classifier nnClassifier;
+
+        std::vector<char>* sequenceDataBuffer;
+        std::vector<int>* sequenceLengthsBuffer;
 	};
 
     BatchState state_unprepared_func(Batch& batch,
@@ -1283,7 +1292,6 @@ namespace gpu{
 
 
 
-
     BatchState state_unprepared_func3(Batch& batch,
                           bool isPausable,
                 TransitionFunctionData& transFuncData){
@@ -1301,6 +1309,8 @@ namespace gpu{
 
         std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
         std::vector<CorrectionTask>* tmptasksBuffer = transFuncData.tmptasksBuffer;
+        std::vector<char>* sequenceDataBuffer = transFuncData.sequenceDataBuffer;
+        std::vector<int>* sequenceLengthsBuffer = transFuncData.sequenceLengthsBuffer;
 
         auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
                         auto copybegin = position_to_erase;
@@ -1313,6 +1323,7 @@ namespace gpu{
         const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
 
         constexpr int num_simultaneous_tasks = 64;
+        const size_t seqpitch = getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength) * sizeof(int);
 
         std::vector<CorrectionTask> tmptasks;
         //std::vector<bool> tmpokflags(num_simultaneous_tasks);
@@ -1324,8 +1335,27 @@ namespace gpu{
 
             if(tmptasksBuffer->empty()){
 
-                if(readIdBuffer->empty())
+                if(readIdBuffer->empty()){
                     *readIdBuffer = transFuncData.readIdGenerator->next_n(1000);
+
+                    sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
+                    sequenceLengthsBuffer->resize(readIdBuffer->size());
+
+                    transFuncData.readStorage->gatherSequenceDataToHostBuffer(
+                                                batch.candidateSequenceGatherHandle2,
+                                                sequenceDataBuffer->data(),
+                                                seqpitch,
+                                                readIdBuffer->data(),
+                                                readIdBuffer->size(),
+                                                transFuncData.runtimeOptions.nCorrectorThreads);
+
+                    transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
+                                                batch.candidateLengthGatherHandle2,
+                                                sequenceLengthsBuffer->data(),
+                                                readIdBuffer->data(),
+                                                readIdBuffer->size(),
+                                                transFuncData.runtimeOptions.nCorrectorThreads);
+                }
 
                 if(readIdBuffer->empty())
                     continue;
@@ -1334,25 +1364,6 @@ namespace gpu{
                 const int max_tmp_tasks = std::min(readIdsInBuffer, num_simultaneous_tasks);
 
                 tmptasks.resize(max_tmp_tasks);
-
-                size_t seqpitch = getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength) * sizeof(int);
-                std::vector<char> sequenceData(max_tmp_tasks * seqpitch, 0);
-                std::vector<int> sequenceLengths(max_tmp_tasks, 0);
-
-                transFuncData.readStorage->gatherSequenceDataToHostBuffer(
-                                            batch.candidateSequenceGatherHandle2,
-                                            sequenceData.data(),
-                                            dataArrays.encoded_sequence_pitch,
-                                            readIdBuffer->data(),
-                                            max_tmp_tasks,
-                                            transFuncData.runtimeOptions.nCorrectorThreads);
-
-                transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
-                                            batch.candidateLengthGatherHandle2,
-                                            sequenceLengths.data(),
-                                            readIdBuffer->data(),
-                                            max_tmp_tasks,
-                                            transFuncData.runtimeOptions.nCorrectorThreads);
 
                 #pragma omp parallel for
                 for(int tmptaskindex = 0; tmptaskindex < max_tmp_tasks; tmptaskindex++){
@@ -1367,8 +1378,8 @@ namespace gpu{
                     }
 
                     if(ok){
-                        const char* sequenceptr = sequenceData.data() + tmptaskindex * dataArrays.encoded_sequence_pitch;
-                        const int sequencelength = sequenceLengths[tmptaskindex];
+                        const char* sequenceptr = sequenceDataBuffer->data() + tmptaskindex * seqpitch;
+                        const int sequencelength = (*sequenceLengthsBuffer)[tmptaskindex];
 
                         task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
@@ -1396,6 +1407,8 @@ namespace gpu{
                 }
 
                 readIdBuffer->erase(readIdBuffer->begin(), readIdBuffer->begin() + max_tmp_tasks);
+                sequenceDataBuffer->erase(sequenceDataBuffer->begin(), sequenceDataBuffer->begin() + max_tmp_tasks * seqpitch);
+                sequenceLengthsBuffer->erase(sequenceLengthsBuffer->begin(), sequenceLengthsBuffer->begin() + max_tmp_tasks);
 
                 std::swap(*tmptasksBuffer, tmptasks);
 
@@ -1439,24 +1452,6 @@ namespace gpu{
 
                 tmptasksBuffer->pop_back();
             }
-
-            #ifdef CARE_GPU_DEBUG
-
-            /*for(int i = 0; i < int(batch.tasks.size()); i++){
-                if(batch.tasks[i].readId == 999013){
-                    std::cout << "indices for task " << dataArrays.h_indices_per_subject[i] << std::endl;
-                }
-            }*/
-
-            if(std::any_of(tmptasksBuffer->begin(), tmptasksBuffer->end(), [](auto& t){return t.readId == 999013;})){
-                std::cout << "is in buffer" << std::endl;
-            }else{
-                std::cout << "nope" << std::endl;
-            }
-
-
-
-            #endif
 
             //only perform one iteration if pausable
             if(isPausable)
@@ -1542,36 +1537,12 @@ namespace gpu{
                     return SDIV(num, factor) * factor;
                 };
 
-                /*const int minOverlapForMaxSeqLength = std::max(1,
-                                                        std::max(transFuncData.goodAlignmentProperties.min_overlap,
-                                                                    int(transFuncData.sequenceFileProperties.maxSequenceLength * transFuncData.goodAlignmentProperties.min_overlap_ratio)));
-                const int msa_max_column_count = (3*transFuncData.sequenceFileProperties.maxSequenceLength - 2*minOverlapForMaxSeqLength);*/
-
-                //batch.batchDataDevice.cubTemp.resize(max_temp_storage_bytes);
-                /*batch.batchDataDevice.resize(int(batch.tasks.size()),
-                                            batch.initialNumberOfCandidates,
-                                            roundToNextMultiple(transFuncData.sequenceFileProperties.maxSequenceLength, 4),
-                                            roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength), 4),
-                                            transFuncData.sequenceFileProperties.maxSequenceLength,
-                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength), msa_max_column_count);
-
-                batch.batchDataHost.resize(int(batch.tasks.size()),
-                                            batch.initialNumberOfCandidates,
-                                            roundToNextMultiple(transFuncData.sequenceFileProperties.maxSequenceLength, 4),
-                                            roundToNextMultiple(sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength), 4),
-                                            transFuncData.sequenceFileProperties.maxSequenceLength,
-                                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength), msa_max_column_count);*/
-
                 batch.initialNumberOfCandidates = 0;
-
-                //std::cout << batch.tasks.size() << std::endl;
 
                 return BatchState::CopyReads;
             }
         }
     }
-
-
 
 
     BatchState state_copyreads_func(Batch& batch,
@@ -4627,7 +4598,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
             TIMERSTARTCPU(buildgpu);
-                  BuiltGpuDataStructures dataStructuresgpu = buildGpuDataStructures(minhashOptions,
+            BuiltGpuDataStructures dataStructuresgpu
+                  = buildGpuDataStructures(minhashOptions,
                                                                           correctionOptions,
                                                                           runtimeOptions,
                                                                           fileOptions);
@@ -4714,7 +4686,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::vector<read_number> readIdBuffer;
       std::vector<CorrectionTask> tmptasksBuffer;
 
+#ifndef DO_PROFILE
       cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+#else
+      cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
+#endif
 
       TransitionFunctionData transFuncData;
 
@@ -5237,8 +5213,14 @@ std::cerr << "correct_gpu2\n";
 
       std::vector<read_number> readIdBuffer;
       std::vector<CorrectionTask> tmptasksBuffer;
+      std::vector<char> sequenceDataBuffer;
+      std::vector<int> sequenceLengthsBuffer;
 
-      cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+#ifndef DO_PROFILE
+        cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+#else
+        cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
+#endif
 
       TransitionFunctionData transFuncData;
 
@@ -5255,6 +5237,8 @@ std::cerr << "correct_gpu2\n";
       transFuncData.readIdGenerator = &readIdGenerator;
       transFuncData.readIdBuffer = &readIdBuffer;
       transFuncData.tmptasksBuffer = &tmptasksBuffer;
+      transFuncData.sequenceDataBuffer = &sequenceDataBuffer;
+      transFuncData.sequenceLengthsBuffer = &sequenceLengthsBuffer;
       transFuncData.minhasher = &minhasher;
       transFuncData.readStorage = &readStorage;
       transFuncData.locksForProcessedFlags = locksForProcessedFlags.get();
@@ -5322,7 +5306,7 @@ std::cerr << "correct_gpu2\n";
 
 
       int stacksize = 0;
-
+      //auto previousprocessedreads = readIdGenerator.getCurrentUnsafe();
       while(
             !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
                   return batch.state == BatchState::Finished;
@@ -5350,15 +5334,17 @@ std::cerr << "correct_gpu2\n";
           AdvanceResult mainBatchAdvanceResult;
           bool popMain = false;
 
-          runtime = std::chrono::system_clock::now() - timepoint_begin;
+          const auto now = std::chrono::system_clock::now();
+          runtime = now - timepoint_begin;
 
   #ifndef DO_PROFILE
-          if(runtimeOptions.showProgress){
+          if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
               printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
                       readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
                       int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
                       int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
                       int(runtime.count()) % 60);
+              //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
           }
   #endif
 
