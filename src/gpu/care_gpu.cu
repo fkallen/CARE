@@ -89,8 +89,8 @@ void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t&
 void checkBuiltDataStructures(BuiltGpuDataStructures& gpudata, BuiltDataStructures& cpudata){
     auto& cpurs = cpudata.builtReadStorage.data;
     auto& gpurs = gpudata.builtReadStorage.data;
-    auto& oldMinhasher = cpudata.builtMinhasher.data;
-    auto& newMinhasher = gpudata.builtMinhasher.data;
+    //auto& oldMinhasher = cpudata.builtMinhasher.data;
+    //auto& newMinhasher = gpudata.builtMinhasher.data;
 
     gpu::ContiguousReadStorage oldgpurs(&cpurs, {0});
     oldgpurs.initGPUData();
@@ -197,11 +197,11 @@ void checkBuiltDataStructures(BuiltGpuDataStructures& gpudata, BuiltDataStructur
         flag.resize(1);
         auto* f = flag.get();
         generic_kernel<<<num,128>>>([=] __device__ (){
-            bool error = false;
+            //bool error = false;
             for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < num * maxlen; i += blockDim.x * gridDim.x){
                 if(oldd[i] != newd[i]){
                     printf("error i %d, %d, %d\n", i, int(oldd[i]), int(newd[i]));
-                    error = true;
+                    //error = true;
                     break;
                 }
             }
