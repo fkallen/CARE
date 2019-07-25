@@ -503,7 +503,7 @@ namespace gpu {
             dim3 block(128,1,1);
 
             generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
-                const int intiters = out_sequence_pitch / sizeof(int);
+                const int intiters = rs_sequence_pitch / sizeof(int);
 
                 for(int index = threadIdx.x + blockDim.x * blockIdx.x; index < nReadIds; index += blockDim.x * gridDim.x){
                     const read_number readId = d_readIds[index];
@@ -511,7 +511,7 @@ namespace gpu {
                     for(int k = 0; k < intiters; k++){
                         ((int*)&d_sequence_data[index * out_sequence_pitch])[k] = ((int*)&rs_sequence_data[size_t(readId) * rs_sequence_pitch])[k];
                     }
-                    for(int k = intiters * sizeof(int); k < out_sequence_pitch; k++){
+                    for(int k = intiters * sizeof(int); k < rs_sequence_pitch; k++){
                     //for (int k = 0; k < out_sequence_pitch; k++){
                     //   printf("rs index %d k %d, copy src[%lu] to dest[%lu] %d\n", index, k, size_t(readId) * rs_sequence_pitch + k, index * out_sequence_pitch + k, int(rs_sequence_data[size_t(readId) * rs_sequence_pitch + k]));
                         d_sequence_data[index * out_sequence_pitch + k] = rs_sequence_data[size_t(readId) * rs_sequence_pitch + k];
