@@ -86,7 +86,168 @@ void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t&
 
 
 
+void checkBuiltDataStructures(BuiltGpuDataStructures& gpudata, BuiltDataStructures& cpudata){
+    auto& cpurs = cpudata.builtReadStorage.data;
+    auto& gpurs = gpudata.builtReadStorage.data;
+    auto& oldMinhasher = cpudata.builtMinhasher.data;
+    auto& newMinhasher = gpudata.builtMinhasher.data;
 
+    gpu::ContiguousReadStorage oldgpurs(&cpurs, {0});
+    oldgpurs.initGPUData();
+    std::cerr << "CHECKING....\n";
+
+
+    // #pragma omp parallel for num_threads(16)
+    // for(read_number i = 0; i < gpurs.getNumberOfReads(); i++){
+    //     std::vector<unsigned int> oldRsData(8,0);
+    //     std::vector<unsigned int> newRsData(8,0);
+    //
+    //     oldgpurs.distributedSequenceData2.get(i, oldRsData.data());
+    //     gpurs.distributedSequenceData2.get(i, newRsData.data());
+    //
+    //     const char* ptr = cpurs.fetchSequenceData_ptr(i);
+    //
+    //     std::vector<unsigned int> cpuRsData(8,0);
+    //     std::copy((const unsigned int*)ptr, ((const unsigned int*)ptr)+8, cpuRsData.begin());
+    //
+    //     if(oldRsData != newRsData || oldRsData != cpuRsData){
+    //         std::cerr << "Error read " << i << "\n";
+    //         std::cerr << "Old rs\n";
+    //         std::copy(oldRsData.begin(), oldRsData.end(), std::ostream_iterator<unsigned int>(std::cerr, " "));
+    //         std::cerr << "\n";
+    //         std::cerr << get2BitHiLoString(oldRsData.data(), 100) << '\n';
+    //         std::cerr << "New rs\n";
+    //         std::copy(newRsData.begin(), newRsData.end(), std::ostream_iterator<unsigned int>(std::cerr, " "));
+    //         std::cerr << "\n";
+    //         std::cerr << get2BitHiLoString(newRsData.data(), 100) << '\n';
+    //         std::cerr << "Cpu rs\n";
+    //         std::copy(cpuRsData.begin(), cpuRsData.end(), std::ostream_iterator<unsigned int>(std::cerr, " "));
+    //         std::cerr << "\n";
+    //         std::cerr << get2BitHiLoString(cpuRsData.data(), 100) << '\n';
+    //         assert(oldRsData == newRsData);
+    //         assert(oldRsData == cpuRsData);
+    //     }
+    //
+    //     assert(oldRsData == newRsData);
+    //     assert(oldRsData == cpuRsData);
+    // }
+
+
+    for(read_number i = 0; i < 1024; i++){
+        int num = 50000;
+        int maxlen = 128;
+        int enclen = getEncodedNumInts2BitHiLo(maxlen);
+        std::mt19937 gen;
+        gen.seed(std::random_device()());
+        std::uniform_int_distribution<read_number> dist(0, gpurs.getNumberOfReads()-1); // distribution in range [1, 6]
+        std::vector<read_number> ids(num);
+        std::generate(ids.begin(), ids.end(), [&](){return dist(gen);});
+
+        SimpleAllocationDevice<read_number> d_readIds;
+        d_readIds.resize(num);
+        cudaMemcpy(d_readIds.get(), ids.data(), sizeof(read_number) * num, H2D); CUERR;
+
+
+        SimpleAllocationDevice<char> d_data;
+        d_data.resize(maxlen * num);
+        cudaMemset(d_data.get(), 0, sizeof(char) * maxlen * num); CUERR;
+        oldgpurs.copyGpuSequenceDataToGpuBufferAsync(d_data.get(), maxlen, d_readIds.get(), num, 0, 0);
+        cudaDeviceSynchronize(); CUERR;
+
+        auto handle = gpurs.makeGatherHandleSequences();
+        SimpleAllocationDevice<char> d_datanew;
+        d_datanew.resize(maxlen * num);
+        cudaMemset(d_datanew.get(), 0, sizeof(char) * maxlen * num); CUERR;
+        gpurs.gatherSequenceDataToGpuBufferAsync2(
+                                    handle,
+                                    d_datanew.get(),
+                                    maxlen,
+                                    ids.data(),
+                                    d_readIds.get(),
+                                    num,
+                                    0,
+                                    0,
+                                    1);
+
+        cudaDeviceSynchronize(); CUERR;
+
+        SimpleAllocationPinnedHost<char> h_data; h_data.resize(maxlen * num);
+        SimpleAllocationPinnedHost<char> h_datanew; h_datanew.resize(maxlen * num);
+
+        cudaMemcpy(h_data.get(), d_data.get(), sizeof(char) * maxlen * num, D2H); CUERR;
+        cudaMemcpy(h_datanew.get(), d_datanew.get(), sizeof(char) * maxlen * num, D2H); CUERR;
+
+        // std::vector<unsigned int> oldRsData(8,0);
+        // std::vector<unsigned int> newRsData(8,0);
+        //
+        // oldgpurs.distributedSequenceData2.get(ids[0], oldRsData.data());
+        // gpurs.distributedSequenceData2.get(ids[0], newRsData.data());
+        //
+        //
+        // std::cerr << get2BitHiLoString(oldRsData.data(), 100) << '\n';
+        // std::cerr << get2BitHiLoString(newRsData.data(), 100) << '\n';
+        // std::cerr << get2BitHiLoString((unsigned int*)h_data.get(), 100) << '\n';
+        // std::cerr << get2BitHiLoString((unsigned int*)h_datanew.get(), 100) << '\n';
+
+
+
+        auto* oldd = d_data.get();
+        auto* newd = d_datanew.get();
+        SimpleAllocationDevice<bool> flag;
+        flag.resize(1);
+        auto* f = flag.get();
+        generic_kernel<<<num,128>>>([=] __device__ (){
+            bool error = false;
+            for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < num * maxlen; i += blockDim.x * gridDim.x){
+                if(oldd[i] != newd[i]){
+                    printf("error i %d, %d, %d\n", i, int(oldd[i]), int(newd[i]));
+                    error = true;
+                    break;
+                }
+            }
+            //*f = error;
+        });
+        cudaDeviceSynchronize();
+        //SimpleAllocationPinnedHost<bool> hflag; hflag.resize(1);
+        //cudaMemcpy(hflag.get(), flag.get(), sizeof(bool), D2H); CUERR;
+        //cudaDeviceSynchronize();
+
+        //if(hflag[0]){
+        //    break;
+        //}
+    }
+    std::exit(0);
+    std::cerr << "READ CHECKING DONE\n";
+
+    // for(read_number i = 0; i < gpurs.getNumberOfReads(); i++){
+    //     std::vector<unsigned int> newRsData(8,0);
+    //     gpurs.distributedSequenceData2.get(i, newRsData.data());
+    //
+    //     std::string sequencestring = get2BitHiLoString(newRsData.data(), 100);
+    //
+    //     auto oldCandidates = oldMinhasher.getCandidates(sequencestring,
+    //                                                         1,
+    //                                                         3200,
+    //                                                         50 * 2.5);
+    //
+    //     auto newCandidates = newMinhasher.getCandidates(sequencestring,
+    //                                                         1,
+    //                                                         3200,
+    //                                                         50 * 2.5);
+    //
+    //     if(oldCandidates != newCandidates){
+    //         std::cerr << "Error candidates read " << i << "\n";
+    //         std::copy(oldCandidates.begin(), oldCandidates.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+    //         std::cerr << "\n";
+    //         std::copy(newCandidates.begin(), newCandidates.end(), std::ostream_iterator<read_number>(std::cerr, " "));
+    //         std::cerr << "\n";
+    //         assert(oldCandidates == newCandidates);
+    //     }
+    //     assert(oldCandidates == newCandidates);
+    // }
+    //
+    // std::cerr << "CANDIDATE CHECKING DONE\n";
+}
 
 
 void performCorrection_gpu(MinhashOptions minhashOptions,
@@ -124,6 +285,16 @@ void performCorrection_gpu(MinhashOptions minhashOptions,
                                                                     fileOptions);
 
     TIMERSTOPCPU(load_and_build);
+
+    // {
+    //     BuiltDataStructures dataStructurescpu = buildDataStructures(minhashOptions,
+    //                                                                     correctionOptions,
+    //                                                                     runtimeOptions,
+    //                                                                     fileOptions);
+    //
+    //     checkBuiltDataStructures(dataStructuresgpu, dataStructurescpu);
+    //
+    // }
 
     auto& readStorage = dataStructuresgpu.builtReadStorage.data;
     auto& minhasher = dataStructuresgpu.builtMinhasher.data;
