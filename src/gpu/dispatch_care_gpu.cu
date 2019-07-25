@@ -151,7 +151,7 @@ namespace care{
 
         printDataStructureMemoryUsage(minhasher, readStorage);
 
-        correct_gpu2(minhashOptions, alignmentOptions,
+        gpu::correct_gpu(minhashOptions, alignmentOptions,
                             goodAlignmentProperties, correctionOptions,
                             runtimeOptions, iterFileOptions, sequenceFileProperties,
                             minhasher, readStorage,
