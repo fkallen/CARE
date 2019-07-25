@@ -44,15 +44,6 @@ namespace gpu {
             const std::size_t requiredQualityMem = cpuReadStorage->useQualityScores ? cpuReadStorage->quality_data_bytes : 0;
 
     		dataProperties = findDataProperties(requiredSequenceMem, requiredQualityMem);
-
-            std::vector<float> maxFreeMemFractions(deviceIds.size(), 0.9f);
-            size_t numReads = cpuReadStorage->getNumberOfSequences();
-            size_t sequencepitch = getSequencePitch();
-            //distributedSequenceData = std::move(DistributedArray<read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch));
-            assert(sequencepitch % sizeof(int) == 0);
-            distributedSequenceData2 = std::move(DistributedArray2<unsigned int, read_number>(deviceIds, maxFreeMemFractions, numReads, sequencepitch / sizeof(unsigned int)));
-            distributedSequenceLengths2 = std::move(DistributedArray2<int, read_number>(deviceIds, maxFreeMemFractions, numReads, 1));
-            distributedQualities2 = std::move(DistributedArray2<char, read_number>(deviceIds, maxFreeMemFractions, numReads, getQualityPitch()));
     	}
 
     	ContiguousReadStorage::ContiguousReadStorage(ContiguousReadStorage&& other){
@@ -66,11 +57,6 @@ namespace gpu {
     		deviceIds = std::move(other.deviceIds);
             gpuData = std::move(other.gpuData);
     		hasMoved = other.hasMoved;
-
-            distributedSequenceData = std::move(other.distributedSequenceData);
-            distributedSequenceData2 = std::move(other.distributedSequenceData2);
-            distributedSequenceLengths2 = std::move(other.distributedSequenceLengths2);
-            distributedQualities2 = std::move(other.distributedQualities2);
 
     		other.destroy();
     		other.hasMoved = true;
@@ -146,16 +132,6 @@ namespace gpu {
     		int oldId;
     		cudaGetDevice(&oldId); CUERR;
 
-
-            //distributedSequenceData.set(0, getNumberOfSequences(), cpuReadStorage->h_sequence_data.get());
-            distributedSequenceData2.set(0, getNumberOfSequences(), (const unsigned int*)cpuReadStorage->h_sequence_data.get());
-            distributedSequenceLengths2.set(0, getNumberOfSequences(), cpuReadStorage->h_sequence_lengths.get());
-            if(useQualityScores()){
-                distributedQualities2.set(0, getNumberOfSequences(), cpuReadStorage->h_quality_data.get());
-
-
-            }
-
 #if 1
     		for(auto deviceId : deviceIds) {
     			auto datait = gpuData.find(deviceId);
@@ -175,24 +151,6 @@ namespace gpu {
 
     					data.sequenceType = ContiguousReadStorage::Type::Full;
 
-                        // {
-                        //     auto bytes = cpuReadStorage->sequence_data_bytes;
-                        //     char* oldptr = data.d_sequence_data;
-                        //     char* newptr = distributedSequenceData.dataPtrPerLocation[0];
-                        //     //generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>([=]__device__(){
-                        //     generic_kernel<<<65535,128>>>([=]__device__(){
-                        //         for(size_t k = threadIdx.x + blockIdx.x * blockDim.x; k < bytes; k += blockDim.x * gridDim.x){
-                        //             char oldval = oldptr[k];
-                        //             char newval = newptr[k];
-                        //             if(oldval != newval){
-                        //                 printf("error readstorage %lu %d %d\n", k, oldval, newval);
-                        //                 break;
-                        //             }
-                        //         }
-                        //     });
-                        //
-                        //     cudaDeviceSynchronize(); CUERR; printf("rstest done\n");
-                        // }
     				}
 
     				if(dataProperties.qualityType == ContiguousReadStorage::Type::Full) {
@@ -201,25 +159,6 @@ namespace gpu {
                         cudaMemcpy(data.d_quality_data, cpuReadStorage->h_quality_data.get(), cpuReadStorage->quality_data_bytes, H2D); CUERR;
 
     					data.qualityType = ContiguousReadStorage::Type::Full;
-
-                        // {
-                        //     auto bytes = cpuReadStorage->quality_data_bytes;
-                        //     char* oldptr = data.d_quality_data;
-                        //     char* newptr = distributedQualities2.dataPtrPerLocation[0];
-                        //     //generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>([=]__device__(){
-                        //     generic_kernel<<<65535,128>>>([=]__device__(){
-                        //         for(size_t k = threadIdx.x + blockIdx.x * blockDim.x; k < bytes; k += blockDim.x * gridDim.x){
-                        //             char oldval = oldptr[k];
-                        //             char newval = newptr[k];
-                        //             if(oldval != newval){
-                        //                 printf("error qual %lu %d %d\n", k, oldval, newval);
-                        //                 break;
-                        //             }
-                        //         }
-                        //     });
-                        //
-                        //     cudaDeviceSynchronize(); CUERR; printf("rs qual test done\n");
-                        // }
 
                         /*std::cerr << "checking quality nullbytes\n";
 
@@ -549,116 +488,6 @@ namespace gpu {
                 }
             });
         }
-
-
-        ContiguousReadStorage::GatherHandle ContiguousReadStorage::makeGatherHandle() const{
-            return distributedSequenceData.makeGatherHandle();
-        }
-
-        ContiguousReadStorage::GatherHandleSequences ContiguousReadStorage::makeGatherHandleSequences() const{
-            return distributedSequenceData2.makeGatherHandle();
-        }
-
-        ContiguousReadStorage::GatherHandleLengths ContiguousReadStorage::makeGatherHandleLengths() const{
-            return distributedSequenceLengths2.makeGatherHandle();
-        }
-
-        ContiguousReadStorage::GatherHandleQualities ContiguousReadStorage::makeGatherHandleQualities() const{
-            return distributedQualities2.makeGatherHandle();
-        }
-
-        void ContiguousReadStorage::gatherSequenceDataToGpuBufferAsync(
-                                    const ContiguousReadStorage::GatherHandle& handle,
-                                    char* d_sequence_data,
-                                    size_t out_sequence_pitch,
-                                    const read_number* h_readIds,
-                                    const read_number* d_readIds,
-                                    int nReadIds,
-                                    int deviceId,
-                                    cudaStream_t stream) const{
-
-            distributedSequenceData.gatherElementsInGpuMemAsync(handle,
-                                                                h_readIds,
-                                                                d_readIds,
-                                                                nReadIds,
-                                                                deviceId,
-                                                                d_sequence_data,
-                                                                out_sequence_pitch,
-                                                                stream);
-
-        }
-
-        void ContiguousReadStorage::gatherSequenceDataToGpuBufferAsync2(
-                                    const ContiguousReadStorage::GatherHandleSequences& handle,
-                                    char* d_sequence_data,
-                                    size_t out_sequence_pitch,
-                                    const read_number* h_readIds,
-                                    const read_number* d_readIds,
-                                    int nReadIds,
-                                    int deviceId,
-                                    cudaStream_t stream,
-                                    int numCpuThreads) const{
-
-            distributedSequenceData2.gatherElementsInGpuMemAsync(handle,
-                                                                h_readIds,
-                                                                d_readIds,
-                                                                nReadIds,
-                                                                deviceId,
-                                                                (unsigned int*)d_sequence_data,
-                                                                out_sequence_pitch,
-                                                                stream,
-                                                                numCpuThreads);
-
-        }
-
-
-
-
-        void ContiguousReadStorage::gatherSequenceLengthsToGpuBufferAsync2(
-                                    const GatherHandleLengths& handle,
-                                    int* d_lengths,
-                                    const read_number* h_readIds,
-                                    const read_number* d_readIds,
-                                    int nReadIds,
-                                    int deviceId,
-                                    cudaStream_t stream,
-                                    int numCpuThreads) const{
-
-            distributedSequenceLengths2.gatherElementsInGpuMemAsync(handle,
-                                                                h_readIds,
-                                                                d_readIds,
-                                                                nReadIds,
-                                                                deviceId,
-                                                                d_lengths,
-                                                                sizeof(int),
-                                                                stream,
-                                                                numCpuThreads);
-
-        }
-
-        void ContiguousReadStorage::gatherQualitiesToGpuBufferAsync2(
-                                    const GatherHandleQualities& handle,
-                                    char* d_quality_data,
-                                    size_t out_quality_pitch,
-                                    const read_number* h_readIds,
-                                    const read_number* d_readIds,
-                                    int nReadIds,
-                                    int deviceId,
-                                    cudaStream_t stream,
-                                    int numCpuThreads) const{
-
-            distributedQualities2.gatherElementsInGpuMemAsync(handle,
-                                                                h_readIds,
-                                                                d_readIds,
-                                                                nReadIds,
-                                                                deviceId,
-                                                                d_quality_data,
-                                                                out_quality_pitch,
-                                                                stream,
-                                                                numCpuThreads);
-
-        }
-
 
 
 #endif

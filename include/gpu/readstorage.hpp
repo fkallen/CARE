@@ -29,10 +29,6 @@ struct ContiguousReadStorage {
     using Length_t = cpu::ContiguousReadStorage::Length_t;
 
 	using SequenceStatistics = cpu::SequenceStatistics;
-    using GatherHandle = DistributedArray<read_number>::GatherHandle;
-    using GatherHandleSequences = DistributedArray2<unsigned int, read_number>::GatherHandle;
-    using GatherHandleLengths = DistributedArray2<int, read_number>::GatherHandle;
-    using GatherHandleQualities = DistributedArray2<char, read_number>::GatherHandle;
 
 	static constexpr bool has_reverse_complement = false;
 	static constexpr int serialization_id = 100000;
@@ -78,22 +74,9 @@ struct ContiguousReadStorage {
     const cpu::ContiguousReadStorage* cpuReadStorage;
 
 
-
-	//managed gpu memory
 	char* d_sequence_data = nullptr;
 	Length_t* d_sequence_lengths = nullptr;
 	char* d_quality_data = nullptr;
-
-    DistributedArray<read_number> distributedSequenceData;
-    DistributedArray2<unsigned int, read_number> distributedSequenceData2;
-    DistributedArray2<int, read_number> distributedSequenceLengths2;
-    DistributedArray2<char, read_number> distributedQualities2;
-
-
-
-
-	//ContiguousReadStorage::Type sequenceType = ContiguousReadStorage::Type::None;
-	//ContiguousReadStorage::Type qualityType = ContiguousReadStorage::Type::None;
 
 	DataProperties dataProperties;
 
@@ -158,56 +141,6 @@ struct ContiguousReadStorage {
 
     void copyGpuQualityDataToGpuBufferAsync(char* d_quality_data, size_t out_quality_pitch, const read_number* d_readIds, int nReadIds, int deviceId, cudaStream_t stream) const;
 
-
-    GatherHandle makeGatherHandle() const;
-
-    void gatherSequenceDataToGpuBufferAsync(
-                                const GatherHandle& handle,
-                                char* d_sequence_data,
-                                size_t out_sequence_pitch,
-                                const read_number* h_readIds,
-                                const read_number* d_readIds,
-                                int nReadIds,
-                                int deviceId,
-                                cudaStream_t stream) const;
-
-    GatherHandleSequences makeGatherHandleSequences() const;
-
-    void gatherSequenceDataToGpuBufferAsync2(
-                                const GatherHandleSequences& handle,
-                                char* d_sequence_data,
-                                size_t out_sequence_pitch,
-                                const read_number* h_readIds,
-                                const read_number* d_readIds,
-                                int nReadIds,
-                                int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
-
-    GatherHandleLengths makeGatherHandleLengths() const;
-
-    void gatherSequenceLengthsToGpuBufferAsync2(
-                                const GatherHandleLengths& handle,
-                                int* d_lengths,
-                                const read_number* h_readIds,
-                                const read_number* d_readIds,
-                                int nReadIds,
-                                int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
-
-    GatherHandleQualities makeGatherHandleQualities() const;
-
-    void gatherQualitiesToGpuBufferAsync2(
-                                const GatherHandleQualities& handle,
-                                char* d_quality_data,
-                                size_t out_quality_pitch,
-                                const read_number* h_readIds,
-                                const read_number* d_readIds,
-                                int nReadIds,
-                                int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
 };
 
 #endif

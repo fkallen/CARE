@@ -31,7 +31,6 @@ public:
 
     using Length_t = int;
 
-    using GatherHandle = DistributedArray<read_number>::GatherHandle;
     using GatherHandleSequences = DistributedArray2<unsigned int, read_number>::GatherHandle;
     using GatherHandleLengths = DistributedArray2<Length_t, read_number>::GatherHandle;
     using GatherHandleQualities = DistributedArray2<char, read_number>::GatherHandle;
