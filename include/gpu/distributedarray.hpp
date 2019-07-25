@@ -938,6 +938,11 @@ public:
 
     using GatherHandle = std::shared_ptr<GatherHandleStruct>;
 
+    struct SinglePartitionInfo{
+        bool isSinglePartition = false;
+        int locationId = -1;
+    };
+
     bool debug;
     int numGpus;
     int numLocations; //numGpus + 1
@@ -946,6 +951,7 @@ public:
     Index_t numRows;
     Index_t numColumns;
     size_t sizeOfElement;
+    SinglePartitionInfo singlePartitionInfo;
     std::vector<int> deviceIds; //device ids which can be used to store data
     std::vector<float> maxFreeMemFraction; // how many elements of data can be stored on wich gpu
     std::vector<Index_t> elementsPerLocation; // how many elements are stored on which location
@@ -1035,12 +1041,16 @@ public:
 
             std::partial_sum(elementsPerLocation.begin(), elementsPerLocation.end(), elementsPerLocationPS.begin()+1);
 
+            auto singlepartitioniter = std::find(elementsPerLocation.begin(), elementsPerLocation.end(), numRows);
+            singlePartitionInfo.isSinglePartition = singlepartitioniter != elementsPerLocation.end();
+            singlePartitionInfo.locationId = std::distance(elementsPerLocation.begin(), singlepartitioniter);
+
             if(true){
                 std::cerr << "DistributedArray2:\n";
                 std::cerr << "device ids: [";
                 std::copy(deviceIds.begin(), deviceIds.end(), std::ostream_iterator<int>(std::cerr, " "));
                 std::cerr << "]\n";
-
+                std::cerr << "SinglePartitionInfo: " << singlePartitionInfo.isSinglePartition << ", " << singlePartitionInfo.locationId << '\n';
                 std::cerr << "elements per location: [";
                 std::copy(elementsPerLocation.begin(), elementsPerLocation.end(), std::ostream_iterator<Index_t>(std::cerr, " "));
                 std::cerr << "]\n";
@@ -1067,6 +1077,7 @@ public:
         numRows = rhs.numRows;
         numColumns = rhs.numColumns;
         sizeOfElement = rhs.sizeOfElement;
+        singlePartitionInfo = rhs.singlePartitionInfo;
         deviceIds = std::move(rhs.deviceIds);
         maxFreeMemFraction = std::move(rhs.maxFreeMemFraction);
         elementsPerLocation = std::move(rhs.elementsPerLocation);
@@ -1081,6 +1092,7 @@ public:
         rhs.numRows = 0;
         rhs.numColumns = 0;
         rhs.sizeOfElement = 0;
+        rhs.singlePartitionInfo = SinglePartitionInfo{};
         rhs.deviceIds.clear();
         rhs.maxFreeMemFraction.clear();
         rhs.elementsPerLocation.clear();
@@ -1341,6 +1353,49 @@ public:
         //assert(resultPitch >= sizeOfElement);
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+
+
+        //fastpath, if all elements of distributed array reside on a single partition
+        if(singlePartitionInfo.isSinglePartition){
+            if(singlePartitionInfo.locationId == hostLocation){
+                if(debug) std::cerr << "single location array fasthpath on host\n";
+
+                for(Index_t k = 0; k < numIds; k++){
+                    const Index_t localId = indices[k];
+                    const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                    Value_t* destPtr = (Value_t*)(((const char*)(result)) + sizeOfElement * k);
+                    std::copy_n(srcPtr, numColumns, destPtr);
+                }
+
+                return;
+            }else{
+                if(debug) std::cerr << "single location array fasthpath on partition " << singlePartitionInfo.locationId << "\n";
+
+                const int locationId = singlePartitionInfo.locationId;
+                const int deviceId = deviceIds[locationId];
+                cudaSetDevice(deviceId); CUERR;
+
+                const cudaStream_t stream = handle->streamsPerGpu[locationId];
+                auto& h_indices = handle->pinnedLocalIndices;
+                auto& d_indices = handle->deviceLocalIndicesPerLocation[locationId];
+                auto& h_result = handle->pinnedResultData;
+                auto& d_result = handle->dataPerGpu[locationId];
+
+                h_indices.resize(numIds);
+                d_indices.resize(numIds);
+                h_result.resize(numIds * numColumns);
+                d_result.resize(numIds * numColumns);
+
+                std::copy_n(indices, numIds, h_indices.get());
+                cudaMemcpyAsync(d_indices.get(), h_indices.get(), sizeof(Index_t) * numIds, H2D, stream); CUERR;
+                copyDataToGpuBufferAsync(d_result.get(), resultPitch, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]); CUERR;
+                cudaMemcpyAsync(h_result.get(), d_result.get(), sizeof(Value_t) * numIds * numColumns, D2H, stream); CUERR;
+                cudaStreamSynchronize(stream); CUERR;
+                std::copy_n(h_result.get(), numIds * numColumns, result);
+
+                return;
+            }
+        }
 
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
         for(Index_t i = 0; i < numIds; i++){
@@ -1773,24 +1828,6 @@ public:
         size_t resultPitchValueTs = resultPitch / sizeof(Value_t);
 
         const Value_t* const gpuData = dataPtrPerLocation[gpu];
-
-        // dim3 grid(SDIV(nIndices, 128),1,1);
-        // dim3 block(128,1,1);
-        //
-        // generic_kernel<<<grid, block,0, stream>>>([=] __device__ (){
-        //     //const int intiters = resultPitch / sizeof(int);
-        //
-        //     for(Index_t k = threadIdx.x + Index_t(blockIdx.x) * blockDim.x; k < nIndices; k += Index_t(blockDim.x) * gridDim.x){
-        //         const Index_t index = d_indices[k] + indexOffset;
-        //         for(int b = 0; b < numCols; b++){
-        //             d_result[k * resultPitchValueTs + b] = gpuData[index * numCols + b];
-        //         }
-        //
-        //         // for(size_t b = 0; b < sizeOfElement_; b++){
-        //         //     d_result[k * resultPitch + b] = gpuData[index * sizeOfElement_ + b];
-        //         // }
-        //     }
-        // }); CUERR;
 
         dim3 block(256,1,1);
         dim3 grid(std::min(65535ul, SDIV(nIndices * numCols, block.x)),1,1);
