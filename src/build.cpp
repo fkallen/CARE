@@ -640,7 +640,7 @@ namespace care{
 #endif
             };
 
-            if(nThreads == 1){
+            //if(nThreads == 1){
                 std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
                 Read read;
@@ -651,47 +651,47 @@ namespace care{
                     handle_read(readIndex, read);
                 }
 
-            }else{
-
-                using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
-
-                std::vector<std::thread> threads;
-                std::vector<Buffer_t> buffers(nThreads);
-
-                for(int i = 0; i < nThreads; i++){
-                    threads.emplace_back([&, i]{
-
-                            auto pair = buffers[i].get();
-
-                            while (pair != buffers[i].defaultValue) {
-                                Read& read = pair.first;
-                                const std::uint64_t readIndex = pair.second;
-
-                                handle_read(readIndex, read);
-
-                                pair = buffers[i].get();
-                            }
-                        });
-                }
-
-                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
-
-                Read read;
-                int target = 0;
-                while (reader->getNextRead(&read)) {
-                    std::uint64_t readnum = reader->getReadnum()-1;
-                    target = readnum % nThreads;
-                    buffers[target].add( { read, readnum });
-                }
-
-                for (auto& b : buffers) {
-                    b.done();
-                }
-
-                for(auto& thread : threads){
-                    thread.join();
-                }
-            }
+            // }else{
+            //
+            //     using Buffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
+            //
+            //     std::vector<std::thread> threads;
+            //     std::vector<Buffer_t> buffers(nThreads);
+            //
+            //     for(int i = 0; i < nThreads; i++){
+            //         threads.emplace_back([&, i]{
+            //
+            //                 auto pair = buffers[i].get();
+            //
+            //                 while (pair != buffers[i].defaultValue) {
+            //                     Read& read = pair.first;
+            //                     const std::uint64_t readIndex = pair.second;
+            //
+            //                     handle_read(readIndex, read);
+            //
+            //                     pair = buffers[i].get();
+            //                 }
+            //             });
+            //     }
+            //
+            //     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+            //
+            //     Read read;
+            //     int target = 0;
+            //     while (reader->getNextRead(&read)) {
+            //         std::uint64_t readnum = reader->getReadnum()-1;
+            //         target = readnum % nThreads;
+            //         buffers[target].add( { read, readnum });
+            //     }
+            //
+            //     for (auto& b : buffers) {
+            //         b.done();
+            //     }
+            //
+            //     for(auto& thread : threads){
+            //         thread.join();
+            //     }
+            // }
 
             return result;
         }
