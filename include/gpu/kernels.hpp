@@ -2,7 +2,8 @@
 #define CARE_GPU_KERNELS_HPP
 
 #include "../hpc_helpers.cuh"
-#include "bestalignment.hpp"
+//#include <gpu/bestalignment.hpp>
+#include <bestalignment.hpp>
 #include <msa.hpp>
 
 #include <config.hpp>

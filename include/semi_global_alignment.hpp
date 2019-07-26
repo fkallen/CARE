@@ -182,7 +182,7 @@ struct SGAdata{
     int* d_subjectlengths = nullptr;
     int* d_querylengths = nullptr;
     int* d_NqueriesPrefixSum = nullptr;
-    care::cpu::BestAlignment_t* d_bestAlignmentFlags = nullptr;
+    care::BestAlignment_t* d_bestAlignmentFlags = nullptr;
     char* d_unpacked_queries = nullptr;
 
     Attributes_t* h_results = nullptr;
@@ -191,7 +191,7 @@ struct SGAdata{
     int* h_subjectlengths = nullptr;
     int* h_querylengths = nullptr;
     int* h_NqueriesPrefixSum = nullptr;
-    care::cpu::BestAlignment_t* h_bestAlignmentFlags = nullptr;
+    care::BestAlignment_t* h_bestAlignmentFlags = nullptr;
     char* h_unpacked_queries = nullptr;
 
 #ifdef __NVCC__

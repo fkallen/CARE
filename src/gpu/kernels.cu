@@ -1,5 +1,6 @@
 #include <gpu/kernels.hpp>
-#include <gpu/bestalignment.hpp>
+//#include <gpu/bestalignment.hpp>
+#include <bestalignment.hpp>
 #include <gpu/qualityscoreweights.hpp>
 #include <gpu/utility_kernels.cuh>
 #include <gpu/cubcachingallocator.cuh>
@@ -1428,7 +1429,7 @@ namespace gpu{
                     const char* const candidatequalPtr = &qualitiesOfCandidates[quality_pitch * indexToIndices];
                     const int candidateLength = d_sequencePointers.candidateSequencesLength[candidateIndex];
                     const int shift = d_alignmentresultpointers.shifts[candidateIndex];
-                    const bool forward = d_alignmentresultpointers.bestAlignmentFlags[candidateIndex] == gpu::BestAlignment_t::Forward;
+                    const bool forward = d_alignmentresultpointers.bestAlignmentFlags[candidateIndex] == BestAlignment_t::Forward;
                     const int query_alignment_overlap = d_alignmentresultpointers.overlaps[candidateIndex];
                     const int query_alignment_nops = d_alignmentresultpointers.nOps[candidateIndex];
 

@@ -26,7 +26,7 @@ namespace cpu{
     candidateLengths.size() == n/2
     returnvalue.size() == n/2
 */
-template<int dummy=0>
+__inline__
 std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDResult>& alignmentresults,
                                     const int subjectLength,
                                     const std::vector<int>& candidateLengths,
@@ -47,7 +47,7 @@ std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDRes
         const SHDResult& revcAlignment = alignmentresults[i + half_size];
         const int candidateLength = candidateLengths[i];
 
-        BestAlignment_t bestAlignmentFlag = care::cpu::choose_best_alignment(forwardAlignment,
+        BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(forwardAlignment,
                                                                           revcAlignment,
                                                                           subjectLength,
                                                                           candidateLength,
@@ -61,7 +61,7 @@ std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDRes
     return result;
 }
 
-template<int dummy=0>
+__inline__
 std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDResult>& forwardAlignments,
                                     const std::vector<SHDResult>& revcAlignments,
                                     const int subjectLength,
@@ -81,7 +81,7 @@ std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDRes
         const SHDResult& revcAlignment = revcAlignments[i];
         const int candidateLength = candidateLengths[i];
 
-        BestAlignment_t bestAlignmentFlag = care::cpu::choose_best_alignment(forwardAlignment,
+        BestAlignment_t bestAlignmentFlag = care::choose_best_alignment(forwardAlignment,
                                                                           revcAlignment,
                                                                           subjectLength,
                                                                           candidateLength,
