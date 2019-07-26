@@ -353,7 +353,7 @@ struct Minhasher {
     static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
-    static constexpr int maximum_number_of_maps = 32;
+    static constexpr int maximum_number_of_maps = 48;
     static constexpr int maximum_kmer_length = minhasherdetail::max_k<kmer_type>::value;
 
     struct Handle{
