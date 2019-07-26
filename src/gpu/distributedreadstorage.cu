@@ -28,7 +28,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     useQualityScores = b;
 
     if(numberOfReads > 0 && sequenceLengthLimit > 0){
-        std::vector<float> maxFreeMemFractions(deviceIds.size(), 0.9f);
+        std::vector<float> maxFreeMemFractions(deviceIds.size(), 0.8f);
 
         const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthLimit);
 
@@ -566,9 +566,9 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
             read_number begin = batch * batchsize;
             read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
 
-            size_t databytes = lengthpitch * (end-begin);
-            std::vector<Length_t> data(databytes, 0);
+            std::vector<Length_t> data((end-begin), 0);
 
+            size_t databytes = lengthpitch * (end-begin);
             stream.read(reinterpret_cast<char*>(&data[0]), databytes);
             totalMemoryRead += stream.gcount();
 
