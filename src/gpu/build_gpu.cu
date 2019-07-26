@@ -171,20 +171,40 @@ namespace gpu{
                 // inserterThread.wait();
 
 
-                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+                // std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+                // std::vector<read_number> indicesBuffer;
+                // std::vector<Read> readsBuffer;
+                // indicesBuffer.reserve(maxbuffersize);
+                // readsBuffer.reserve(maxbuffersize);
+                //
+                // Read read;
+                // while (reader->getNextRead(&read)) {
+                //     std::uint64_t readnum = reader->getReadnum()-1;
+                //     handle_read(readnum, read, indicesBuffer, readsBuffer);
+                // }
+                // if(indicesBuffer.size() > 0){
+                //     flushBuffers(indicesBuffer, readsBuffer);
+                // }
+
+
                 std::vector<read_number> indicesBuffer;
                 std::vector<Read> readsBuffer;
                 indicesBuffer.reserve(maxbuffersize);
                 readsBuffer.reserve(maxbuffersize);
 
-                Read read;
-                while (reader->getNextRead(&read)) {
-                    std::uint64_t readnum = reader->getReadnum()-1;
-                    handle_read(readnum, read, indicesBuffer, readsBuffer);
-                }
+                forEachReadInFile(fileOptions.inputfile,
+                                fileOptions.format,
+                                [&](auto readnum, auto& read){
+                                    handle_read(readnum, read, indicesBuffer, readsBuffer);
+                                }
+                );
+
                 if(indicesBuffer.size() > 0){
                     flushBuffers(indicesBuffer, readsBuffer);
                 }
+
+
+
             //}
 
             return result;

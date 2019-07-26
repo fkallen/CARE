@@ -641,15 +641,23 @@ namespace care{
             };
 
             //if(nThreads == 1){
-                std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
-                Read read;
+                forEachReadInFile(fileOptions.inputfile,
+                                fileOptions.format,
+                                [&](auto readnum, auto& read){
+                                    handle_read(readnum, read);
+                                }
+                );
 
-                while (reader->getNextRead(&read)) {
-                    std::uint64_t readIndex = reader->getReadnum() - 1;
-
-                    handle_read(readIndex, read);
-                }
+                // std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+                //
+                // Read read;
+                //
+                // while (reader->getNextRead(&read)) {
+                //     std::uint64_t readIndex = reader->getReadnum() - 1;
+                //
+                //     handle_read(readIndex, read);
+                // }
 
             // }else{
             //
