@@ -239,6 +239,18 @@ SequenceFileProperties getSequenceFileProperties(const std::string& filename, Fi
 std::uint64_t getNumberOfReadsFast(const std::string& filename, FileFormat format);
 std::uint64_t getNumberOfReads(const std::string& filename, FileFormat format);
 
+template<class Func>
+void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
+    std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(filename, format);
+
+    Read read;
+    while (reader->getNextRead(&read)) {
+        std::uint64_t readnum = reader->getReadnum()-1;
+        f(readnum, read);
+    }
+}
+
+
 /*
     Deletes every file in vector filenames
 */
