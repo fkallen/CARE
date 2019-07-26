@@ -109,103 +109,21 @@ namespace gpu{
                 }
             };
 
-            // if(nThreads == 1){
-            //     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
-            //
-            //     Read read;
-            //
-            //     std::vector<read_number> indicesBuffer;
-            //     std::vector<Read> readsBuffer;
-            //     indicesBuffer.reserve(maxbuffersize);
-            //     readsBuffer.reserve(maxbuffersize);
-            //
-            //     while (reader->getNextRead(&read)) {
-            //         std::uint64_t readIndex = reader->getReadnum() - 1;
-            //
-            //         handle_read(readIndex, read, indicesBuffer, readsBuffer);
-            //     }
-            //
-            //     if(indicesBuffer.size() > 0){
-            //         flushBuffers(indicesBuffer, readsBuffer);
-            //     }
-            //
-            // }else{
+            std::vector<read_number> indicesBuffer;
+            std::vector<Read> readsBuffer;
+            indicesBuffer.reserve(maxbuffersize);
+            readsBuffer.reserve(maxbuffersize);
 
-                // using CommunicationBuffer_t = ThreadsafeBuffer<std::pair<Read, std::uint64_t>, 30000>;
-                // CommunicationBuffer_t commBuffer;
-                //
-                // auto inserterFunc = [&](){
-                //     std::vector<read_number> indicesBuffer;
-                //     std::vector<Read> readsBuffer;
-                //     indicesBuffer.reserve(maxbuffersize);
-                //     readsBuffer.reserve(maxbuffersize);
-                //
-                //     auto pair = commBuffer.get();
-                //
-                //     while (pair != commBuffer.defaultValue) {
-                //         Read& read = pair.first;
-                //         const std::uint64_t readIndex = pair.second;
-                //
-                //         handle_read(readIndex, read, indicesBuffer, readsBuffer);
-                //
-                //         pair = commBuffer.get();
-                //     }
-                //
-                //     if(indicesBuffer.size() > 0){
-                //         flushBuffers(indicesBuffer, readsBuffer);
-                //     }
-                // };
-                //
-                // auto inserterThread = std::async(std::launch::async, inserterFunc);
-                //
-                // std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
-                //
-                // Read read;
-                // while (reader->getNextRead(&read)) {
-                //     std::uint64_t readnum = reader->getReadnum()-1;
-                //     commBuffer.add( { std::move(read), readnum });
-                // }
-                //
-                // commBuffer.done();
-                //
-                // inserterThread.wait();
+            forEachReadInFile(fileOptions.inputfile,
+                            fileOptions.format,
+                            [&](auto readnum, auto& read){
+                                handle_read(readnum, read, indicesBuffer, readsBuffer);
+                            }
+            );
 
-
-                // std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
-                // std::vector<read_number> indicesBuffer;
-                // std::vector<Read> readsBuffer;
-                // indicesBuffer.reserve(maxbuffersize);
-                // readsBuffer.reserve(maxbuffersize);
-                //
-                // Read read;
-                // while (reader->getNextRead(&read)) {
-                //     std::uint64_t readnum = reader->getReadnum()-1;
-                //     handle_read(readnum, read, indicesBuffer, readsBuffer);
-                // }
-                // if(indicesBuffer.size() > 0){
-                //     flushBuffers(indicesBuffer, readsBuffer);
-                // }
-
-
-                std::vector<read_number> indicesBuffer;
-                std::vector<Read> readsBuffer;
-                indicesBuffer.reserve(maxbuffersize);
-                readsBuffer.reserve(maxbuffersize);
-
-                forEachReadInFile(fileOptions.inputfile,
-                                fileOptions.format,
-                                [&](auto readnum, auto& read){
-                                    handle_read(readnum, read, indicesBuffer, readsBuffer);
-                                }
-                );
-
-                if(indicesBuffer.size() > 0){
-                    flushBuffers(indicesBuffer, readsBuffer);
-                }
-
-
-
-            //}
+            if(indicesBuffer.size() > 0){
+                flushBuffers(indicesBuffer, readsBuffer);
+            }
 
             return result;
         }
