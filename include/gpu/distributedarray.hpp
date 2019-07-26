@@ -400,8 +400,45 @@ public:
 
     void setSafe(const std::vector<Index_t>& indices, const Value_t* data){
         assert(std::is_sorted(indices.begin(), indices.end()));
+        assert(!indices.empty());
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+
+
+
+
+        if(singlePartitionInfo.isSinglePartition){
+            const int locationId = singlePartitionInfo.locationId;
+
+            bool isConsecutiveIndices = true;
+            for(size_t k = 0; k < indices.size()-1; k++){
+                if(indices[k]+1 != indices[k+1]){
+                    isConsecutiveIndices = false;
+                    break;
+                }
+            }
+
+            std::cerr << "setSafe isConsecutiveIndices? " << isConsecutiveIndices << "\n";
+
+            if(isConsecutiveIndices){
+                if(locationId == hostLocation){
+                    Index_t start = indices[0];
+                    Value_t* destPtr = offsetPtr(dataPtrPerLocation[locationId], start);
+
+                    std::copy_n(data, indices.size() * numColumns, destPtr);
+                    return;
+                }else{
+                    Index_t start = indices[0];
+                    Value_t* destPtr = offsetPtr(dataPtrPerLocation[locationId], start);
+                    cudaSetDevice(deviceIds[locationId]); CUERR;
+                    cudaMemcpy(destPtr, data, indices.size() * sizeOfElement, H2D); CUERR;
+                    cudaSetDevice(oldDevice); CUERR;
+                    return;
+                }
+            }
+
+
+        }
 
         std::vector<int> localIndices(indices.size(), -1);
         std::vector<int> hitsPerLocation(numLocations, 0);
