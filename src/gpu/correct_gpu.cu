@@ -10,7 +10,6 @@
 
 #include <config.hpp>
 #include <qualityscoreweights.hpp>
-#include <tasktiming.hpp>
 #include <sequence.hpp>
 #include <featureextractor.hpp>
 #include <forestclassifier.hpp>

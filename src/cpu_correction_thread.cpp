@@ -3,7 +3,7 @@
 #include <config.hpp>
 
 #include "options.hpp"
-#include "tasktiming.hpp"
+
 #include "cpu_alignment.hpp"
 #include "bestalignment.hpp"
 #include <msa.hpp>

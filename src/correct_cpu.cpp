@@ -9,7 +9,6 @@
 #include "sequence.hpp"
 #include "sequencefileio.hpp"
 #include "qualityscoreweights.hpp"
-#include "tasktiming.hpp"
 
 #include "featureextractor.hpp"
 #include "bestalignment.hpp"
