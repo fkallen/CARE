@@ -10,7 +10,7 @@
 namespace care{
 
     template<class KeyValueMap>
-    void transform_keyvaluemap(KeyValueMap& map, const std::vector<int>& deviceIds){
+    void transform_keyvaluemap(KeyValueMap& map){
         if(map.noMoreWrites) return;
 
         if(map.size == 0) return;
@@ -30,19 +30,19 @@ namespace care{
         }*/
     }
 
-    void transform_minhasher(Minhasher& minhasher, int map, const std::vector<int>& deviceIds){
+    void transform_minhasher(Minhasher& minhasher, int map){
         assert(map < int(minhasher.minhashTables.size()));
 
         auto& tableptr = minhasher.minhashTables[map];
         if(!tableptr->noMoreWrites){
             std::cerr << "Transforming table " << map << std::endl;
-            transform_keyvaluemap(*tableptr, deviceIds);
+            transform_keyvaluemap(*tableptr);
         }
     }
 
-    void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds){
+    void transform_minhasher(Minhasher& minhasher){
         for (std::size_t i = 0; i < minhasher.minhashTables.size(); ++i){
-            transform_minhasher(minhasher, i, deviceIds);
+            transform_minhasher(minhasher, i);
         }
     }
 

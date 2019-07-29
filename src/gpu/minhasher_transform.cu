@@ -7,6 +7,17 @@
 #include <vector>
 
 
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+
+#include <thrust/iterator/constant_iterator.h>
+
+#include <thrust/copy.h>
+#include <thrust/inner_product.h>
+#include <thrust/sort.h>
+
+#include <gpu/thrust_custom_allocators.hpp>
+
 namespace care{
 
     template<bool allowFallback>
@@ -224,7 +235,7 @@ namespace care{
         }*/
     }
 
-    void transform_minhasher(Minhasher& minhasher, int map, const std::vector<int>& deviceIds){
+    void transform_minhasher_gpu(Minhasher& minhasher, int map, const std::vector<int>& deviceIds){
         assert(map < int(minhasher.minhashTables.size()));
 
         auto& tableptr = minhasher.minhashTables[map];
@@ -234,9 +245,9 @@ namespace care{
         }
     }
 
-    void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds){
+    void transform_minhasher_gpu(Minhasher& minhasher, const std::vector<int>& deviceIds){
         for (std::size_t i = 0; i < minhasher.minhashTables.size(); ++i){
-            transform_minhasher(minhasher, i, deviceIds);
+            transform_minhasher_gpu(minhasher, i, deviceIds);
         }
     }
 

@@ -225,7 +225,7 @@ namespace gpu{
                 }
 
                 for(auto mapId : mapIds){
-                    transform_minhasher(minhasher, mapId, runtimeOptions.deviceIds);
+                    transform_minhasher_gpu(minhasher, mapId, runtimeOptions.deviceIds);
                 }
             }
             omp_set_num_threads(oldnumthreads);

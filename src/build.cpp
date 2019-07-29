@@ -162,7 +162,7 @@ namespace care{
                 }
 
                 for(auto mapId : mapIds){
-                    transform_minhasher(minhasher, mapId, runtimeOptions.deviceIds);
+                    transform_minhasher(minhasher, mapId);
                 }
 
             }

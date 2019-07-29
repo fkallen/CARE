@@ -9,26 +9,17 @@
 #include <iostream>
 #include <vector>
 
-#ifdef __NVCC__
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
-
-#include <thrust/iterator/constant_iterator.h>
-
-#include <thrust/copy.h>
-#include <thrust/inner_product.h>
-#include <thrust/sort.h>
-
-#include <gpu/thrust_custom_allocators.hpp>
-#endif
-
-
 
 
 namespace care{
 
-    void transform_minhasher(Minhasher& minhasher, const std::vector<int>& deviceIds);
-    void transform_minhasher(Minhasher& minhasher, int map, const std::vector<int>& deviceIds);
+    void transform_minhasher(Minhasher& minhasher);
+    void transform_minhasher(Minhasher& minhasher, int map);
+
+#ifdef __NVCC__
+    void transform_minhasher_gpu(Minhasher& minhasher, const std::vector<int>& deviceIds);
+    void transform_minhasher_gpu(Minhasher& minhasher, int map, const std::vector<int>& deviceIds);
+#endif
 
 
     template<class Key_t, class Value_t, class Index_t>
