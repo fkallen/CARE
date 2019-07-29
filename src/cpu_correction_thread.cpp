@@ -37,602 +37,886 @@
 namespace care{
 namespace cpu{
 
-        template<class Iter>
-        void initializeTasks(std::vector<CPUCorrectionThread::CorrectionTask>& tasks,
-                             const cpu::ContiguousReadStorage& readStorage,
-                             const std::vector<read_number>& readIds,
-                             int numThreads = 1){
+        struct CorrectionTask{
+            CorrectionTask(){}
 
-            auto identity = [](auto i){return i;};
+            CorrectionTask(read_number readId)
+                :   active(true),
+                    corrected(false),
+                    readId(readId)
+                    {}
 
-            omp_set_num_threads(numThreads);
+            CorrectionTask(const CorrectionTask& other)
+                : active(other.active),
+                corrected(other.corrected),
+                readId(other.readId),
+                candidate_read_ids(other.candidate_read_ids),
+                candidate_read_ids_begin(other.candidate_read_ids_begin),
+                candidate_read_ids_end(other.candidate_read_ids_end),
+                original_subject_string(other.original_subject_string),
+                subject_string(other.subject_string),
+                encodedSubjectPtr(other.encodedSubjectPtr),
+                clipping_begin(other.clipping_begin),
+                clipping_end(other.clipping_end),
+                corrected_subject(other.corrected_subject),
+                corrected_candidates(other.corrected_candidates),
+                corrected_candidates_read_ids(other.corrected_candidates_read_ids){
 
-            #pragma omp parallel for schedule(dynamic, 5)
-            for(size_t i = 0; i < readIds.size(); i++){
-                auto& task = tasks[i];
-                const read_number readId = readIds[i];
+                candidate_read_ids_begin = &(candidate_read_ids[0]);
+                candidate_read_ids_end = &(candidate_read_ids[candidate_read_ids.size()]);
 
-                const char* const originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
-                const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
-
-                task = std::move(CPUCorrectionThread::CorrectionTask{readId});
-
-                task.original_subject_string.resize(originalsubjectLength);
-                decode2BitHiLoSequence(&task.original_subject_string[0],
-                                        (const unsigned int*) originalsubjectptr, originalsubjectLength, identity);
             }
-        }
 
-        void getCandidates(std::vector<CPUCorrectionThread::CorrectionTask>& tasks,
+            CorrectionTask(CorrectionTask&& other){
+                operator=(other);
+            }
+
+            CorrectionTask& operator=(const CorrectionTask& other){
+                CorrectionTask tmp(other);
+                swap(*this, tmp);
+                return *this;
+            }
+
+            CorrectionTask& operator=(CorrectionTask&& other){
+                swap(*this, other);
+                return *this;
+            }
+
+            friend void swap(CorrectionTask& l, CorrectionTask& r) noexcept{
+                using std::swap;
+
+                swap(l.active, r.active);
+                swap(l.corrected, r.corrected);
+                swap(l.readId, r.readId);
+                swap(l.original_subject_string, r.original_subject_string);
+                swap(l.subject_string, r.subject_string);
+                swap(l.encodedSubjectPtr, r.encodedSubjectPtr);
+                swap(l.candidate_read_ids, r.candidate_read_ids);
+                swap(l.candidate_read_ids_begin, r.candidate_read_ids_begin);
+                swap(l.candidate_read_ids_end, r.candidate_read_ids_end);
+                swap(l.clipping_begin, r.clipping_begin);
+                swap(l.clipping_end, r.clipping_end);
+                swap(l.corrected_subject, r.corrected_subject);
+                swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
+            }
+
+            bool active;
+            bool corrected;
+            read_number readId;
+
+            std::vector<read_number> candidate_read_ids;
+            read_number* candidate_read_ids_begin;
+            read_number* candidate_read_ids_end; // exclusive
+
+            std::string original_subject_string;
+            std::string subject_string;
+            const unsigned int* encodedSubjectPtr;
+            const char* subjectQualityPtr;
+
+            int clipping_begin;
+            int clipping_end;
+
+            std::string corrected_subject;
+            std::vector<std::string> corrected_candidates;
+            std::vector<read_number> corrected_candidates_read_ids;
+        };
+
+        struct TaskData{
+            MultipleSequenceAlignment multipleSequenceAlignment;
+            std::vector<unsigned int> subjectsequence;
+            std::vector<char> candidateData;
+            std::vector<char> candidateRevcData;
+            std::vector<int> candidateLengths;
+            int max_candidate_length = 0;
+            std::vector<char*> candidateDataPtrs;
+            std::vector<char*> candidateRevcDataPtrs;
+
+            std::vector<SHDResult> forwardAlignments;
+            std::vector<SHDResult> revcAlignments;
+            std::vector<BestAlignment_t> alignmentFlags;
+            size_t numGoodAlignmentFlags;
+
+            std::vector<SHDResult> bestAlignments;
+            std::vector<BestAlignment_t> bestAlignmentFlags;
+            std::vector<int> bestAlignmentShifts;
+            std::vector<float> bestAlignmentWeights;
+            std::vector<read_number> bestCandidateReadIds;
+            std::vector<int> bestCandidateLengths;
+            std::vector<char> bestCandidateData;
+            std::vector<char*> bestCandidatePtrs;
+
+            std::vector<char> bestCandidateQualityData;
+            std::vector<char*> bestCandidateQualityPtrs;
+            //std::vector<std::string> bestCandidateStrings;
+            std::vector<char> bestCandidateStrings;
+        };
+
+
+
+        void getCandidates(CorrectionTask& task,
                             const Minhasher& minhasher,
                             int maxNumberOfCandidates,
                             int requiredHitsPerCandidate,
-                            size_t maxNumResultsPerMapQuery,
-                            int numThreads = 1){
+                            size_t maxNumResultsPerMapQuery){
 
-            omp_set_num_threads(numThreads);
+            task.candidate_read_ids = minhasher.getCandidates(task.subject_string,
+                                                               requiredHitsPerCandidate,
+                                                               maxNumberOfCandidates,
+                                                               maxNumResultsPerMapQuery);
 
-            #pragma omp parallel for schedule(dynamic, 5)
-            for(size_t i = 0; i < tasks.size(); i++){
-                auto& task = tasks[i];
-                task.candidate_read_ids = minhasher.getCandidates(task.subject_string,
-                                                                   requiredHitsPerCandidate,
-                                                                   maxNumberOfCandidates,
-                                                                   maxNumResultsPerMapQuery);
+            //remove our own read id from candidate list. candidate_read_ids is sorted.
+            auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(),
+                                                task.candidate_read_ids.end(),
+                                                task.readId);
 
-                //remove our own read id from candidate list. candidate_read_ids is sorted.
-                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(),
-                                                    task.candidate_read_ids.end(),
-                                                    task.readId);
+            if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId){
+                task.candidate_read_ids.erase(readIdPos);
+            }
+        }
 
-                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId){
-                    task.candidate_read_ids.erase(readIdPos);
+
+        void getCandidateSequenceData(TaskData& data,
+                                    const cpu::ContiguousReadStorage& readStorage,
+                                    CorrectionTask& task,
+                                    size_t encodedSequencePitch){
+
+            const size_t numCandidates = task.candidate_read_ids.size();
+
+            data.candidateLengths.clear();
+            data.candidateLengths.reserve(numCandidates);
+
+            for(const read_number candidateId : task.candidate_read_ids){
+                const int candidateLength = readStorage.fetchSequenceLength(candidateId);
+                data.candidateLengths.emplace_back(candidateLength);
+            }
+
+            //max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
+
+            data.candidateData.clear();
+            data.candidateData.resize(encodedSequencePitch * numCandidates, 0);
+            data.candidateRevcData.clear();
+            data.candidateRevcData.resize(encodedSequencePitch * numCandidates, 0);
+            data.candidateDataPtrs.clear();
+            data.candidateDataPtrs.resize(numCandidates, nullptr);
+            data.candidateRevcDataPtrs.clear();
+            data.candidateRevcDataPtrs.resize(numCandidates, nullptr);
+
+            //copy candidate data and reverse complements into buffer
+
+            constexpr int prefetch_distance_sequences = 4;
+
+            for(int i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
+                const read_number next_candidate_read_id = task.candidate_read_ids[i];
+                const char* nextsequenceptr = readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+                __builtin_prefetch(nextsequenceptr, 0, 0);
+            }
+
+            for(int i = 0; i < numCandidates; i++){
+                if(i + prefetch_distance_sequences < numCandidates) {
+                    const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
+                    const char* nextsequenceptr = readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+                    __builtin_prefetch(nextsequenceptr, 0, 0);
+                }
+
+                const read_number candidateId = task.candidate_read_ids[i];
+                const char* candidateptr = readStorage.fetchSequenceData_ptr(candidateId);
+                const int candidateLength = candidateLengths[i];
+                const int bytes = getEncodedNumInts2BitHiLo(candidateLength) * sizeof(unsigned int);
+
+                char* const candidateDataBegin = candidateData.data() + i * encodedSequencePitch;
+                char* const candidateRevcDataBegin = candidateRevcData.data() + i * encodedSequencePitch;
+
+                std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
+                reverseComplement2BitHiLo((unsigned int*)(candidateRevcDataBegin),
+                                          (const unsigned int*)(candidateptr),
+                                          candidateLength);
+
+                candidateDataPtrs[i] = candidateDataBegin;
+                candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+            }
+        }
+
+
+        void getCandidateAlignments(TaskData& data,
+                                    CorrectionTask& task,
+                                    size_t encodedSequencePitch,
+                                    const GoodAlignmentProperties& alignmentProps){
+
+            const std::size_t numCandidates = task.candidate_read_ids.size();
+
+            data.forwardAlignments.resize(numCandidates);
+            data.revcAlignments.resize(numCandidates);
+
+            shd::cpu_multi_shifted_hamming_distance_popcount(data.forwardAlignments.begin(),
+                                                            task.encodedSubjectPtr,
+                                                            task.original_subject_string.size(),
+                                                            data.candidateData,
+                                                            data.candidateLengths,
+                                                            encodedSequencePitch,
+                                                            alignmentProps.min_overlap,
+                                                            alignmentProps.maxErrorRate,
+                                                            alignmentProps.min_overlap_ratio);
+
+            shd::cpu_multi_shifted_hamming_distance_popcount(data.revcAlignments.begin(),
+                                                            task.encodedSubjectPtr,
+                                                            task.original_subject_string.size(),
+                                                            data.candidateRevcData,
+                                                            data.candidateLengths,
+                                                            encodedSequencePitch,
+                                                            alignmentProps.min_overlap,
+                                                            alignmentProps.maxErrorRate,
+                                                            alignmentProps.min_overlap_ratio);
+
+            //decide whether to keep forward or reverse complement
+            data.alignmentFlags = findBestAlignmentDirection(data.forwardAlignments,
+                                                            data.revcAlignments,
+                                                            task.original_subject_string.size(),
+                                                            data.candidateLengths,
+                                                            alignmentProps.min_overlap,
+                                                            alignmentProps.maxErrorRate,
+                                                            alignmentProps.min_overlap_ratio);
+
+        }
+
+        void gatherBestAlignmentData(TaskData& data,
+                                  CorrectionTask& task,
+                                  size_t encodedSequencePitch){
+
+              data.bestAlignments.clear();
+              data.bestAlignmentFlags.clear();
+              data.bestCandidateReadIds.clear();
+              data.bestCandidateData.clear();
+              data.bestCandidateLengths.clear();
+              data.bestCandidatePtrs.clear();
+
+              data.bestAlignments.resize(data.numGoodDirection);
+              data.bestAlignmentFlags.resize(data.numGoodDirection);
+              data.bestCandidateReadIds.resize(data.numGoodDirection);
+              data.bestCandidateData.resize(data.numGoodDirection * encodedSequencePitch);
+              data.bestCandidateLengths.resize(data.numGoodDirection);
+              data.bestCandidatePtrs.resize(data.numGoodDirection);
+
+              for(size_t i = 0; i < data.numGoodDirection; i++){
+                  data.bestCandidatePtrs[i] = data.bestCandidateData.data() + i * encodedSequencePitch;
+              }
+
+              for(size_t i = 0, insertpos = 0; i < data.alignmentFlags.size(); i++){
+
+                  const BestAlignment_t flag = data.alignmentFlags[i];
+                  const auto& fwdAlignment = data.forwardAlignments[i];
+                  const auto& revcAlignment = data.revcAlignments[i];
+                  const read_number candidateId = task.candidate_read_ids[i];
+                  const int candidateLength = data.candidateLengths[i];
+
+                  if(flag == BestAlignment_t::Forward){
+                      data.bestAlignmentFlags[insertpos] = flag;
+                      data.bestCandidateReadIds[insertpos] = candidateId;
+                      data.bestCandidateLengths[insertpos] = candidateLength;
+
+                      data.bestAlignments[insertpos] = fwdAlignment;
+                      std::copy(data.candidateDataPtrs[i],
+                                data.candidateDataPtrs[i] + encodedSequencePitch,
+                                data.bestCandidatePtrs[insertpos]);
+                      insertpos++;
+                  }else if(flag == BestAlignment_t::ReverseComplement){
+                      data.bestAlignmentFlags[insertpos] = flag;
+                      data.bestCandidateReadIds[insertpos] = candidateId;
+                      data.bestCandidateLengths[insertpos] = candidateLength;
+
+                      data.bestAlignments[insertpos] = revcAlignment;
+                      std::copy(data.candidateRevcDataPtrs[i],
+                                data.candidateRevcDataPtrs[i] + encodedSequencePitch,
+                                data.bestCandidatePtrs[insertpos]);
+                      insertpos++;
+                  }else{
+                      ;//BestAlignment_t::None discard alignment
+                  }
+              }
+        }
+
+        void filterBestAlignmentsByMismatchRatio(TaskData& data,
+                  CorrectionTask& task,
+                  size_t encodedSequencePitch,
+                  const CorrectionOptions& correctionOptions,
+                  const GoodAlignmentProperties& alignmentProps){
+            //get indices of alignments which have a good mismatch ratio
+
+            auto goodIndices = filterAlignmentsByMismatchRatio(taskdata.bestAlignments,
+                                                               correctionOptions.estimatedErrorrate,
+                                                               correctionOptions.estimatedCoverage,
+                                                               correctionOptions.m_coverage,
+                                                               [hpc = correctionOptions.hits_per_candidate](){
+                                                                   return hpc > 1;
+                                                               });
+
+            if(goodIndices.size() == 0){
+                task.active = false; //no good mismatch ratio
+            }else{
+                //stream compaction. keep only data at positions given by goodIndices
+
+                for(size_t i = 0; i < int(goodIndices.size()); i++){
+                    const int fromIndex = goodIndices[i];
+                    const int toIndex = i;
+
+                    taskdata.bestAlignments[toIndex] = taskdata.bestAlignments[fromIndex];
+                    taskdata.bestAlignmentFlags[toIndex] = taskdata.bestAlignmentFlags[fromIndex];
+                    taskdata.bestCandidateReadIds[toIndex] = taskdata.bestCandidateReadIds[fromIndex];
+                    taskdata.bestCandidateLengths[toIndex] = taskdata.bestCandidateLengths[fromIndex];
+
+                    std::copy(taskdata.bestCandidatePtrs[fromIndex],
+                              taskdata.bestCandidatePtrs[fromIndex] + maxSequenceBytes,
+                              taskdata.bestCandidatePtrs[toIndex]);
+                }
+
+                taskdata.bestAlignments.erase(taskdata.bestAlignments.begin() + goodIndices.size(),
+                                     taskdata.bestAlignments.end());
+                taskdata.bestAlignmentFlags.erase(taskdata.bestAlignmentFlags.begin() + goodIndices.size(),
+                                         taskdata.bestAlignmentFlags.end());
+                taskdata.bestCandidateReadIds.erase(taskdata.bestCandidateReadIds.begin() + goodIndices.size(),
+                                           taskdata.bestCandidateReadIds.end());
+                taskdata.bestCandidateLengths.erase(taskdata.bestCandidateLengths.begin() + goodIndices.size(),
+                                           taskdata.bestCandidateLengths.end());
+                taskdata.bestCandidatePtrs.erase(taskdata.bestCandidatePtrs.begin() + goodIndices.size(),
+                                        taskdata.bestCandidatePtrs.end());
+                taskdata.bestCandidateData.erase(taskdata.bestCandidateData.begin() + goodIndices.size() * maxSequenceBytes,
+                                        taskdata.bestCandidateData.end());
+
+                taskdata.bestAlignmentShifts.resize(taskdata.bestAlignments.size());
+                taskdata.bestAlignmentWeights.resize(taskdata.bestAlignments.size());
+
+                for(int i = 0; i < int(bestAlignments.size()); i++){
+                    taskdata.bestAlignmentShifts[i] = taskdata.bestAlignments[i].shift;
+                    taskdata.bestAlignmentWeights[i] = 1.0f - std::sqrt(taskdata.bestAlignments[i].nOps
+                                                                        / (taskdata.bestAlignments[i].overlap
+                                                                            * alignmentProps.maxErrorRate));
                 }
             }
         }
 
 
-        void CPUCorrectionThread::run(){
-            if(isRunning) throw std::runtime_error("CPUCorrectionThread::run: Is already running.");
-            isRunning = true;
-            thread = std::move(std::thread(&CPUCorrectionThread::execute, this));
+
+        void getCandidateQualities(TaskData& data,
+                                    const cpu::ContiguousReadStorage& readStorage,
+                                    CorrectionTask& task,
+                                    int maximumSequenceLength){
+
+            task.subjectQualityPtr = readStorage.fetchQuality_ptr(task.readId);
+
+            data.bestCandidateQualityData.clear();
+            data.bestCandidateQualityData.resize(maximumSequenceLength * data.bestAlignments.size());
+
+            data.bestCandidateQualityPtrs.clear();
+            data.bestCandidateQualityPtrs.resize(data.bestAlignments.size());
+
+            constexpr size_t prefetch_distance_qualities = 4;
+
+            for(size_t i = 0; i < data.bestAlignments.size() && i < prefetch_distance_qualities; ++i) {
+                const read_number next_candidate_read_id = data.bestCandidateReadIds[i];
+                const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
+                __builtin_prefetch(nextqualityptr, 0, 0);
+            }
+
+            for(size_t i = 0; i < bestAlignments.size(); i++){
+                if(i + prefetch_distance_qualities < bestAlignments.size()) {
+                    const read_number next_candidate_read_id = data.bestCandidateReadIds[i + prefetch_distance_qualities];
+                    const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
+                    __builtin_prefetch(nextqualityptr, 0, 0);
+                }
+                const char* qualityptr = readStorage.fetchQuality_ptr(data.bestCandidateReadIds[i]);
+                const int length = data.bestCandidateLengths[i];
+                const BestAlignment_t flag = data.bestAlignmentFlags[i];
+
+                if(flag == BestAlignment_t::Forward){
+                    std::copy(qualityptr, qualityptr + length, &data.bestCandidateQualityData[maximumSequenceLength * i]);
+                }else{
+                    std::reverse_copy(qualityptr, qualityptr + length, &data.bestCandidateQualityData[maximumSequenceLength * i]);
+                }
+            }
+
+            for(size_t i = 0; i < data.bestAlignments.size(); i++){
+                data.bestCandidateQualityPtrs[i] = data.bestCandidateQualityData.data() + i * maximumSequenceLength;
+            }
         }
 
-        void CPUCorrectionThread::join(){
-            thread.join();
-            isRunning = false;
+
+        void makeCandidateStrings(TaskData& data,
+                                    CorrectionTask& task,
+                                    int maximumSequenceLength){
+            data.bestCandidateStrings.clear();
+            data.bestCandidateStrings.resize(bestAlignments.size() * maximumSequenceLength);
+
+            for(size_t i = 0; i < data.bestAlignments.size(); i++){
+                const char* ptr = data.bestCandidatePtrs[i];
+                const int length = data.bestCandidateLengths[i];
+                decode2BitHiLoSequence(&data.bestCandidateStrings[i * maximumSequenceLength],
+                                        (const unsigned int*)ptr,
+                                        length);
+            }
         }
 
-    	void CPUCorrectionThread::execute() {
+        void buildMultipleSequenceAlignment(TaskData& data,
+                                            cpu::ContiguousReadStorage& readStorage,
+                                            CorrectionTask& task,
+                                            const CorrectionOptions& correctionOptions,
+                                            int maximumSequenceLength){
 
-            using MSA_t = care::MultipleSequenceAlignment;
 
-    		isRunning = true;
+            const char* const candidateQualityPtr = correctionOptions.useQualityScores ?
+                                                    data.bestCandidateQualityData.data()
+                                                    : nullptr;
 
-            const int max_sequence_bytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(fileProperties.maxSequenceLength);
+            data.multipleSequenceAlignment.build(task.original_subject_string.c_str(),
+                                            task.original_subject_string.length(),
+                                            data.bestCandidateStrings.data(),
+                                            data.bestCandidateLengths.data(),
+                                            int(data.bestAlignments.size()),
+                                            data.bestAlignmentShifts.data(),
+                                            data.bestAlignmentWeights.data(),
+                                            task.subjectQualityPtr,
+                                            candidateQualityPtr,
+                                            maximumSequenceLength,
+                                            maximumSequenceLength,
+                                            correctionOptions.useQualityScores);
+        }
 
-    		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
+        void removeCandidatesOfDifferentRegionFromMSA(TaskData& data,
+                                                        CorrectionTask& task,
+                                                        const CorrectionOptions& correctionOptions,
+                                                        size_t encodedSequencePitch,
+                                                        int maximumSequenceLength){
+            constexpr int max_num_minimizations = 5;
 
-    		std::ofstream outputstream(threadOpts.outputfile);
+            if(max_num_minimizations > 0){
+                int num_minimizations = 0;
 
-            std::ofstream featurestream(threadOpts.outputfile + "_features");
-    		auto write_read = [&](const read_number readId, const auto& sequence){
-                //std::cout << readId << " " << sequence << std::endl;
-    			auto& stream = outputstream;
-			assert(sequence.size() > 0);
+                auto minimizationResult = findCandidatesOfDifferentRegion(task.original_subject_string.c_str(),
+                                                                    task.original_subject_string.length(),
+                                                                    data.bestCandidateStrings.data(),
+                                                                    data.bestCandidateLengths.data(),
+                                                                    int(data.bestAlignments.size()),
+                                                                    maximumSequenceLength,
+                                                                    data.multipleSequenceAlignment.consensus.data(),
+                                                                    data.multipleSequenceAlignment.countsA.data(),
+                                                                    data.multipleSequenceAlignment.countsC.data(),
+                                                                    data.multipleSequenceAlignment.countsG.data(),
+                                                                    data.multipleSequenceAlignment.countsT.data(),
+                                                                    data.multipleSequenceAlignment.weightsA.data(),
+                                                                    data.multipleSequenceAlignment.weightsC.data(),
+                                                                    data.multipleSequenceAlignment.weightsG.data(),
+                                                                    data.multipleSequenceAlignment.weightsT.data(),
+                                                                    data.multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                                    data.multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                                    data.bestAlignmentShifts.data(),
+                                                                    correctionOptions.estimatedCoverage);
 
-			for(const auto& c : sequence){
-				assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
-			}
+                auto update_after_successfull_minimization = [&](){
 
-    			stream << readId << ' ' << sequence << '\n';
-    		};
+                    if(minimizationResult.performedMinimization){
+                        assert(minimizationResult.differentRegionCandidate.size() == data.bestAlignments.size());
 
-    		auto lock = [&](read_number readId){
-    			read_number index = readId % threadOpts.nLocksForProcessedFlags;
-    			threadOpts.locksForProcessedFlags[index].lock();
-    		};
+                        bool anyRemoved = false;
+                        size_t cur = 0;
+                        for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
+                            if(!minimizationResult.differentRegionCandidate[i]){
 
-    		auto unlock = [&](read_number readId){
-    			read_number index = readId % threadOpts.nLocksForProcessedFlags;
-    			threadOpts.locksForProcessedFlags[index].unlock();
-    		};
+                                data.bestAlignments[cur] = data.bestAlignments[i];
+                                data.bestAlignmentShifts[cur] = data.bestAlignmentShifts[i];
+                                data.bestAlignmentWeights[cur] = data.bestAlignmentWeights[i];
+                                data.bestAlignmentFlags[cur] = data.bestAlignmentFlags[i];
+                                data.bestCandidateReadIds[cur] = data.bestCandidateReadIds[i];
+                                data.bestCandidateLengths[cur] = data.bestCandidateLengths[i];
 
-            auto identity = [](auto i){return i;};
+                                std::copy(data.bestCandidateData.begin() + i * encodedSequencePitch,
+                                        data.bestCandidateData.begin() + (i+1) * encodedSequencePitch,
+                                        data.bestCandidateData.begin() + cur * encodedSequencePitch);
+                                std::copy(data.bestCandidateQualityData.begin() + i * maximumSequenceLength,
+                                        data.bestCandidateQualityData.begin() + (i+1) * maximumSequenceLength,
+                                        data.bestCandidateQualityData.begin() + cur * maximumSequenceLength);
+                                std::copy(data.bestCandidateStrings.begin() + i * maximumSequenceLength,
+                                        data.bestCandidateStrings.begin() + (i+1) * maximumSequenceLength,
+                                        data.bestCandidateStrings.begin() + cur * maximumSequenceLength);
 
-            MSA_t multipleSequenceAlignment;
+                                cur++;
 
-            std::vector<read_number> readIds;
+                            }else{
+                                anyRemoved = true;
+                            }
+                        }
+
+                        assert(anyRemoved);
+
+                        data.bestAlignments.erase(data.bestAlignments.begin() + cur, data.bestAlignments.end());
+                        data.bestAlignmentShifts.erase(data.bestAlignmentShifts.begin() + cur, data.bestAlignmentShifts.end());
+                        data.bestAlignmentWeights.erase(data.bestAlignmentWeights.begin() + cur, data.bestAlignmentWeights.end());
+                        data.bestAlignmentFlags.erase(data.bestAlignmentFlags.begin() + cur, data.bestAlignmentFlags.end());
+                        data.bestCandidateReadIds.erase(data.bestCandidateReadIds.begin() + cur, data.bestCandidateReadIds.end());
+                        data.bestCandidateLengths.erase(data.bestCandidateLengths.begin() + cur, data.bestCandidateLengths.end());
+
+                        data.bestCandidateData.erase(data.bestCandidateData.begin() + cur * encodedSequencePitch, data.bestCandidateData.end());
+                        data.bestCandidateQualityData.erase(data.bestCandidateQualityData.begin() + cur * maximumSequenceLength, data.bestCandidateQualityData.end());
+                        data.bestCandidateStrings.erase(data.bestCandidateStrings.begin() + cur * maximumSequenceLength, data.bestCandidateStrings.end());
+
+                        //build minimized multiple sequence alignment
+
+                        buildMultipleSequenceAlignment(data,
+                                                        task,
+                                                        correctionOptions,
+                                                        maximumSequenceLength);
+                    }
+                };
+
+                update_after_successfull_minimization();
+
+
+                num_minimizations++;
+
+                while(num_minimizations <= max_num_minimizations
+                        && minimizationResult.performedMinimization){
+
+                    minimizationResult = findCandidatesOfDifferentRegion(task.original_subject_string.c_str(),
+                                                                        task.original_subject_string.length(),
+                                                                        data.bestCandidateStrings.data(),
+                                                                        data.bestCandidateLengths.data(),
+                                                                        int(data.bestAlignments.size()),
+                                                                        maximumSequenceLength,
+                                                                        data.multipleSequenceAlignment.consensus.data(),
+                                                                        data.multipleSequenceAlignment.countsA.data(),
+                                                                        data.multipleSequenceAlignment.countsC.data(),
+                                                                        data.multipleSequenceAlignment.countsG.data(),
+                                                                        data.multipleSequenceAlignment.countsT.data(),
+                                                                        data.multipleSequenceAlignment.weightsA.data(),
+                                                                        data.multipleSequenceAlignment.weightsC.data(),
+                                                                        data.multipleSequenceAlignment.weightsG.data(),
+                                                                        data.multipleSequenceAlignment.weightsT.data(),
+                                                                        data.multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                                        data.multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                                        data.bestAlignmentShifts.data(),
+                                                                        correctionOptions.estimatedCoverage);
+
+                    update_after_successfull_minimization();
+
+                    num_minimizations++;
+                }
+            }
+        }
+
+
+
+        void correct_cpu(const MinhashOptions& minhashOptions,
+                          const AlignmentOptions& alignmentOptions,
+                          const GoodAlignmentProperties& goodAlignmentProperties,
+                          const CorrectionOptions& correctionOptions,
+                          const RuntimeOptions& runtimeOptions,
+                          const FileOptions& fileOptions,
+                          const SequenceFileProperties& sequenceFileProperties,
+                          Minhasher& minhasher,
+                          cpu::ContiguousReadStorage& readStorage,
+                          std::uint64_t maxCandidatesPerRead,
+                          std::vector<char>& readIsCorrectedVector,
+                          std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
+                          std::size_t nLocksForProcessedFlags){
+
+            int oldNumOMPThreads = 1;
+            #pragma omp parallel
+            {
+                #pragma omp single
+                oldNumOMPThreads = omp_get_num_threads();
+            }
+
+            omp_set_num_threads(runtimeOptions.nCorrectorThreads);
+
+            std::vector<std::string> tmpfiles{fileOptions.outputfile + "_tmp"};
+
+            std::ofstream outputstream;
+
+            outputstream = std::move(std::ofstream(tmpfiles[0]));
+            if(!outputstream){
+                throw std::runtime_error("Could not open output file " + tmpfiles[0]);
+            }
+
+            std::ofstream featurestream;
+            //if(correctionOptions.extractFeatures){
+                featurestream = std::move(std::ofstream(tmpfiles[0] + "_features"));
+                if(!featurestream && correctionOptions.extractFeatures){
+                    throw std::runtime_error("Could not open output feature file");
+                }
+            //}
+
+            #ifndef DO_PROFILE
+                    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+            #else
+                    cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
+            #endif
+
+            NN_Correction_Classifier_Base nnClassifierBase;
+            NN_Correction_Classifier nnClassifier;
+            if(correctionOptions.correctionType == CorrectionType::Convnet){
+                nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
+                nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
+            }
 
             ForestClassifier forestClassifier;
             if(correctionOptions.correctionType == CorrectionType::Forest){
                 forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
             }
 
-            std::vector<CorrectionTask_t> correctionTasks(1);
+            auto write_read = [&](const read_number readId, const auto& sequence){
+                //std::cout << readId << " " << sequence << std::endl;
+                auto& stream = outputstream;
+                assert(sequence.size() > 0);
+
+                for(const auto& c : sequence){
+                    assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
+                }
+
+                stream << readId << ' ' << sequence << '\n';
+            };
+
+            auto lock = [&](read_number readId){
+                read_number index = readId % threadOpts.nLocksForProcessedFlags;
+                threadOpts.locksForProcessedFlags[index].lock();
+            };
+
+            auto unlock = [&](read_number readId){
+                read_number index = readId % threadOpts.nLocksForProcessedFlags;
+                threadOpts.locksForProcessedFlags[index].unlock();
+            };
+
+            auto identity = [](auto i){return i;};
+
+
+
+            const int max_sequence_bytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(fileProperties.maxSequenceLength);
+
+    		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
+
+            const int numThreads = runtimeOptions.nCorrectorThreads;
+
+
+            std::vector<TaskData> dataPerTask(runtimeOptions.batchsize);
+
+
+            std::vector<read_number> readIds;
+            std::vector<CorrectionTask_t> correctionTasks;
 
             //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-            std::map<int, int> totalnumcandidatesmap;
+    		while(!(threadOpts.readIdGenerator->empty() && readIds.empty())){
 
-    		while(!stopAndAbort && !(threadOpts.readIdGenerator->empty() && readIds.empty())){
-
-                if(readIds.empty())
-                    readIds = threadOpts.readIdGenerator->next_n(100);
-
-                if(readIds.empty())
-                    continue;
-
-                correctionTasks[0] = std::move(CorrectionTask_t(readIds.back()));
-                readIds.pop_back();
-
-                bool ok = false;
-                lock(correctionTasks[0].readId);
-                if ((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 0) {
-                    (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 1;
-                    ok = true;
-                }else{
+                if(readIds.empty()){
+                    readIds = threadOpts.readIdGenerator->next_n(runtimeOptions.batchsize);
                 }
-                unlock(correctionTasks[0].readId);
-
-                if(!ok)
-                    continue; //already corrected
-
-                const char* originalsubjectptr = threadOpts.readStorage->fetchSequenceData_ptr(correctionTasks[0].readId);
-                const int originalsubjectLength = threadOpts.readStorage->fetchSequenceLength(correctionTasks[0].readId);
-
-                correctionTasks[0].original_subject_string.resize(originalsubjectLength);
-                decode2BitHiLoSequence(&correctionTasks[0].original_subject_string[0],
-                                        (const unsigned int*) originalsubjectptr, originalsubjectLength, identity);
-                correctionTasks[0].subject_string = correctionTasks[0].original_subject_string;
-                correctionTasks[0].clipping_begin = 0;
-                correctionTasks[0].clipping_end = originalsubjectLength;
-
-
-
-                // -----
-
-                bool needsSecondPassAfterClipping = false;
-                bool discardThisTask = false;
-                std::vector<unsigned int> subjectsequence;
-
-
-                std::vector<char> candidateData;
-                std::vector<char> candidateRevcData;
-                std::vector<int> candidateLengths;
-                int max_candidate_length = 0;
-                std::vector<char*> candidateDataPtrs;
-                std::vector<char*> candidateRevcDataPtrs;
-
-                std::vector<AlignmentResult_t> forwardAlignments;
-                std::vector<AlignmentResult_t> revcAlignments;
-
-                std::vector<AlignmentResult_t> bestAlignments;
-                std::vector<BestAlignment_t> bestAlignmentFlags;
-                std::vector<int> bestAlignmentShifts;
-                std::vector<float> bestAlignmentWeights;
-                std::vector<read_number> bestCandidateReadIds;
-                std::vector<int> bestCandidateLengths;
-                std::vector<char> bestCandidateData;
-                std::vector<char*> bestCandidatePtrs;
-
-                std::vector<char> bestCandidateQualityData;
-                std::vector<char*> bestCandidateQualityPtrs;
-                //std::vector<std::string> bestCandidateStrings;
-                std::vector<char> bestCandidateStrings;
-
-                //this loop allows a second pass after subject has been clipped
-                int clippingIters = 0;
-
-                do{
-
-                    clippingIters++;
-
-                    const char* subjectptr = originalsubjectptr;
-                    int subjectLength = originalsubjectLength;
-                    if(needsSecondPassAfterClipping){
-                        const int length = correctionTasks[0].subject_string.length();
-                        subjectsequence.resize(getEncodedNumInts2BitHiLo(length));
-                        encodeSequence2BitHiLo(subjectsequence.data(), correctionTasks[0].subject_string.c_str(), length, identity);
-
-                        subjectptr = (const char*)subjectsequence.data();
-                        subjectLength = length;
-                    }
-
-                    if(clippingIters > 1){
-                        //std::cout << "before: " << correctionTasks[0].candidate_read_ids.size() << " candidates\n";
-                    }
-
-#ifdef ENABLE_TIMING
-                    auto tpa = std::chrono::system_clock::now();
-#endif
-                    const int candidate_limit = clippingIters > 1 ? std::numeric_limits<int>::max() : max_candidates;
-
-                    const size_t maxNumResultsPerMapQuery = correctionOptions.estimatedCoverage * 2.5;
-
-                    getCandidates(correctionTasks,
-                                    *threadOpts.minhasher,
-                                    candidate_limit,
-                                    correctionOptions.hits_per_candidate,
-                                    maxNumResultsPerMapQuery,
-                                    1);
-
-
-#ifdef ENABLE_TIMING
-                    getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-                    if(clippingIters > 1){
-                        //std::cout << "after: " << correctionTasks[0].candidate_read_ids.size() << " candidates\n";
-                    }
-
-                    int myNumCandidates = int(correctionTasks[0].candidate_read_ids.size());
-
-                    if(myNumCandidates == 0){
-                        discardThisTask = true; //no candidates to use for correction
-                        break;
-                    }
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    //copy candidates lengths into buffer
-                    candidateLengths.clear();
-                    candidateLengths.reserve(myNumCandidates);
-
-                    max_candidate_length = 0;
-                    for(const read_number candidateId: correctionTasks[0].candidate_read_ids){
-                        const int candidateLength = threadOpts.readStorage->fetchSequenceLength(candidateId);
-                        candidateLengths.emplace_back(candidateLength);
-                        max_candidate_length = std::max(max_candidate_length, candidateLength);
-                    }
-
-                    assert(max_candidate_length > 0);
-
-                    //max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
-
-                    candidateData.clear();
-                    candidateData.resize(max_sequence_bytes * myNumCandidates, 0);
-                    candidateRevcData.clear();
-                    candidateRevcData.resize(max_sequence_bytes * myNumCandidates, 0);
-                    candidateDataPtrs.clear();
-                    candidateDataPtrs.resize(myNumCandidates, nullptr);
-                    candidateRevcDataPtrs.clear();
-                    candidateRevcDataPtrs.resize(myNumCandidates, nullptr);
-
-                    //copy candidate data and reverse complements into buffer
-
-                    constexpr int prefetch_distance_sequences = 4;
-
-                    for(int i = 0; i < myNumCandidates && i < prefetch_distance_sequences; ++i) {
-                        const read_number next_candidate_read_id = correctionTasks[0].candidate_read_ids[i];
-                        const char* nextsequenceptr = threadOpts.readStorage->fetchSequenceData_ptr(next_candidate_read_id);
-                        __builtin_prefetch(nextsequenceptr, 0, 0);
-                    }
-
-                    for(int i = 0; i < myNumCandidates; i++){
-                        if(i + prefetch_distance_sequences < myNumCandidates) {
-                            const read_number next_candidate_read_id = correctionTasks[0].candidate_read_ids[i + prefetch_distance_sequences];
-                            const char* nextsequenceptr = threadOpts.readStorage->fetchSequenceData_ptr(next_candidate_read_id);
-                            __builtin_prefetch(nextsequenceptr, 0, 0);
-                        }
-
-                        const read_number candidateId = correctionTasks[0].candidate_read_ids[i];
-                        const char* candidateptr = threadOpts.readStorage->fetchSequenceData_ptr(candidateId);
-                        const int candidateLength = candidateLengths[i];
-                        const int bytes = getEncodedNumInts2BitHiLo(candidateLength) * sizeof(unsigned int);
-
-                        char* const candidateDataBegin = candidateData.data() + i * max_sequence_bytes;
-                        char* const candidateRevcDataBegin = candidateRevcData.data() + i * max_sequence_bytes;
-
-                        std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
-                        reverseComplement2BitHiLo((unsigned int*)(candidateRevcDataBegin),
-                                                  (const unsigned int*)(candidateptr),
-                                                  candidateLength,
-                                                  identity,
-                                                  identity);
-
-                        candidateDataPtrs[i] = candidateDataBegin;
-                        candidateRevcDataPtrs[i] = candidateRevcDataBegin;
-                    }
-
-#ifdef ENABLE_TIMING
-                    copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    //calculate alignments
-                    forwardAlignments.resize(myNumCandidates);
-                    revcAlignments.resize(myNumCandidates);
-
-                    /*auto forwardAlignments = shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
-                                                                subjectLength,
-                                                                candidateData,
-                                                                candidateLengths,
-                                                                max_sequence_bytes,
-                                                                goodAlignmentProperties.min_overlap,
-                                                                goodAlignmentProperties.maxErrorRate,
-                                                                goodAlignmentProperties.min_overlap_ratio);
-                    auto revcAlignments = shd::cpu_multi_shifted_hamming_distance_popcount(subjectptr,
-                                                                subjectLength,
-                                                                candidateRevcData,
-                                                                candidateLengths,
-                                                                max_sequence_bytes,
-                                                                goodAlignmentProperties.min_overlap,
-                                                                goodAlignmentProperties.maxErrorRate,
-                                                                goodAlignmentProperties.min_overlap_ratio);*/
-
-                    shd::cpu_multi_shifted_hamming_distance_popcount(forwardAlignments.begin(),
-                                                                    subjectptr,
-                                                                    subjectLength,
-                                                                    candidateData,
-                                                                    candidateLengths,
-                                                                    max_sequence_bytes,
-                                                                    goodAlignmentProperties.min_overlap,
-                                                                    goodAlignmentProperties.maxErrorRate,
-                                                                    goodAlignmentProperties.min_overlap_ratio);
-
-                    shd::cpu_multi_shifted_hamming_distance_popcount(revcAlignments.begin(),
-                                                                    subjectptr,
-                                                                    subjectLength,
-                                                                    candidateRevcData,
-                                                                    candidateLengths,
-                                                                    max_sequence_bytes,
-                                                                    goodAlignmentProperties.min_overlap,
-                                                                    goodAlignmentProperties.maxErrorRate,
-                                                                    goodAlignmentProperties.min_overlap_ratio);
-
-#ifdef ENABLE_TIMING
-                    getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    //decide whether to keep forward or reverse complement
-                    auto alignmentFlags = findBestAlignmentDirection(forwardAlignments,
-                                                                    revcAlignments,
-                                                                    subjectLength,
-                                                                    candidateLengths,
-                                                                    goodAlignmentProperties.min_overlap,
-                                                                    goodAlignmentProperties.maxErrorRate,
-                                                                    goodAlignmentProperties.min_overlap_ratio);
-
-#ifdef ENABLE_TIMING
-                    findBestAlignmentDirectionTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-                    int numGoodDirection = std::count_if(alignmentFlags.begin(),
-                                                         alignmentFlags.end(),
-                                                         [](const auto flag){
-                                                            return flag != BestAlignment_t::None;
-                                                         });
-
-                    if(numGoodDirection == 0){
-                        discardThisTask = true; //no good alignments
-                        break;
-                    }
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    //gather data for candidates with good alignment direction
-
-                    bestAlignments.clear();
-                    bestAlignmentFlags.clear();
-                    bestCandidateReadIds.clear();
-                    bestCandidateData.clear();
-                    bestCandidateLengths.clear();
-                    bestCandidatePtrs.clear();
-
-                    bestAlignments.resize(numGoodDirection);
-                    bestAlignmentFlags.resize(numGoodDirection);
-                    bestCandidateReadIds.resize(numGoodDirection);
-                    bestCandidateData.resize(numGoodDirection * max_sequence_bytes);
-                    bestCandidateLengths.resize(numGoodDirection);
-                    bestCandidatePtrs.resize(numGoodDirection);
-
-                    for(int i = 0; i < numGoodDirection; i++){
-                        bestCandidatePtrs[i] = bestCandidateData.data() + i * max_sequence_bytes;
-                    }
-
-                    for(int i = 0, insertpos = 0; i < int(alignmentFlags.size()); i++){
-
-                        const BestAlignment_t flag = alignmentFlags[i];
-                        const auto& fwdAlignment = forwardAlignments[i];
-                        const auto& revcAlignment = revcAlignments[i];
-                        const read_number candidateId = correctionTasks[0].candidate_read_ids[i];
-                        const int candidateLength = candidateLengths[i];
-
-                        if(flag == BestAlignment_t::Forward){
-                            bestAlignmentFlags[insertpos] = flag;
-                            bestCandidateReadIds[insertpos] = candidateId;
-                            bestCandidateLengths[insertpos] = candidateLength;
-
-                            bestAlignments[insertpos] = fwdAlignment;
-                            std::copy(candidateDataPtrs[i],
-                                      candidateDataPtrs[i] + max_sequence_bytes,
-                                      bestCandidatePtrs[insertpos]);
-                            insertpos++;
-                        }else if(flag == BestAlignment_t::ReverseComplement){
-                            bestAlignmentFlags[insertpos] = flag;
-                            bestCandidateReadIds[insertpos] = candidateId;
-                            bestCandidateLengths[insertpos] = candidateLength;
-
-                            bestAlignments[insertpos] = revcAlignment;
-                            std::copy(candidateRevcDataPtrs[i],
-                                      candidateRevcDataPtrs[i] + max_sequence_bytes,
-                                      bestCandidatePtrs[insertpos]);
-                            insertpos++;
-                        }else{
-                            ;// discard
-                        }
-                    }
-
-#ifdef ENABLE_TIMING
-                    gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    //get indices of alignments which have a good mismatch ratio
-                    auto goodIndices = filterAlignmentsByMismatchRatio(bestAlignments,
-                                                                       correctionOptions.estimatedErrorrate,
-                                                                       correctionOptions.estimatedCoverage,
-                                                                       correctionOptions.m_coverage,
-                                                                       [hpc = correctionOptions.hits_per_candidate](){
-                                                                           return hpc > 1;
-                                                                       });
-
-#ifdef ENABLE_TIMING
-                   mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-                    if(goodIndices.size() == 0){
-                        discardThisTask = true; //no good mismatch ratio
-                        break;
-
-                        /*if(!needsSecondPassAfterClipping){
-                            //std::cout << "A" << correctionTasks[0].readId << std::endl;
-                            needsSecondPassAfterClipping = true;
-
-                            correctionTasks[0].clipping_begin = 0;
-                            correctionTasks[0].clipping_end = std::max(0, int(correctionTasks[0].original_subject_string.length()-10));
-                            const int clipsize = correctionTasks[0].clipping_end - correctionTasks[0].clipping_begin;
-                            correctionTasks[0].subject_string = correctionTasks[0].original_subject_string.substr(correctionTasks[0].clipping_begin, clipsize);
-
-                            continue;
-                        }else{
-                            //std::cout << "B" << correctionTasks[0].readId << std::endl;
-                            needsSecondPassAfterClipping = false;
-                            discardThisTask = true;
-                            break;
-                        }*/
+                if(readIds.empty()){
+                    continue;
+                }
+
+                correctionTasks.resize(readIds.size());
+
+                #pragma omp parallel for
+                for(size_t i = 0; i < readIds.size(); i++){
+                    auto& task = correctionTasks[i];
+
+                    const read_number readId = readIds[i];
+                    task = CorrectionTask(readId);
+
+                    bool ok = false;
+                    lock(readId);
+                    if (readIsCorrectedVector[readId] == 0) {
+                        readIsCorrectedVector[readId] = 1;
+                        ok = true;
                     }else{
-                        //needsSecondPassAfterClipping = false;
                     }
+                    unlock(readId);
 
-                    //std::cout << correctionTasks[0].readId << std::endl;
+                    if(ok){
+                        const char* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
+                        const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
+
+                        task.original_subject_string = get2BitHiLoString(originalsubjectptr, originalsubjectLength);
+
+                        task.subject_string = correctionTasks[0].original_subject_string;
+                        task.encodedSubjectPtr = (const unsigned int*) originalsubjectptr;
+                        task.clipping_begin = 0;
+                        task.clipping_end = originalsubjectLength;
+
+                    }else{
+                        task.active = false;
+                    }
+                }
+
+                correctionTasks.erase(std::remove_if(correctionTasks.begin(),
+                                                    correctionTasks.end(),
+                                                    [](const auto& task){
+                                                        return !task.active;
+                                                    }),
+                                      correctionTasks.end());
+
+                const size_t maxNumResultsPerMapQuery = correctionOptions.estimatedCoverage * 2.5;
+
+#ifdef ENABLE_TIMING
+                auto tpa = std::chrono::system_clock::now();
+#endif
+
+                #pragma omp parallel for
+                for(size_t i = 0; i < correctionTasks.size(); i++){
+                    auto& task = correctionTasks[i];
+                    getCandidates(task,
+                                  minhasher,
+                                  maxCandidatesPerRead,
+                                  correctionOptions.hits_per_candidate,
+                                  maxNumResultsPerMapQuery);
+                }
+
+#ifdef ENABLE_TIMING
+                getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+                correctionTasks.erase(std::remove_if(correctionTasks.begin(),
+                                                  correctionTasks.end(),
+                                                  [](const auto& task){
+                                                      return task.candidate_read_ids.empty();
+                                                  }),
+                                    correctionTasks.end());
+
+#ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+#endif
+
+                #pragma omp parallel for
+                for(size_t i = 0; i < correctionTasks.size(); i++){
+                    auto& taskdata = dataPerTask[i];
+                    auto& task = correctionTasks[i];
+                    getCandidateSequenceData(taskdata, readStorage, task maxSequenceBytes);
+                }
+
+#ifdef ENABLE_TIMING
+                copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+#ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+#endif
+
+                #pragma omp parallel for
+                for(size_t i = 0; i < correctionTasks.size(); i++){
+                    auto& taskdata = dataPerTask[i];
+                    auto& task = correctionTasks[i];
+
+                    getCandidateAlignments(threadData, task, maxSequenceBytes, goodAlignmentProperties);
+
+                    taskdata.numGoodAlignmentFlags = std::count_if(taskdata.alignmentFlags.begin(),
+                                                                 taskdata.alignmentFlags.end(),
+                                                                 [](const auto flag){
+                                                                    return flag != BestAlignment_t::None;
+                                                                 });
+
+                    if(taskdata.numGoodAlignmentFlags == 0){
+                        task.active = false; //no good alignments
+                    }
+                }
+
+
+#ifdef ENABLE_TIMING
+                getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+                correctionTasks.erase(std::remove_if(correctionTasks.begin(),
+                                                    correctionTasks.end(),
+                                                    [](const auto& task){
+                                                        return !task.active;
+                                                    }),
+                                      correctionTasks.end());
+
+
+#ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+#endif
+
+                //gather data for candidates with good alignment direction
+
+                #pragma omp parallel for
+                for(size_t i = 0; i < correctionTasks.size(); i++){
+                    auto& taskdata = dataPerTask[i];
+                    auto& task = correctionTasks[i];
+
+                    gatherBestAlignmentData(taskdata, task, maxSequenceBytes);
+                }
+
+#ifdef ENABLE_TIMING
+                gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+
+
+#ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+#endif
+
+                #pragma omp parallel for
+                for(size_t i = 0; i < correctionTasks.size(); i++){
+                    auto& taskdata = dataPerTask[i];
+                    auto& task = correctionTasks[i];
+
+                    filterBestAlignmentsByMismatchRatio(taskdata,
+                                                      task,
+                                                      maxSequenceBytes,
+                                                      correctionOptions,
+                                                      alignmentProps);
+                }
+
+#ifdef ENABLE_TIMING
+                mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
+#endif
+
+
+                correctionTasks.erase(std::remove_if(correctionTasks.begin(),
+                                                    correctionTasks.end(),
+                                                    [](const auto& task){
+                                                        return !task.active;
+                                                    }),
+                                      correctionTasks.end());
 
 
 #ifdef ENABLE_TIMING
                     tpa = std::chrono::system_clock::now();
 #endif
 
-                    //stream compaction. keep only data at positions given by goodIndices
 
-                    for(int i = 0; i < int(goodIndices.size()); i++){
-                        const int fromIndex = goodIndices[i];
-                        const int toIndex = i;
-
-                        bestAlignments[toIndex] = bestAlignments[fromIndex];
-                        bestAlignmentFlags[toIndex] = bestAlignmentFlags[fromIndex];
-                        bestCandidateReadIds[toIndex] = bestCandidateReadIds[fromIndex];
-                        bestCandidateLengths[toIndex] = bestCandidateLengths[fromIndex];
-
-                        std::copy(bestCandidatePtrs[fromIndex],
-                                  bestCandidatePtrs[fromIndex] + max_sequence_bytes,
-                                  bestCandidatePtrs[toIndex]);
-                    }
-
-                    bestAlignments.erase(bestAlignments.begin() + goodIndices.size(),
-                                         bestAlignments.end());
-                    bestAlignmentFlags.erase(bestAlignmentFlags.begin() + goodIndices.size(),
-                                             bestAlignmentFlags.end());
-                    bestCandidateReadIds.erase(bestCandidateReadIds.begin() + goodIndices.size(),
-                                               bestCandidateReadIds.end());
-                    bestCandidateLengths.erase(bestCandidateLengths.begin() + goodIndices.size(),
-                                               bestCandidateLengths.end());
-                    bestCandidatePtrs.erase(bestCandidatePtrs.begin() + goodIndices.size(),
-                                            bestCandidatePtrs.end());
-                    bestCandidateData.erase(bestCandidateData.begin() + goodIndices.size() * max_sequence_bytes,
-                                            bestCandidateData.end());
-
-                    bestAlignmentShifts.resize(bestAlignments.size());
-                    bestAlignmentWeights.resize(bestAlignments.size());
-
-                    for(int i = 0; i < int(bestAlignments.size()); i++){
-                        bestAlignmentShifts[i] = bestAlignments[i].shift;
-                        bestAlignmentWeights[i] = 1.0f - std::sqrt(bestAlignments[i].nOps
-                                                                    / (bestAlignments[i].overlap
-                                                                        * goodAlignmentProperties.maxErrorRate));
-                    }
-
-
-#ifdef ENABLE_TIMING
-                   compactBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
-#endif
-
-#ifdef ENABLE_TIMING
-                    tpa = std::chrono::system_clock::now();
-#endif
-
-                    //gather quality scores of best alignments
                     if(correctionOptions.useQualityScores){
-                        bestCandidateQualityData.clear();
-                        bestCandidateQualityData.resize(max_candidate_length * bestAlignments.size());
+                        //gather quality scores of best alignments
 
-                        bestCandidateQualityPtrs.clear();
-                        bestCandidateQualityPtrs.resize(bestAlignments.size());
+                        #pragma omp parallel for
+                        for(size_t i = 0; i < correctionTasks.size(); i++){
+                            auto& taskdata = dataPerTask[i];
+                            auto& task = correctionTasks[i];
 
-                        constexpr int prefetch_distance_qualities = 4;
-
-                        for(int i = 0; i < int(bestAlignments.size()) && i < prefetch_distance_qualities; ++i) {
-                            const read_number next_candidate_read_id = bestCandidateReadIds[i];
-                            const char* nextqualityptr = threadOpts.readStorage->fetchQuality_ptr(next_candidate_read_id);
-                            __builtin_prefetch(nextqualityptr, 0, 0);
-                        }
-
-                        for(int i = 0; i < int(bestAlignments.size()); i++){
-                            if(i + prefetch_distance_qualities < int(bestAlignments.size())) {
-                                const read_number next_candidate_read_id = bestCandidateReadIds[i + prefetch_distance_qualities];
-                                const char* nextqualityptr = threadOpts.readStorage->fetchQuality_ptr(next_candidate_read_id);
-                                __builtin_prefetch(nextqualityptr, 0, 0);
-                            }
-                            const char* qualityptr = threadOpts.readStorage->fetchQuality_ptr(bestCandidateReadIds[i]);
-                            const int length = bestCandidateLengths[i];
-                            const BestAlignment_t flag = bestAlignmentFlags[i];
-
-                            if(flag == BestAlignment_t::Forward){
-                                std::copy(qualityptr, qualityptr + length, &bestCandidateQualityData[max_candidate_length * i]);
-                            }else{
-                                std::reverse_copy(qualityptr, qualityptr + length, &bestCandidateQualityData[max_candidate_length * i]);
-                            }
-                        }
-
-                        for(int i = 0; i < int(bestAlignments.size()); i++){
-                            bestCandidateQualityPtrs[i] = bestCandidateQualityData.data() + i * max_candidate_length;
+                            getCandidateQualities(taskdata,
+                                                readStorage,
+                                                task,
+                                                fileProperties.maxSequenceLength);
                         }
                     }
 #ifdef ENABLE_TIMING
                     fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
+
 #ifdef ENABLE_TIMING
                     tpa = std::chrono::system_clock::now();
 #endif
 
 
-                    bestCandidateStrings.clear();
-                    //bestCandidateStrings.reserve(bestAlignments.size());
-                    bestCandidateStrings.resize(bestAlignments.size() * fileProperties.maxSequenceLength);
+                    #pragma omp parallel for
+                    for(size_t i = 0; i < correctionTasks.size(); i++){
+                        auto& taskdata = dataPerTask[i];
+                        auto& task = correctionTasks[i];
 
-                    for(int i = 0; i < int(bestAlignments.size()); i++){
-                        const char* ptr = bestCandidatePtrs[i];
-                        const int length = bestCandidateLengths[i];
-                        decode2BitHiLoSequence(&bestCandidateStrings[i * fileProperties.maxSequenceLength],
-                                                (const unsigned int*)ptr,
-                                                length,
-                                                identity);
+                        makeCandidateStrings(taskdata,
+                                            task,
+                                            fileProperties.maxSequenceLength);
                     }
+
+
 
 #ifdef ENABLE_TIMING
                     makeCandidateStringsTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -644,25 +928,21 @@ namespace cpu{
                     tpa = std::chrono::system_clock::now();
 #endif
 
-                    const char* subjectQualityPtr = correctionOptions.useQualityScores ?
-                                                    threadOpts.readStorage->fetchQuality_ptr(correctionTasks[0].readId)
-                                                    : nullptr;
-                    const char* candidateQualityPtr = correctionOptions.useQualityScores ?
-                                                            bestCandidateQualityData.data()
-                                                            : nullptr;
-                    //build multiple sequence alignment
-                    multipleSequenceAlignment.build(correctionTasks[0].subject_string.c_str(),
-                                                subjectLength,
-                                                bestCandidateStrings.data(),
-                                                bestCandidateLengths.data(),
-                                                int(bestAlignments.size()),
-                                                bestAlignmentShifts.data(),
-                                                bestAlignmentWeights.data(),
-                                                subjectQualityPtr,
-                                                candidateQualityPtr,
-                                                fileProperties.maxSequenceLength,
-                                                max_candidate_length,
-                                                correctionOptions.useQualityScores);
+                    #pragma omp parallel for
+                    for(size_t i = 0; i < correctionTasks.size(); i++){
+                        auto& taskdata = dataPerTask[i];
+                        auto& task = correctionTasks[i];
+
+                        buildMultipleSequenceAlignment(taskdata,
+                                                       readStorage,
+                                                       task,
+                                                       correctionOptions,
+                                                       fileProperties.maxSequenceLength);
+                    }
+
+
+
+
 
 
 #ifdef ENABLE_TIMING
@@ -670,99 +950,6 @@ namespace cpu{
 #endif
 
 
-
-    #if 0
-                    auto print_multiple_sequence_alignment = [&](const auto& msa, const auto& alignments){
-                        auto get_shift_of_row = [&](int row){
-                            if(row == 0) return 0;
-                            return alignments[row-1].shift;
-                        };
-
-                        const char* const my_multiple_sequence_alignment = msa.multiple_sequence_alignment.data();
-                        const char* const my_consensus = msa.consensus.data();
-                        const int ncolumns = msa.nColumns;
-                        const int msa_rows = msa.nRows;
-
-                        auto msaproperties = msa.getMSAProperties();
-                        const bool isHQ = msaproperties.isHQ;
-
-                        std::cout << "ReadId " << correctionTasks[0].readId << ": msa rows = " << msa_rows << ", columns = " << ncolumns << ", HQ-MSA: " << (isHQ ? "True" : "False")
-                                    << '\n';
-
-                        print_multiple_sequence_alignment_sorted_by_shift(std::cout, my_multiple_sequence_alignment, msa_rows, ncolumns, ncolumns, get_shift_of_row);
-                        std::cout << '\n';
-                        print_multiple_sequence_alignment_consensusdiff_sorted_by_shift(std::cout, my_multiple_sequence_alignment, my_consensus,
-                                                                                        msa_rows, ncolumns, ncolumns, get_shift_of_row);
-                        std::cout << '\n';
-                    };
-
-                    auto msa2 = multipleSequenceAlignment;
-                    auto minimizationResult = msa2.minimize(correctionOptions.estimatedCoverage);
-
-                    if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
-
-                        msa2.findConsensus();
-                        std::vector<AlignmentResult_t> remaining_alignments(minimizationResult.remaining_candidates.size());
-                        for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
-                            remaining_alignments[i] = bestAlignments[minimizationResult.remaining_candidates[i]];
-                        }
-    /*
-                        for(auto i : minimizationResult.remaining_candidates){
-                            std::cout << i << ", ";
-                        }
-                        std::cout << '\n';*/
-
-                        std::cout << ", num_discarded_candidates: " << minimizationResult.num_discarded_candidates;
-                        std::cout << ", column: " << minimizationResult.column;
-                        std::cout << ", significantBase: " << minimizationResult.significantBase;
-                        std::cout << ", consensusBase: " << minimizationResult.consensusBase;
-                        std::cout << ", originalBase: " << minimizationResult.originalBase;
-                        std::cout << ", significantCount: " << minimizationResult.significantCount;
-                        std::cout << ", consensuscount: " << minimizationResult.consensuscount;
-                        std::cout << '\n';
-
-                        std::cout << "Before minimization\n";
-                        print_multiple_sequence_alignment(multipleSequenceAlignment, bestAlignments);
-                        std::cout << "After minimization: discarded " << minimizationResult.num_discarded_candidates << " candidates\n";
-                        print_multiple_sequence_alignment(msa2, remaining_alignments);
-
-
-                        for(int i = 0; i < 5 && !msa2.getMSAProperties().isHQ; i++){
-                            auto msa3 = msa2;
-                            minimizationResult = msa3.minimize(correctionOptions.estimatedCoverage);
-
-                            if(minimizationResult.performedMinimization && minimizationResult.num_discarded_candidates > 0){
-
-                                msa3.findConsensus();
-                                std::vector<AlignmentResult_t> remaining_alignments3(minimizationResult.remaining_candidates.size());
-                                for(int i = 0; i < int(minimizationResult.remaining_candidates.size()); i++){
-                                    remaining_alignments3[i] = remaining_alignments[minimizationResult.remaining_candidates[i]];
-                                }
-
-                                /*for(auto i : minimizationResult.remaining_candidates){
-                                    std::cout << i << ", ";
-                                }
-                                std::cout << '\n';*/
-
-                                std::cout << ", num_discarded_candidates: " << minimizationResult.num_discarded_candidates;
-                                std::cout << ", column: " << minimizationResult.column;
-                                std::cout << ", significantBase: " << minimizationResult.significantBase;
-                                std::cout << ", consensusBase: " << minimizationResult.consensusBase;
-                                std::cout << ", originalBase: " << minimizationResult.originalBase;
-                                std::cout << ", significantCount: " << minimizationResult.significantCount;
-                                std::cout << ", consensuscount: " << minimizationResult.consensuscount;
-                                std::cout << '\n';
-
-                                std::cout << "After minimization " << (i+2) << ": discarded " << minimizationResult.num_discarded_candidates << " candidates\n";
-                                print_multiple_sequence_alignment(msa3, remaining_alignments3);
-
-                                std::swap(msa2, msa3);
-                                std::swap(remaining_alignments, remaining_alignments3);
-                            }
-                        }
-                    }
-
-    #endif
 
 #ifdef USE_MSA_MINIMIZATION
 
@@ -805,320 +992,24 @@ namespace cpu{
                                         fileProperties.maxSequenceLength);
 #endif
 
-                    constexpr int max_num_minimizations = 5;
+                    #pragma omp parallel for
+                    for(size_t i = 0; i < correctionTasks.size(); i++){
+                        auto& taskdata = dataPerTask[i];
+                        auto& task = correctionTasks[i];
 
-                    if(max_num_minimizations > 0){
-                        int num_minimizations = 0;
-
-                        auto minimizationResult = findCandidatesOfDifferentRegion(correctionTasks[0].subject_string.c_str(),
-                                                                            subjectLength,
-                                                                            bestCandidateStrings.data(),
-                                                                            bestCandidateLengths.data(),
-                                                                            int(bestAlignments.size()),
-                                                                            fileProperties.maxSequenceLength,
-                                                                            multipleSequenceAlignment.consensus.data(),
-                                                                            multipleSequenceAlignment.countsA.data(),
-                                                                            multipleSequenceAlignment.countsC.data(),
-                                                                            multipleSequenceAlignment.countsG.data(),
-                                                                            multipleSequenceAlignment.countsT.data(),
-                                                                            multipleSequenceAlignment.weightsA.data(),
-                                                                            multipleSequenceAlignment.weightsC.data(),
-                                                                            multipleSequenceAlignment.weightsG.data(),
-                                                                            multipleSequenceAlignment.weightsT.data(),
-                                                                            multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                                                            multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                                            bestAlignmentShifts.data(),
-                                                                            correctionOptions.estimatedCoverage);
-
-                        auto update_after_successfull_minimization = [&](){
-#if 0
-                            if(correctionTasks[0].readId == 207){
-                            int toKeep = std::count_if(minimizationResult.differentRegionCandidate.begin(),
-                                                    minimizationResult.differentRegionCandidate.end(), [](auto b){return !b;});
-                            int toRemove = std::count_if(minimizationResult.differentRegionCandidate.begin(),
-                                                    minimizationResult.differentRegionCandidate.end(), [](auto b){return b;});
-                            std::cerr << "numindices: " << minimizationResult.differentRegionCandidate.size() << ", to keep: " << toKeep << ", toRemove: " << toRemove << '\n';
-
-                            std::cerr << "subjectColumnsBegin_incl: " << multipleSequenceAlignment.subjectColumnsBegin_incl
-                                    << ", subjectColumnsEnd_excl: " << multipleSequenceAlignment.subjectColumnsEnd_excl << '\n';
-
-                            /*std::cerr << "shifts:\n";
-                            for(auto shift : bestAlignmentShifts){
-                                std::cerr << shift << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "consensus:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.consensus.size(); i++){
-                                std::cerr << multipleSequenceAlignment.consensus[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "countsA:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.countsA.size(); i++){
-                                std::cerr << multipleSequenceAlignment.countsA[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "countsC:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.countsC.size(); i++){
-                                std::cerr << multipleSequenceAlignment.countsC[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "countsG:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.countsG.size(); i++){
-                                std::cerr << multipleSequenceAlignment.countsG[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "countsT:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.countsT.size(); i++){
-                                std::cerr << multipleSequenceAlignment.countsT[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "weightsA:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.weightsA.size(); i++){
-                                std::cerr << multipleSequenceAlignment.weightsA[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "weightsC:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.weightsC.size(); i++){
-                                std::cerr << multipleSequenceAlignment.weightsC[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "weightsG:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.weightsG.size(); i++){
-                                std::cerr << multipleSequenceAlignment.weightsG[i] << ", ";
-                            }
-                            std::cerr << '\n';
-
-                            std::cerr << "weightsT:\n";
-                            for(int i = 0; i < multipleSequenceAlignment.weightsT.size(); i++){
-                                std::cerr << multipleSequenceAlignment.weightsT[i] << ", ";
-                            }
-                            std::cerr << '\n';*/
-
-                            //std::exit(0);
-                        }
-#endif
-                            if(minimizationResult.performedMinimization){
-                                assert(minimizationResult.differentRegionCandidate.size() == bestAlignments.size());
-
-                                bool anyRemoved = false;
-                                size_t cur = 0;
-                                for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
-                                    if(!minimizationResult.differentRegionCandidate[i]){
-                                        //std::cout << i << " ";
-
-                                        bestAlignments[cur] = bestAlignments[i];
-                                        bestAlignmentShifts[cur] = bestAlignmentShifts[i];
-                                        bestAlignmentWeights[cur] = bestAlignmentWeights[i];
-                                        bestAlignmentFlags[cur] = bestAlignmentFlags[i];
-                                        bestCandidateReadIds[cur] = bestCandidateReadIds[i];
-                                        bestCandidateLengths[cur] = bestCandidateLengths[i];
-
-                                        std::copy(bestCandidateData.begin() + i * max_sequence_bytes,
-                                                bestCandidateData.begin() + (i+1) * max_sequence_bytes,
-                                                bestCandidateData.begin() + cur * max_sequence_bytes);
-                                        std::copy(bestCandidateQualityData.begin() + i * max_candidate_length,
-                                                bestCandidateQualityData.begin() + (i+1) * max_candidate_length,
-                                                bestCandidateQualityData.begin() + cur * max_candidate_length);
-                                        std::copy(bestCandidateStrings.begin() + i * max_candidate_length,
-                                                bestCandidateStrings.begin() + (i+1) * max_candidate_length,
-                                                bestCandidateStrings.begin() + cur * max_candidate_length);
-
-                                        cur++;
-
-                                    }else{
-                                        /*multipleSequenceAlignment.removeSequence(correctionOptions.useQualityScores,
-                                                                                bestCandidateStrings.data() + i * max_candidate_length,
-                                                                                bestCandidateQualityData.data() + i * max_candidate_length,
-                                                                                bestCandidateLengths[i],
-                                                                                bestAlignmentShifts[i], bestAlignmentWeights[i]);*/
-                                        anyRemoved = true;
-                                    }
-                                }
-
-
-                                /*if(!anyRemoved){
-                                    std::cout << correctionTasks[0].readId << std::endl;
-                                    std::cout << num_minimizations << std::endl;
-                                    for(const auto b : minimizationResult.differentRegionCandidate){
-                                        std::cout << b << " ";
-                                    }
-                                    std::cout << std::endl;
-                                    std::cout << minimizationResult.performedMinimization << std::endl;
-                                    std::cout << minimizationResult.column << std::endl;
-                                    std::cout << minimizationResult.significantBase << std::endl;
-                                    std::cout << minimizationResult.consensusBase << std::endl;
-                                    std::cout << minimizationResult.originalBase << std::endl;
-                                    std::cout << minimizationResult.significantCount << std::endl;
-                                    std::cout << minimizationResult.consensuscount << std::endl;
-
-                                }*/
-                                assert(anyRemoved);
-
-                                bestAlignments.erase(bestAlignments.begin() + cur, bestAlignments.end());
-                                bestAlignmentShifts.erase(bestAlignmentShifts.begin() + cur, bestAlignmentShifts.end());
-                                bestAlignmentWeights.erase(bestAlignmentWeights.begin() + cur, bestAlignmentWeights.end());
-                                bestAlignmentFlags.erase(bestAlignmentFlags.begin() + cur, bestAlignmentFlags.end());
-                                bestCandidateReadIds.erase(bestCandidateReadIds.begin() + cur, bestCandidateReadIds.end());
-                                bestCandidateLengths.erase(bestCandidateLengths.begin() + cur, bestCandidateLengths.end());
-
-                                bestCandidateData.erase(bestCandidateData.begin() + cur * max_sequence_bytes, bestCandidateData.end());
-                                bestCandidateQualityData.erase(bestCandidateQualityData.begin() + cur * max_candidate_length, bestCandidateQualityData.end());
-                                bestCandidateStrings.erase(bestCandidateStrings.begin() + cur * max_candidate_length, bestCandidateStrings.end());
-
-                                /*if(anyRemoved){
-                                    multipleSequenceAlignment.findConsensus();
-                                    multipleSequenceAlignment.findOrigWeightAndCoverage(correctionTasks[0].subject_string.c_str());
-                                }*/
-
-                                //build minimized multiple sequence alignment
-                                multipleSequenceAlignment.build(correctionTasks[0].subject_string.c_str(),
-                                                                subjectLength,
-                                                                bestCandidateStrings.data(),
-                                                                bestCandidateLengths.data(),
-                                                                int(bestAlignments.size()),
-                                                                bestAlignmentShifts.data(),
-                                                                bestAlignmentWeights.data(),
-                                                                subjectQualityPtr,
-                                                                candidateQualityPtr,
-                                                                fileProperties.maxSequenceLength,
-                                                                max_candidate_length,
-                                                                correctionOptions.useQualityScores);
-
-#ifdef PRINT_MSA
-                                std::cout << correctionTasks[0].readId << " MSA after minimization " << (num_minimizations+1) << ": rows = " << (int(bestAlignments.size()) + 1) << " columns = " << multipleSequenceAlignment.nColumns << "\n";
-                                std::cout << "Consensus:\n   ";
-                                for(int i = 0; i < multipleSequenceAlignment.nColumns; i++){
-                                    std::cout << multipleSequenceAlignment.consensus[i];
-                                }
-                                std::cout << '\n';
-
-                                /*printSequencesInMSA(std::cout,
-                                                    correctionTasks[0].subject_string.c_str(),
-                                                    subjectLength,
-                                                    bestCandidateStrings.data(),
-                                                    bestCandidateLengths.data(),
-                                                    int(bestAlignments.size()),
-                                                    bestAlignmentShifts.data(),
-                                                    multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                                    multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                    multipleSequenceAlignment.nColumns,
-                                                    fileProperties.maxSequenceLength);*/
-
-
-
-                                printSequencesInMSAConsEq(std::cout,
-                                                    correctionTasks[0].subject_string.c_str(),
-                                                    subjectLength,
-                                                    bestCandidateStrings.data(),
-                                                    bestCandidateLengths.data(),
-                                                    int(bestAlignments.size()),
-                                                    bestAlignmentShifts.data(),
-                                                    multipleSequenceAlignment.consensus.data(),
-                                                    multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                                    multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                    multipleSequenceAlignment.nColumns,
-                                                    fileProperties.maxSequenceLength);
-#endif
-                            }
-                        };
-
-                        update_after_successfull_minimization();
-
-
-                        num_minimizations++;
-
-                        while(num_minimizations <= max_num_minimizations
-                                && minimizationResult.performedMinimization){
-
-                            minimizationResult = findCandidatesOfDifferentRegion(correctionTasks[0].subject_string.c_str(),
-                                                                                subjectLength,
-                                                                                bestCandidateStrings.data(),
-                                                                                bestCandidateLengths.data(),
-                                                                                int(bestAlignments.size()),
-                                                                                fileProperties.maxSequenceLength,
-                                                                                multipleSequenceAlignment.consensus.data(),
-                                                                                multipleSequenceAlignment.countsA.data(),
-                                                                                multipleSequenceAlignment.countsC.data(),
-                                                                                multipleSequenceAlignment.countsG.data(),
-                                                                                multipleSequenceAlignment.countsT.data(),
-                                                                                multipleSequenceAlignment.weightsA.data(),
-                                                                                multipleSequenceAlignment.weightsC.data(),
-                                                                                multipleSequenceAlignment.weightsG.data(),
-                                                                                multipleSequenceAlignment.weightsT.data(),
-                                                                                multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                                                                multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                                                bestAlignmentShifts.data(),
-                                                                                correctionOptions.estimatedCoverage);
-
-                            update_after_successfull_minimization();
-
-                            num_minimizations++;
-                        }
+                        removeCandidatesOfDifferentRegionFromMSA(taskdata,
+                                                                task,
+                                                                correctionOptions,
+                                                                maxSequenceBytes,
+                                                                fileProperties.maxSequenceLength);
                     }
+
 
 #ifdef ENABLE_TIMING
                     msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
 #endif
 
 #endif // USE_MSA_MINIMIZATION
-
-
-
-                    //minimization is finished here
-#ifdef USE_SUBJECT_CLIPPING
-                    if(!needsSecondPassAfterClipping){
-                        auto goodregion = findGoodConsensusRegionOfSubject2(correctionTasks[0].subject_string.c_str(),
-                                                                            subjectLength,
-                                                                            multipleSequenceAlignment.coverage.data(),
-                                                                            multipleSequenceAlignment.nColumns,
-                                                                            multipleSequenceAlignment.subjectColumnsEnd_excl);
-
-                        if(goodregion.first > 0 || goodregion.second < int(correctionTasks[0].subject_string.size())){
-                            /*const int negativeShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),
-                                                                    multipleSequenceAlignment.shifts.end(),
-                                                                    [](int s){return s < 0;});
-                            const int positiveShifts = std::count_if(multipleSequenceAlignment.shifts.begin(),
-                                                                    multipleSequenceAlignment.shifts.end(),
-                                                                    [](int s){return s > 0;});
-
-                            std::cout << "ReadId " << correctionTasks[0].readId << " : [" << goodregion.first << ", "
-                                        << goodregion.second << "] negativeShifts " << negativeShifts
-                                        << ", positiveShifts " << positiveShifts
-                                        << ". Subject starts at column "
-                                        << multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl
-                                        << ". Subject ends at column "
-                                        << multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl
-                                        << " / " << multipleSequenceAlignment.nColumns << "\n";*/
-
-                            needsSecondPassAfterClipping = true;
-
-                            correctionTasks[0].clipping_begin = goodregion.first;
-                            correctionTasks[0].clipping_end = goodregion.second;
-                            const int clipsize = correctionTasks[0].clipping_end - correctionTasks[0].clipping_begin;
-                            correctionTasks[0].subject_string = correctionTasks[0].original_subject_string.substr(correctionTasks[0].clipping_begin, clipsize);
-                        }
-                    }else{
-                        //subject has already been clipped in previous iteration, do not clip again
-                        needsSecondPassAfterClipping = false;
-                    }
-#endif
-
-                }while(needsSecondPassAfterClipping && !discardThisTask);
-                //}while(false);
-
-
-                if(discardThisTask){
-                    continue;
-                }
-
 
 
                 if(correctionOptions.extractFeatures){
@@ -1425,16 +1316,70 @@ namespace cpu{
             featurestream.flush();
             outputstream.flush();
 
-            lock(0);
-            std::cout << "CPU worker finished" << std::endl;
+            minhasher.destroy();
+        	readStorage.destroy();
 
+            std::cout << "begin merge" << std::endl;
 
-                /*for(const auto& pair : numCandidatesOfUncorrectedSubjects){
-                    std::cerr << pair.first << '\t' << pair.second << '\n';
-                }*/
-            unlock(0);
+            if(!correctionOptions.extractFeatures){
 
+                std::cout << "begin merging reads" << std::endl;
 
+                TIMERSTARTCPU(merge);
+
+                mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+
+                TIMERSTOPCPU(merge);
+
+                std::cout << "end merging reads" << std::endl;
+
+            }
+
+            deleteFiles(tmpfiles);
+
+            std::vector<std::string> featureFiles(tmpfiles);
+            for(auto& s : featureFiles)
+                s = s + "_features";
+
+            //concatenate feature files of each thread into one file
+
+            if(correctionOptions.extractFeatures){
+                std::cout << "begin merging features" << std::endl;
+
+                std::stringstream commandbuilder;
+
+                commandbuilder << "cat";
+
+                for(const auto& featureFile : featureFiles){
+                    commandbuilder << " \"" << featureFile << "\"";
+                }
+
+                commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
+
+                const std::string command = commandbuilder.str();
+                TIMERSTARTCPU(concat_feature_files);
+                int r1 = std::system(command.c_str());
+                TIMERSTOPCPU(concat_feature_files);
+
+                if(r1 != 0){
+                    std::cerr << "Warning. Feature files could not be concatenated!\n";
+                    std::cerr << "This command returned a non-zero error value: \n";
+                    std::cerr << command +  '\n';
+                    std::cerr << "Please concatenate the following files manually\n";
+                    for(const auto& s : featureFiles)
+                        std::cerr << s << '\n';
+                }else{
+                    deleteFiles(featureFiles);
+                }
+
+                std::cout << "end merging features" << std::endl;
+            }else{
+                deleteFiles(featureFiles);
+            }
+
+            std::cout << "end merge" << std::endl;
+
+            omp_set_num_threads(oldNumOMPThreads);
     	}
 
 }
