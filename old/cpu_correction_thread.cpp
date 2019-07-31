@@ -1,9 +1,11 @@
-#include <cpu_correction_thread.hpp>
+//#include <cpu_correction_thread.hpp>
 
 #include <config.hpp>
 
 #include "options.hpp"
 
+#include <minhasher.hpp>
+#include <readstorage.hpp>
 #include "cpu_alignment.hpp"
 #include "bestalignment.hpp"
 #include <msa.hpp>
@@ -50,20 +52,12 @@ namespace cpu{
                 : active(other.active),
                 corrected(other.corrected),
                 readId(other.readId),
-                candidate_read_ids(other.candidate_read_ids),
-                candidate_read_ids_begin(other.candidate_read_ids_begin),
-                candidate_read_ids_end(other.candidate_read_ids_end),
-                original_subject_string(other.original_subject_string),
-                subject_string(other.subject_string),
                 encodedSubjectPtr(other.encodedSubjectPtr),
-                clipping_begin(other.clipping_begin),
-                clipping_end(other.clipping_end),
+                subjectQualityPtr(other.subjectQualityPtr),
+                original_subject_string(other.original_subject_string),
                 corrected_subject(other.corrected_subject),
-                corrected_candidates(other.corrected_candidates),
-                corrected_candidates_read_ids(other.corrected_candidates_read_ids){
-
-                candidate_read_ids_begin = &(candidate_read_ids[0]);
-                candidate_read_ids_end = &(candidate_read_ids[candidate_read_ids.size()]);
+                correctedCandidates(other.correctedCandidates),
+                candidate_read_ids(other.candidate_read_ids){
 
             }
 
@@ -88,41 +82,29 @@ namespace cpu{
                 swap(l.active, r.active);
                 swap(l.corrected, r.corrected);
                 swap(l.readId, r.readId);
-                swap(l.original_subject_string, r.original_subject_string);
-                swap(l.subject_string, r.subject_string);
                 swap(l.encodedSubjectPtr, r.encodedSubjectPtr);
-                swap(l.candidate_read_ids, r.candidate_read_ids);
-                swap(l.candidate_read_ids_begin, r.candidate_read_ids_begin);
-                swap(l.candidate_read_ids_end, r.candidate_read_ids_end);
-                swap(l.clipping_begin, r.clipping_begin);
-                swap(l.clipping_end, r.clipping_end);
+                swap(l.subjectQualityPtr, r.subjectQualityPtr);
+                swap(l.original_subject_string, r.original_subject_string);
                 swap(l.corrected_subject, r.corrected_subject);
-                swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
+                swap(l.correctedCandidates, r.correctedCandidates);
+                swap(l.candidate_read_ids, r.candidate_read_ids);
             }
 
             bool active;
             bool corrected;
             read_number readId;
-
-            std::vector<read_number> candidate_read_ids;
-            read_number* candidate_read_ids_begin;
-            read_number* candidate_read_ids_end; // exclusive
-
-            std::string original_subject_string;
-            std::string subject_string;
             const unsigned int* encodedSubjectPtr;
             const char* subjectQualityPtr;
-
-            int clipping_begin;
-            int clipping_end;
-
+            std::string original_subject_string;
             std::string corrected_subject;
-            std::vector<std::string> corrected_candidates;
-            std::vector<read_number> corrected_candidates_read_ids;
+            std::vector<CorrectedCandidate> correctedCandidates;
+            std::vector<read_number> candidate_read_ids;
         };
 
         struct TaskData{
             MultipleSequenceAlignment multipleSequenceAlignment;
+            MSAProperties msaProperties;
+
             std::vector<unsigned int> subjectsequence;
             std::vector<char> candidateData;
             std::vector<char> candidateRevcData;
@@ -149,6 +131,10 @@ namespace cpu{
             std::vector<char*> bestCandidateQualityPtrs;
             //std::vector<std::string> bestCandidateStrings;
             std::vector<char> bestCandidateStrings;
+
+            std::vector<MSAFeature> msaforestfeatures;
+
+            std::vector<CorrectedCandidate> correctedCandidates;
         };
 
 
@@ -159,7 +145,7 @@ namespace cpu{
                             int requiredHitsPerCandidate,
                             size_t maxNumResultsPerMapQuery){
 
-            task.candidate_read_ids = minhasher.getCandidates(task.subject_string,
+            task.candidate_read_ids = minhasher.getCandidates(task.original_subject_string,
                                                                requiredHitsPerCandidate,
                                                                maxNumberOfCandidates,
                                                                maxNumResultsPerMapQuery);
@@ -203,15 +189,15 @@ namespace cpu{
 
             //copy candidate data and reverse complements into buffer
 
-            constexpr int prefetch_distance_sequences = 4;
+            constexpr size_t prefetch_distance_sequences = 4;
 
-            for(int i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
+            for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
                 const read_number next_candidate_read_id = task.candidate_read_ids[i];
                 const char* nextsequenceptr = readStorage.fetchSequenceData_ptr(next_candidate_read_id);
                 __builtin_prefetch(nextsequenceptr, 0, 0);
             }
 
-            for(int i = 0; i < numCandidates; i++){
+            for(size_t i = 0; i < numCandidates; i++){
                 if(i + prefetch_distance_sequences < numCandidates) {
                     const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
                     const char* nextsequenceptr = readStorage.fetchSequenceData_ptr(next_candidate_read_id);
@@ -220,19 +206,19 @@ namespace cpu{
 
                 const read_number candidateId = task.candidate_read_ids[i];
                 const char* candidateptr = readStorage.fetchSequenceData_ptr(candidateId);
-                const int candidateLength = candidateLengths[i];
+                const int candidateLength = data.candidateLengths[i];
                 const int bytes = getEncodedNumInts2BitHiLo(candidateLength) * sizeof(unsigned int);
 
-                char* const candidateDataBegin = candidateData.data() + i * encodedSequencePitch;
-                char* const candidateRevcDataBegin = candidateRevcData.data() + i * encodedSequencePitch;
+                char* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitch;
+                char* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitch;
 
                 std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
                 reverseComplement2BitHiLo((unsigned int*)(candidateRevcDataBegin),
                                           (const unsigned int*)(candidateptr),
                                           candidateLength);
 
-                candidateDataPtrs[i] = candidateDataBegin;
-                candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+                data.candidateDataPtrs[i] = candidateDataBegin;
+                data.candidateRevcDataPtrs[i] = candidateRevcDataBegin;
             }
         }
 
@@ -248,7 +234,7 @@ namespace cpu{
             data.revcAlignments.resize(numCandidates);
 
             shd::cpu_multi_shifted_hamming_distance_popcount(data.forwardAlignments.begin(),
-                                                            task.encodedSubjectPtr,
+                                                            (const char*)task.encodedSubjectPtr,
                                                             task.original_subject_string.size(),
                                                             data.candidateData,
                                                             data.candidateLengths,
@@ -258,7 +244,7 @@ namespace cpu{
                                                             alignmentProps.min_overlap_ratio);
 
             shd::cpu_multi_shifted_hamming_distance_popcount(data.revcAlignments.begin(),
-                                                            task.encodedSubjectPtr,
+                                                            (const char*)task.encodedSubjectPtr,
                                                             task.original_subject_string.size(),
                                                             data.candidateRevcData,
                                                             data.candidateLengths,
@@ -289,14 +275,14 @@ namespace cpu{
               data.bestCandidateLengths.clear();
               data.bestCandidatePtrs.clear();
 
-              data.bestAlignments.resize(data.numGoodDirection);
-              data.bestAlignmentFlags.resize(data.numGoodDirection);
-              data.bestCandidateReadIds.resize(data.numGoodDirection);
-              data.bestCandidateData.resize(data.numGoodDirection * encodedSequencePitch);
-              data.bestCandidateLengths.resize(data.numGoodDirection);
-              data.bestCandidatePtrs.resize(data.numGoodDirection);
+              data.bestAlignments.resize(data.numGoodAlignmentFlags);
+              data.bestAlignmentFlags.resize(data.numGoodAlignmentFlags);
+              data.bestCandidateReadIds.resize(data.numGoodAlignmentFlags);
+              data.bestCandidateData.resize(data.numGoodAlignmentFlags * encodedSequencePitch);
+              data.bestCandidateLengths.resize(data.numGoodAlignmentFlags);
+              data.bestCandidatePtrs.resize(data.numGoodAlignmentFlags);
 
-              for(size_t i = 0; i < data.numGoodDirection; i++){
+              for(size_t i = 0; i < data.numGoodAlignmentFlags; i++){
                   data.bestCandidatePtrs[i] = data.bestCandidateData.data() + i * encodedSequencePitch;
               }
 
@@ -341,7 +327,7 @@ namespace cpu{
                   const GoodAlignmentProperties& alignmentProps){
             //get indices of alignments which have a good mismatch ratio
 
-            auto goodIndices = filterAlignmentsByMismatchRatio(taskdata.bestAlignments,
+            auto goodIndices = filterAlignmentsByMismatchRatio(data.bestAlignments,
                                                                correctionOptions.estimatedErrorrate,
                                                                correctionOptions.estimatedCoverage,
                                                                correctionOptions.m_coverage,
@@ -354,40 +340,40 @@ namespace cpu{
             }else{
                 //stream compaction. keep only data at positions given by goodIndices
 
-                for(size_t i = 0; i < int(goodIndices.size()); i++){
+                for(size_t i = 0; i < goodIndices.size(); i++){
                     const int fromIndex = goodIndices[i];
                     const int toIndex = i;
 
-                    taskdata.bestAlignments[toIndex] = taskdata.bestAlignments[fromIndex];
-                    taskdata.bestAlignmentFlags[toIndex] = taskdata.bestAlignmentFlags[fromIndex];
-                    taskdata.bestCandidateReadIds[toIndex] = taskdata.bestCandidateReadIds[fromIndex];
-                    taskdata.bestCandidateLengths[toIndex] = taskdata.bestCandidateLengths[fromIndex];
+                    data.bestAlignments[toIndex] = data.bestAlignments[fromIndex];
+                    data.bestAlignmentFlags[toIndex] = data.bestAlignmentFlags[fromIndex];
+                    data.bestCandidateReadIds[toIndex] = data.bestCandidateReadIds[fromIndex];
+                    data.bestCandidateLengths[toIndex] = data.bestCandidateLengths[fromIndex];
 
-                    std::copy(taskdata.bestCandidatePtrs[fromIndex],
-                              taskdata.bestCandidatePtrs[fromIndex] + maxSequenceBytes,
-                              taskdata.bestCandidatePtrs[toIndex]);
+                    std::copy(data.bestCandidatePtrs[fromIndex],
+                              data.bestCandidatePtrs[fromIndex] + encodedSequencePitch,
+                              data.bestCandidatePtrs[toIndex]);
                 }
 
-                taskdata.bestAlignments.erase(taskdata.bestAlignments.begin() + goodIndices.size(),
-                                     taskdata.bestAlignments.end());
-                taskdata.bestAlignmentFlags.erase(taskdata.bestAlignmentFlags.begin() + goodIndices.size(),
-                                         taskdata.bestAlignmentFlags.end());
-                taskdata.bestCandidateReadIds.erase(taskdata.bestCandidateReadIds.begin() + goodIndices.size(),
-                                           taskdata.bestCandidateReadIds.end());
-                taskdata.bestCandidateLengths.erase(taskdata.bestCandidateLengths.begin() + goodIndices.size(),
-                                           taskdata.bestCandidateLengths.end());
-                taskdata.bestCandidatePtrs.erase(taskdata.bestCandidatePtrs.begin() + goodIndices.size(),
-                                        taskdata.bestCandidatePtrs.end());
-                taskdata.bestCandidateData.erase(taskdata.bestCandidateData.begin() + goodIndices.size() * maxSequenceBytes,
-                                        taskdata.bestCandidateData.end());
+                data.bestAlignments.erase(data.bestAlignments.begin() + goodIndices.size(),
+                                     data.bestAlignments.end());
+                data.bestAlignmentFlags.erase(data.bestAlignmentFlags.begin() + goodIndices.size(),
+                                         data.bestAlignmentFlags.end());
+                data.bestCandidateReadIds.erase(data.bestCandidateReadIds.begin() + goodIndices.size(),
+                                           data.bestCandidateReadIds.end());
+                data.bestCandidateLengths.erase(data.bestCandidateLengths.begin() + goodIndices.size(),
+                                           data.bestCandidateLengths.end());
+                data.bestCandidatePtrs.erase(data.bestCandidatePtrs.begin() + goodIndices.size(),
+                                        data.bestCandidatePtrs.end());
+                data.bestCandidateData.erase(data.bestCandidateData.begin() + goodIndices.size() * encodedSequencePitch,
+                                        data.bestCandidateData.end());
 
-                taskdata.bestAlignmentShifts.resize(taskdata.bestAlignments.size());
-                taskdata.bestAlignmentWeights.resize(taskdata.bestAlignments.size());
+                data.bestAlignmentShifts.resize(data.bestAlignments.size());
+                data.bestAlignmentWeights.resize(data.bestAlignments.size());
 
-                for(int i = 0; i < int(bestAlignments.size()); i++){
-                    taskdata.bestAlignmentShifts[i] = taskdata.bestAlignments[i].shift;
-                    taskdata.bestAlignmentWeights[i] = 1.0f - std::sqrt(taskdata.bestAlignments[i].nOps
-                                                                        / (taskdata.bestAlignments[i].overlap
+                for(size_t i = 0; i < data.bestAlignments.size(); i++){
+                    data.bestAlignmentShifts[i] = data.bestAlignments[i].shift;
+                    data.bestAlignmentWeights[i] = 1.0f - std::sqrt(data.bestAlignments[i].nOps
+                                                                        / (data.bestAlignments[i].overlap
                                                                             * alignmentProps.maxErrorRate));
                 }
             }
@@ -416,8 +402,8 @@ namespace cpu{
                 __builtin_prefetch(nextqualityptr, 0, 0);
             }
 
-            for(size_t i = 0; i < bestAlignments.size(); i++){
-                if(i + prefetch_distance_qualities < bestAlignments.size()) {
+            for(size_t i = 0; i < data.bestAlignments.size(); i++){
+                if(i + prefetch_distance_qualities < data.bestAlignments.size()) {
                     const read_number next_candidate_read_id = data.bestCandidateReadIds[i + prefetch_distance_qualities];
                     const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
                     __builtin_prefetch(nextqualityptr, 0, 0);
@@ -443,7 +429,7 @@ namespace cpu{
                                     CorrectionTask& task,
                                     int maximumSequenceLength){
             data.bestCandidateStrings.clear();
-            data.bestCandidateStrings.resize(bestAlignments.size() * maximumSequenceLength);
+            data.bestCandidateStrings.resize(data.bestAlignments.size() * maximumSequenceLength);
 
             for(size_t i = 0; i < data.bestAlignments.size(); i++){
                 const char* ptr = data.bestCandidatePtrs[i];
@@ -455,7 +441,6 @@ namespace cpu{
         }
 
         void buildMultipleSequenceAlignment(TaskData& data,
-                                            cpu::ContiguousReadStorage& readStorage,
                                             CorrectionTask& task,
                                             const CorrectionOptions& correctionOptions,
                                             int maximumSequenceLength){
@@ -602,6 +587,158 @@ namespace cpu{
 
 
 
+
+        void correctSubject(TaskData& data,
+                            CorrectionTask& task,
+                            const CorrectionOptions& correctionOptions,
+                            int maximumSequenceLength){
+
+            const int subjectColumnsBegin_incl = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = data.multipleSequenceAlignment.subjectColumnsEnd_excl;
+
+            data.msaProperties = getMSAProperties2(data.multipleSequenceAlignment.support.data(),
+                                                            data.multipleSequenceAlignment.coverage.data(),
+                                                            subjectColumnsBegin_incl,
+                                                            subjectColumnsEnd_excl,
+                                                            correctionOptions.estimatedErrorrate,
+                                                            correctionOptions.estimatedCoverage,
+                                                            correctionOptions.m_coverage);
+
+            auto correctionResult = getCorrectedSubject(data.multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
+                                                        data.multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
+                                                        data.multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
+                                                        data.multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
+                                                        int(task.original_subject_string.size()),
+                                                        task.original_subject_string.c_str(),
+                                                        subjectColumnsBegin_incl,
+                                                        data.bestCandidateStrings.data(),
+                                                        int(data.bestAlignmentWeights.size()),
+                                                        data.bestAlignmentWeights.data(),
+                                                        data.bestCandidateLengths.data(),
+                                                        data.bestAlignmentShifts.data(),
+                                                        maximumSequenceLength,
+                                                        data.msaProperties.isHQ,
+                                                        correctionOptions.estimatedErrorrate,
+                                                        correctionOptions.estimatedCoverage,
+                                                        correctionOptions.m_coverage,
+                                                        correctionOptions.kmerlength);
+
+            if(correctionResult.isCorrected){
+                task.corrected_subject = correctionResult.correctedSequence;
+                task.corrected = true;
+            }
+        }
+
+        void correctCandidates(TaskData& data,
+                                CorrectionTask& task,
+                                const CorrectionOptions& correctionOptions){
+
+            task.correctedCandidates = getCorrectedCandidates(data.multipleSequenceAlignment.consensus.data(),
+                                                            data.multipleSequenceAlignment.support.data(),
+                                                            data.multipleSequenceAlignment.coverage.data(),
+                                                            data.multipleSequenceAlignment.nColumns,
+                                                            data.multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                            data.multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                            data.bestAlignmentShifts.data(),
+                                                            data.bestCandidateLengths.data(),
+                                                            data.multipleSequenceAlignment.nCandidates,
+                                                            correctionOptions.estimatedErrorrate,
+                                                            correctionOptions.estimatedCoverage,
+                                                            correctionOptions.m_coverage,
+                                                            correctionOptions.new_columns_to_correct);
+        }
+
+        void correctSubjectWithForest(TaskData& data,
+                                CorrectionTask& task,
+                                const ForestClassifier& forestClassifier,
+                                const CorrectionOptions& correctionOptions){
+
+            auto MSAFeatures = extractFeatures(data.multipleSequenceAlignment.consensus.data(),
+                                            data.multipleSequenceAlignment.support.data(),
+                                            data.multipleSequenceAlignment.coverage.data(),
+                                            data.multipleSequenceAlignment.origCoverages.data(),
+                                            data.multipleSequenceAlignment.nColumns,
+                                            data.multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                            data.multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                            task.original_subject_string,
+                                            correctionOptions.kmerlength, 0.5f,
+                                            correctionOptions.estimatedCoverage);
+
+            task.corrected_subject = task.original_subject_string;
+
+            for(const auto& msafeature : MSAFeatures){
+                constexpr float maxgini = 0.05f;
+                constexpr float forest_correction_fraction = 0.5f;
+
+                const bool doCorrect = forestClassifier.shouldCorrect(
+                                                msafeature.position_support,
+                                                msafeature.position_coverage,
+                                                msafeature.alignment_coverage,
+                                                msafeature.dataset_coverage,
+                                                msafeature.min_support,
+                                                msafeature.min_coverage,
+                                                msafeature.max_support,
+                                                msafeature.max_coverage,
+                                                msafeature.mean_support,
+                                                msafeature.mean_coverage,
+                                                msafeature.median_support,
+                                                msafeature.median_coverage,
+                                                maxgini,
+                                                forest_correction_fraction);
+
+                if(doCorrect){
+                    task.corrected = true;
+
+                    const int globalIndex = data.multipleSequenceAlignment.subjectColumnsBegin_incl + msafeature.position;
+                    task.corrected_subject[msafeature.position] = data.multipleSequenceAlignment.consensus[globalIndex];
+                }
+            }
+        }
+
+        void correctSubjectWithNeuralNetwork(TaskData& data,
+                                            CorrectionTask& task,
+                                            const NN_Correction_Classifier& nnClassifier,
+                                            const CorrectionOptions& correctionOptions){
+            assert(false);
+            /*auto MSAFeatures3 = extractFeatures3_2(
+                                    data.multipleSequenceAlignment.countsA.data(),
+                                    data.multipleSequenceAlignment.countsC.data(),
+                                    data.multipleSequenceAlignment.countsG.data(),
+                                    data.multipleSequenceAlignment.countsT.data(),
+                                    data.multipleSequenceAlignment.weightsA.data(),
+                                    data.multipleSequenceAlignment.weightsC.data(),
+                                    data.multipleSequenceAlignment.weightsG.data(),
+                                    data.multipleSequenceAlignment.weightsT.data(),
+                                    data.multipleSequenceAlignment.nRows,
+                                    data.multipleSequenceAlignment.columnProperties.columnsToCheck,
+                                    data.multipleSequenceAlignment.consensus.data(),
+                                    data.multipleSequenceAlignment.support.data(),
+                                    data.multipleSequenceAlignment.coverage.data(),
+                                    data.multipleSequenceAlignment.origCoverages.data(),
+                                    data.multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
+                                    data.multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
+                                    task.original_subject_string,
+                                    correctionOptions.estimatedCoverage);
+
+                std::vector<float> predictions = nnClassifier.infer(MSAFeatures3);
+                assert(predictions.size() == MSAFeatures3.size());
+
+                task.corrected_subject = task.original_subject_string;
+
+                for(size_t index = 0; index < predictions.size(); index++){
+                    constexpr float threshold = 0.8;
+                    const auto& msafeature = MSAFeatures3[index];
+
+                    if(predictions[index] >= threshold){
+                        task.corrected = true;
+
+                        const int globalIndex = data.multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
+                        task.corrected_subject[msafeature.position] = data.multipleSequenceAlignment.consensus[globalIndex];
+                    }
+                }*/
+        }
+
+
         void correct_cpu(const MinhashOptions& minhashOptions,
                           const AlignmentOptions& alignmentOptions,
                           const GoodAlignmentProperties& goodAlignmentProperties,
@@ -673,38 +810,81 @@ namespace cpu{
             };
 
             auto lock = [&](read_number readId){
-                read_number index = readId % threadOpts.nLocksForProcessedFlags;
-                threadOpts.locksForProcessedFlags[index].lock();
+                read_number index = readId % nLocksForProcessedFlags;
+                locksForProcessedFlags[index].lock();
             };
 
             auto unlock = [&](read_number readId){
-                read_number index = readId % threadOpts.nLocksForProcessedFlags;
-                threadOpts.locksForProcessedFlags[index].unlock();
+                read_number index = readId % nLocksForProcessedFlags;
+                locksForProcessedFlags[index].unlock();
             };
 
-            auto identity = [](auto i){return i;};
+            //auto identity = [](auto i){return i;};
+
+            auto writeCorrectedSubjectToFile = [&](auto dataPerTask, auto correctionTasks){
+                for(size_t i = 0; i < correctionTasks.size(); i++){
+                    //auto& taskdata = dataPerTask[i];
+                    auto& task = correctionTasks[i];
+
+                    if(task.corrected){
+
+                        write_read(task.readId, task.corrected_subject);
+                        lock(task.readId);
+                        readIsCorrectedVector[task.readId] = 1;
+                        unlock(task.readId);
+                    }else{
+
+                        //make subject available for correction as a candidate
+                        if(readIsCorrectedVector[task.readId] == 1){
+                            lock(task.readId);
+                            if(readIsCorrectedVector[task.readId] == 1){
+                                readIsCorrectedVector[task.readId] = 0;
+                            }
+                            unlock(task.readId);
+                        }
+                    }
+                }
+            };
 
 
+            std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
+            std::chrono::duration<double> runtime = std::chrono::seconds(0);
+            std::chrono::duration<double> getCandidatesTimeTotal{0};
+            std::chrono::duration<double> copyCandidateDataToBufferTimeTotal{0};
+            std::chrono::duration<double> getAlignmentsTimeTotal{0};
+            std::chrono::duration<double> findBestAlignmentDirectionTimeTotal{0};
+            std::chrono::duration<double> gatherBestAlignmentDataTimeTotal{0};
+            std::chrono::duration<double> mismatchRatioFilteringTimeTotal{0};
+            std::chrono::duration<double> compactBestAlignmentDataTimeTotal{0};
+            std::chrono::duration<double> fetchQualitiesTimeTotal{0};
+            std::chrono::duration<double> makeCandidateStringsTimeTotal{0};
+            std::chrono::duration<double> msaAddSequencesTimeTotal{0};
+            std::chrono::duration<double> msaFindConsensusTimeTotal{0};
+            std::chrono::duration<double> msaMinimizationTimeTotal{0};
+            std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
+            std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
+            std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
 
-            const int max_sequence_bytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(fileProperties.maxSequenceLength);
+
+            const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength);
 
     		//std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
-            const int numThreads = runtimeOptions.nCorrectorThreads;
+            //const int numThreads = runtimeOptions.nCorrectorThreads;
 
 
-            std::vector<TaskData> dataPerTask(runtimeOptions.batchsize);
+            std::vector<TaskData> dataPerTask(correctionOptions.batchsize);
 
 
             std::vector<read_number> readIds;
-            std::vector<CorrectionTask_t> correctionTasks;
+            std::vector<CorrectionTask> correctionTasks;
 
             //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    		while(!(threadOpts.readIdGenerator->empty() && readIds.empty())){
+    		while(!(readIdGenerator.empty() && readIds.empty())){
 
                 if(readIds.empty()){
-                    readIds = threadOpts.readIdGenerator->next_n(runtimeOptions.batchsize);
+                    readIds = readIdGenerator.next_n(correctionOptions.batchsize);
                 }
                 if(readIds.empty()){
                     continue;
@@ -732,13 +912,9 @@ namespace cpu{
                         const char* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
                         const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
 
-                        task.original_subject_string = get2BitHiLoString(originalsubjectptr, originalsubjectLength);
+                        task.original_subject_string = get2BitHiLoString((const unsigned int*)originalsubjectptr, originalsubjectLength);
 
-                        task.subject_string = correctionTasks[0].original_subject_string;
                         task.encodedSubjectPtr = (const unsigned int*) originalsubjectptr;
-                        task.clipping_begin = 0;
-                        task.clipping_end = originalsubjectLength;
-
                     }else{
                         task.active = false;
                     }
@@ -786,7 +962,7 @@ namespace cpu{
                 for(size_t i = 0; i < correctionTasks.size(); i++){
                     auto& taskdata = dataPerTask[i];
                     auto& task = correctionTasks[i];
-                    getCandidateSequenceData(taskdata, readStorage, task maxSequenceBytes);
+                    getCandidateSequenceData(taskdata, readStorage, task, encodedSequencePitch);
                 }
 
 #ifdef ENABLE_TIMING
@@ -802,7 +978,7 @@ namespace cpu{
                     auto& taskdata = dataPerTask[i];
                     auto& task = correctionTasks[i];
 
-                    getCandidateAlignments(threadData, task, maxSequenceBytes, goodAlignmentProperties);
+                    getCandidateAlignments(taskdata, task, encodedSequencePitch, goodAlignmentProperties);
 
                     taskdata.numGoodAlignmentFlags = std::count_if(taskdata.alignmentFlags.begin(),
                                                                  taskdata.alignmentFlags.end(),
@@ -839,7 +1015,7 @@ namespace cpu{
                     auto& taskdata = dataPerTask[i];
                     auto& task = correctionTasks[i];
 
-                    gatherBestAlignmentData(taskdata, task, maxSequenceBytes);
+                    gatherBestAlignmentData(taskdata, task, encodedSequencePitch);
                 }
 
 #ifdef ENABLE_TIMING
@@ -859,9 +1035,9 @@ namespace cpu{
 
                     filterBestAlignmentsByMismatchRatio(taskdata,
                                                       task,
-                                                      maxSequenceBytes,
+                                                      encodedSequencePitch,
                                                       correctionOptions,
-                                                      alignmentProps);
+                                                      goodAlignmentProperties);
                 }
 
 #ifdef ENABLE_TIMING
@@ -893,7 +1069,7 @@ namespace cpu{
                             getCandidateQualities(taskdata,
                                                 readStorage,
                                                 task,
-                                                fileProperties.maxSequenceLength);
+                                                sequenceFileProperties.maxSequenceLength);
                         }
                     }
 #ifdef ENABLE_TIMING
@@ -913,7 +1089,7 @@ namespace cpu{
 
                         makeCandidateStrings(taskdata,
                                             task,
-                                            fileProperties.maxSequenceLength);
+                                            sequenceFileProperties.maxSequenceLength);
                     }
 
 
@@ -934,10 +1110,9 @@ namespace cpu{
                         auto& task = correctionTasks[i];
 
                         buildMultipleSequenceAlignment(taskdata,
-                                                       readStorage,
                                                        task,
                                                        correctionOptions,
-                                                       fileProperties.maxSequenceLength);
+                                                       sequenceFileProperties.maxSequenceLength);
                     }
 
 
@@ -967,7 +1142,7 @@ namespace cpu{
                     std::cout << '\n';
 
                     /*printSequencesInMSA(std::cout,
-                                        correctionTasks[0].subject_string.c_str(),
+                                        correctionTasks[0].original_subject_string.c_str(),
                                         subjectLength,
                                         bestCandidateStrings.data(),
                                         bestCandidateLengths.data(),
@@ -976,10 +1151,10 @@ namespace cpu{
                                         multipleSequenceAlignment.subjectColumnsBegin_incl,
                                         multipleSequenceAlignment.subjectColumnsEnd_excl,
                                         multipleSequenceAlignment.nColumns,
-                                        fileProperties.maxSequenceLength);*/
+                                        sequenceFileProperties.maxSequenceLength);*/
 
                     printSequencesInMSAConsEq(std::cout,
-                                        correctionTasks[0].subject_string.c_str(),
+                                        correctionTasks[0].original_subject_string.c_str(),
                                         subjectLength,
                                         bestCandidateStrings.data(),
                                         bestCandidateLengths.data(),
@@ -989,7 +1164,7 @@ namespace cpu{
                                         multipleSequenceAlignment.subjectColumnsBegin_incl,
                                         multipleSequenceAlignment.subjectColumnsEnd_excl,
                                         multipleSequenceAlignment.nColumns,
-                                        fileProperties.maxSequenceLength);
+                                        sequenceFileProperties.maxSequenceLength);
 #endif
 
                     #pragma omp parallel for
@@ -1000,8 +1175,8 @@ namespace cpu{
                         removeCandidatesOfDifferentRegionFromMSA(taskdata,
                                                                 task,
                                                                 correctionOptions,
-                                                                maxSequenceBytes,
-                                                                fileProperties.maxSequenceLength);
+                                                                encodedSequencePitch,
+                                                                sequenceFileProperties.maxSequenceLength);
                     }
 
 
@@ -1013,47 +1188,59 @@ namespace cpu{
 
 
                 if(correctionOptions.extractFeatures){
-#if 1
-                    auto MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
+
+                    #pragma omp parallel for
+                    for(size_t i = 0; i < correctionTasks.size(); i++){
+                        auto& taskdata = dataPerTask[i];
+                        auto& task = correctionTasks[i];
+
+                        #if 1
+                        taskdata.msaforestfeatures = extractFeatures(taskdata.multipleSequenceAlignment.consensus.data(),
+                                                                    taskdata.multipleSequenceAlignment.support.data(),
+                                                                    taskdata.multipleSequenceAlignment.coverage.data(),
+                                                                    taskdata.multipleSequenceAlignment.origCoverages.data(),
+                                                                    taskdata.multipleSequenceAlignment.nColumns,
+                                                                    taskdata.multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                                    taskdata.multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                                    task.original_subject_string,
+                                                                    correctionOptions.kmerlength, 0.5f,
+                                                                    correctionOptions.estimatedCoverage);
+                        #else
+
+                        auto MSAFeatures = extractFeatures3_2(
+                                                    multipleSequenceAlignment.countsA.data(),
+                                                    multipleSequenceAlignment.countsC.data(),
+                                                    multipleSequenceAlignment.countsG.data(),
+                                                    multipleSequenceAlignment.countsT.data(),
+                                                    multipleSequenceAlignment.weightsA.data(),
+                                                    multipleSequenceAlignment.weightsC.data(),
+                                                    multipleSequenceAlignment.weightsG.data(),
+                                                    multipleSequenceAlignment.weightsT.data(),
+                                                    multipleSequenceAlignment.nCandidates+1,
+                                                    multipleSequenceAlignment.nColumns,
+                                                    multipleSequenceAlignment.consensus.data(),
                                                     multipleSequenceAlignment.support.data(),
                                                     multipleSequenceAlignment.coverage.data(),
                                                     multipleSequenceAlignment.origCoverages.data(),
-                                                    multipleSequenceAlignment.nColumns,
                                                     multipleSequenceAlignment.subjectColumnsBegin_incl,
                                                     multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                    correctionTasks[0].subject_string,
-                                                    correctionOptions.kmerlength, 0.5f,
+                                                    task.original_subject_string,
                                                     correctionOptions.estimatedCoverage);
-#else
-
-
-                auto MSAFeatures = extractFeatures3_2(
-                                            multipleSequenceAlignment.countsA.data(),
-                                            multipleSequenceAlignment.countsC.data(),
-                                            multipleSequenceAlignment.countsG.data(),
-                                            multipleSequenceAlignment.countsT.data(),
-                                            multipleSequenceAlignment.weightsA.data(),
-                                            multipleSequenceAlignment.weightsC.data(),
-                                            multipleSequenceAlignment.weightsG.data(),
-                                            multipleSequenceAlignment.weightsT.data(),
-                                            multipleSequenceAlignment.nCandidates+1,
-                                            multipleSequenceAlignment.nColumns,
-                                            multipleSequenceAlignment.consensus.data(),
-                                            multipleSequenceAlignment.support.data(),
-                                            multipleSequenceAlignment.coverage.data(),
-                                            multipleSequenceAlignment.origCoverages.data(),
-                                            multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                            multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                            correctionTasks[0].subject_string,
-                                            correctionOptions.estimatedCoverage);
-
-
-#endif
-
-                    for(const auto& msafeature : MSAFeatures){
-                        featurestream << correctionTasks[0].readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
-                        featurestream << msafeature << '\n';
+                        #endif
                     }
+
+                    for(size_t i = 0; i < correctionTasks.size(); i++){
+                        auto& taskdata = dataPerTask[i];
+                        auto& task = correctionTasks[i];
+
+                        for(const auto& msafeature : taskdata.msaforestfeatures){
+                            featurestream << task.readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
+                            featurestream << msafeature << '\n';
+                        }
+                    }
+
+
+
                 }else{ //correction is not performed when extracting features
 
                     if(correctionOptions.correctionType == CorrectionType::Classic){
@@ -1061,146 +1248,75 @@ namespace cpu{
     #ifdef ENABLE_TIMING
                         auto tpa = std::chrono::system_clock::now();
     #endif
-                        //get corrected subject and write it to file
 
-                        const int subjectColumnsBegin_incl = multipleSequenceAlignment.subjectColumnsBegin_incl;
-                        const int subjectColumnsEnd_excl = multipleSequenceAlignment.subjectColumnsEnd_excl;
+                        #pragma omp parallel for
+                        for(size_t i = 0; i < correctionTasks.size(); i++){
+                            auto& taskdata = dataPerTask[i];
+                            auto& task = correctionTasks[i];
 
-                        //if(correctionTasks[0].readId == 207){
-                        //    std::cerr << "debug\n";
-                        //}
-
-                        MSAProperties msaProperties = getMSAProperties2(multipleSequenceAlignment.support.data(),
-                                                                        multipleSequenceAlignment.coverage.data(),
-                                                                        //int(correctionTasks[0].subject_string.size()),
-                                                                        subjectColumnsBegin_incl,
-                                                                        subjectColumnsEnd_excl,
-                                                                        correctionOptions.estimatedErrorrate,
-                                                                        correctionOptions.estimatedCoverage,
-                                                                        correctionOptions.m_coverage);
-
-                        // auto correctionResult = getCorrectedSubject(multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
-                        //                                             multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
-                        //                                             multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
-                        //                                             multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
-                        //                                             int(correctionTasks[0].subject_string.size()),
-                        //                                             correctionTasks[0].subject_string.c_str(),
-                        //                                             msaProperties.isHQ,
-                        //                                             correctionOptions.estimatedErrorrate,
-                        //                                             correctionOptions.estimatedCoverage,
-                        //                                             correctionOptions.m_coverage,
-                        //                                             correctionOptions.kmerlength);
-
-                        auto correctionResult = getCorrectedSubject(multipleSequenceAlignment.consensus.data() + subjectColumnsBegin_incl,
-                                                                    multipleSequenceAlignment.support.data() + subjectColumnsBegin_incl,
-                                                                    multipleSequenceAlignment.coverage.data() + subjectColumnsBegin_incl,
-                                                                    multipleSequenceAlignment.origCoverages.data() + subjectColumnsBegin_incl,
-                                                                    int(correctionTasks[0].subject_string.size()),
-                                                                    correctionTasks[0].subject_string.c_str(),
-                                                                    subjectColumnsBegin_incl,
-                                                                    bestCandidateStrings.data(),
-                                                                    int(bestAlignmentWeights.size()),
-                                                                    bestAlignmentWeights.data(),
-                                                                    bestCandidateLengths.data(),
-                                                                    bestAlignmentShifts.data(),
-                                                                    fileProperties.maxSequenceLength,
-                                                                    msaProperties.isHQ,
-                                                                    correctionOptions.estimatedErrorrate,
-                                                                    correctionOptions.estimatedCoverage,
-                                                                    correctionOptions.m_coverage,
-                                                                    correctionOptions.kmerlength);
+                            correctSubject(taskdata,
+                                            task,
+                                            correctionOptions,
+                                            sequenceFileProperties.maxSequenceLength);
+                        }
 
 
     #ifdef ENABLE_TIMING
                         msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
     #endif
 
-
-                        if(correctionResult.isCorrected){
-                            //need to replace the bases in the good region by the corrected bases of the clipped read
-                            if(clippingIters == 1){
-                                correctionTasks[0].corrected_subject = correctionResult.correctedSequence;
-                            }else{
-                                correctionTasks[0].corrected_subject = correctionTasks[0].original_subject_string;
-                                std::copy(correctionResult.correctedSequence.begin(),
-                                          correctionResult.correctedSequence.end(),
-                                          correctionTasks[0].corrected_subject.begin() + correctionTasks[0].clipping_begin);
-                            }
-                        }
+                        writeCorrectedSubjectToFile(dataPerTask, correctionTasks);
 
 
-
-
-                        /*if(!correctionResult.isCorrected || correctionResult.correctedSequence == correctionTasks[0].original_subject_string){
-                            const std::size_t numCandidates = correctionTasks[0].candidate_read_ids.size();
-                            numCandidatesOfUncorrectedSubjects[numCandidates]++;
-                        }*/
-
-                        if(correctionResult.isCorrected){
-
-                            write_read(correctionTasks[0].readId, correctionTasks[0].corrected_subject);
-                            lock(correctionTasks[0].readId);
-                            (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 1;
-                            unlock(correctionTasks[0].readId);
-                        }else{
-
-                            //make subject available for correction as a candidate
-                            if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
-                                lock(correctionTasks[0].readId);
-                                if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
-                                    (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 0;
-                                }
-                                unlock(correctionTasks[0].readId);
-                            }
-                        }
 
                         //get corrected candidates and write them to file
-                        if(correctionOptions.correctCandidates && msaProperties.isHQ){
+                        if(correctionOptions.correctCandidates){
     #ifdef ENABLE_TIMING
                             tpa = std::chrono::system_clock::now();
     #endif
 
-                            auto correctedCandidates = getCorrectedCandidates(multipleSequenceAlignment.consensus.data(),
-                                                                            multipleSequenceAlignment.support.data(),
-                                                                            multipleSequenceAlignment.coverage.data(),
-                                                                            multipleSequenceAlignment.nColumns,
-                                                                            multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                                                            multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                                            bestAlignmentShifts.data(),
-                                                                            bestCandidateLengths.data(),
-                                                                            multipleSequenceAlignment.nCandidates,
-                                                                            correctionOptions.estimatedErrorrate,
-                                                                            correctionOptions.estimatedCoverage,
-                                                                            correctionOptions.m_coverage,
-                                                                            correctionOptions.new_columns_to_correct);
+                            #pragma omp parallel for
+                            for(size_t i = 0; i < correctionTasks.size(); i++){
+                                auto& taskdata = dataPerTask[i];
+                                auto& task = correctionTasks[i];
+
+                                if(taskdata.msaProperties.isHQ){
+                                    correctCandidates(taskdata, task, correctionOptions);
+                                }
+                            }
 
     #ifdef ENABLE_TIMING
                             msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
     #endif
 
-                            for(const auto& correctedCandidate : correctedCandidates){
-                                const read_number candidateId = bestCandidateReadIds[correctedCandidate.index];
-                                bool savingIsOk = false;
-                                if((*threadOpts.readIsCorrectedVector)[candidateId] == 0){
-                                    lock(candidateId);
-                                    if((*threadOpts.readIsCorrectedVector)[candidateId]== 0) {
-                                        (*threadOpts.readIsCorrectedVector)[candidateId] = 1; // we will process this read
-                                        savingIsOk = true;
-                                    }
-                                    unlock(candidateId);
-                                }
-                                unlock(candidateId);
+                            for(size_t i = 0; i < correctionTasks.size(); i++){
+                                auto& taskdata = dataPerTask[i];
+                                auto& task = correctionTasks[i];
 
-                                if (savingIsOk) {
-                                    if(bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                                        write_read(candidateId, correctedCandidate.sequence);
-                                    }else{
-                                        std::string fwd;
-                                        fwd.resize(correctedCandidate.sequence.length());
-                                        reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
-                                        write_read(candidateId, fwd);
+                                for(const auto& correctedCandidate : task.correctedCandidates){
+                                    const read_number candidateId = taskdata.bestCandidateReadIds[correctedCandidate.index];
+                                    bool savingIsOk = false;
+                                    if(readIsCorrectedVector[candidateId] == 0){
+                                        lock(candidateId);
+                                        if(readIsCorrectedVector[candidateId]== 0) {
+                                            readIsCorrectedVector[candidateId] = 1; // we will process this read
+                                            savingIsOk = true;
+                                        }
+                                        unlock(candidateId);
+                                    }
+
+                                    if (savingIsOk) {
+                                        if(taskdata.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                                            write_read(candidateId, correctedCandidate.sequence);
+                                        }else{
+                                            std::string fwd;
+                                            fwd.resize(correctedCandidate.sequence.length());
+                                            reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
+                                            write_read(candidateId, fwd);
+                                        }
                                     }
                                 }
+
                             }
                         }
 
@@ -1209,109 +1325,54 @@ namespace cpu{
     #ifdef ENABLE_TIMING
                         auto tpa = std::chrono::system_clock::now();
     #endif
-                        auto MSAFeatures = extractFeatures(multipleSequenceAlignment.consensus.data(),
-                                                        multipleSequenceAlignment.support.data(),
-                                                        multipleSequenceAlignment.coverage.data(),
-                                                        multipleSequenceAlignment.origCoverages.data(),
-                                                        multipleSequenceAlignment.nColumns,
-                                                        multipleSequenceAlignment.subjectColumnsBegin_incl,
-                                                        multipleSequenceAlignment.subjectColumnsEnd_excl,
-                                                        correctionTasks[0].subject_string,
-                                                        correctionOptions.kmerlength, 0.5f,
-                                                        correctionOptions.estimatedCoverage);
 
-                        correctionTasks[0].corrected_subject = correctionTasks[0].subject_string;
-                        bool isCorrected = false;
-
-                        for(const auto& msafeature : MSAFeatures){
-                            constexpr float maxgini = 0.05f;
-                            constexpr float forest_correction_fraction = 0.5f;
-
-                            const bool doCorrect = forestClassifier.shouldCorrect(
-                                                            msafeature.position_support,
-                                                            msafeature.position_coverage,
-                                                            msafeature.alignment_coverage,
-                                                            msafeature.dataset_coverage,
-                                                            msafeature.min_support,
-                                                            msafeature.min_coverage,
-                                                            msafeature.max_support,
-                                                            msafeature.max_coverage,
-                                                            msafeature.mean_support,
-                                                            msafeature.mean_coverage,
-                                                            msafeature.median_support,
-                                                            msafeature.median_coverage,
-                                                            maxgini,
-                                                            forest_correction_fraction);
-
-                            if(doCorrect){
-                                isCorrected = true;
-
-                                const int globalIndex = multipleSequenceAlignment.subjectColumnsBegin_incl + msafeature.position;
-                                correctionTasks[0].corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
-                            }
+                        #pragma omp parallel for
+                        for(size_t i = 0; i < correctionTasks.size(); i++){
+                            auto& taskdata = dataPerTask[i];
+                            auto& task = correctionTasks[i];
+#if 1
+                            correctSubjectWithForest(taskdata, task, forestClassifier, correctionOptions);
+#else
+                            correctSubjectWithNeuralNetwork(taskdata, task, nnClassifier, correctionOptions);
+#endif
                         }
 
     #ifdef ENABLE_TIMING
                         correctWithFeaturesTimeTotal += std::chrono::system_clock::now() - tpa;
     #endif
 
-    #if 0
-    MSAFeatures3 = extractFeatures3_2(
-                                multipleSequenceAlignment.countsA.data(),
-                                multipleSequenceAlignment.countsC.data(),
-                                multipleSequenceAlignment.countsG.data(),
-                                multipleSequenceAlignment.countsT.data(),
-                                multipleSequenceAlignment.weightsA.data(),
-                                multipleSequenceAlignment.weightsC.data(),
-                                multipleSequenceAlignment.weightsG.data(),
-                                multipleSequenceAlignment.weightsT.data(),
-                                multipleSequenceAlignment.nRows,
-                                multipleSequenceAlignment.columnProperties.columnsToCheck,
-                                multipleSequenceAlignment.consensus.data(),
-                                multipleSequenceAlignment.support.data(),
-                                multipleSequenceAlignment.coverage.data(),
-                                multipleSequenceAlignment.origCoverages.data(),
-                                multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl,
-                                multipleSequenceAlignment.columnProperties.subjectColumnsEnd_excl,
-                                task.subject_string,
-                                correctionOptions.estimatedCoverage);
 
-                        std::vector<float> predictions = nnClassifier.infer(MSAFeatures3);
-                        assert(predictions.size() == MSAFeatures3.size());
-
-                        for(size_t index = 0; index < predictions.size(); index++){
-                            constexpr float threshold = 0.8;
-                            const auto& msafeature = MSAFeatures3[index];
-
-                            if(predictions[index] >= threshold){
-                                isCorrected = true;
-
-                                const int globalIndex = multipleSequenceAlignment.columnProperties.subjectColumnsBegin_incl + msafeature.position;
-                                task.corrected_subject[msafeature.position] = multipleSequenceAlignment.consensus[globalIndex];
-                            }
-                        }
-
-    #endif
-
-                        if(isCorrected){
-                            write_read(correctionTasks[0].readId, correctionTasks[0].corrected_subject);
-                            lock(correctionTasks[0].readId);
-                            (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 1;
-                            unlock(correctionTasks[0].readId);
-                        }else{
-                            //make subject available for correction as a candidate
-                            if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
-                                lock(correctionTasks[0].readId);
-                                if((*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] == 1){
-                                    (*threadOpts.readIsCorrectedVector)[correctionTasks[0].readId] = 0;
-                                }
-                                unlock(correctionTasks[0].readId);
-                            }
-                        }
+                        writeCorrectedSubjectToFile(dataPerTask, correctionTasks);
 
                     }
                 }
+
+                if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
+                    const auto now = std::chrono::system_clock::now();
+                    runtime = now - timepoint_begin;
+
+                    printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                            readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+                            int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                            int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                            int(runtime.count()) % 60);
+                    //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
+                }
+
+
     		} // end batch processing
+
+            if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
+                const auto now = std::chrono::system_clock::now();
+                runtime = now - timepoint_begin;
+
+                printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                        readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+                        int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                        int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                        int(runtime.count()) % 60);
+                //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
+            }
 
             featurestream.flush();
             outputstream.flush();
@@ -1319,7 +1380,50 @@ namespace cpu{
             minhasher.destroy();
         	readStorage.destroy();
 
-            std::cout << "begin merge" << std::endl;
+
+            std::chrono::duration<double> totalDuration = getCandidatesTimeTotal
+                                                        + copyCandidateDataToBufferTimeTotal
+                                                        + getAlignmentsTimeTotal
+                                                        + findBestAlignmentDirectionTimeTotal
+                                                        + gatherBestAlignmentDataTimeTotal
+                                                        + mismatchRatioFilteringTimeTotal
+                                                        + compactBestAlignmentDataTimeTotal
+                                                        + fetchQualitiesTimeTotal
+                                                        + makeCandidateStringsTimeTotal
+                                                        + msaAddSequencesTimeTotal
+                                                        + msaFindConsensusTimeTotal
+                                                        + msaMinimizationTimeTotal
+                                                        + msaCorrectSubjectTimeTotal
+                                                        + msaCorrectCandidatesTimeTotal
+                                                        + correctWithFeaturesTimeTotal;
+
+            auto printDuration = [&](const auto& name, const auto& duration){
+                std::cout << "# elapsed time ("<< name << "): "
+                          << duration.count()  << " s. "
+                          << (100.0 * duration / totalDuration) << " %."<< std::endl;
+            };
+
+            #define printme(x) printDuration((#x),(x));
+
+            printme(getCandidatesTimeTotal);
+            printme(copyCandidateDataToBufferTimeTotal);
+            printme(getAlignmentsTimeTotal);
+            printme(findBestAlignmentDirectionTimeTotal);
+            printme(gatherBestAlignmentDataTimeTotal);
+            printme(mismatchRatioFilteringTimeTotal);
+            printme(compactBestAlignmentDataTimeTotal);
+            printme(fetchQualitiesTimeTotal);
+            printme(makeCandidateStringsTimeTotal);
+            printme(msaAddSequencesTimeTotal);
+            printme(msaFindConsensusTimeTotal);
+            printme(msaMinimizationTimeTotal);
+            printme(msaCorrectSubjectTimeTotal);
+            printme(msaCorrectCandidatesTimeTotal);
+            printme(correctWithFeaturesTimeTotal);
+
+            #undef printme
+
+            std::cout << "Correction finished. Constructing result file." << std::endl;
 
             if(!correctionOptions.extractFeatures){
 
