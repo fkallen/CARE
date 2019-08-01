@@ -22,6 +22,10 @@ namespace care{
     static_assert(std::is_integral<kmer_type>::value, "kmer_type must be integral.");
     static_assert(std::is_unsigned<kmer_type>::value, "kmer_type must be unsigned.");
 
+    //maximum number of minhash maps
+    constexpr int maximum_number_of_maps = 48;
+    static_assert(maximum_number_of_maps > 0);
+
 
 
 //##################################################
