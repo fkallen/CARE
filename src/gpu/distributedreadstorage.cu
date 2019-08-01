@@ -462,7 +462,7 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
         }
     }
 
-    {
+    if(useQualityScores){
         auto qualityhandle = makeGatherHandleQualities();
         size_t outputpitch = sequenceLengthLimit;
 
