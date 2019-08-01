@@ -304,6 +304,11 @@ public:
     		if(index < elementsPerLocationPS[location+1])
                         break;
     	}
+        if(location >= numLocations){
+            std::cerr << location << " " << numLocations << "\n";
+            std::copy(elementsPerLocationPS.begin(), elementsPerLocationPS.end(), std::ostream_iterator<Index_t>(std::cerr, " "));
+            std::cerr << "\n";
+        }
         assert(location < numLocations);
     	return location;
     }
