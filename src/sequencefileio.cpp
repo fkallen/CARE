@@ -3,6 +3,7 @@
 #include <config.hpp>
 #include <threadsafe_buffer.hpp>
 
+#include <iterator>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -966,8 +967,62 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         });
     };
 
-    auto combineMultipleCorrectionResults = [](const std::vector<std::string>& sequences){
+    auto combineMultipleCorrectionResults = [](const std::vector<std::string>& sequences, const std::vector<bool> isHQ){
         assert(!sequences.empty());
+        assert(sequences.size() == isHQ.size());
+
+        for(size_t i = 0; i < sequences.size(); i++){
+            if(isHQ[i]){
+                return sequences[i];
+            }
+        }
+
+        if(!std::all_of(sequences.begin()+1, sequences.end(), [&](const auto& s){
+            return s == sequences[0];
+        })){
+            // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
+            // std::cerr << "\n";
+            // std::exit(0);
+            std::string consensus(sequences[0].size(), 'F');
+            std::vector<int> countsA(sequences[0].size(), 0);
+            std::vector<int> countsC(sequences[0].size(), 0);
+            std::vector<int> countsG(sequences[0].size(), 0);
+            std::vector<int> countsT(sequences[0].size(), 0);
+
+            for(const auto& sequence : sequences){
+                assert(sequence.size() == consensus.size());
+                for(size_t i = 0; i < sequence.size();  i++){
+                    const char c = sequence[i];
+                    if(c == 'A') countsA[i]++;
+                    else if(c == 'C') countsC[i]++;
+                    else if(c == 'G') countsG[i]++;
+                    else if(c == 'T') countsT[i]++;
+                    else assert(false);
+                }
+            }
+            for(size_t i = 0; i < consensus.size();  i++){
+                int count = countsA[i];
+                char c = 'A';
+                if(countsC[i] > count){
+                    count = countsC[i];
+                    c = 'C';
+                }
+                if(countsG[i] > count){
+                    count = countsG[i];
+                    c = 'G';
+                }
+                if(countsT[i] > count){
+                    count = countsT[i];
+                    c = 'T';
+                }
+                consensus[i] = c;
+            }
+
+            return consensus;
+
+        }else{
+            return sequences[0];
+        }
 
         return sequences[0];
     };
@@ -1032,11 +1087,15 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     std::uint64_t currentReadId = 0;
     std::vector<std::string> correctedSequencesOfSameReadId;
+    std::vector<bool> isHQSequence;
     correctedSequencesOfSameReadId.reserve(256);
+    //bool hqSubject = false;
 
     std::uint64_t currentReadId_tmp = 0;
     std::vector<std::string> correctedSequencesOfSameReadId_tmp;
+    std::vector<bool> isHQSequence_tmp;
     correctedSequencesOfSameReadId_tmp.reserve(256);
+    //bool hqSubject_tmp = false;
 
     bool firstiter = true;
 
@@ -1044,28 +1103,42 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         std::stringstream ss(correctionline);
         std::uint64_t correctionReadId;
         std::string sequence;
-        ss >> correctionReadId >> sequence;
+        char type;
+        bool hq = false;
+        ss >> correctionReadId >> sequence >> type;
+        if(type == 's'){
+            ss >> hq;
+        }
 
         if(firstiter || correctionReadId == currentReadId){
             currentReadId = correctionReadId;
             correctedSequencesOfSameReadId.emplace_back(std::move(sequence));
+            isHQSequence.emplace_back(hq);
 
             while(std::getline(correctionsstream, correctionline)){
                 std::stringstream ss2(correctionline);
                 std::uint64_t correctionReadId2;
-                ss2 >> correctionReadId2 >> sequence;
+                char type2;
+                bool hq2;
+                ss2 >> correctionReadId2 >> sequence >> type2 >> hq2;
+                if(type2 == 's'){
+                    ss2 >> hq2;
+                }
 
                 if(correctionReadId2 == currentReadId){
                     correctedSequencesOfSameReadId.emplace_back(std::move(sequence));
+                    isHQSequence.emplace_back(hq2);
                 }else{
                     currentReadId_tmp = correctionReadId2;
                     correctedSequencesOfSameReadId_tmp.emplace_back(std::move(sequence));
+                    isHQSequence_tmp.emplace_back(hq2);
                     break;
                 }
             }
         }else{
             currentReadId_tmp = correctionReadId;
             correctedSequencesOfSameReadId_tmp.emplace_back(std::move(sequence));
+            isHQSequence_tmp.emplace_back(hq);
         }
 
         std::uint64_t originalReadId = reader->getReadnum();
@@ -1088,14 +1161,17 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId);
+        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId, isHQSequence);
         assert(isValidSequence(correctedSequence));
 
         writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
 
         correctedSequencesOfSameReadId.clear();
+        isHQSequence.clear();
         std::swap(currentReadId, currentReadId_tmp);
         std::swap(correctedSequencesOfSameReadId, correctedSequencesOfSameReadId_tmp);
+        std::swap(isHQSequence, isHQSequence_tmp);
+
 
         firstiter = false;
     }
@@ -1121,7 +1197,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId);
+        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId, isHQSequence);
         assert(isValidSequence(correctedSequence));
 
         writer->writeRead(read.name, read.comment, correctedSequence, read.quality);

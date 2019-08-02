@@ -1581,7 +1581,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
     }
 
-    auto write_read = [&](const read_number readId, const auto& sequence){
+    auto write_read = [&](const read_number readId, const auto& sequence, bool hq){
         //std::cout << readId << " " << sequence << std::endl;
         auto& stream = outputstream;
         assert(sequence.size() > 0);
@@ -1590,7 +1590,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
         }
 
-        stream << readId << ' ' << sequence << '\n';
+        stream << readId << ' ' << sequence << " s " << hq << '\n';
     };
 
     auto write_candidate = [&](const read_number readId, const auto& sequence){
@@ -1602,7 +1602,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
         }
 
-        stream << readId << ' ' << sequence << " c " << '\n';
+        stream << readId << ' ' << sequence << " c" << '\n';
     };
 
     auto lock = [&](read_number readId){
@@ -1670,15 +1670,15 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             auto& taskdata = dataPerTask[i];
             task.taskDataPtr = &taskdata;
 
-            bool ok = false;
-            lock(readId);
-            if (readIsCorrectedVector[readId] == 0) {
-                readIsCorrectedVector[readId] = 1;
-                ok = true;
-            }else{
-            }
-            unlock(readId);
-
+            //bool ok = false;
+            // lock(readId);
+            // if (readIsCorrectedVector[readId] == 0) {
+            //     readIsCorrectedVector[readId] = 1;
+            //     ok = true;
+            // }else{
+            // }
+            // unlock(readId);
+            bool ok = true;
             if(ok){
                 const char* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
                 const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
@@ -1971,34 +1971,35 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                 if(task.active){
                     if(task.corrected){
-                        write_read(task.readId, task.corrected_subject);
-                        lock(task.readId);
-                        readIsCorrectedVector[task.readId] = 1;
-                        unlock(task.readId);
+                        write_read(task.readId, task.corrected_subject, taskdata.msaProperties.isHQ);
+                        // lock(task.readId);
+                        // readIsCorrectedVector[task.readId] = 1;
+                        // unlock(task.readId);
                     }else{
 
                         //make subject available for correction as a candidate
-                        if(readIsCorrectedVector[task.readId] == 1){
-                            lock(task.readId);
-                            if(readIsCorrectedVector[task.readId] == 1){
-                                readIsCorrectedVector[task.readId] = 0;
-                            }
-                            unlock(task.readId);
-                        }
+                        // if(readIsCorrectedVector[task.readId] == 1){
+                        //     lock(task.readId);
+                        //     if(readIsCorrectedVector[task.readId] == 1){
+                        //         readIsCorrectedVector[task.readId] = 0;
+                        //     }
+                        //     unlock(task.readId);
+                        // }
                     }
 
                     for(const auto& correctedCandidate : task.correctedCandidates){
                         const read_number candidateId = taskdata.bestCandidateReadIds[correctedCandidate.index];
-                        bool savingIsOk = false;
-
-                        if(readIsCorrectedVector[candidateId] == 0){
-                            lock(candidateId);
-                            if(readIsCorrectedVector[candidateId]== 0) {
-                                readIsCorrectedVector[candidateId] = 1; // we will process this read
-                                savingIsOk = true;
-                            }
-                            unlock(candidateId);
-                        }
+                        // bool savingIsOk = false;
+                        //
+                        // if(readIsCorrectedVector[candidateId] == 0){
+                        //     lock(candidateId);
+                        //     if(readIsCorrectedVector[candidateId]== 0) {
+                        //         readIsCorrectedVector[candidateId] = 1; // we will process this read
+                        //         savingIsOk = true;
+                        //     }
+                        //     unlock(candidateId);
+                        // }
+                        bool savingIsOk = true;
 
                         if (savingIsOk) {
                             {
