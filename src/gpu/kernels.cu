@@ -1,7 +1,6 @@
 #include <gpu/kernels.hpp>
 //#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
-#include <gpu/qualityscoreweights.hpp>
 #include <gpu/utility_kernels.cuh>
 #include <gpu/cubcachingallocator.cuh>
 
@@ -33,6 +32,22 @@ namespace gpu{
         handle.deviceId = deviceId;
         cudaGetDeviceProperties(&handle.deviceProperties, deviceId); CUERR;
         return handle;
+    }
+
+
+
+    //####################   DEVICE FUNCTIONS #############
+
+    __device__
+    inline
+    float getQualityWeight(char qualitychar){
+        constexpr int ascii_base = 33;
+        constexpr float min_weight = 0.001f;
+
+        const int q(qualitychar);
+        const float errorprob = powf(10.0f, -(q-ascii_base)/10.0f);
+
+        return max(min_weight, 1.0f - errorprob);
     }
 
 
@@ -709,7 +724,7 @@ namespace gpu{
                     const int globalIndex = subjectColumnsBegin_incl + shift + i;
                     const char base = get(subject, subjectLength, i);
                     //printf("%d ", int(base));
-                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+                    const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
                     const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
                     atomicAdd(d_msapointers.counts + ptrOffset + globalIndex, 1);
                     atomicAdd(d_msapointers.weights + ptrOffset + globalIndex, weight);
@@ -758,7 +773,7 @@ namespace gpu{
                         const int globalIndex = defaultcolumnoffset + i;
                         const char base = get(query, queryLength, i);
                         //printf("%d ", int(base));
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * defaultweight : defaultweight;
                         const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
                         atomicAdd(d_msapointers.counts + ptrOffset + globalIndex, 1);
                         atomicAdd(d_msapointers.weights + ptrOffset + globalIndex, weight);
@@ -776,7 +791,7 @@ namespace gpu{
                         const char base = get(query, queryLength, reverseIndex);
                         const char revCompl = make_reverse_complement_byte(base);
                         //printf("%d ", int(revCompl));
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * defaultweight : defaultweight;
                         const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(revCompl) * msa_weights_row_pitch_floats;
                         atomicAdd(d_msapointers.counts + ptrOffset + globalIndex, 1);
                         atomicAdd(d_msapointers.weights + ptrOffset + globalIndex, weight);
@@ -923,7 +938,7 @@ namespace gpu{
                         const int globalIndex = subjectColumnsBegin_incl + shift + i;
                         const char base = get(subject, subjectLength, i, [](auto i){return i;});
 
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+                        const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
                         const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                         atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                         atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
@@ -960,9 +975,9 @@ namespace gpu{
                             //}
 
 #ifndef transposequal
-                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * defaultweight : defaultweight;
 #else
-                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i * num_indices]] * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i * num_indices]) * defaultweight : defaultweight;
 #endif
                             assert(weight != 0);
                             const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
@@ -990,9 +1005,9 @@ namespace gpu{
                                 //assert(queryQualityScore[reverseIndex] != '\0');
                             //}
 #ifndef transposequal
-                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * defaultweight : defaultweight;
 #else
-                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex*num_indices]] * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex*num_indices]) * defaultweight : defaultweight;
 #endif
 
                             assert(weight != 0);
@@ -1174,7 +1189,7 @@ namespace gpu{
                     const int globalIndex = subjectColumnsBegin_incl + shift + i;
                     const char base = get(subject, subjectLength, i);
 
-                    const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)subjectQualityScore[i]] : 1.0f;
+                    const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
                     const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
                     atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
                     atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
@@ -1209,9 +1224,9 @@ namespace gpu{
                         const char base = get(query, queryLength, i);
 
                         #ifndef transposequal
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i]] * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * defaultweight : defaultweight;
                         #else
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[i * num_indices]] * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i * num_indices]) * defaultweight : defaultweight;
                         #endif
                         assert(weight != 0);
                         const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
@@ -1232,9 +1247,9 @@ namespace gpu{
                         const char revCompl = make_reverse_complement_byte(base);
 
                         #ifndef transposequal
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex]] * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * defaultweight : defaultweight;
                         #else
-                        const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)queryQualityScore[reverseIndex*num_indices]] * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex*num_indices]) * defaultweight : defaultweight;
                         #endif
 
                         assert(weight != 0);
@@ -1360,7 +1375,7 @@ namespace gpu{
                             countsMatrix[2] += (encodedBase == baseG_enc);
                             countsMatrix[3] += (encodedBase == baseT_enc);
 
-                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[baseposition]] * weightFactor : 1.0f;
+                            const float weight = canUseQualityScores ? getQualityWeight(qualptr[baseposition]) * weightFactor : 1.0f;
 
                             //if(debug && print){
                             //    printf("%f ", weight);
@@ -1393,7 +1408,7 @@ namespace gpu{
                             countsMatrix[2] += (revCompl == baseG_enc);
                             countsMatrix[3] += (revCompl == baseT_enc);
 
-                            const float weight = canUseQualityScores ? d_qscore_to_weight[(unsigned char)qualptr[reverseIndex]] * weightFactor : weightFactor;
+                            const float weight = canUseQualityScores ? getQualityWeight(qualptr[reverseIndex]) * weightFactor : weightFactor;
 
                             weightsMatrix[0] += (revCompl == baseA_enc) * weight;
                             weightsMatrix[1] += (revCompl == baseC_enc) * weight;

@@ -2,7 +2,6 @@
 
 #include <gpu/correct_gpu.hpp>
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/qualityscoreweights.hpp>
 #include <gpu/nvvptimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
 #include <gpu/dataarrays.hpp>
@@ -3065,9 +3064,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       Read readInFile;
 
       cudaSetDevice(deviceIds[0]); CUERR;
-
-      gpu::init_weights(deviceIds);
-
 
       auto transitionFunctionTable = makeTransitionFunctionTable();
 
