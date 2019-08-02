@@ -70,6 +70,7 @@ DistributedReadStorage::MemoryInfo DistributedReadStorage::getMemoryInfo() const
 
         for(int location = 0; location < distributedSequenceData2.numLocations; location++){
             size_t bytes = partitions[location] * array.sizeOfElement;
+            std::cerr << "location " << location << " " << bytes << "\n";
             if(location == array.hostLocation){
                 info.hostSizeInBytes += bytes;
             }else{
@@ -587,7 +588,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
         assert(totalMemoryRead == totalLengthMemory);
     }
 
-    {
+    if(useQualityScores){
         size_t qualitypitch = sequenceLengthLimit;
 
         size_t totalqualityMemory = 1;
