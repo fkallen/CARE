@@ -504,7 +504,7 @@ void GZipWriter::writeImpl(const std::string& data){
 
         Read r;
 
-		const std::uint64_t countlimit = 1000000;
+		std::uint64_t countlimit = 1000000;
 		std::uint64_t count = 0;
 		std::uint64_t totalCount = 0;
 		tpa = std::chrono::system_clock::now();
@@ -523,7 +523,7 @@ void GZipWriter::writeImpl(const std::string& data){
 				tpb = std::chrono::system_clock::now();
 				duration = tpb - tpa;
 				std::cout << totalCount << " : " << duration.count() << " seconds." << std::endl;
-				count = 0;
+				countlimit *= 2;
 			}
         }
 
@@ -966,6 +966,14 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         });
     };
 
+    auto combineMultipleCorrectionResults = [](const std::vector<std::string>& sequences){
+        assert(!sequences.empty());
+
+        return sequences[0];
+    };
+
+#if 0
+
     std::uint64_t previousCorrectionReadId = 0;
 
     while(std::getline(correctionsstream, correctionline)){
@@ -1018,6 +1026,118 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         writer->writeRead(read);
         //swt.push(read);
     }
+
+
+#else
+
+    std::uint64_t currentReadId = 0;
+    std::vector<std::string> correctedSequencesOfSameReadId;
+    correctedSequencesOfSameReadId.reserve(256);
+
+    std::uint64_t currentReadId_tmp = 0;
+    std::vector<std::string> correctedSequencesOfSameReadId_tmp;
+    correctedSequencesOfSameReadId_tmp.reserve(256);
+
+    bool firstiter = true;
+
+    while(std::getline(correctionsstream, correctionline)){
+        std::stringstream ss(correctionline);
+        std::uint64_t correctionReadId;
+        std::string sequence;
+        ss >> correctionReadId >> sequence;
+
+        if(firstiter || correctionReadId == currentReadId){
+            currentReadId = correctionReadId;
+            correctedSequencesOfSameReadId.emplace_back(std::move(sequence));
+
+            while(std::getline(correctionsstream, correctionline)){
+                std::stringstream ss2(correctionline);
+                std::uint64_t correctionReadId2;
+                ss2 >> correctionReadId2 >> sequence;
+
+                if(correctionReadId2 == currentReadId){
+                    correctedSequencesOfSameReadId.emplace_back(std::move(sequence));
+                }else{
+                    currentReadId_tmp = correctionReadId2;
+                    correctedSequencesOfSameReadId_tmp.emplace_back(std::move(sequence));
+                    break;
+                }
+            }
+        }else{
+            currentReadId_tmp = correctionReadId;
+            correctedSequencesOfSameReadId_tmp.emplace_back(std::move(sequence));
+        }
+
+        std::uint64_t originalReadId = reader->getReadnum();
+        Read read;
+        //copy preceding reads from original file
+        while(originalReadId < currentReadId){
+            bool valid = reader->getNextRead(&read);
+
+            assert(valid);
+
+            assert(isValidSequence(read.sequence));
+
+            writer->writeRead(read);
+            //swt.push(read);
+
+            originalReadId = reader->getReadnum();
+        }
+        //replace sequence of next read with corrected sequence
+        bool valid = reader->getNextRead(&read);
+
+        assert(valid);
+
+        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId);
+        assert(isValidSequence(correctedSequence));
+
+        writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
+
+        correctedSequencesOfSameReadId.clear();
+        std::swap(currentReadId, currentReadId_tmp);
+        std::swap(correctedSequencesOfSameReadId, correctedSequencesOfSameReadId_tmp);
+
+        firstiter = false;
+    }
+
+    if(correctedSequencesOfSameReadId.size() > 0){
+        std::uint64_t originalReadId = reader->getReadnum();
+        Read read;
+        //copy preceding reads from original file
+        while(originalReadId < currentReadId){
+            bool valid = reader->getNextRead(&read);
+
+            assert(valid);
+
+            assert(isValidSequence(read.sequence));
+
+            writer->writeRead(read);
+            //swt.push(read);
+
+            originalReadId = reader->getReadnum();
+        }
+        //replace sequence of next read with corrected sequence
+        bool valid = reader->getNextRead(&read);
+
+        assert(valid);
+
+        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId);
+        assert(isValidSequence(correctedSequence));
+
+        writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
+    }
+
+    //copy remaining reads from original file
+    Read read;
+
+    while(reader->getNextRead(&read)){
+        assert(isValidSequence(read.sequence));
+
+        writer->writeRead(read);
+        //swt.push(read);
+    }
+
+#endif
 
     //swt.producerDone();
 
