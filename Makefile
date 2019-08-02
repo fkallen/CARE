@@ -138,8 +138,6 @@ cleangpud:
 makedir:
 	@mkdir -p buildcpu
 	@mkdir -p buildgpu
-	@mkdir -p debugbuildcpu
-	@mkdir -p debugbuildgpu
 	@mkdir -p forests
 
 .PHONY: minhashertest
