@@ -28,7 +28,7 @@ struct PeerAccess{
         for(int i = 0; i < numGpus; i++){
             for(int k = 0; k < numGpus; k++){
                 //device i can access device k?
-                cudaDeviceCanAccessPeer(&accessMatrix[i * numGpus + k], i, k);
+                cudaDeviceCanAccessPeer(&accessMatrix[i * numGpus + k], i, k); CUERR;
             }
         }
     }
@@ -205,7 +205,7 @@ public:
                     //std::cerr << "cudamalloc on device " << deviceIds[gpu] << '\n';
                     //std::cerr << "bytes: " << (elements * sizeOfElement) << '\n';
                     cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
-
+                    std::cerr << "cudaMalloc " << (rows * sizeOfElement) << "\n";
                     //std::cerr << "dataptr: " << static_cast<void*>(dataPtrPerLocation[gpu]) <<'\n';
 
                     remainingElements -= rows;
@@ -214,6 +214,7 @@ public:
                 //remaining elements are stored in host memory
                 if(remainingElements > 0){
                     dataPtrPerLocation[hostLocation] = new Value_t[remainingElements * numColumns];
+                    std::cerr << "host malloc " << (remainingElements * numColumns * sizeof(Value_t)) << "\n";
                     elementsPerLocation[hostLocation] = remainingElements;
                 }
             }
@@ -782,7 +783,7 @@ public:
 
                 cudaSetDevice(resultDeviceId); CUERR;
 
-                cudaMemcpyAsync(d_result, h_result.get(), sizeof(Value_t) * numIds * numColumns, H2D, stream);
+                cudaMemcpyAsync(d_result, h_result.get(), sizeof(Value_t) * numIds * numColumns, H2D, stream); CUERR;
 
                 cudaSetDevice(oldDevice); CUERR;
 
@@ -949,7 +950,7 @@ public:
                                     handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
                                     sizeOfElement * hitsPerLocation[gpu],
                                     H2D,
-                                    stream);
+                                    stream); CUERR;
                 }
             }
     	}
@@ -980,7 +981,7 @@ public:
                         handle->pinnedResultData.get() + hitsPerLocationPrefixSum[hostLocation] * sizeOfElement,
                         hitsPerLocation[hostLocation] * sizeOfElement,
                         H2D,
-                        stream);
+                        stream); CUERR;
 
         {
             assert(resultPitch % sizeof(Value_t) == 0);
@@ -1006,7 +1007,7 @@ public:
             //             dest[i * resultPitchValueTs + b] = src[srcindex * numCols + b];
             //         }
             //     }
-            // });
+            // }); CUERR;
 
             dim3 block(256,1,1);
             dim3 grid(std::min(65535ul, SDIV(n * numCols, block.x)),1,1);
@@ -1018,7 +1019,7 @@ public:
                     const Index_t col = i % numCols;
                     dest[outputrow * resultPitchValueTs + col] = src[inputrow * numCols + col];
                 }
-            });
+            }); CUERR;
 
         }
 
@@ -1079,7 +1080,7 @@ public:
                 const Index_t col = i % numCols;
                 d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
             }
-        });
+        }); CUERR;
 
         cudaSetDevice(oldDevice); CUERR;
     }
@@ -1136,7 +1137,7 @@ public:
                 const Index_t col = i % numCols;
                 d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
             }
-        });
+        }); CUERR;
 
         cudaSetDevice(oldDevice); CUERR;
     }
