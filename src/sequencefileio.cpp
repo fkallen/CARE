@@ -966,11 +966,20 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         });
     };
 
+    std::uint64_t previousCorrectionReadId = 0;
+
     while(std::getline(correctionsstream, correctionline)){
         std::stringstream ss(correctionline);
         std::uint64_t correctionReadId;
         std::string correctedSequence;
         ss >> correctionReadId >> correctedSequence;
+
+        if(previousCorrectionReadId != 0){
+            if(previousCorrectionReadId >= correctionReadId){
+                std::cerr << "previousCorrectionReadId " << previousCorrectionReadId << ", correctionReadId " << correctionReadId << std::endl;
+            }
+            assert(previousCorrectionReadId < correctionReadId);
+        }
 
         std::uint64_t originalReadId = reader->getReadnum();
         Read read;
@@ -996,6 +1005,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
         //read.sequence = std::move(correctedSequence);
         //swt.push(read);
+
+        previousCorrectionReadId = correctionReadId;
     }
 
     //copy remaining reads from original file

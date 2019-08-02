@@ -139,9 +139,8 @@ namespace cpu{
 
             std::vector<MSAFeature> msaforestfeatures;
 
-            std::vector<CorrectedCandidate> correctedCandidates;
+            std::vector<int> indicesOfCandidatesEqualToSubject;
         };
-
 
 
         void getCandidates(CorrectionTask& task,
@@ -442,6 +441,26 @@ namespace cpu{
                 decode2BitHiLoSequence(&data.bestCandidateStrings[i * maximumSequenceLength],
                                         (const unsigned int*)ptr,
                                         length);
+            }
+        }
+
+        void getIndicesOfCandidatesEqualToSubject(TaskData& data,
+                                                    const CorrectionTask& task,
+                                                    int maximumSequenceLength){
+
+            data.indicesOfCandidatesEqualToSubject.clear();
+            data.indicesOfCandidatesEqualToSubject.reserve(data.bestAlignmentShifts.size());
+
+            for(std::size_t i = 0; i < data.bestAlignmentShifts.size(); i++){
+                if(data.bestAlignmentShifts[i] == 0){
+                    std::size_t length = task.original_subject_string.length();
+                    int cmpresult = std::memcmp(task.original_subject_string.c_str(),
+                                            &data.bestCandidateStrings[i * maximumSequenceLength],
+                                            length);
+                    if(cmpresult == 0){
+                        data.indicesOfCandidatesEqualToSubject.emplace_back(i);
+                    }
+                }
             }
         }
 
@@ -1574,6 +1593,18 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         stream << readId << ' ' << sequence << '\n';
     };
 
+    auto write_candidate = [&](const read_number readId, const auto& sequence){
+        //std::cout << readId << " " << sequence << std::endl;
+        auto& stream = outputstream;
+        assert(sequence.size() > 0);
+
+        for(const auto& c : sequence){
+            assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
+        }
+
+        stream << readId << ' ' << sequence << " c " << '\n';
+    };
+
     auto lock = [&](read_number readId){
         read_number index = readId % nLocksForProcessedFlags;
         locksForProcessedFlags[index].lock();
@@ -1892,6 +1923,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         tpa = std::chrono::system_clock::now();
                         #endif
 
+                        getIndicesOfCandidatesEqualToSubject(taskdata, task, sequenceFileProperties.maxSequenceLength);
+
                         if(taskdata.msaProperties.isHQ){
                             correctCandidates(taskdata, task, correctionOptions);
                         }
@@ -1957,6 +1990,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                     for(const auto& correctedCandidate : task.correctedCandidates){
                         const read_number candidateId = taskdata.bestCandidateReadIds[correctedCandidate.index];
                         bool savingIsOk = false;
+
                         if(readIsCorrectedVector[candidateId] == 0){
                             lock(candidateId);
                             if(readIsCorrectedVector[candidateId]== 0) {
@@ -1967,26 +2001,29 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         }
 
                         if (savingIsOk) {
+                            {
+
+                            }
                             if(taskdata.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                                write_read(candidateId, correctedCandidate.sequence);
+                                write_candidate(candidateId, correctedCandidate.sequence);
                             }else{
-                                std::string fwd;
-                                fwd.resize(correctedCandidate.sequence.length());
-                                reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
-                                write_read(candidateId, fwd);
+                                 std::string fwd;
+                                 fwd.resize(correctedCandidate.sequence.length());
+                                 reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
+                                 write_candidate(candidateId, fwd);
                             }
                         }
                     }
                 }else{
                     //task is inactive, make subject available for correction as a candidate
 
-                    if(readIsCorrectedVector[task.readId] == 1){
-                        lock(task.readId);
-                        if(readIsCorrectedVector[task.readId] == 1){
-                            readIsCorrectedVector[task.readId] = 0;
-                        }
-                        unlock(task.readId);
-                    }
+                    // if(readIsCorrectedVector[task.readId] == 1){
+                    //     lock(task.readId);
+                    //     if(readIsCorrectedVector[task.readId] == 1){
+                    //         readIsCorrectedVector[task.readId] = 0;
+                    //     }
+                    //     unlock(task.readId);
+                    // }
                 }
             }
         }
