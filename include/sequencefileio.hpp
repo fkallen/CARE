@@ -289,7 +289,7 @@ struct TempCorrectedSequence{
 
     bool hq{};
     Type type{};
-    read_number correctionReadId{};
+    read_number readId{};
     std::string sequence{};
     std::vector<int> uncorrectedPositionsNoConsensus{};
 };

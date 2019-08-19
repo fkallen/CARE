@@ -14,7 +14,7 @@
 #include "featureextractor.hpp"
 #include "forestclassifier.hpp"
 #include "nn_classifier.hpp"
-
+#include <sequencefileio.hpp>
 #include "cpu_correction_core.hpp"
 
 #include <array>
@@ -1590,7 +1590,16 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
         }
 
-        stream << readId << ' ' << sequence << " s " << hq << '\n';
+        //stream << readId << ' ' << sequence << " s " << hq << '\n';
+
+
+        TempCorrectedSequence tmp;
+        tmp.hq = hq;
+        tmp.type = TempCorrectedSequence::Type::Anchor;
+        tmp.readId = readId;
+        tmp.sequence = sequence;
+        tmp.uncorrectedPositionsNoConsensus = {};
+        stream << tmp << '\n';
     };
 
     auto write_candidate = [&](const read_number readId, const auto& sequence){
@@ -1602,7 +1611,14 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             assert(c == 'A' || c == 'C' || c == 'G' || c == 'T' || c =='N');
         }
 
-        stream << readId << ' ' << sequence << " c" << '\n';
+        //stream << readId << ' ' << sequence << " c" << '\n';
+        TempCorrectedSequence tmp;
+        tmp.hq = false;
+        tmp.type = TempCorrectedSequence::Type::Candidate;
+        tmp.readId = readId;
+        tmp.sequence = sequence;
+        tmp.uncorrectedPositionsNoConsensus = {};
+        stream << tmp << '\n';
     };
 
     auto lock = [&](read_number readId){

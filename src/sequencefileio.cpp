@@ -1103,44 +1103,33 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     while(std::getline(correctionsstream, correctionline)){
         std::stringstream ss(correctionline);
-        std::uint64_t correctionReadId;
-        std::string sequence;
-        char type;
-        bool hq = false;
-        ss >> correctionReadId >> sequence >> type;
-        if(type == 's'){
-            ss >> hq;
-        }
+        TempCorrectedSequence tcs;
+        ss >> tcs;
 
-        if(firstiter || correctionReadId == currentReadId){
-            currentReadId = correctionReadId;
-            correctedSequencesOfSameReadId.emplace_back(std::move(sequence));
-            isHQSequence.emplace_back(hq);
+        if(firstiter || tcs.readId == currentReadId){
+            currentReadId = tcs.readId ;
+            correctedSequencesOfSameReadId.emplace_back(std::move(tcs.sequence));
+            isHQSequence.emplace_back(tcs.hq);
 
             while(std::getline(correctionsstream, correctionline)){
                 std::stringstream ss2(correctionline);
-                std::uint64_t correctionReadId2;
-                char type2;
-                bool hq2;
-                ss2 >> correctionReadId2 >> sequence >> type2 >> hq2;
-                if(type2 == 's'){
-                    ss2 >> hq2;
-                }
+                TempCorrectedSequence tcs2;
+                ss2 >> tcs2;
 
-                if(correctionReadId2 == currentReadId){
-                    correctedSequencesOfSameReadId.emplace_back(std::move(sequence));
-                    isHQSequence.emplace_back(hq2);
+                if(tcs2.readId == currentReadId){
+                    correctedSequencesOfSameReadId.emplace_back(std::move(tcs2.sequence));
+                    isHQSequence.emplace_back(tcs2.hq);
                 }else{
-                    currentReadId_tmp = correctionReadId2;
-                    correctedSequencesOfSameReadId_tmp.emplace_back(std::move(sequence));
-                    isHQSequence_tmp.emplace_back(hq2);
+                    currentReadId_tmp = tcs2.readId;
+                    correctedSequencesOfSameReadId_tmp.emplace_back(std::move(tcs2.sequence));
+                    isHQSequence_tmp.emplace_back(tcs2.hq);
                     break;
                 }
             }
         }else{
-            currentReadId_tmp = correctionReadId;
-            correctedSequencesOfSameReadId_tmp.emplace_back(std::move(sequence));
-            isHQSequence_tmp.emplace_back(hq);
+            currentReadId_tmp = tcs.readId;
+            correctedSequencesOfSameReadId_tmp.emplace_back(std::move(tcs.sequence));
+            isHQSequence_tmp.emplace_back(tcs.hq);
         }
 
         std::uint64_t originalReadId = reader->getReadnum();
@@ -1369,7 +1358,7 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
 }
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
-    os << tmp.correctionReadId << ' ' << tmp.sequence << ' ';
+    os << tmp.readId << ' ' << tmp.sequence << ' ';
     if(tmp.type == TempCorrectedSequence::Type::Anchor){
         os << TempCorrectedSequence::AnchorChar << ' ' << tmp.hq;
         const auto& vec = tmp.uncorrectedPositionsNoConsensus;
@@ -1386,7 +1375,7 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
 }
 
 std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
-    is >> tmp.correctionReadId >> tmp.sequence;
+    is >> tmp.readId >> tmp.sequence;
     char typechar;
     is >> typechar;
     if(typechar == TempCorrectedSequence::AnchorChar){
