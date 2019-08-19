@@ -977,9 +977,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             }
         }
 
-        if(!std::all_of(sequences.begin()+1, sequences.end(), [&](const auto& s){
+        auto equalsFirstSequence = [&](const auto& s){
             return s == sequences[0];
-        })){
+        };
+
+        if(!std::all_of(sequences.begin()+1, sequences.end(), equalsFirstSequence)){
             // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
             // std::cerr << "\n";
             // std::exit(0);
