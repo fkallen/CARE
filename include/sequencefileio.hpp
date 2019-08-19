@@ -275,6 +275,28 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
                     const std::vector<std::string>& filesToMerge, const std::string& outputfile,
                     size_t tempbytes);
 
+
+
+
+
+// represents a sequence produced by the correction of a read.
+// Will be saved to file during correction.
+// Will be loaded from file during mergeResultFiles
+struct TempCorrectedSequence{
+    enum Type {Anchor, Candidate};
+    static constexpr char AnchorChar = 'a';
+    static constexpr char CandidateChar = 'c';
+
+    bool hq{};
+    Type type{};
+    read_number correctionReadId{};
+    std::string sequence{};
+    std::vector<int> uncorrectedPositionsNoConsensus{};
+};
+
+std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp);
+std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp);
+
 } //end namespace
 
 #endif

@@ -1368,6 +1368,46 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
 
 }
 
+std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
+    os << tmp.correctionReadId << ' ' << tmp.sequence << ' ';
+    if(tmp.type == TempCorrectedSequence::Type::Anchor){
+        os << TempCorrectedSequence::AnchorChar << ' ' << tmp.hq;
+        const auto& vec = tmp.uncorrectedPositionsNoConsensus;
+        os << ' ' << vec.size();
+        if(!vec.empty()){
+            os << ' ';
+            std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, ","));
+        }
+    }else{
+        os << TempCorrectedSequence::CandidateChar;
+    }
+
+    return os;
+}
+
+std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
+    is >> tmp.correctionReadId >> tmp.sequence;
+    char typechar;
+    is >> typechar;
+    if(typechar == TempCorrectedSequence::AnchorChar){
+        tmp.type = TempCorrectedSequence::Type::Anchor;
+        is >> tmp.hq;
+        size_t vecsize;
+        is >> vecsize;
+        if(vecsize > 0){
+            auto& vec = tmp.uncorrectedPositionsNoConsensus;
+            vec.resize(vecsize);
+            for(size_t i = 0; i < vecsize; i++){
+                is >> vec[i];
+            }
+        }
+    }else{
+        tmp.type = TempCorrectedSequence::Type::Candidate;
+    }
+
+    return is;
+}
+
 
 #endif
 }
