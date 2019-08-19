@@ -967,31 +967,38 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         });
     };
 
-    auto combineMultipleCorrectionResults = [](const std::vector<std::string>& sequences, const std::vector<bool> isHQ){
-        assert(!sequences.empty());
-        assert(sequences.size() == isHQ.size());
+    auto combineMultipleCorrectionResults = [](const std::vector<TempCorrectedSequence>& tmpresults){
+        assert(!tmpresults.empty());
 
-        for(size_t i = 0; i < sequences.size(); i++){
-            if(isHQ[i]){
-                return sequences[i];
-            }
-        }
-
-        auto equalsFirstSequence = [&](const auto& s){
-            return s == sequences[0];
+        auto isHQ = [](const auto& tcs){
+            return tcs.hq;
         };
 
-        if(!std::all_of(sequences.begin()+1, sequences.end(), equalsFirstSequence)){
+        auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
+        if(firstHqSequence != tmpresults.end()){
+            return firstHqSequence->sequence;
+        }
+
+        auto equalsFirstSequence = [&](const auto& result){
+            return result.sequence == tmpresults[0].sequence;
+        };
+
+        auto getSequence = [&](int index){
+            return tmpresults[index].sequence;
+        };
+
+        if(!std::all_of(tmpresults.begin()+1, tmpresults.end(), equalsFirstSequence)){
             // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
             // std::cerr << "\n";
             // std::exit(0);
-            std::string consensus(sequences[0].size(), 'F');
-            std::vector<int> countsA(sequences[0].size(), 0);
-            std::vector<int> countsC(sequences[0].size(), 0);
-            std::vector<int> countsG(sequences[0].size(), 0);
-            std::vector<int> countsT(sequences[0].size(), 0);
+            std::string consensus(getSequence(0).size(), 'F');
+            std::vector<int> countsA(getSequence(0).size(), 0);
+            std::vector<int> countsC(getSequence(0).size(), 0);
+            std::vector<int> countsG(getSequence(0).size(), 0);
+            std::vector<int> countsT(getSequence(0).size(), 0);
 
-            for(const auto& sequence : sequences){
+            auto countBases = [&](const auto& result){
+                const auto& sequence = result.sequence;
                 assert(sequence.size() == consensus.size());
                 for(size_t i = 0; i < sequence.size();  i++){
                     const char c = sequence[i];
@@ -1001,7 +1008,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     else if(c == 'T') countsT[i]++;
                     else assert(false);
                 }
-            }
+            };
+
+            std::for_each(tmpresults.begin(), tmpresults.end(), countBases);
+
             for(size_t i = 0; i < consensus.size();  i++){
                 int count = countsA[i];
                 char c = 'A';
@@ -1023,80 +1033,21 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             return consensus;
 
         }else{
-            return sequences[0];
+            return tmpresults[0].sequence;
         }
 
-        return sequences[0];
+        return tmpresults[0].sequence;
     };
 
-#if 0
-
-    std::uint64_t previousCorrectionReadId = 0;
-
-    while(std::getline(correctionsstream, correctionline)){
-        std::stringstream ss(correctionline);
-        std::uint64_t correctionReadId;
-        std::string correctedSequence;
-        ss >> correctionReadId >> correctedSequence;
-
-        if(previousCorrectionReadId != 0){
-            if(previousCorrectionReadId >= correctionReadId){
-                std::cerr << "previousCorrectionReadId " << previousCorrectionReadId << ", correctionReadId " << correctionReadId << std::endl;
-            }
-            assert(previousCorrectionReadId < correctionReadId);
-        }
-
-        std::uint64_t originalReadId = reader->getReadnum();
-        Read read;
-        //copy preceding reads from original file
-        while(originalReadId < correctionReadId){
-            bool valid = reader->getNextRead(&read);
-
-            assert(valid);
-
-            assert(isValidSequence(read.sequence));
-
-            writer->writeRead(read);
-            //swt.push(read);
-
-            originalReadId = reader->getReadnum();
-        }
-        //replace sequence of next read with corrected sequence
-        bool valid = reader->getNextRead(&read);
-
-        assert(valid);
-        assert(isValidSequence(correctedSequence));
-
-        writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
-        //read.sequence = std::move(correctedSequence);
-        //swt.push(read);
-
-        previousCorrectionReadId = correctionReadId;
-    }
-
-    //copy remaining reads from original file
-    Read read;
-
-    while(reader->getNextRead(&read)){
-        assert(isValidSequence(read.sequence));
-
-        writer->writeRead(read);
-        //swt.push(read);
-    }
-
-
-#else
 
     std::uint64_t currentReadId = 0;
-    std::vector<std::string> correctedSequencesOfSameReadId;
-    std::vector<bool> isHQSequence;
-    correctedSequencesOfSameReadId.reserve(256);
+    std::vector<TempCorrectedSequence> correctionVector;
+    correctionVector.reserve(256);
     //bool hqSubject = false;
 
     std::uint64_t currentReadId_tmp = 0;
-    std::vector<std::string> correctedSequencesOfSameReadId_tmp;
-    std::vector<bool> isHQSequence_tmp;
-    correctedSequencesOfSameReadId_tmp.reserve(256);
+    std::vector<TempCorrectedSequence> correctionVector_tmp;
+    correctionVector_tmp.reserve(256);
     //bool hqSubject_tmp = false;
 
     bool firstiter = true;
@@ -1108,8 +1059,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         if(firstiter || tcs.readId == currentReadId){
             currentReadId = tcs.readId ;
-            correctedSequencesOfSameReadId.emplace_back(std::move(tcs.sequence));
-            isHQSequence.emplace_back(tcs.hq);
+            correctionVector.emplace_back(std::move(tcs));
 
             while(std::getline(correctionsstream, correctionline)){
                 std::stringstream ss2(correctionline);
@@ -1117,19 +1067,16 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 ss2 >> tcs2;
 
                 if(tcs2.readId == currentReadId){
-                    correctedSequencesOfSameReadId.emplace_back(std::move(tcs2.sequence));
-                    isHQSequence.emplace_back(tcs2.hq);
+                    correctionVector.emplace_back(std::move(tcs2));
                 }else{
                     currentReadId_tmp = tcs2.readId;
-                    correctedSequencesOfSameReadId_tmp.emplace_back(std::move(tcs2.sequence));
-                    isHQSequence_tmp.emplace_back(tcs2.hq);
+                    correctionVector_tmp.emplace_back(std::move(tcs2));
                     break;
                 }
             }
         }else{
             currentReadId_tmp = tcs.readId;
-            correctedSequencesOfSameReadId_tmp.emplace_back(std::move(tcs.sequence));
-            isHQSequence_tmp.emplace_back(tcs.hq);
+            correctionVector_tmp.emplace_back(std::move(tcs));
         }
 
         std::uint64_t originalReadId = reader->getReadnum();
@@ -1152,22 +1099,20 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId, isHQSequence);
+        auto correctedSequence = combineMultipleCorrectionResults(correctionVector);
         assert(isValidSequence(correctedSequence));
 
         writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
 
-        correctedSequencesOfSameReadId.clear();
-        isHQSequence.clear();
+        correctionVector.clear();
+        std::swap(correctionVector, correctionVector_tmp);
         std::swap(currentReadId, currentReadId_tmp);
-        std::swap(correctedSequencesOfSameReadId, correctedSequencesOfSameReadId_tmp);
-        std::swap(isHQSequence, isHQSequence_tmp);
 
 
         firstiter = false;
     }
 
-    if(correctedSequencesOfSameReadId.size() > 0){
+    if(correctionVector.size() > 0){
         std::uint64_t originalReadId = reader->getReadnum();
         Read read;
         //copy preceding reads from original file
@@ -1188,7 +1133,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults(correctedSequencesOfSameReadId, isHQSequence);
+        auto correctedSequence = combineMultipleCorrectionResults(correctionVector);
         assert(isValidSequence(correctedSequence));
 
         writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
@@ -1201,12 +1146,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(isValidSequence(read.sequence));
 
         writer->writeRead(read);
-        //swt.push(read);
     }
-
-#endif
-
-    //swt.producerDone();
 
     TIMERSTOPCPU(actualmerging);
 

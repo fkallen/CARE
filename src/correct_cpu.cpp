@@ -1581,6 +1581,10 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
     }
 
+    auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
+        outputstream << tmp << '\n';
+    };
+
     auto write_read = [&](const read_number readId, const auto& sequence, bool hq){
         //std::cout << readId << " " << sequence << std::endl;
         auto& stream = outputstream;
@@ -1987,7 +1991,14 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                 if(task.active){
                     if(task.corrected){
-                        write_read(task.readId, task.corrected_subject, taskdata.msaProperties.isHQ);
+                        TempCorrectedSequence tmp;
+                        tmp.hq = taskdata.msaProperties.isHQ;
+                        tmp.type = TempCorrectedSequence::Type::Anchor;
+                        tmp.readId = task.readId;
+                        tmp.sequence = task.corrected_subject;
+                        tmp.uncorrectedPositionsNoConsensus = {};
+                        saveCorrectedSequence(tmp);
+                        //write_read(task.readId, task.corrected_subject, taskdata.msaProperties.isHQ);
                         // lock(task.readId);
                         // readIsCorrectedVector[task.readId] = 1;
                         // unlock(task.readId);
@@ -2022,12 +2033,26 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                             }
                             if(taskdata.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                                write_candidate(candidateId, correctedCandidate.sequence);
+                                //write_candidate(candidateId, correctedCandidate.sequence);
+                                TempCorrectedSequence tmp;
+                                tmp.hq = false;
+                                tmp.type = TempCorrectedSequence::Type::Candidate;
+                                tmp.readId = candidateId;
+                                tmp.sequence = correctedCandidate.sequence;
+                                tmp.uncorrectedPositionsNoConsensus = {};
+                                saveCorrectedSequence(tmp);
                             }else{
                                  std::string fwd;
                                  fwd.resize(correctedCandidate.sequence.length());
                                  reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
-                                 write_candidate(candidateId, fwd);
+                                 //write_candidate(candidateId, fwd);
+                                 TempCorrectedSequence tmp;
+                                 tmp.hq = false;
+                                 tmp.type = TempCorrectedSequence::Type::Candidate;
+                                 tmp.readId = candidateId;
+                                 tmp.sequence = std::move(fwd);
+                                 tmp.uncorrectedPositionsNoConsensus = {};
+                                 saveCorrectedSequence(tmp);
                             }
                         }
                     }
