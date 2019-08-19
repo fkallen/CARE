@@ -396,6 +396,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
     CorrectionResult result;
     result.isCorrected = false;
     result.correctedSequence.resize(nColumns);
+    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
 
     if(isHQ){
         //corrected sequence = consensus;
@@ -430,6 +431,14 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                 if(neighborregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
                     result.correctedSequence[column] = consensus[column];
                     foundAColumn = true;
+                }else{
+                    if(subject[column] != consensus[column]){
+                        result.uncorrectedPositionsNoConsensus.emplace_back(column);
+                    }
+                }
+            }else{
+                if(subject[column] != consensus[column]){
+                    result.uncorrectedPositionsNoConsensus.emplace_back(column);
                 }
             }
         }
@@ -467,6 +476,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
     CorrectionResult result;
     result.isCorrected = false;
     result.correctedSequence.resize(nColumns);
+    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
 
     if(isHQ){
         //corrected sequence = consensus;
@@ -547,6 +557,8 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                         result.correctedSequence[column] = consensus[column];
                         foundAColumn = true;
                     }
+                }else{
+                    result.uncorrectedPositionsNoConsensus.emplace_back(column);
                 }
             }
         }

@@ -85,8 +85,9 @@ struct MSAProperties{
 };
 
 struct CorrectionResult{
-    std::string correctedSequence;
     bool isCorrected;
+    std::string correctedSequence;
+    std::vector<int> uncorrectedPositionsNoConsensus;    
 };
 
 struct CorrectedCandidate{
