@@ -1835,48 +1835,6 @@ namespace gpu{
 
                             //assert(canCorrect || origCoverage > 2);
 
-#if 0
-                            float avgsupportkregion = 0;
-                            int c = 0;
-                            bool kregioncoverageisgood = false;
-                            //if k/2 region does not exceed the right end of anchor
-
-                            if(i + k_region/2 < subjectLength){
-                                kregioncoverageisgood = true;
-                                for(int j = i + 1; j <= i + k_region/2 && kregioncoverageisgood; j++){
-                                    avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                    kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                                    //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
-                                    c++;
-                                }
-                            }
-                            avgsupportkregion /= c;
-
-                            const bool goodRightColumns = kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate;
-                            avgsupportkregion = 0;
-                            c = 0;
-                            kregioncoverageisgood = false;
-
-                            //if k/2 region does not exceed the left end of anchor
-                            if(i - k_region/2 >= 0){
-                                kregioncoverageisgood = true;
-                                for(int j = i - k_region/2; j < i && kregioncoverageisgood; j++){
-                                    avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                    kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                                    //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
-                                    c++;
-                                }
-                            }
-
-                            avgsupportkregion /= c;
-
-                            const bool goodLeftColumns = kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate;
-
-                            if(goodRightColumns || goodLeftColumns){
-                                my_corrected_subject[i] = my_consensus[globalIndex];
-                                foundAColumn = true;
-                            }
-#else
                             if(canCorrect){
 
                                 float avgsupportkregion = 0;
@@ -1898,28 +1856,7 @@ namespace gpu{
                                     my_corrected_subject[i] = my_consensus[globalIndex];
                                     foundAColumn = true;
                                 }
-
-                                // bool goodconsensusregion = true;
-                                // for(int j = i - k_region/2; j <= i + k_region/2 && goodconsensusregion; j++){
-                                //     if(j != i && j >= 0 && j < subjectLength){
-                                //         const char cons = my_consensus[subjectColumnsBegin_incl + j];
-                                //         const char orig = my_corrected_subject[j];
-                                //         goodconsensusregion &= (cons == orig);
-                                //     }
-                                // }
-
-                                // if(goodconsensusregion){
-                                //     my_corrected_subject[i] = my_consensus[globalIndex];
-                                //     foundAColumn = true;
-                                // }
-
-                                // if(goodconsensusregion && kregioncoverageisgood && avgsupportkregion >= 1.0f-estimatedErrorrate){
-                                //     my_corrected_subject[i] = my_consensus[globalIndex];
-                                //     foundAColumn = true;
-                                // }
                             }
-#endif
-
                         }
                     }
                     //perform block wide or-reduction on foundAColumn
