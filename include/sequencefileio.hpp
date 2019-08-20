@@ -287,11 +287,12 @@ struct TempCorrectedSequence{
     static constexpr char AnchorChar = 'a';
     static constexpr char CandidateChar = 'c';
 
-    bool hq{};
-    Type type{};
-    read_number readId{};
-    std::string sequence{};
-    std::vector<int> uncorrectedPositionsNoConsensus{};
+    bool hq = false; //if anchor
+    Type type = Type::Anchor;
+    int newColumns = 0; //if candidate
+    read_number readId = 0;
+    std::string sequence = "";
+    std::vector<int> uncorrectedPositionsNoConsensus{}; //if anchor
 };
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp);

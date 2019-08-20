@@ -108,7 +108,8 @@ namespace gpu{
             candidate_read_ids(other.candidate_read_ids),
             corrected_subject(other.corrected_subject),
             corrected_candidates(other.corrected_candidates),
-            corrected_candidates_read_ids(other.corrected_candidates_read_ids){
+            corrected_candidates_read_ids(other.corrected_candidates_read_ids),
+            corrected_candidates_newColumns(other.corrected_candidates_newColumns){
         }
 
         CorrectionTask(CorrectionTask&& other){
@@ -137,6 +138,7 @@ namespace gpu{
             swap(l.candidate_read_ids, r.candidate_read_ids);
             swap(l.corrected_subject, r.corrected_subject);
             swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
+            swap(l.corrected_candidates_newColumns, r.corrected_candidates_newColumns);
         }
 
         bool active;
@@ -151,6 +153,7 @@ namespace gpu{
         std::string corrected_subject;
         std::vector<std::string> corrected_candidates;
         std::vector<read_number> corrected_candidates_read_ids;
+        std::vector<int> corrected_candidates_newColumns;
     };
 
     enum class BatchState : int{
@@ -812,7 +815,7 @@ namespace gpu{
 
                 if(task.active){
 
-                    const read_number id = task.readId;
+                    //const read_number id = task.readId;
                     // bool ok = false;
                     // transFuncData.lock(id);
                     // if ((*transFuncData.readIsCorrectedVector)[id] == 0) {
@@ -1408,8 +1411,6 @@ namespace gpu{
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
-
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
 #ifdef USE_WAIT_FLAGS
@@ -1503,8 +1504,6 @@ namespace gpu{
                                                               transFuncData.runtimeOptions.nCorrectorThreads);
 
             cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
-
-            assert(cudaSuccess == cudaEventQuery(events[quality_transfer_finished_event_index])); CUERR;
 
             cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
@@ -2014,8 +2013,6 @@ namespace gpu{
                                             D2H,
                                             streams[secondary_stream_index]);*/
 
-        		assert(cudaSuccess == cudaEventQuery(events[indices_transfer_finished_event_index])); CUERR;
-
         		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
     #ifdef USE_WAIT_FLAGS
@@ -2027,8 +2024,6 @@ namespace gpu{
 
 
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
-
-        //assert(cudaSuccess == cudaEventQuery(events[msa_build_finished_event_index])); CUERR;
 
         cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
@@ -2243,6 +2238,11 @@ namespace gpu{
 
 		if(transFuncData.correctionOptions.correctCandidates) {
 
+            cudaMemcpyAsync(dataArrays.h_alignment_shifts,
+                            dataArrays.d_alignment_shifts,
+                            dataArrays.d_alignment_shifts.sizeInBytes(),
+                            D2H,
+                            streams[secondary_stream_index]); CUERR;
 
 			// find subject ids of subjects with high quality multiple sequence alignment
 
@@ -2280,8 +2280,6 @@ namespace gpu{
                     batch.kernelLaunchHandle);
 		}
 
-		assert(cudaSuccess == cudaEventQuery(events[correction_finished_event_index])); CUERR;
-
 		cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_corrected_subjects,
@@ -2316,9 +2314,10 @@ namespace gpu{
                             dataArrays.d_indices_of_corrected_candidates.sizeInBytes(),
                             D2H,
                             streams[primary_stream_index]); CUERR;
-        }
 
-		assert(cudaSuccess == cudaEventQuery(events[result_transfer_finished_event_index])); CUERR;
+            cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+            cudaStreamWaitEvent(streams[primary_stream_index], events[result_transfer_finished_event_index], 0); CUERR;
+        }
 
 		cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
@@ -2665,6 +2664,7 @@ namespace gpu{
                                                 + dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
 
+                task.corrected_candidates_newColumns.resize(n_corrected_candidates);
                 task.corrected_candidates_read_ids.resize(n_corrected_candidates);
                 task.corrected_candidates.resize(n_corrected_candidates);
 
@@ -2677,9 +2677,11 @@ namespace gpu{
 
                     const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
                     const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];//transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+                    const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
 
                     const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
 
+                    task.corrected_candidates_newColumns[i] = candidate_shift;
                     task.corrected_candidates_read_ids[i] = candidate_read_id;
                     task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
 
@@ -2861,11 +2863,10 @@ namespace gpu{
     					//transFuncData.write_read_to_stream(candidateId, corrected_candidate);
 
                         TempCorrectedSequence tmp;
-                        tmp.hq = false;
                         tmp.type = TempCorrectedSequence::Type::Candidate;
+                        tmp.newColumns = std::abs(task.corrected_candidates_newColumns[corrected_candidate_index]);
                         tmp.readId = candidateId;
-                        tmp.sequence = corrected_candidate;
-                        tmp.uncorrectedPositionsNoConsensus = {};
+                        tmp.sequence = std::move(corrected_candidate);
 
                         transFuncData.saveCorrectedSequence(tmp);
     				}

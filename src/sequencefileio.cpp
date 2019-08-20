@@ -1040,6 +1040,137 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     };
 
 
+
+    auto combineMultipleCorrectionResults2 = [](const std::vector<TempCorrectedSequence>& tmpresults){
+        assert(!tmpresults.empty());
+
+        auto isHQ = [](const auto& tcs){
+            return tcs.hq;
+        };
+
+        auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
+        if(firstHqSequence != tmpresults.end()){
+            return std::make_pair(firstHqSequence->sequence, false);
+        }
+
+        auto equalsFirstSequence = [&](const auto& result){
+            return result.sequence == tmpresults[0].sequence;
+        };
+
+        auto getSequence = [&](int index){
+            return tmpresults[index].sequence;
+        };
+
+        if(!std::all_of(tmpresults.begin()+1, tmpresults.end(), equalsFirstSequence)){
+            // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
+            // std::cerr << "\n";
+            // std::exit(0);
+            std::string consensus(getSequence(0).size(), 'F');
+            std::vector<int> countsA(getSequence(0).size(), 0);
+            std::vector<int> countsC(getSequence(0).size(), 0);
+            std::vector<int> countsG(getSequence(0).size(), 0);
+            std::vector<int> countsT(getSequence(0).size(), 0);
+
+            auto countBases = [&](const auto& result){
+                const auto& sequence = result.sequence;
+                assert(sequence.size() == consensus.size());
+                for(size_t i = 0; i < sequence.size();  i++){
+                    const char c = sequence[i];
+                    if(c == 'A') countsA[i]++;
+                    else if(c == 'C') countsC[i]++;
+                    else if(c == 'G') countsG[i]++;
+                    else if(c == 'T') countsT[i]++;
+                    else assert(false);
+                }
+            };
+
+            auto findConsensusOfPosition = [&](int i){
+                int count = countsA[i];
+                char c = 'A';
+                if(countsC[i] > count){
+                    count = countsC[i];
+                    c = 'C';
+                }
+                if(countsG[i] > count){
+                    count = countsG[i];
+                    c = 'G';
+                }
+                if(countsT[i] > count){
+                    count = countsT[i];
+                    c = 'T';
+                }
+                return c;
+            };
+
+            auto setConsensusOfPosition = [&](int position){
+                consensus[position] = findConsensusOfPosition(position);
+            };
+
+            // auto isBadAnchor = [](const auto& result){
+            //     return result.type == TempCorrectedSequence::Type::Anchor
+            //             && !result.uncorrectedPositionsNoConsensus.empty();
+            // };
+            // auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), isBadAnchor);
+            auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
+                return r.type == TempCorrectedSequence::Type::Anchor;
+            });
+
+            if(anchorIter != tmpresults.end()){
+                std::for_each(tmpresults.begin(), tmpresults.end(), countBases);
+
+                if(!anchorIter->uncorrectedPositionsNoConsensus.empty()){
+                    std::copy(anchorIter->sequence.begin(), anchorIter->sequence.end(), consensus.begin());
+                    const auto& positions = anchorIter->uncorrectedPositionsNoConsensus;
+
+                    std::for_each(positions.begin(), positions.end(), setConsensusOfPosition);
+                    //std::copy(positions.begin(), positions.end(), std::ostream_iterator<int>(std::cerr, " "));
+                    //std::cerr << '\n';
+                    return std::make_pair(consensus, false);
+                }else{
+                    for(size_t i = 0; i < consensus.size();  i++){
+                        setConsensusOfPosition(i);
+                    }
+                    return std::make_pair(consensus, false); //false
+                }
+
+            }else{
+                //only candidates available
+
+                // for(int newCols = 0; newCols <= 3; newCols++){
+                //     const int count = std::count_if(tmpresults.begin(),
+                //                                 tmpresults.end(),
+                //                                 [&](const auto& r){return r.newColumns == newCols;});
+                //     if(count > 2){
+                //         for(const auto& r : tmpresults){
+                //             if(r.newColumns == newCols){
+                //                 countBases(r);
+                //             }
+                //         }
+                //         for(size_t i = 0; i < consensus.size();  i++){
+                //             setConsensusOfPosition(i);
+                //         }
+                //         return std::make_pair(consensus, true); //false
+                //     }
+                // }
+
+                return std::make_pair(std::string{""}, false);
+            }
+
+        }else{
+            auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
+                return r.type == TempCorrectedSequence::Type::Anchor;
+            });
+            if(anchorIter != tmpresults.end()){
+                return std::make_pair(anchorIter->sequence, false);
+            }else{
+                return std::make_pair(tmpresults[0].sequence, false);
+            }
+        }
+
+        //return tmpresults[0].sequence;
+    };
+
+
     std::uint64_t currentReadId = 0;
     std::vector<TempCorrectedSequence> correctionVector;
     correctionVector.reserve(256);
@@ -1099,10 +1230,14 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults(correctionVector);
-        assert(isValidSequence(correctedSequence));
+        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector);
 
-        writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
+        if(correctedSequence.second){
+            assert(isValidSequence(correctedSequence.first));
+            writer->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
+        }else{
+            writer->writeRead(read.name, read.comment, read.sequence, read.quality);
+        }
 
         correctionVector.clear();
         std::swap(correctionVector, correctionVector_tmp);
@@ -1133,10 +1268,14 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults(correctionVector);
-        assert(isValidSequence(correctedSequence));
+        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector);
 
-        writer->writeRead(read.name, read.comment, correctedSequence, read.quality);
+        if(correctedSequence.second){
+            assert(isValidSequence(correctedSequence.first));
+            writer->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
+        }else{
+            writer->writeRead(read.name, read.comment, read.sequence, read.quality);
+        }
     }
 
     //copy remaining reads from original file
@@ -1150,152 +1289,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     TIMERSTOPCPU(actualmerging);
 
-    deleteFiles({tempfile});
+    //deleteFiles({tempfile});
 
     std::ios::sync_with_stdio(oldsyncflag);
 }
 
-
-
-
-
-
-
-void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& originalReadFile,
-                      FileFormat originalFormat,
-                      const std::vector<std::string>& filesToMerge, const std::string& outputfile,
-                        size_t tempbytes){
-
-    std::string tempfile = outputfile + "mergetempfile";
-    std::stringstream commandbuilder;
-
-    //sort the result files and save sorted result file in tempfile.
-    //Then, merge original file and tempfile, replacing the reads in
-    //original file by the corresponding reads in the tempfile.
-
-    commandbuilder << "sort --parallel=4 -k1,1 -n ";
-    for(const auto& filename : filesToMerge){
-        commandbuilder << "\"" << filename << "\" ";
-    }
-    commandbuilder << " > " << tempfile;
-
-    std::string command = commandbuilder.str();
-    TIMERSTARTCPU(sort_during_merge);
-    int r1 = std::system(command.c_str());
-
-    TIMERSTOPCPU(sort_during_merge);
-    if(r1 != 0){
-        throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
-    }
-
-    std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
-
-    std::ifstream correctionsstream(tempfile);
-    std::ofstream outputstream(outputfile);
-
-    std::string correctionline;
-    //loop over correction sequences
-    TIMERSTARTCPU(actualmerging);
-
-#if 1
-    std::vector<std::string> correctionLines;
-    constexpr int maxCorrectionLines = 1;
-    constexpr int maxCachedOutputReads = 1;
-    correctionLines.reserve(maxCorrectionLines);
-
-    while(std::getline(correctionsstream, correctionline)){
-        correctionLines.clear();
-
-        correctionLines.emplace_back(correctionline);
-        int lines = 1;
-
-        while(lines < maxCorrectionLines && std::getline(correctionsstream, correctionline)){
-            correctionLines.emplace_back(correctionline);
-            lines++;
-        }
-
-        int cachedOutputReads = 0;
-        std::stringstream outstringstream;
-        for(int i = 0; i < lines; i++){
-            std::stringstream ss(correctionLines[i]);
-
-            std::uint64_t correctionReadId;
-            std::string correctedSequence;
-            ss >> correctionReadId >> correctedSequence;
-
-            std::uint64_t originalReadId = reader->getReadnum();
-            Read read;
-            //copy preceding reads from original file
-            while(originalReadId < correctionReadId){
-                bool valid = reader->getNextRead(&read);
-
-                assert(valid);
-
-                outstringstream << read.name << '\n' << read.sequence << '\n';
-                if (originalFormat == FileFormat::FASTQ)
-                    outstringstream << '+' << '\n' << read.quality << '\n';
-
-                originalReadId = reader->getReadnum();
-
-                cachedOutputReads++;
-
-                if(cachedOutputReads >= maxCachedOutputReads){
-                    outputstream << outstringstream.rdbuf();
-                    cachedOutputReads = 0;
-                    outstringstream.str(std::string());
-                    outstringstream.clear();
-                }
-            }
-            //replace sequence of next read with corrected sequence
-            bool valid = reader->getNextRead(&read);
-
-            assert(valid);
-
-            outstringstream << read.name << '\n' << correctedSequence << '\n';
-            if (originalFormat == FileFormat::FASTQ)
-                outstringstream << '+' << '\n' << read.quality << '\n';
-
-            cachedOutputReads++;
-
-            if(cachedOutputReads >= maxCachedOutputReads){
-                outputstream << outstringstream.rdbuf();
-                cachedOutputReads = 0;
-                outstringstream.str(std::string());
-                outstringstream.clear();
-            }
-        }
-
-        if(cachedOutputReads >= 0){
-            outputstream << outstringstream.rdbuf();
-            cachedOutputReads = 0;
-            outstringstream.str(std::string());
-            outstringstream.clear();
-        }
-
-    }
-
-#endif
-
-    //copy remaining reads from original file
-    Read read;
-
-    TIMERSTARTCPU(copy_remaining_reads);
-    while(reader->getNextReadUnsafe(&read)){
-        outputstream << read.name << '\n' << read.sequence << '\n';
-        if (originalFormat == FileFormat::FASTQ)
-            outputstream << '+' << '\n' << read.quality << '\n';
-    }
-
-    outputstream.flush();
-    outputstream.close();
-
-    TIMERSTOPCPU(copy_remaining_reads);
-
-    TIMERSTOPCPU(actualmerging);
-
-    deleteFiles({tempfile});
-
-}
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
     os << tmp.readId << ' ' << tmp.sequence << ' ';
@@ -1305,10 +1303,10 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
         os << ' ' << vec.size();
         if(!vec.empty()){
             os << ' ';
-            std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, ","));
+            std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
         }
     }else{
-        os << TempCorrectedSequence::CandidateChar;
+        os << TempCorrectedSequence::CandidateChar << ' ' << tmp.newColumns;
     }
 
     return os;
@@ -1332,6 +1330,8 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
         }
     }else{
         tmp.type = TempCorrectedSequence::Type::Candidate;
+        is >> tmp.newColumns;
+        tmp.newColumns = std::abs(tmp.newColumns);
     }
 
     return is;
