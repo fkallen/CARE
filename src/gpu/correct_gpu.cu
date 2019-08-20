@@ -1648,6 +1648,7 @@ namespace gpu{
 #ifdef USE_MSA_MINIMIZATION
 
         constexpr int max_num_minimizations = 5;
+        const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
 
         if(max_num_minimizations > 0){
             if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == dataArrays.h_num_indices[0])){
@@ -1676,6 +1677,7 @@ namespace gpu{
                             dataArrays.d_indices,
                             dataArrays.d_indices_per_subject,
                             dataArrays.d_indices_per_subject_prefixsum,
+                            desiredAlignmentMaxErrorRate,
                             transFuncData.correctionOptions.estimatedCoverage,
                             streams[primary_stream_index],
                             batch.kernelLaunchHandle,

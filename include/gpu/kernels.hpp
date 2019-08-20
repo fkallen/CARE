@@ -380,6 +380,7 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_indices_per_subject_prefixsum,
+            float desiredAlignmentMaxErrorRate,
             int dataset_coverage,
             cudaStream_t stream,
             KernelLaunchHandle& handle,

@@ -2022,6 +2022,7 @@ namespace gpu{
                         const int* __restrict__ d_indices,
                         const int* __restrict__ d_indices_per_subject,
                         const int* __restrict__ d_indices_per_subject_prefixsum,
+                        float desiredAlignmentMaxErrorRate,
                         int dataset_coverage,
                         const unsigned int* d_readids,
                         bool debug = false){
@@ -2150,12 +2151,27 @@ namespace gpu{
                     const int* const myCountsG = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
                     const int* const myCountsT = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
+                    const float* const myWeightsA = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                    const float* const myWeightsC = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                    const float* const myWeightsG = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                    const float* const myWeightsT = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+
+                    const float* const mySupport = d_msapointers.support + subjectIndex * msa_weights_pitch_floats;
+
                     for(int columnindex = subjectColumnsBegin_incl + threadIdx.x; columnindex < subjectColumnsEnd_excl && !foundColumn; columnindex += blockDim.x){
                         int counts[4];
                         counts[0] = myCountsA[columnindex];
                         counts[1] = myCountsC[columnindex];
                         counts[2] = myCountsG[columnindex];
                         counts[3] = myCountsT[columnindex];
+
+                        int weights[4];
+                        weights[0] = myWeightsA[columnindex];
+                        weights[1] = myWeightsC[columnindex];
+                        weights[2] = myWeightsG[columnindex];
+                        weights[3] = myWeightsT[columnindex];
+
+                        const float support = mySupport[columnindex];
 
                         const char consbase = myConsensus[columnindex];
                         consindex = -1;
@@ -2175,8 +2191,10 @@ namespace gpu{
                             if(i != consindex){
                                 //const bool significant = is_significant_count(counts[i], dataset_coverage);
                                 //const int columnCoverage = counts[0] + counts[1] +counts[2] + counts[3];
+
                                 const bool significant = is_significant_count(counts[i], dataset_coverage);
 
+                                //const bool significant = weights[i] / support >= 0.7f;
 
                                 significantBaseIndex = significant ? i : significantBaseIndex;
                             }
@@ -2239,8 +2257,6 @@ namespace gpu{
 
                         auto discard_rows = [&](bool keepMatching){
 
-                            //int seenCounts[4]{0,0,0,0};
-
                             const int indexoffset = d_indices_per_subject_prefixsum[subjectIndex];
 
                             for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
@@ -2265,56 +2281,45 @@ namespace gpu{
                                     }
                                 }
 
-                                /*if(debug){
-                                    printf("k %d, candidateIndex %d, row_begin_incl %d, row_end_excl %d, notAffected %d, base %c, forward %d\n", k, candidateIndex,
-                                    row_begin_incl, row_end_excl, notAffected, base, alignmentFlag == BestAlignment_t::Forward);
-
-                                    if(alignmentFlag == BestAlignment_t::Forward){
-                                        for(int i = 0; i < row_end_excl - row_begin_incl; i++){
-                                            if(i == (col - row_begin_incl))
-                                                printf("_");
-                                            printf("%c", to_nuc(get(candidateptr, candidateLength, i)));
-                                            if(i == (col - row_begin_incl))
-                                                printf("_");
-                                        }
-                                        printf("\n");
-                                    }else{
-                                        for(int i = 0; i < row_end_excl - row_begin_incl; i++){
-                                            if(i == (col - row_begin_incl))
-                                                printf("_");
-                                            printf("%c", to_nuc(~get(candidateptr, candidateLength, candidateLength-1-i) & 0x03));
-                                            if(i == (col - row_begin_incl))
-                                                printf("_");
-                                        }
-                                        printf("\n");
-                                    }
-
-
-                                }*/
-
-                                /*if(base == 'A') seenCounts[0]++;
-                                if(base == 'C') seenCounts[1]++;
-                                if(base == 'G') seenCounts[2]++;
-                                if(base == 'T') seenCounts[3]++;*/
-
                                 if(notAffected || (!(keepMatching ^ (base == foundBase)))){
                                     d_shouldBeKept[indexoffset + k] = true; //same region
                                 }else{
                                     d_shouldBeKept[indexoffset + k] = false; //different region
                                 }
                             }
-
-                            /*if(originalbase == 'A') seenCounts[0]++;
-                            if(originalbase == 'C') seenCounts[1]++;
-                            if(originalbase == 'G') seenCounts[2]++;
-                            if(originalbase == 'T') seenCounts[3]++;
-
-                            #pragma unroll
-                            for(int i = 0; i < 4; i++){
-                                if(seenCounts[i] != counts[i]){
-                                    assert(seenCounts[i] == counts[i]);
+#if 0
+                            //check that no candidate which should be removed has very good alignment.
+                            //if there is such a candidate, none of the candidates will be removed.
+                            bool veryGoodAlignment = false;
+                            for(int k = threadIdx.x; k < myNumIndices && !veryGoodAlignment; k += blockDim.x){
+                                if(!d_shouldBeKept[indexoffset + k]){
+                                    const int candidateIndex = myIndices[k];
+                                    const int nOps = d_alignmentresultpointers.nOps[candidateIndex];
+                                    const int overlapsize = d_alignmentresultpointers.overlaps[candidateIndex];
+                                    const float overlapweight = 1.0f - sqrtf(nOps / (overlapsize * desiredAlignmentMaxErrorRate));
+                                    if(overlapweight >= 0.9f){
+                                        veryGoodAlignment = true;
+                                    }
                                 }
-                            }*/
+                            }
+
+                            veryGoodAlignment = BlockReduceBool(temp_storage.boolreduce).Reduce(veryGoodAlignment, [](auto l, auto r){return l || r;});
+
+                            if(threadIdx.x == 0){
+                                broadcastbufferbool = veryGoodAlignment;
+                            }
+                            __syncthreads();
+
+                            veryGoodAlignment = broadcastbufferbool;
+
+                            if(veryGoodAlignment){
+                                for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
+                                    d_shouldBeKept[indexoffset + k] = true;
+                                }
+                            }
+#endif
+
+
                         };
 
 
@@ -3914,6 +3919,7 @@ namespace gpu{
                 const int* d_indices,
                 const int* d_indices_per_subject,
                 const int* d_indices_per_subject_prefixsum,
+                float desiredAlignmentMaxErrorRate,
                 int dataset_coverage,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle,
@@ -3988,6 +3994,7 @@ namespace gpu{
                     d_indices, \
                     d_indices_per_subject, \
                     d_indices_per_subject_prefixsum, \
+                    desiredAlignmentMaxErrorRate, \
                     dataset_coverage, \
                     d_readids, \
                     debug); CUERR;
