@@ -424,7 +424,7 @@ public:
                 }
             }
 
-            std::cerr << "setSafe isConsecutiveIndices? " << isConsecutiveIndices << "\n";
+            //std::cerr << "setSafe isConsecutiveIndices? " << isConsecutiveIndices << "\n";
 
             if(isConsecutiveIndices){
                 if(locationId == hostLocation){
