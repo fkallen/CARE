@@ -57,10 +57,10 @@
 
 #define USE_WAIT_FLAGS
 
-#define DO_PROFILE
+//#define DO_PROFILE
 
 #ifdef DO_PROFILE
-    constexpr size_t num_reads_to_profile = 2000;
+    constexpr size_t num_reads_to_profile = 10000;
 #endif
 
 
@@ -194,8 +194,8 @@ namespace gpu{
         bool handledReadIds = false;
 
 
-		std::vector<read_number> allReadIdsOfTasks;
-		std::vector<read_number> allReadIdsOfTasks_tmp;
+		std::vector<read_number> readIdBuffer;
+
 		std::vector<char> collectedCandidateReads;
 		int numsortedCandidateIds = 0;
 		int numsortedCandidateIdTasks = 0;
@@ -276,8 +276,8 @@ namespace gpu{
 
 		void reset(){
             tasks.clear();
-    		allReadIdsOfTasks.clear();
-    		allReadIdsOfTasks_tmp.clear();
+    		readIdBuffer.clear();
+
     		collectedCandidateReads.clear();
 
     		initialNumberOfCandidates = 0;
@@ -971,31 +971,38 @@ namespace gpu{
 
         batch.tasks.reserve(transFuncData.correctionOptions.batchsize);
 
-        while(int(batch.tasks.size()) < transFuncData.correctionOptions.batchsize && !transFuncData.readIdGenerator->empty()){
+        while(int(batch.tasks.size()) < transFuncData.correctionOptions.batchsize
+                    && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())){
 
-            const int numNewIds = std::min(256, transFuncData.correctionOptions.batchsize);
+            if(readIdBuffer->empty()){
+                const int numNewIds = std::min(256, transFuncData.correctionOptions.batchsize);
 
-            *readIdBuffer = transFuncData.readIdGenerator->next_n(numNewIds);
+                *readIdBuffer = transFuncData.readIdGenerator->next_n(numNewIds);
 
-            sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
-            sequenceLengthsBuffer->resize(readIdBuffer->size());
-            transFuncData.readStorage->gatherSequenceDataToHostBuffer(
-                                        batch.candidateSequenceGatherHandle2,
-                                        sequenceDataBuffer->data(),
-                                        seqpitch,
-                                        readIdBuffer->data(),
-                                        readIdBuffer->size(),
-                                        transFuncData.runtimeOptions.nCorrectorThreads);
+                sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
+                sequenceLengthsBuffer->resize(readIdBuffer->size());
+                transFuncData.readStorage->gatherSequenceDataToHostBuffer(
+                                            batch.candidateSequenceGatherHandle2,
+                                            sequenceDataBuffer->data(),
+                                            seqpitch,
+                                            readIdBuffer->data(),
+                                            readIdBuffer->size(),
+                                            transFuncData.runtimeOptions.nCorrectorThreads);
 
-            transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
-                                        batch.candidateLengthGatherHandle2,
-                                        sequenceLengthsBuffer->data(),
-                                        readIdBuffer->data(),
-                                        readIdBuffer->size(),
-                                        transFuncData.runtimeOptions.nCorrectorThreads);
+                transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
+                                            batch.candidateLengthGatherHandle2,
+                                            sequenceLengthsBuffer->data(),
+                                            readIdBuffer->data(),
+                                            readIdBuffer->size(),
+                                            transFuncData.runtimeOptions.nCorrectorThreads);
+                if(isPausable){
+                   return BatchState::Unprepared;
+                }
+            }
 
             const size_t oldSize = batch.tasks.size();
             batch.tasks.resize(oldSize + readIdBuffer->size());
+
             int initialNumberOfCandidates = 0;
 
             #pragma omp parallel for reduction(+: initialNumberOfCandidates)
@@ -3274,8 +3281,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           oldNumOMPThreads = omp_get_num_threads();
       }
 
-      //omp_set_num_threads(runtimeOptions.nCorrectorThreads);
-      omp_set_num_threads(1);
+      omp_set_num_threads(runtimeOptions.nCorrectorThreads);
+      //omp_set_num_threads(1);
 
       std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
       std::chrono::duration<double> runtime = std::chrono::seconds(0);
