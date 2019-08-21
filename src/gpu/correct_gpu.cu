@@ -969,89 +969,103 @@ namespace gpu{
         std::vector<CorrectionTask> tmptasks;
         //std::vector<bool> tmpokflags(num_simultaneous_tasks);
 
-        *readIdBuffer = transFuncData.readIdGenerator->next_n(transFuncData.correctionOptions.batchsize);
+        batch.tasks.reserve(transFuncData.correctionOptions.batchsize);
 
-        if(readIdBuffer->empty()){
-            return BatchState::Aborted;
-        }
+        while(int(batch.tasks.size()) < transFuncData.correctionOptions.batchsize && !transFuncData.readIdGenerator->empty()){
 
-        sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
-        sequenceLengthsBuffer->resize(readIdBuffer->size());
-        transFuncData.readStorage->gatherSequenceDataToHostBuffer(
-                                    batch.candidateSequenceGatherHandle2,
-                                    sequenceDataBuffer->data(),
-                                    seqpitch,
-                                    readIdBuffer->data(),
-                                    readIdBuffer->size(),
-                                    transFuncData.runtimeOptions.nCorrectorThreads);
+            const int numNewIds = std::min(256, transFuncData.correctionOptions.batchsize);
 
-        transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
-                                    batch.candidateLengthGatherHandle2,
-                                    sequenceLengthsBuffer->data(),
-                                    readIdBuffer->data(),
-                                    readIdBuffer->size(),
-                                    transFuncData.runtimeOptions.nCorrectorThreads);
+            *readIdBuffer = transFuncData.readIdGenerator->next_n(numNewIds);
 
-        batch.tasks.resize(readIdBuffer->size());
-        int initialNumberOfCandidates = 0;
+            sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
+            sequenceLengthsBuffer->resize(readIdBuffer->size());
+            transFuncData.readStorage->gatherSequenceDataToHostBuffer(
+                                        batch.candidateSequenceGatherHandle2,
+                                        sequenceDataBuffer->data(),
+                                        seqpitch,
+                                        readIdBuffer->data(),
+                                        readIdBuffer->size(),
+                                        transFuncData.runtimeOptions.nCorrectorThreads);
 
-        #pragma omp parallel for reduction(+: initialNumberOfCandidates)
-        for(int i = 0; i < int(readIdBuffer->size()); i++){
-            auto& task = batch.tasks[i];
+            transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
+                                        batch.candidateLengthGatherHandle2,
+                                        sequenceLengthsBuffer->data(),
+                                        readIdBuffer->data(),
+                                        readIdBuffer->size(),
+                                        transFuncData.runtimeOptions.nCorrectorThreads);
 
-            const read_number readId = (*readIdBuffer)[i];
-            task = CorrectionTask(readId);
+            const size_t oldSize = batch.tasks.size();
+            batch.tasks.resize(oldSize + readIdBuffer->size());
+            int initialNumberOfCandidates = 0;
 
-            bool ok = false;
-            if ((*transFuncData.readIsCorrectedVector)[readId] == 0) {
-                ok = true;
-            }
+            #pragma omp parallel for reduction(+: initialNumberOfCandidates)
+            for(size_t i = 0; i < readIdBuffer->size(); i++){
+                auto& task = batch.tasks[oldSize + i];
 
-            if(ok){
-                const char* sequenceptr = sequenceDataBuffer->data() + i * seqpitch;
-                const int sequencelength = (*sequenceLengthsBuffer)[i];
+                const read_number readId = (*readIdBuffer)[i];
+                task = CorrectionTask(readId);
 
-                task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
-
-                task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
-                                                                    hits_per_candidate,
-                                                                    transFuncData.runtimeOptions.max_candidates,
-                                                                    maxNumResultsPerMapQuery);
-
-                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-
-                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
-                    task.candidate_read_ids.erase(readIdPos);
+                bool ok = false;
+                if ((*transFuncData.readIsCorrectedVector)[readId] == 0) {
+                    ok = true;
                 }
 
-                std::size_t myNumCandidates = task.candidate_read_ids.size();
+                if(ok){
+                    const char* sequenceptr = sequenceDataBuffer->data() + i * seqpitch;
+                    const int sequencelength = (*sequenceLengthsBuffer)[i];
 
-                assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+                    task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
-                if(myNumCandidates == 0) {
+                    task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                        hits_per_candidate,
+                                                                        transFuncData.runtimeOptions.max_candidates,
+                                                                        maxNumResultsPerMapQuery);
+
+                    auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+
+                    if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                        task.candidate_read_ids.erase(readIdPos);
+                    }
+
+                    std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+                    assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+                    if(myNumCandidates == 0) {
+                        task.active = false;
+                    }
+                }else{
                     task.active = false;
                 }
-            }else{
-                task.active = false;
+
+                //const read_number id = task.readId;
+                // bool ok2 = false;
+                // transFuncData.lock(id);
+                // if ((*transFuncData.readIsCorrectedVector)[id] == 0) {
+                //     (*transFuncData.readIsCorrectedVector)[id] = 1;
+                //     ok2 = true;
+                // }else{
+                // }
+                // transFuncData.unlock(id);
+                const bool ok2 = true;
+                if(ok2){
+                    const int myNumCandidates = int(task.candidate_read_ids.size());
+                    initialNumberOfCandidates += myNumCandidates;
+                }
             }
 
-            //const read_number id = task.readId;
-            // bool ok2 = false;
-            // transFuncData.lock(id);
-            // if ((*transFuncData.readIsCorrectedVector)[id] == 0) {
-            //     (*transFuncData.readIsCorrectedVector)[id] = 1;
-            //     ok2 = true;
-            // }else{
-            // }
-            // transFuncData.unlock(id);
-            const bool ok2 = true;
-            if(ok2){
-                const int myNumCandidates = int(task.candidate_read_ids.size());
-                initialNumberOfCandidates += myNumCandidates;
+            batch.initialNumberOfCandidates += initialNumberOfCandidates;
+
+            readIdBuffer->clear();
+
+            if(isPausable){
+                return BatchState::Unprepared;
             }
         }
 
-        batch.initialNumberOfCandidates = initialNumberOfCandidates;
+
+
+
 
         auto it = std::remove_if(batch.tasks.begin(), batch.tasks.end(), [](const auto& t){return !t.active;});
         batch.tasks.erase(it, batch.tasks.end());
@@ -3013,7 +3027,7 @@ namespace gpu{
 			//std::cout << "finished readId " << task.readId << std::endl;
 
 			if(task.corrected/* && task.corrected_subject != task.subject_string*/) {
-				push_range("write_subject", 4);
+				//push_range("write_subject", 4);
 				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
 				//transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
                 TempCorrectedSequence tmp;
@@ -3030,9 +3044,9 @@ namespace gpu{
 				//transFuncData.lock(task.readId);
 				//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
 				//transFuncData.unlock(task.readId);
-				pop_range();
+				//pop_range();
 			}else{
-				push_range("subject_not_corrected", 5);
+				//push_range("subject_not_corrected", 5);
 				//mark read as not corrected
 				if((*transFuncData.readIsCorrectedVector)[task.readId] == 1) {
 					// transFuncData.lock(task.readId);
@@ -3041,9 +3055,9 @@ namespace gpu{
 					// }
 					// transFuncData.unlock(task.readId);
 				}
-                pop_range();
+                //pop_range();
 			}
-			push_range("correctedcandidates", 6);
+			//push_range("correctedcandidates", 6);
 			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
 
 				read_number candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
@@ -3080,7 +3094,7 @@ namespace gpu{
 
 
 			}
-			pop_range();
+			//pop_range();
 		}
 
 		return BatchState::Finished;
