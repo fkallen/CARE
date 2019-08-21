@@ -129,7 +129,7 @@ namespace care{
 			std::vector<Index_t> countsPrefixSum;
             std::vector<int> deviceIds;
 
-			double load = 0.5;
+			double load = 0.8;
 			KeyIndexMap<Key_t, Index_t> keyIndexMap;
 
             KeyValueMapFixedSize() : KeyValueMapFixedSize(0, {}){
@@ -157,6 +157,7 @@ namespace care{
                 keys = other.keys;
                 values = other.values;
                 countsPrefixSum = other.countsPrefixSum;
+                keyIndexMap = other.keyIndexMap;
                 return *this;
             }
 
@@ -168,6 +169,7 @@ namespace care{
                 keys = std::move(other.keys);
                 values = std::move(other.values);
                 countsPrefixSum = std::move(other.countsPrefixSum);
+                keyIndexMap = std::move(other.keyIndexMap);
                 return *this;
             }
 
@@ -254,6 +256,12 @@ namespace care{
 
                 instream.read(reinterpret_cast<char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
 
+                keyIndexMap = KeyIndexMap<Key_t, Index_t>(keys.size() / load);
+
+                for(size_t i = 0; i < keys.size(); i++){
+                    keyIndexMap.insert(keys[i], i);
+                }
+
             }
 
             std::size_t numBytes() const{
@@ -313,17 +321,19 @@ namespace care{
 			std::vector<Value_t> get(Key_t key) const noexcept{
                 assert(noMoreWrites);
 
-				//TIMERSTARTCPU(binarysearch);
-				auto range = std::equal_range(keys.begin(), keys.end(), key);
-				if(range.first == keys.end()) return {};
+                // auto range = std::equal_range(keys.begin(), keys.end(), key);
+				// if(range.first == keys.end()) return {};
+                //
+				// Index_t index = std::distance(keys.begin(), range.first);
 
-				Index_t index = std::distance(keys.begin(), range.first);
-				//TIMERSTOPCPU(binarysearch);
+                // auto lb = std::lower_bound(keys.begin(), keys.end(), key);
+                // if(lb == keys.end() || *lb != key) {
+                //     return {};
+                // }
+                // const Index_t index = std::distance(keys.begin(), lb);
 
-				//TIMERSTARTCPU(probing);
-				//Index_t index = keyIndexMap.get(key);
-				//TIMERSTOPCPU(probing);
-				//assert(index == index2);
+                const Index_t index = keyIndexMap.get(key);
+
 				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
 			}
 
@@ -331,11 +341,18 @@ namespace care{
 			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) const noexcept{
                 assert(noMoreWrites);
 
-				//TIMERSTARTCPU(binarysearch);
-				auto range = std::equal_range(keys.begin(), keys.end(), key);
-				if(range.first == keys.end()) return {};
+				// auto range = std::equal_range(keys.begin(), keys.end(), key);
+				// if(range.first == keys.end()) return {};
+                //
+				// Index_t index = std::distance(keys.begin(), range.first);
 
-				Index_t index = std::distance(keys.begin(), range.first);
+                // auto lb = std::lower_bound(keys.begin(), keys.end(), key);
+                // if(lb == keys.end() || *lb != key) {
+                //     return {};
+                // }
+                // const Index_t index = std::distance(keys.begin(), lb);
+
+                const Index_t index = keyIndexMap.get(key);
 
 				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
 			}
