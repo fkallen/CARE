@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include <gpu/nvtxtimelinemarkers.hpp>
 
 
 namespace care{
@@ -296,13 +297,61 @@ namespace care{
         allUniqueResults.reserve(maximumResultSize);
         tmp.reserve(maximumResultSize);
 
+
+
+#if 1
+        allUniqueResults.resize(maximumResultSize);
+        tmp.resize(maximumResultSize);
+
+        size_t allUniqueResults_size = 0;
+        size_t tmp_size = 0;
+
+        //TIMERSTARTCPU(getcandrest);
+        for(int map = 0; map < minparams.maps && allUniqueResults_size < max_number_candidates; ++map) {
+            kmer_type key = hashValues[map] & key_mask;
+
+            //nvtx::push_range("querymap", 6);
+            auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
+            //nvtx::pop_range();
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+            //std::vector<Value_t> backup(allUniqueResults);
+
+            if(n_entries == 0){
+                continue;
+            }
+
+            //nvtx::push_range("union", 4);
+            // auto union_end = set_union_n_or_empty(entries_range.first,
+            //                                     entries_range.second,
+            //                                     allUniqueResults.begin(),
+            //                                     allUniqueResults.end(),
+            //                                     max_number_candidates,
+            //                                     tmp.begin());
+            auto union_end = std::set_union(entries_range.first,
+                                        entries_range.second,
+                                        allUniqueResults.begin(),
+                                        allUniqueResults.begin() + allUniqueResults_size,
+                                        tmp.begin());
+            //nvtx::pop_range();
+            tmp_size = std::distance(tmp.begin(), union_end);
+
+            std::swap(allUniqueResults, tmp);
+            std::swap(allUniqueResults_size, tmp_size);
+        }
+
+        allUniqueResults.erase(allUniqueResults.begin() + allUniqueResults_size, allUniqueResults.end());
+
+#else
+
+
         //TIMERSTARTCPU(getcandrest);
         for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
             kmer_type key = hashValues[map] & key_mask;
 
+            //nvtx::push_range("querymap", 6);
             auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
+            //nvtx::pop_range();
             std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-
             //std::vector<Value_t> backup(allUniqueResults);
 
             if(n_entries == 0){
@@ -310,24 +359,36 @@ namespace care{
             }
 
             tmp.resize(allUniqueResults.size() + n_entries);
-            auto union_end = set_union_n_or_empty(entries_range.first,
+            //nvtx::push_range("union", 4);
+            // auto union_end = set_union_n_or_empty(entries_range.first,
+            //                                     entries_range.second,
+            //                                     allUniqueResults.begin(),
+            //                                     allUniqueResults.end(),
+            //                                     max_number_candidates,
+            //                                     tmp.begin());
+            auto union_end = std::set_union(entries_range.first,
                                                 entries_range.second,
                                                 allUniqueResults.begin(),
                                                 allUniqueResults.end(),
-                                                max_number_candidates,
                                                 tmp.begin());
-            if(tmp.begin() == union_end){
-                //assert(n_entries != 0 || (allUniqueResults.size() == 0 && n_entries == 0));
-                return {};
-            }else{
+            //nvtx::pop_range();
+            //if(tmp.begin() == union_end){
+            //    //assert(n_entries != 0 || (allUniqueResults.size() == 0 && n_entries == 0));
+            //    return {};
+            //}else{
                 //tmp.resize(std::distance(tmp.begin(), union_end));
+                //nvtx::push_range("erase", 3);
                 tmp.erase(union_end, tmp.end());
+                //nvtx::pop_range();
                 std::swap(tmp, allUniqueResults);
-            }
+            //}
             //if(n_entries == 0){
             //    assert(backup == allUniqueResults);
             //}
         }
+
+
+#endif
 
         return allUniqueResults;
     }
