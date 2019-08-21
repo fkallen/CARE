@@ -2,7 +2,7 @@
 
 #include <gpu/correct_gpu.hpp>
 #include <gpu/distributedreadstorage.hpp>
-#include <gpu/nvvptimelinemarkers.hpp>
+#include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/kernels.hpp>
 #include <gpu/dataarrays.hpp>
 #include <gpu/cubcachingallocator.cuh>
@@ -57,10 +57,10 @@
 
 #define USE_WAIT_FLAGS
 
-//#define DO_PROFILE
+#define DO_PROFILE
 
 #ifdef DO_PROFILE
-    constexpr size_t num_reads_to_profile = 100000;
+    constexpr size_t num_reads_to_profile = 2000;
 #endif
 
 
@@ -1083,7 +1083,7 @@ namespace gpu{
                 //assert(batch.initialNumberOfCandidates < transFuncData.correctionOptions.batchsize + transFuncData.runtimeOptions.max_candidates);
 
                 //allocate data arrays
-                push_range("set_problem_dimensions", 4);
+                nvtx::push_range("set_problem_dimensions", 4);
                 dataArrays.set_problem_dimensions(int(batch.tasks.size()),
                             batch.initialNumberOfCandidates,
                             transFuncData.sequenceFileProperties.maxSequenceLength,
@@ -1091,7 +1091,7 @@ namespace gpu{
                             transFuncData.goodAlignmentProperties.min_overlap,
                             transFuncData.goodAlignmentProperties.min_overlap_ratio,
                             transFuncData.correctionOptions.useQualityScores); CUERR;
-                pop_range();
+                nvtx::pop_range();
 
                 std::size_t temp_storage_bytes = 0;
                 std::size_t max_temp_storage_bytes = 0;
@@ -3027,7 +3027,7 @@ namespace gpu{
 			//std::cout << "finished readId " << task.readId << std::endl;
 
 			if(task.corrected/* && task.corrected_subject != task.subject_string*/) {
-				//push_range("write_subject", 4);
+				//nvtx::push_range("write_subject", 4);
 				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
 				//transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
                 TempCorrectedSequence tmp;
@@ -3044,9 +3044,9 @@ namespace gpu{
 				//transFuncData.lock(task.readId);
 				//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
 				//transFuncData.unlock(task.readId);
-				//pop_range();
+				//nvtx::pop_range();
 			}else{
-				//push_range("subject_not_corrected", 5);
+				//nvtx::push_range("subject_not_corrected", 5);
 				//mark read as not corrected
 				if((*transFuncData.readIsCorrectedVector)[task.readId] == 1) {
 					// transFuncData.lock(task.readId);
@@ -3055,9 +3055,9 @@ namespace gpu{
 					// }
 					// transFuncData.unlock(task.readId);
 				}
-                //pop_range();
+                //nvtx::pop_range();
 			}
-			//push_range("correctedcandidates", 6);
+			//nvtx::push_range("correctedcandidates", 6);
 			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
 
 				read_number candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
@@ -3094,7 +3094,7 @@ namespace gpu{
 
 
 			}
-			//pop_range();
+			//nvtx::pop_range();
 		}
 
 		return BatchState::Finished;
@@ -3274,8 +3274,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           oldNumOMPThreads = omp_get_num_threads();
       }
 
-      omp_set_num_threads(runtimeOptions.nCorrectorThreads);
-      //omp_set_num_threads(1);
+      //omp_set_num_threads(runtimeOptions.nCorrectorThreads);
+      omp_set_num_threads(1);
 
       std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
       std::chrono::duration<double> runtime = std::chrono::seconds(0);
@@ -3485,7 +3485,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
           assert(popMain == false);
-          push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
+          nvtx::push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
           ++stacksize;
           popMain = true;
 
@@ -3497,12 +3497,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                             transitionFunctionTable);
 
               if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)) {
-                  pop_range("main inner");
+                  nvtx::pop_range("main inner");
                   popMain = false;
                   --stacksize;
 
                   assert(popMain == false);
-                  push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
+                  nvtx::push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
                   ++stacksize;
                   popMain = true;
               }
@@ -3542,13 +3542,13 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                               if(firstSideIter) {
                                   assert(popSide == false);
-                                  push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
+                                  nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
                                   ++stacksize;
                                   popSide = true;
                               }else{
                                   if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
                                       assert(popSide == false);
-                                      push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
+                                      nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
                                       ++stacksize;
                                       popSide = true;
                                   }
@@ -3556,7 +3556,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                               //auto curstate = sideBatch.state;
                               //if(curstate == BatchState::Unprepared){
-                              //    push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
+                              //    nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
                               //}
                               sideBatchAdvanceResult = advance_one_step(sideBatch,
                                           true,                   //can be paused
@@ -3564,11 +3564,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                                             transitionFunctionTable);
 
                               //if(curstate == BatchState::Unprepared){
-                              //    pop_range();
+                              //    nvtx::pop_range();
                               //}
 
                               if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-                                  pop_range("side inner");
+                                  nvtx::pop_range("side inner");
                                   popSide = false;
                                   --stacksize;
                               }
@@ -3583,7 +3583,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                               localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
 
                               if(popSide) {
-                                  pop_range("switch sidebatch");
+                                  nvtx::pop_range("switch sidebatch");
                                   popSide = false;
                                   --stacksize;
                               }
@@ -3594,7 +3594,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                       }
 
                       if(popSide) {
-                          pop_range("side outer");
+                          nvtx::pop_range("side outer");
                           popSide = false;
                           --stacksize;
                       }
@@ -3612,7 +3612,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           }
 
           if(popMain) {
-              pop_range("main outer");
+              nvtx::pop_range("main outer");
               popMain = false;
               --stacksize;
           }
