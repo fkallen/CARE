@@ -195,6 +195,8 @@ namespace gpu{
 
 
 		std::vector<read_number> readIdBuffer;
+        std::vector<char> sequenceDataBuffer;
+        std::vector<int> sequenceLengthsBuffer;
 
 		std::vector<char> collectedCandidateReads;
 		int numsortedCandidateIds = 0;
@@ -277,7 +279,8 @@ namespace gpu{
 		void reset(){
             tasks.clear();
     		readIdBuffer.clear();
-
+            sequenceDataBuffer.clear();
+            sequenceLengthsBuffer.clear();
     		collectedCandidateReads.clear();
 
     		initialNumberOfCandidates = 0;
@@ -318,7 +321,6 @@ namespace gpu{
     struct TransitionFunctionData {
         int deviceId;
 		cpu::RangeGenerator<read_number>* readIdGenerator;
-		std::vector<read_number>* readIdBuffer;
         std::vector<CorrectionTask>* tmptasksBuffer;
 		const Minhasher* minhasher;
         const DistributedReadStorage* readStorage;
@@ -340,9 +342,6 @@ namespace gpu{
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         NN_Correction_Classifier nnClassifier;
-
-        std::vector<char>* sequenceDataBuffer;
-        std::vector<int>* sequenceLengthsBuffer;
 	};
 
     BatchState state_unprepared_func(Batch& batch,
@@ -698,16 +697,7 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
         //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-        std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
         std::vector<CorrectionTask>* tmptasksBuffer = transFuncData.tmptasksBuffer;
-        std::vector<char>* sequenceDataBuffer = transFuncData.sequenceDataBuffer;
-        std::vector<int>* sequenceLengthsBuffer = transFuncData.sequenceLengthsBuffer;
-
-        auto erase_from_range = [](auto begin, auto end, auto position_to_erase){
-                        auto copybegin = position_to_erase;
-                        std::advance(copybegin, 1);
-                        return std::copy(copybegin, end, position_to_erase);
-                    };
 
         const auto& minhasher = transFuncData.minhasher;
 
@@ -720,38 +710,38 @@ namespace gpu{
         //std::vector<bool> tmpokflags(num_simultaneous_tasks);
 
         while(batch.initialNumberOfCandidates < transFuncData.correctionOptions.batchsize
-              && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty() && tmptasksBuffer->empty())) {
+              && !(transFuncData.readIdGenerator->empty() && batch.readIdBuffer.empty() && tmptasksBuffer->empty())) {
 
 
 
             if(tmptasksBuffer->empty()){
 
-                if(readIdBuffer->empty()){
-                    *readIdBuffer = transFuncData.readIdGenerator->next_n(1000);
+                if(batch.readIdBuffer.empty()){
+                    batch.readIdBuffer = transFuncData.readIdGenerator->next_n(1000);
 
-                    sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
-                    sequenceLengthsBuffer->resize(readIdBuffer->size());
+                    batch.sequenceDataBuffer.resize(batch.readIdBuffer.size() * seqpitch);
+                    batch.sequenceLengthsBuffer.resize(batch.readIdBuffer.size());
 
                     transFuncData.readStorage->gatherSequenceDataToHostBuffer(
                                                 batch.candidateSequenceGatherHandle2,
-                                                sequenceDataBuffer->data(),
+                                                batch.sequenceDataBuffer.data(),
                                                 seqpitch,
-                                                readIdBuffer->data(),
-                                                readIdBuffer->size(),
+                                                batch.readIdBuffer.data(),
+                                                batch.readIdBuffer.size(),
                                                 transFuncData.runtimeOptions.nCorrectorThreads);
 
                     transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
                                                 batch.candidateLengthGatherHandle2,
-                                                sequenceLengthsBuffer->data(),
-                                                readIdBuffer->data(),
-                                                readIdBuffer->size(),
+                                                batch.sequenceLengthsBuffer.data(),
+                                                batch.readIdBuffer.data(),
+                                                batch.readIdBuffer.size(),
                                                 transFuncData.runtimeOptions.nCorrectorThreads);
                 }
 
-                if(readIdBuffer->empty())
+                if(batch.readIdBuffer.empty())
                     continue;
 
-                const int readIdsInBuffer = readIdBuffer->size();
+                const int readIdsInBuffer = batch.readIdBuffer.size();
                 const int max_tmp_tasks = std::min(readIdsInBuffer, num_simultaneous_tasks);
 
                 tmptasks.resize(max_tmp_tasks);
@@ -760,7 +750,7 @@ namespace gpu{
                 for(int tmptaskindex = 0; tmptaskindex < max_tmp_tasks; tmptaskindex++){
                     auto& task = tmptasks[tmptaskindex];
 
-                    const read_number readId = (*readIdBuffer)[tmptaskindex];
+                    const read_number readId = batch.readIdBuffer[tmptaskindex];
                     task = CorrectionTask(readId);
 
                     bool ok = false;
@@ -769,8 +759,8 @@ namespace gpu{
                     }
 
                     if(ok){
-                        const char* sequenceptr = sequenceDataBuffer->data() + tmptaskindex * seqpitch;
-                        const int sequencelength = (*sequenceLengthsBuffer)[tmptaskindex];
+                        const char* sequenceptr = batch.sequenceDataBuffer.data() + tmptaskindex * seqpitch;
+                        const int sequencelength = batch.sequenceLengthsBuffer[tmptaskindex];
 
                         task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
@@ -797,9 +787,9 @@ namespace gpu{
                     }
                 }
 
-                readIdBuffer->erase(readIdBuffer->begin(), readIdBuffer->begin() + max_tmp_tasks);
-                sequenceDataBuffer->erase(sequenceDataBuffer->begin(), sequenceDataBuffer->begin() + max_tmp_tasks * seqpitch);
-                sequenceLengthsBuffer->erase(sequenceLengthsBuffer->begin(), sequenceLengthsBuffer->begin() + max_tmp_tasks);
+                batch.readIdBuffer.erase(batch.readIdBuffer.begin(), batch.readIdBuffer.begin() + max_tmp_tasks);
+                batch.sequenceDataBuffer.erase(batch.sequenceDataBuffer.begin(), batch.sequenceDataBuffer.begin() + max_tmp_tasks * seqpitch);
+                batch.sequenceLengthsBuffer.erase(batch.sequenceLengthsBuffer.begin(), batch.sequenceLengthsBuffer.begin() + max_tmp_tasks);
 
                 std::swap(*tmptasksBuffer, tmptasks);
 
@@ -851,7 +841,7 @@ namespace gpu{
 
 
         if(batch.initialNumberOfCandidates < transFuncData.correctionOptions.batchsize
-            && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())) {
+            && !(transFuncData.readIdGenerator->empty() && batch.readIdBuffer.empty())) {
             //still more read ids to add
 
             return BatchState::Unprepared;
@@ -954,16 +944,10 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
         //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-        std::vector<read_number>* readIdBuffer = transFuncData.readIdBuffer;
-        std::vector<CorrectionTask>* tmptasksBuffer = transFuncData.tmptasksBuffer;
-        std::vector<char>* sequenceDataBuffer = transFuncData.sequenceDataBuffer;
-        std::vector<int>* sequenceLengthsBuffer = transFuncData.sequenceLengthsBuffer;
-
         const auto& minhasher = transFuncData.minhasher;
 
         const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
 
-        constexpr int num_simultaneous_tasks = 64;
         const size_t seqpitch = getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength) * sizeof(int);
 
         std::vector<CorrectionTask> tmptasks;
@@ -972,28 +956,28 @@ namespace gpu{
         batch.tasks.reserve(transFuncData.correctionOptions.batchsize);
 
         while(int(batch.tasks.size()) < transFuncData.correctionOptions.batchsize
-                    && !(transFuncData.readIdGenerator->empty() && readIdBuffer->empty())){
+                    && !(transFuncData.readIdGenerator->empty() && batch.readIdBuffer.empty())){
 
-            if(readIdBuffer->empty()){
+            if(batch.readIdBuffer.empty()){
                 const int numNewIds = std::min(256, transFuncData.correctionOptions.batchsize);
 
-                *readIdBuffer = transFuncData.readIdGenerator->next_n(numNewIds);
+                batch.readIdBuffer = transFuncData.readIdGenerator->next_n(numNewIds);
 
-                sequenceDataBuffer->resize(readIdBuffer->size() * seqpitch);
-                sequenceLengthsBuffer->resize(readIdBuffer->size());
+                batch.sequenceDataBuffer.resize(batch.readIdBuffer.size() * seqpitch);
+                batch.sequenceLengthsBuffer.resize(batch.readIdBuffer.size());
                 transFuncData.readStorage->gatherSequenceDataToHostBuffer(
                                             batch.candidateSequenceGatherHandle2,
-                                            sequenceDataBuffer->data(),
+                                            batch.sequenceDataBuffer.data(),
                                             seqpitch,
-                                            readIdBuffer->data(),
-                                            readIdBuffer->size(),
+                                            batch.readIdBuffer.data(),
+                                            batch.readIdBuffer.size(),
                                             transFuncData.runtimeOptions.nCorrectorThreads);
 
                 transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
                                             batch.candidateLengthGatherHandle2,
-                                            sequenceLengthsBuffer->data(),
-                                            readIdBuffer->data(),
-                                            readIdBuffer->size(),
+                                            batch.sequenceLengthsBuffer.data(),
+                                            batch.readIdBuffer.data(),
+                                            batch.readIdBuffer.size(),
                                             transFuncData.runtimeOptions.nCorrectorThreads);
                 if(isPausable){
                    return BatchState::Unprepared;
@@ -1001,15 +985,15 @@ namespace gpu{
             }
 
             const size_t oldSize = batch.tasks.size();
-            batch.tasks.resize(oldSize + readIdBuffer->size());
+            batch.tasks.resize(oldSize + batch.readIdBuffer.size());
 
             int initialNumberOfCandidates = 0;
 
             #pragma omp parallel for reduction(+: initialNumberOfCandidates)
-            for(size_t i = 0; i < readIdBuffer->size(); i++){
+            for(size_t i = 0; i < batch.readIdBuffer.size(); i++){
                 auto& task = batch.tasks[oldSize + i];
 
-                const read_number readId = (*readIdBuffer)[i];
+                const read_number readId = batch.readIdBuffer[i];
                 task = CorrectionTask(readId);
 
                 bool ok = false;
@@ -1018,8 +1002,8 @@ namespace gpu{
                 }
 
                 if(ok){
-                    const char* sequenceptr = sequenceDataBuffer->data() + i * seqpitch;
-                    const int sequencelength = (*sequenceLengthsBuffer)[i];
+                    const char* sequenceptr = batch.sequenceDataBuffer.data() + i * seqpitch;
+                    const int sequencelength = batch.sequenceLengthsBuffer[i];
 
                     task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
@@ -1063,7 +1047,7 @@ namespace gpu{
 
             batch.initialNumberOfCandidates += initialNumberOfCandidates;
 
-            readIdBuffer->clear();
+            batch.readIdBuffer.clear();
 
             if(isPausable){
                 return BatchState::Unprepared;
@@ -3371,10 +3355,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.sequenceFileProperties = sequenceFileProperties;
 
       transFuncData.readIdGenerator = &readIdGenerator;
-      transFuncData.readIdBuffer = &readIdBuffer;
       transFuncData.tmptasksBuffer = &tmptasksBuffer;
-      transFuncData.sequenceDataBuffer = &sequenceDataBuffer;
-      transFuncData.sequenceLengthsBuffer = &sequenceLengthsBuffer;
       transFuncData.minhasher = &minhasher;
       transFuncData.readStorage = &readStorage;
       transFuncData.locksForProcessedFlags = locksForProcessedFlags.get();
@@ -3450,9 +3431,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       //auto previousprocessedreads = readIdGenerator.getCurrentUnsafe();
       while(
             !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
-                  return batch.state == BatchState::Finished;
+                  return batch.state == BatchState::Finished && batch.readIdBuffer.empty();
               })
-              && readIdBuffer.empty()
+              //&& readIdBuffer.empty()
               && readIdGenerator.empty())) {
 
           if(stacksize != 0)
@@ -3628,7 +3609,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
           assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
 
-          if(!(readIdGenerator.empty() && readIdBuffer.empty() && tmptasksBuffer.empty())) {
+          if(!(readIdGenerator.empty() && mainBatch.readIdBuffer.empty() && tmptasksBuffer.empty())) {
               //there are reads left to correct, so this batch can be reused again
               mainBatch.reset();
           }else{
