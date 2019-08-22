@@ -933,6 +933,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     }
     commandbuilder << " > " << tempfile;
 
+#if 1
     std::string command = commandbuilder.str();
     TIMERSTARTCPU(sort_during_merge);
     int r1 = std::system(command.c_str());
@@ -941,7 +942,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     if(r1 != 0){
         throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
     }
-
+#else
+    tempfile = filesToMerge[0];
+#endif
     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
     //std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
 
@@ -1050,7 +1053,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
         if(firstHqSequence != tmpresults.end()){
-            return std::make_pair(firstHqSequence->sequence, false);
+            return std::make_pair(firstHqSequence->sequence, true);
         }
 
         auto equalsFirstSequence = [&](const auto& result){
@@ -1125,33 +1128,33 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     std::for_each(positions.begin(), positions.end(), setConsensusOfPosition);
                     //std::copy(positions.begin(), positions.end(), std::ostream_iterator<int>(std::cerr, " "));
                     //std::cerr << '\n';
-                    return std::make_pair(consensus, false);
+                    return std::make_pair(consensus, true);
                 }else{
                     for(size_t i = 0; i < consensus.size();  i++){
                         setConsensusOfPosition(i);
                     }
-                    return std::make_pair(consensus, false); //false
+                    return std::make_pair(consensus, true);
                 }
 
             }else{
                 //only candidates available
 
-                // for(int newCols = 0; newCols <= 3; newCols++){
-                //     const int count = std::count_if(tmpresults.begin(),
-                //                                 tmpresults.end(),
-                //                                 [&](const auto& r){return r.newColumns == newCols;});
-                //     if(count > 2){
-                //         for(const auto& r : tmpresults){
-                //             if(r.newColumns == newCols){
-                //                 countBases(r);
-                //             }
-                //         }
-                //         for(size_t i = 0; i < consensus.size();  i++){
-                //             setConsensusOfPosition(i);
-                //         }
-                //         return std::make_pair(consensus, true); //false
-                //     }
-                // }
+                for(int newCols = 0; newCols <= 3; newCols++){
+                    const int count = std::count_if(tmpresults.begin(),
+                                                tmpresults.end(),
+                                                [&](const auto& r){return r.newColumns == newCols;});
+                    if(count > 2){
+                        for(const auto& r : tmpresults){
+                            if(r.newColumns == newCols){
+                                countBases(r);
+                            }
+                        }
+                        for(size_t i = 0; i < consensus.size();  i++){
+                            setConsensusOfPosition(i);
+                        }
+                        return std::make_pair(consensus, true);
+                    }
+                }
 
                 return std::make_pair(std::string{""}, false);
             }
@@ -1161,9 +1164,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 return r.type == TempCorrectedSequence::Type::Anchor;
             });
             if(anchorIter != tmpresults.end()){
-                return std::make_pair(anchorIter->sequence, false);
+                return std::make_pair(anchorIter->sequence, true);
             }else{
-                return std::make_pair(tmpresults[0].sequence, false);
+                return std::make_pair(tmpresults[0].sequence, true);
             }
         }
 
@@ -1289,7 +1292,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     TIMERSTOPCPU(actualmerging);
 
-    //deleteFiles({tempfile});
+    deleteFiles({tempfile});
 
     std::ios::sync_with_stdio(oldsyncflag);
 }
