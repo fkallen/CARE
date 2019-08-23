@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 #include <string>
+#include <condition_variable>
 #include <mutex>
 #include <cstdint>
 #include <cstring>
@@ -60,7 +61,7 @@
 //#define DO_PROFILE
 
 #ifdef DO_PROFILE
-    constexpr size_t num_reads_to_profile = 10000;
+    constexpr size_t num_reads_to_profile = 1000000;
 #endif
 
 
@@ -311,6 +312,67 @@ namespace gpu{
         }
 	};
 
+    struct BackgroundThread{
+        enum class StopType{FinishAndStop, Stop};
+
+        std::vector<std::function<void()>> tasks{};
+        std::mutex m{};
+        std::condition_variable condvar{};
+        std::thread thread{};
+        volatile bool stop{false};
+        std::atomic<bool> finishRemainingTasks{true};
+
+        BackgroundThread(){
+            stop = false;
+
+            thread = std::move(std::thread{
+                [&](){
+                    while(!stop){
+                        std::unique_lock<std::mutex> mylock(m);
+                        while(tasks.empty() && !stop){
+                            condvar.wait(mylock);
+                        }
+                        if(!tasks.empty()){
+                            auto func = std::move(tasks.front());
+                            tasks.erase(tasks.begin());
+                            mylock.unlock();
+
+                            func();
+                        }
+                    }
+
+                    if(stop && finishRemainingTasks){
+                        for(const auto& func : tasks){
+                            func();
+                        }
+                        tasks.clear();
+                    }
+                }
+            });
+        }
+
+        template<class Func>
+        void emplace(Func&& func){
+            std::function<void()> wrapper(std::move(func));
+            {
+                std::lock_guard<std::mutex> mylock(m);
+                tasks.emplace_back(wrapper);
+            }
+            condvar.notify_one();
+        }
+
+        void stopThread(StopType type){
+            if(type == StopType::FinishAndStop){
+                finishRemainingTasks = true;
+            }else{
+                finishRemainingTasks = false;
+            }
+            stop = true;
+            condvar.notify_one();
+            thread.join();
+        }
+    };
+
 	struct AdvanceResult {
 		BatchState oldState = BatchState::Unprepared;
 		BatchState newState = BatchState::Unprepared;
@@ -339,6 +401,8 @@ namespace gpu{
         std::function<void(const TempCorrectedSequence&)> saveCorrectedSequence;
 		std::function<void(const read_number)> lock;
 		std::function<void(const read_number)> unlock;
+
+        BackgroundThread* backgroundThread;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         NN_Correction_Classifier nnClassifier;
@@ -1049,9 +1113,9 @@ namespace gpu{
 
             batch.readIdBuffer.clear();
 
-            if(isPausable){
-                return BatchState::Unprepared;
-            }
+            // if(isPausable){
+            //    return BatchState::Unprepared;
+            // }
         }
 
 
@@ -1531,10 +1595,14 @@ namespace gpu{
             return expectedState;
         }
 #else
-        cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = num_indices_transfered_event_index;
-            return expectedState;
+        if(nParallelBatches == 1){
+            cudaEventSynchronize(events[num_indices_transfered_event_index]);
+        }else{
+            cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
+            if(status == cudaErrorNotReady){
+                batch.activeWaitIndex = num_indices_transfered_event_index;
+                return expectedState;
+            }
         }
 #endif
 
@@ -1655,10 +1723,14 @@ namespace gpu{
             return expectedState;
         }
 #else
-        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = indices_transfer_finished_event_index;
-            return expectedState;
+        if(nParallelBatches == 1){
+            cudaEventSynchronize(events[indices_transfer_finished_event_index]);
+        }else{
+                cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
+                if(status == cudaErrorNotReady){
+                    batch.activeWaitIndex = indices_transfer_finished_event_index;
+                    return expectedState;
+                }
         }
 #endif
 
@@ -1780,6 +1852,7 @@ namespace gpu{
         }
 
 		const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
+        //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
         //std::cout << "msa_init" << std::endl;
 
@@ -1858,6 +1931,7 @@ namespace gpu{
 
         constexpr int max_num_minimizations = 5;
         const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
+        //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
         if(max_num_minimizations > 0){
             if(batch.numMinimizations < max_num_minimizations && !(batch.numMinimizations > 0 && batch.previousNumIndices == dataArrays.h_num_indices[0])){
@@ -2147,6 +2221,7 @@ namespace gpu{
                 }
 
                 const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
+                //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
                 build_msa_async(dataArrays.getDeviceMSAPointers(),
                                 dataArrays.getDeviceAlignmentResultPointers(),
@@ -3009,84 +3084,91 @@ namespace gpu{
             }
         }*/
 
-		//write result to file
-		for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
+        auto function = [tasks = std::move(batch.tasks), transFuncData = &transFuncData](){
 
-			const auto& task = batch.tasks[subject_index];
-			//std::cout << task.readId << "result" << std::endl;
+            //write result to file
+    		for(std::size_t subject_index = 0; subject_index < tasks.size(); ++subject_index) {
 
-			//std::cout << "finished readId " << task.readId << std::endl;
+    			const auto& task = tasks[subject_index];
+    			//std::cout << task.readId << "result" << std::endl;
 
-			if(task.corrected/* && task.corrected_subject != task.subject_string*/) {
-				//nvtx::push_range("write_subject", 4);
-				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
-				//transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
-                TempCorrectedSequence tmp;
-                tmp.hq = task.highQualityAlignment;
-                tmp.type = TempCorrectedSequence::Type::Anchor;
-                tmp.readId = task.readId;
-                tmp.sequence = task.corrected_subject;
-                tmp.uncorrectedPositionsNoConsensus = {};
+    			//std::cout << "finished readId " << task.readId << std::endl;
 
-                transFuncData.saveCorrectedSequence(tmp);
+    			if(task.corrected/* && task.corrected_subject != task.subject_string*/) {
+    				//nvtx::push_range("write_subject", 4);
+    				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
+    				//transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
+                    TempCorrectedSequence tmp;
+                    tmp.hq = task.highQualityAlignment;
+                    tmp.type = TempCorrectedSequence::Type::Anchor;
+                    tmp.readId = task.readId;
+                    tmp.sequence = task.corrected_subject;
+                    tmp.uncorrectedPositionsNoConsensus = {};
+
+                    transFuncData->saveCorrectedSequence(tmp);
 
 
 
-				//transFuncData.lock(task.readId);
-				//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
-				//transFuncData.unlock(task.readId);
-				//nvtx::pop_range();
-			}else{
-				//nvtx::push_range("subject_not_corrected", 5);
-				//mark read as not corrected
-				if((*transFuncData.readIsCorrectedVector)[task.readId] == 1) {
-					// transFuncData.lock(task.readId);
-					// if((*transFuncData.readIsCorrectedVector)[task.readId] == 1) {
-					// 	(*transFuncData.readIsCorrectedVector)[task.readId] = 0;
-					// }
-					// transFuncData.unlock(task.readId);
-				}
-                //nvtx::pop_range();
-			}
-			//nvtx::push_range("correctedcandidates", 6);
-			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
-
-				read_number candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
-				const std::string& corrected_candidate = task.corrected_candidates[corrected_candidate_index];
-
-                //const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidateId);
-				//const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidateId);
-				//const std::string original_candidate = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
-
-                //if(corrected_candidate == original_candidate){
-                    // bool savingIsOk = false;
-    				// if((*transFuncData.readIsCorrectedVector)[candidateId] == 0) {
-    				// 	transFuncData.lock(candidateId);
-    				// 	if((*transFuncData.readIsCorrectedVector)[candidateId]== 0) {
-    				// 		(*transFuncData.readIsCorrectedVector)[candidateId] = 1;         // we will process this read
-    				// 		savingIsOk = true;
-    				// 		//nCorrectedCandidates++;
-    				// 	}
-    				// 	transFuncData.unlock(candidateId);
-    				// }
-                    const bool savingIsOk = true;
-    				if (savingIsOk) {
-    					//transFuncData.write_read_to_stream(candidateId, corrected_candidate);
-
-                        TempCorrectedSequence tmp;
-                        tmp.type = TempCorrectedSequence::Type::Candidate;
-                        tmp.newColumns = std::abs(task.corrected_candidates_newColumns[corrected_candidate_index]);
-                        tmp.readId = candidateId;
-                        tmp.sequence = std::move(corrected_candidate);
-
-                        transFuncData.saveCorrectedSequence(tmp);
+    				//transFuncData.lock(task.readId);
+    				//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
+    				//transFuncData.unlock(task.readId);
+    				//nvtx::pop_range();
+    			}else{
+    				//nvtx::push_range("subject_not_corrected", 5);
+    				//mark read as not corrected
+    				if((*(transFuncData->readIsCorrectedVector))[task.readId] == 1) {
+    					// transFuncData.lock(task.readId);
+    					// if((*transFuncData.readIsCorrectedVector)[task.readId] == 1) {
+    					// 	(*transFuncData.readIsCorrectedVector)[task.readId] = 0;
+    					// }
+    					// transFuncData.unlock(task.readId);
     				}
-                //}
+                    //nvtx::pop_range();
+    			}
+    			//nvtx::push_range("correctedcandidates", 6);
+    			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
+
+    				read_number candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
+    				const std::string& corrected_candidate = task.corrected_candidates[corrected_candidate_index];
+
+                    //const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidateId);
+    				//const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidateId);
+    				//const std::string original_candidate = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
+
+                    //if(corrected_candidate == original_candidate){
+                        // bool savingIsOk = false;
+        				// if((*transFuncData.readIsCorrectedVector)[candidateId] == 0) {
+        				// 	transFuncData.lock(candidateId);
+        				// 	if((*transFuncData.readIsCorrectedVector)[candidateId]== 0) {
+        				// 		(*transFuncData.readIsCorrectedVector)[candidateId] = 1;         // we will process this read
+        				// 		savingIsOk = true;
+        				// 		//nCorrectedCandidates++;
+        				// 	}
+        				// 	transFuncData.unlock(candidateId);
+        				// }
+                        const bool savingIsOk = true;
+        				if (savingIsOk) {
+        					//transFuncData.write_read_to_stream(candidateId, corrected_candidate);
+
+                            TempCorrectedSequence tmp;
+                            tmp.type = TempCorrectedSequence::Type::Candidate;
+                            tmp.newColumns = std::abs(task.corrected_candidates_newColumns[corrected_candidate_index]);
+                            tmp.readId = candidateId;
+                            tmp.sequence = std::move(corrected_candidate);
+
+                            transFuncData->saveCorrectedSequence(tmp);
+        				}
+                    //}
 
 
-			}
-			//nvtx::pop_range();
-		}
+    			}
+    			//nvtx::pop_range();
+    		}
+        };
+
+		function();
+
+        //transFuncData.backgroundThread->emplace(std::move(function));
 
 		return BatchState::Finished;
 	}
@@ -3249,10 +3331,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                   const SequenceFileProperties& sequenceFileProperties,
                   Minhasher& minhasher,
                   DistributedReadStorage& readStorage,
-                  std::uint64_t maxCandidatesPerRead,
-                  std::vector<char>& readIsCorrectedVector,
-                  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-                  std::size_t nLocksForProcessedFlags){
+                  std::uint64_t maxCandidatesPerRead){
 
       assert(runtimeOptions.canUseGpu);
       assert(runtimeOptions.max_candidates > 0);
@@ -3276,6 +3355,14 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::vector<std::string> tmpfiles{fileOptions.outputfile + "_tmp"};
 
       std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
+
+      std::vector<char> readIsCorrectedVector;
+      std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+      std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+
+      readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
+
+      std::cerr << "readIsCorrectedVector bytes: " << readIsCorrectedVector.size() / 1024. / 1024. << " MB\n";
 
       std::ofstream outputstream;
       std::unique_ptr<SequenceFileWriter> writer;
@@ -3342,7 +3429,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
+        BackgroundThread backgroundThread;
+
       TransitionFunctionData transFuncData;
+
+      transFuncData.backgroundThread = &backgroundThread;
 
       //transFuncData.mybatchgen = &mybatchgen;
       transFuncData.deviceId = deviceIds[0];
@@ -3635,15 +3726,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       assert(tmptasksBuffer.empty());
 
-
-
-
-
-
-
-
-
-
+      backgroundThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
       #ifdef DO_PROFILE
           cudaProfilerStop();

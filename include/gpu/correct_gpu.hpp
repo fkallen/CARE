@@ -25,10 +25,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 			const SequenceFileProperties& sequenceFileProperties,
             Minhasher& minhasher,
             DistributedReadStorage& readStorage,
-            std::uint64_t maxCandidatesPerRead,
-			std::vector<char>& readIsCorrectedVector,
-			std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-			std::size_t nLocksForProcessedFlags);
+            std::uint64_t maxCandidatesPerRead);
 
 }
 }

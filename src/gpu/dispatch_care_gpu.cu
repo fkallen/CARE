@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <iostream>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 #include <experimental/filesystem>
@@ -90,10 +89,6 @@ namespace care{
 
         filesys::create_directories(fileOptions.outputdirectory);
 
-    	std::vector<char> readIsCorrectedVector;
-    	std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-    	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
-
     	auto thread_id = std::this_thread::get_id();
     	std::string thread_id_string;
     	{
@@ -145,19 +140,13 @@ namespace care{
 
         TIMERSTOPCPU(candidateestimation);
 
-        readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
-
-        std::cerr << "readIsCorrectedVector bytes: " << readIsCorrectedVector.size() / 1024. / 1024. << " MB\n";
-
         printDataStructureMemoryUsage(minhasher, readStorage);
 
         gpu::correct_gpu(minhashOptions, alignmentOptions,
                             goodAlignmentProperties, correctionOptions,
                             runtimeOptions, iterFileOptions, sequenceFileProperties,
                             minhasher, readStorage,
-                            maxCandidatesPerRead,
-                            readIsCorrectedVector, locksForProcessedFlags,
-                            nLocksForProcessedFlags);
+                            maxCandidatesPerRead);
 
         TIMERSTARTCPU(finalizing_files);
 
