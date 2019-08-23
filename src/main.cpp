@@ -38,6 +38,10 @@ int main(int argc, char** argv){
 		("candidateCorrection", "If set, candidate reads will be corrected,too.",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 
+        ("candidateCorrectionNewColumns", "If candidateCorrection is set, a candidates with an absolute shift of candidateCorrectionNewColumns compared to anchor are corrected",
+		cxxopts::value<int>()->default_value("0")->implicit_value("0"))
+
+
 		("matchscore", "Score for match during alignment.", cxxopts::value<int>()->default_value("1")->implicit_value("1"))
 		("subscore", "Score for substitution during alignment.", cxxopts::value<int>()->default_value("-1")->implicit_value("-1"))
 		("insertscore", "Score for insertion during alignment.", cxxopts::value<int>()->default_value("-100")->implicit_value("-100"))

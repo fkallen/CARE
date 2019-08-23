@@ -22,6 +22,7 @@ threads=16
 threadsgpu=0
 
 candidateCorrection=true
+candidateCorrectionNewColumns=3
 extractFeatures=false
 
 if [ $# -gt 3 ]
@@ -107,6 +108,7 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
                  --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
+                 --candidateCorrectionNewColumns=$candidateCorrectionNewColumns\
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
 		 --nnmodel=$nnmodel\
@@ -116,6 +118,7 @@ $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --o
                  --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
                  --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio\
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
+                 --candidateCorrectionNewColumns=$candidateCorrectionNewColumns\
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
 		 --nnmodel=$nnmodel\

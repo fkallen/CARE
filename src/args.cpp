@@ -96,7 +96,7 @@ namespace args{
             pr["base"].as<float>(),
             pr["kmerlength"].as<int>(),
             pr["batchsize"].as<int>(),
-            3, //new_columns_to_correct
+            pr["candidateCorrectionNewColumns"].as<int>(),
             pr["extractFeatures"].as<bool>(),
             pr["hits_per_candidate"].as<int>()
         };
@@ -257,7 +257,7 @@ namespace args{
         //     valid = false;
         //     std::cout << "Error: threadsForGPUs must be >= 0, is " + std::to_string(opt.threadsForGPUs) << std::endl;
         // }
-        // 
+        //
         // if(opt.threadsForGPUs > opt.threads){
         //     valid = false;
         //     std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
