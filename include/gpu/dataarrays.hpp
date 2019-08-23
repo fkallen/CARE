@@ -228,12 +228,16 @@ struct DataArrays {
         h_num_corrected_candidates.resize(n_sub * allocfactor);
         h_subject_is_corrected.resize(n_sub * allocfactor);
         h_indices_of_corrected_candidates.resize(n_quer * allocfactor);
+        h_num_uncorrected_positions_per_subject.resize(n_sub * allocfactor);
+        h_uncorrected_positions_per_subject.resize(n_sub * max_seq_length * allocfactor);
 
         d_corrected_subjects.resize(n_sub * sequence_pitch * allocfactor);
         d_corrected_candidates.resize(n_quer * sequence_pitch * allocfactor);
         d_num_corrected_candidates.resize(n_sub * allocfactor);
         d_subject_is_corrected.resize(n_sub * allocfactor);
         d_indices_of_corrected_candidates.resize(n_quer * allocfactor);
+        d_num_uncorrected_positions_per_subject.resize(n_sub * allocfactor);
+        d_uncorrected_positions_per_subject.resize(n_sub * max_seq_length * allocfactor);
 
         h_is_high_quality_subject.resize(n_sub * allocfactor);
         h_high_quality_subject_indices.resize(n_sub * allocfactor);
@@ -304,6 +308,9 @@ struct DataArrays {
         cudaMemsetAsync(d_is_high_quality_subject, 0, d_is_high_quality_subject.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_high_quality_subject_indices, 0, d_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_num_high_quality_subject_indices, 0, d_num_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_num_uncorrected_positions_per_subject, 0, d_num_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
+        cudaMemsetAsync(d_uncorrected_positions_per_subject, 0, d_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
+
 
         cudaMemsetAsync(d_alignment_scores, 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
         cudaMemsetAsync(d_alignment_overlaps, 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
@@ -399,6 +406,8 @@ struct DataArrays {
         h_is_high_quality_subject = std::move(SimpleAllocationPinnedHost<bool>{});
         h_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
         h_num_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
+        h_num_uncorrected_positions_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
+        h_uncorrected_positions_per_subject= std::move(SimpleAllocationPinnedHost<int>{});
 
         d_corrected_subjects = std::move(SimpleAllocationDevice<char>{});
         d_corrected_candidates = std::move(SimpleAllocationDevice<char>{});
@@ -408,6 +417,8 @@ struct DataArrays {
         d_is_high_quality_subject = std::move(SimpleAllocationDevice<bool>{});
         d_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
         d_num_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
+        d_num_uncorrected_positions_per_subject = std::move(SimpleAllocationDevice<int>{});
+        d_uncorrected_positions_per_subject= std::move(SimpleAllocationDevice<int>{});
 
         h_indices = std::move(SimpleAllocationPinnedHost<int>{});
         h_indices_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
@@ -476,6 +487,8 @@ struct DataArrays {
         bytes += f(h_is_high_quality_subject);
         bytes += f(h_high_quality_subject_indices);
         bytes += f(h_num_high_quality_subject_indices);
+        bytes += f(h_num_uncorrected_positions_per_subject);
+        bytes += f(h_uncorrected_positions_per_subject);
 
         bytes += f(h_indices);
         bytes += f(h_indices_per_subject);
@@ -531,6 +544,8 @@ struct DataArrays {
         bytes += f(d_is_high_quality_subject);
         bytes += f(d_high_quality_subject_indices);
         bytes += f(d_num_high_quality_subject_indices);
+        bytes += f(d_num_uncorrected_positions_per_subject);
+        bytes += f(d_uncorrected_positions_per_subject);
 
         bytes += f(d_indices);
         bytes += f(d_indices_per_subject);
@@ -583,6 +598,8 @@ struct DataArrays {
         bytes += f(h_is_high_quality_subject);
         bytes += f(h_high_quality_subject_indices);
         bytes += f(h_num_high_quality_subject_indices);
+        bytes += f(h_num_uncorrected_positions_per_subject);
+        bytes += f(h_uncorrected_positions_per_subject);
 
         bytes += f(h_indices);
         bytes += f(h_indices_per_subject);
@@ -638,6 +655,8 @@ struct DataArrays {
         bytes += f(d_is_high_quality_subject);
         bytes += f(d_high_quality_subject_indices);
         bytes += f(d_num_high_quality_subject_indices);
+        bytes += f(d_num_uncorrected_positions_per_subject);
+        bytes += f(d_uncorrected_positions_per_subject);
 
         bytes += f(d_indices);
         bytes += f(d_indices_per_subject);
@@ -761,6 +780,8 @@ struct DataArrays {
             h_is_high_quality_subject.get(),
             h_high_quality_subject_indices.get(),
             h_num_high_quality_subject_indices.get(),
+            h_num_uncorrected_positions_per_subject.get(),
+            h_uncorrected_positions_per_subject.get(),
         };
         return pointers;
     }
@@ -775,6 +796,8 @@ struct DataArrays {
             d_is_high_quality_subject.get(),
             d_high_quality_subject_indices.get(),
             d_num_high_quality_subject_indices.get(),
+            d_num_uncorrected_positions_per_subject.get(),
+            d_uncorrected_positions_per_subject.get(),
         };
         return pointers;
     }
@@ -786,12 +809,16 @@ struct DataArrays {
     SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
     SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
     SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
+    SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
+    SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
 
     SimpleAllocationDevice<char> d_corrected_subjects;
     SimpleAllocationDevice<char> d_corrected_candidates;
     SimpleAllocationDevice<int> d_num_corrected_candidates;
     SimpleAllocationDevice<bool> d_subject_is_corrected;
     SimpleAllocationDevice<int> d_indices_of_corrected_candidates;
+    SimpleAllocationDevice<int> d_num_uncorrected_positions_per_subject;
+    SimpleAllocationDevice<int> d_uncorrected_positions_per_subject;
 
     SimpleAllocationPinnedHost<bool> h_is_high_quality_subject;
     SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;

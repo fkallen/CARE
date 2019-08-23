@@ -70,6 +70,8 @@ struct CorrectionResultPointers{
         bool* isHighQualitySubject;
         int* highQualitySubjectIndices;
         int* numHighQualitySubjectIndices;
+        int* num_uncorrected_positions_per_subject;
+        int* uncorrected_positions_per_subject;
 };
 
 
