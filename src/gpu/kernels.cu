@@ -45,7 +45,7 @@ namespace gpu{
         constexpr float min_weight = 0.001f;
 
         const int q(qualitychar);
-        const float errorprob = powf(10.0f, -(q-ascii_base)/10.0f);
+        const float errorprob = exp10f(-(q-ascii_base)/10.0f);
 
         return max(min_weight, 1.0f - errorprob);
     }
@@ -447,6 +447,7 @@ namespace gpu{
                     const int alignment_nops = d_alignmentresultpointers.nOps[candidate_index];
 
                     const float mismatchratio = float(alignment_nops) / alignment_overlap;
+
                     if(mismatchratio >= 4 * mismatchratioBaseFactor) {
                         d_alignmentresultpointers.bestAlignmentFlags[candidate_index] = BestAlignment_t::None;
                     }else{
@@ -762,8 +763,11 @@ namespace gpu{
         		const int query_alignment_overlap = d_alignmentresultpointers.overlaps[queryIndex];
         		const int query_alignment_nops = d_alignmentresultpointers.nOps[queryIndex];
 
-        		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
+        		const float overlapweight = 1.0f - sqrtf(query_alignment_nops
         					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+
+                assert(overlapweight <= 1.0f);
+                assert(overlapweight >= 0.0f);
 
                 assert(flag != BestAlignment_t::None);                 // indices should only be pointing to valid alignments
                 //printf("candidate %d, shift %d default %d: ", index, shift, defaultcolumnoffset);
@@ -773,7 +777,7 @@ namespace gpu{
                         const int globalIndex = defaultcolumnoffset + i;
                         const char base = get(query, queryLength, i);
                         //printf("%d ", int(base));
-                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * overlapweight : overlapweight;
                         const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
                         atomicAdd(d_msapointers.counts + ptrOffset + globalIndex, 1);
                         atomicAdd(d_msapointers.weights + ptrOffset + globalIndex, weight);
@@ -791,7 +795,7 @@ namespace gpu{
                         const char base = get(query, queryLength, reverseIndex);
                         const char revCompl = make_reverse_complement_byte(base);
                         //printf("%d ", int(revCompl));
-                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * defaultweight : defaultweight;
+                        const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * overlapweight : overlapweight;
                         const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(revCompl) * msa_weights_row_pitch_floats;
                         atomicAdd(d_msapointers.counts + ptrOffset + globalIndex, 1);
                         atomicAdd(d_msapointers.weights + ptrOffset + globalIndex, weight);
@@ -960,8 +964,10 @@ namespace gpu{
             		const int query_alignment_overlap = d_alignmentresultpointers.overlaps[queryIndex];
             		const int query_alignment_nops = d_alignmentresultpointers.nOps[queryIndex];
 
-            		const float defaultweight = 1.0f - sqrtf(query_alignment_nops
+            		const float overlapweight = 1.0f - sqrtf(query_alignment_nops
             					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+                    assert(overlapweight <= 1.0f);
+                    assert(overlapweight >= 0.0f);
 
                     assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
 
@@ -975,9 +981,9 @@ namespace gpu{
                             //}
 
 #ifndef transposequal
-                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * overlapweight : overlapweight;
 #else
-                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i * num_indices]) * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i * num_indices]) * overlapweight : overlapweight;
 #endif
                             assert(weight != 0);
                             const int ptrOffset = int(base) * msa_weights_row_pitch_floats;
@@ -1005,9 +1011,9 @@ namespace gpu{
                                 //assert(queryQualityScore[reverseIndex] != '\0');
                             //}
 #ifndef transposequal
-                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * overlapweight : overlapweight;
 #else
-                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex*num_indices]) * defaultweight : defaultweight;
+                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex*num_indices]) * overlapweight : overlapweight;
 #endif
 
                             assert(weight != 0);
@@ -2165,7 +2171,7 @@ namespace gpu{
                         counts[2] = myCountsG[columnindex];
                         counts[3] = myCountsT[columnindex];
 
-                        int weights[4];
+                        float weights[4];
                         weights[0] = myWeightsA[columnindex];
                         weights[1] = myWeightsC[columnindex];
                         weights[2] = myWeightsG[columnindex];
@@ -2183,6 +2189,27 @@ namespace gpu{
                             case 'T': consindex = 3;break;
                         }
 
+                        // char consensusByCount = 'A';
+                        // int maxCount = counts[0];
+                        // if(counts[1] > maxCount){
+                        //     consensusByCount = 'C';
+                        //     maxCount = counts[1];
+                        // }
+                        // if(counts[2] > maxCount){
+                        //     consensusByCount = 'G';
+                        //     maxCount = counts[2];
+                        // }
+                        // if(counts[3] > maxCount){
+                        //     consensusByCount = 'T';
+                        //     maxCount = counts[3];
+                        // }
+                        //
+                        // if(consbase != consensusByCount){
+                        //     printf("bycounts %c %.6f %.6f %.6f %.6f,\nbyweight %c %.6f %.6f %.6f %.6f\n\n",
+                        //             consensusByCount, float(counts[0]), float(counts[1]), float(counts[2]), float(counts[3]),
+                        //             consbase, weights[0], weights[1], weights[2], weights[3]);
+                        // }
+
                         //find out if there is a non-consensus base with significant coverage
                         int significantBaseIndex = -1;
 
@@ -2194,7 +2221,7 @@ namespace gpu{
 
                                 const bool significant = is_significant_count(counts[i], dataset_coverage);
 
-                                //const bool significant = weights[i] / support >= 0.7f;
+                                //const bool significant = weights[i] / support >= 0.5f;
 
                                 significantBaseIndex = significant ? i : significantBaseIndex;
                             }
@@ -2205,9 +2232,9 @@ namespace gpu{
                             col = columnindex;
                             foundBaseIndex = significantBaseIndex;
 
-                            if(debug){
-                                //printf("found col %d, baseIndex %d\n", col, foundBaseIndex);
-                            }
+                            // if(debug){
+                            //     printf("found col %d, baseIndex %d\n", col, foundBaseIndex);
+                            // }
                         }
                     }
 
@@ -2287,7 +2314,7 @@ namespace gpu{
                                     d_shouldBeKept[indexoffset + k] = false; //different region
                                 }
                             }
-#if 0
+#if 1
                             //check that no candidate which should be removed has very good alignment.
                             //if there is such a candidate, none of the candidates will be removed.
                             bool veryGoodAlignment = false;
@@ -2297,6 +2324,9 @@ namespace gpu{
                                     const int nOps = d_alignmentresultpointers.nOps[candidateIndex];
                                     const int overlapsize = d_alignmentresultpointers.overlaps[candidateIndex];
                                     const float overlapweight = 1.0f - sqrtf(nOps / (overlapsize * desiredAlignmentMaxErrorRate));
+                                    assert(overlapweight <= 1.0f);
+                                    assert(overlapweight >= 0.0f);
+
                                     if(overlapweight >= 0.9f){
                                         veryGoodAlignment = true;
                                     }
