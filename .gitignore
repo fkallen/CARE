@@ -8,3 +8,4 @@ errorcorrector_cpu
 errorcorrector_gpu
 errorcorrector_cpu_debug
 errorcorrector_gpu_debug
+makeresultfile/makeresultfile

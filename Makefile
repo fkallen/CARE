@@ -123,6 +123,9 @@ alignmenttest:
 	@echo Building alignmenttest
 	@$(CUDACC) $(CUDA_ARCH) $(CXXFLAGS) $(NVCCFLAGS_DEBUG) -Xcompiler "$(CFLAGS_DEBUG)" tests/alignmenttest/main.cpp src/gpu/kernels.cu  $(LDFLAGSGPU) -o tests/alignmenttest/main
 
+makeresultfile: buildcpu/sequencefileio.o makeresultfile/makeresultfile.cpp
+	g++ $(CXXFLAGS) $(CFLAGS) makeresultfile/makeresultfile.cpp buildcpu/sequencefileio.o -lz -o makeresultfile/makeresultfile
+
 clean:
 	@rm -f $(GPU_VERSION) $(CPU_VERSION) $(GPU_VERSION_DEBUG) $(CPU_VERSION_DEBUG)\
 			$(OBJECTS_CPU_AND_GPU) $(OBJECTS_ONLY_GPU) $(OBJECTS_ONLY_CPU) \
@@ -144,4 +147,6 @@ makedir:
 
 .PHONY: makedirs
 
--PHONY: forests
+.PHONY: forests
+
+.PHONY: makeresultfile
