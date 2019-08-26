@@ -2552,6 +2552,44 @@ namespace gpu{
                         dataArrays.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
+            // int* d_high_quality_subject_indices_backup;
+            // int* d_num_high_quality_subject_indices_backup;
+            // cubCachingAllocator.DeviceAllocate((void**)&d_high_quality_subject_indices_backup,
+            //                                     sizeof(int) * dataArrays.n_subjects,
+            //                                     streams[primary_stream_index]); CUERR;
+            // cubCachingAllocator.DeviceAllocate((void**)&d_num_high_quality_subject_indices_backup,
+            //                                     sizeof(int),
+            //                                     streams[primary_stream_index]); CUERR;
+            //
+            // cudaMemcpyAsync(d_high_quality_subject_indices_backup,
+            //                 dataArrays.d_high_quality_subject_indices.get(),
+            //                 sizeof(int) * dataArrays.n_subjects,
+            //                 D2D,
+            //                 streams[primary_stream_index]); CUERR;
+            //
+            // cudaMemcpyAsync(d_num_high_quality_subject_indices_backup,
+            //                 dataArrays.d_num_high_quality_subject_indices.get(),
+            //                 sizeof(int),
+            //                 D2D,
+            //                 streams[primary_stream_index]); CUERR;
+            //
+            // {
+            //     auto n_subjects = dataArrays.n_subjects;
+            //     auto d_high_quality_subject_indices = dataArrays.d_high_quality_subject_indices.get();
+            //     auto d_num_high_quality_subject_indices = dataArrays.d_num_high_quality_subject_indices.get();
+            //
+            //     generic_kernel<<<SDIV(dataArrays.n_subjects, 128), 128, 0, streams[primary_stream_index]>>>([=] __device__ (){
+            //         for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_subjects; i+= blockDim.x * gridDim.x){
+            //             d_high_quality_subject_indices[i] = i;
+            //         }
+            //         if(threadIdx.x + blockIdx.x * blockDim.x == 0){
+            //             *d_num_high_quality_subject_indices = n_subjects;
+            //         }
+            //     }); CUERR;
+            // }
+
+
+
 			// correct candidates
             call_msa_correct_candidates_kernel_async_exp(
                     dataArrays.getDeviceMSAPointers(),
@@ -2573,6 +2611,21 @@ namespace gpu{
                     dataArrays.maximum_sequence_length,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
+
+            // cudaMemcpyAsync(dataArrays.d_high_quality_subject_indices.get(),
+            //                 d_high_quality_subject_indices_backup,
+            //                 sizeof(int) * dataArrays.n_subjects,
+            //                 D2D,
+            //                 streams[primary_stream_index]); CUERR;
+            //
+            // cudaMemcpyAsync(dataArrays.d_num_high_quality_subject_indices.get(),
+            //                 d_num_high_quality_subject_indices_backup,
+            //                 sizeof(int),
+            //                 D2D,
+            //                 streams[primary_stream_index]); CUERR;
+            //
+            // cubCachingAllocator.DeviceFree(d_high_quality_subject_indices_backup); CUERR;
+            // cubCachingAllocator.DeviceFree(d_num_high_quality_subject_indices_backup); CUERR;
 		}
 
 		cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
