@@ -1051,6 +1051,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             return tcs.hq;
         };
 
+        //if there is a correction using a high quality alignment, use it
         auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
         if(firstHqSequence != tmpresults.end()){
             return std::make_pair(firstHqSequence->sequence, true);
@@ -1139,34 +1140,67 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             }else{
                 //only candidates available
 
-                for(int newCols = 0; newCols <= 3; newCols++){
-                    const int count = std::count_if(tmpresults.begin(),
-                                                tmpresults.end(),
-                                                [&](const auto& r){return r.newColumns == newCols;});
-                    if(count > 2){
-                        for(const auto& r : tmpresults){
-                            if(r.newColumns == newCols){
-                                countBases(r);
-                            }
-                        }
-                        for(size_t i = 0; i < consensus.size();  i++){
-                            setConsensusOfPosition(i);
-                        }
-                        return std::make_pair(consensus, true);
-                    }
-                }
+                // int maxNewCols = 0;
+                // for(const auto& r : tmpresults){
+                //     maxNewCols = std::max(maxNewCols, r.newColumns);
+                // }
+                //
+                //
+                // for(int newCols = 0; newCols <= maxNewCols; newCols++){
+                //     auto checkNewColumns = [&](const auto& r){
+                //         return r.newColumns <= newCols;
+                //     };
+                //
+                //     const int count = std::count_if(tmpresults.begin(),
+                //                                 tmpresults.end(),
+                //                                 checkNewColumns);
+                //     if(count > 2){
+                //         for(const auto& r : tmpresults){
+                //             if(r.newColumns <= newCols){
+                //                 countBases(r);
+                //             }
+                //         }
+                //         for(size_t i = 0; i < consensus.size();  i++){
+                //             setConsensusOfPosition(i);
+                //         }
+                //         return std::make_pair(consensus, true);
+                //     }
+                // }
 
-                return std::make_pair(std::string{""}, false);
+                return std::make_pair(std::string{""}, false); //always false
             }
 
         }else{
+            //return std::make_pair(tmpresults[0].sequence, false);
             auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
                 return r.type == TempCorrectedSequence::Type::Anchor;
             });
             if(anchorIter != tmpresults.end()){
-                return std::make_pair(anchorIter->sequence, true);
+                //return std::make_pair(anchorIter->sequence, true);
+                auto checkNewColumns = [](const auto& r){
+                    return r.type == TempCorrectedSequence::Type::Candidate && r.newColumns <= 15;
+                    //return true;
+                };
+                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkNewColumns)){
+                    return std::make_pair(tmpresults[0].sequence, true);
+                }else{
+                    return std::make_pair(std::string{""}, false); //always false
+                }
             }else{
-                return std::make_pair(tmpresults[0].sequence, true);
+                //no correction as anchor. all corrections as candidate are equal.
+                //only use the correction if at least one correction as candidate was performed with 0 new columns
+                auto checkNewColumns = [](const auto& r){
+                    return r.newColumns <= 1;
+                };
+                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkNewColumns)){
+                    return std::make_pair(tmpresults[0].sequence, true);
+                }else{
+                    return std::make_pair(std::string{""}, false); //always false
+                }
+
+                //return std::make_pair(std::string{""}, false);
+
+                //return std::make_pair(tmpresults[0].sequence, true);
             }
         }
 
@@ -1292,7 +1326,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     TIMERSTOPCPU(actualmerging);
 
-    deleteFiles({tempfile});
+    //deleteFiles({tempfile});
 
     std::ios::sync_with_stdio(oldsyncflag);
 }
