@@ -1616,7 +1616,7 @@ namespace gpu{
         }
     }
 
-
+#if 0
     template<int BLOCKSIZE>
     __global__
     void msa_correct_subject_implicit_kernel(
@@ -1632,6 +1632,7 @@ namespace gpu{
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
+                            int maximumSequenceLength,
                             float estimatedErrorrate,
                             float desiredAlignmentMaxErrorRate,
                             float avg_support_threshold,
@@ -1701,6 +1702,7 @@ namespace gpu{
         for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
             const int myNumIndices = d_indices_per_subject[subjectIndex];
             if(myNumIndices > 0){
+
                 const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
                 const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
                 const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
@@ -1768,6 +1770,7 @@ namespace gpu{
 
                     bool foundAColumn = false;
                     for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+
                         const int globalIndex = subjectColumnsBegin_incl + i;
                         const int origCoverage = my_orig_coverage[globalIndex];
                         const char origBase = my_corrected_subject[i];
@@ -1877,6 +1880,315 @@ namespace gpu{
         }
     }
 
+#else
+
+template<int BLOCKSIZE>
+__global__
+void msa_correct_subject_implicit_kernel(
+                        MSAPointers msapointers,
+                        AlignmentResultPointers alignmentresultpointers,
+                        ReadSequencesPointers d_sequencePointers,
+                        CorrectionResultPointers d_correctionResultPointers,
+                        const int* __restrict__ d_indices,
+                        const int* __restrict__ d_indices_per_subject,
+                        const int* __restrict__ d_indices_per_subject_prefixsum,
+                        int n_subjects,
+                        size_t encoded_sequence_pitch,
+                        size_t sequence_pitch,
+                        size_t msa_pitch,
+                        size_t msa_weights_pitch,
+                        int maximumSequenceLength,
+                        float estimatedErrorrate,
+                        float desiredAlignmentMaxErrorRate,
+                        float avg_support_threshold,
+                        float min_support_threshold,
+                        float min_coverage_threshold,
+                        float max_coverage_threshold,
+                        int k_region){
+
+    using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+    using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+    using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+    __shared__ union {
+        typename BlockReduceBool::TempStorage boolreduce;
+        typename BlockReduceInt::TempStorage intreduce;
+        typename BlockReduceFloat::TempStorage floatreduce;
+    } temp_storage;
+
+    __shared__ bool broadcastbuffer;
+
+    __shared__ int numUncorrectedPositions;
+    __shared__ int uncorrectedPositions[BLOCKSIZE];
+
+    auto get = [] (const char* data, int length, int index){
+        //return Sequence_t::get_as_nucleotide(data, length, index);
+        return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+    };
+
+    auto getSubjectPtr = [&] (int subjectIndex){
+        const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+        return result;
+    };
+
+    auto getCandidatePtr = [&] (int candidateIndex){
+        const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+        return result;
+    };
+
+    auto getCandidateLength = [&](int candidateIndex){
+        return d_sequencePointers.candidateSequencesLength[candidateIndex];
+    };
+
+    auto isGoodAvgSupport = [&](float avgsupport){
+        return avgsupport >= avg_support_threshold;
+    };
+    auto isGoodMinSupport = [&](float minsupport){
+        return minsupport >= min_support_threshold;
+    };
+    auto isGoodMinCoverage = [&](float mincoverage){
+        return mincoverage >= min_coverage_threshold;
+    };
+
+    constexpr char A_enc = 0x00;
+    constexpr char C_enc = 0x01;
+    constexpr char G_enc = 0x02;
+    constexpr char T_enc = 0x03;
+
+    auto to_nuc = [](char c){
+        switch(c){
+        case A_enc: return 'A';
+        case C_enc: return 'C';
+        case G_enc: return 'G';
+        case T_enc: return 'T';
+        default: return 'F';
+        }
+    };
+
+    const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+    for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+        const int myNumIndices = d_indices_per_subject[subjectIndex];
+        if(myNumIndices > 0){
+
+            const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
+            const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
+            char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
+
+            const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+            const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+
+            float avg_support = 0;
+            float min_support = 1.0f;
+            //int max_coverage = 0;
+            int min_coverage = std::numeric_limits<int>::max();
+
+            for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                assert(i < lastColumn_excl);
+
+                avg_support += my_support[i];
+                min_support = min(my_support[i], min_support);
+                //max_coverage = max(my_coverage[i], max_coverage);
+                min_coverage = min(my_coverage[i], min_coverage);
+            }
+
+            avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
+            __syncthreads();
+
+            min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
+            __syncthreads();
+
+            //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
+
+            min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
+            __syncthreads();
+
+            avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+
+            bool isHQ = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+            //bool isHQ = true;
+
+            if(threadIdx.x == 0){
+                broadcastbuffer = isHQ;
+                d_correctionResultPointers.isHighQualitySubject[subjectIndex] = isHQ;
+            }
+            __syncthreads();
+
+            isHQ = broadcastbuffer;
+
+            if(isHQ){
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                    my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                }
+                if(threadIdx.x == 0){
+                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;
+                }
+            }else{
+
+                //decode orignal sequence and copy to corrected sequence
+                const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                const char* const subject = getSubjectPtr(subjectIndex);
+                for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+                    my_corrected_subject[i] = to_nuc(get(subject, subjectLength, i));
+                }
+
+                bool foundAColumn = false;
+                //round up to next multiple of BLOCKSIZE;
+                int* globalUncorrectedPostitionsPtr = d_correctionResultPointers.uncorrected_positions_per_subject + subjectIndex * maximumSequenceLength;
+                int* const globalNumUncorrectedPositionsPtr = d_correctionResultPointers.num_uncorrected_positions_per_subject + subjectIndex;
+
+                const int loopIters = SDIV(subjectLength, BLOCKSIZE) * BLOCKSIZE;
+                for(int loopIter = 0; loopIter < loopIters; loopIter++){
+                    if(threadIdx.x == 0){
+                        numUncorrectedPositions = 0;
+                    }
+                    __syncthreads();
+
+                    const int i = threadIdx.x + loopIter * BLOCKSIZE;
+
+                    if(i < subjectLength){
+                        const int globalIndex = subjectColumnsBegin_incl + i;
+                        const int origCoverage = my_orig_coverage[globalIndex];
+                        const char origBase = my_corrected_subject[i];
+
+                        if(origBase != my_consensus[globalIndex]
+                                    && my_support[globalIndex] > 0.5f
+                                    //&& my_orig_coverage[globalIndex] <= ceil(min_coverage_threshold * 0.5f)+1
+                                    //&& origCoverage <= 7//ceil(estimatedErrorrate * my_coverage[globalIndex])
+                                    //&& my_orig_coverage[globalIndex] <= 1
+                                ){
+                            /*printf("%f %d, %d <= %f\n",
+                                    estimatedErrorrate,
+                                    my_coverage[globalIndex],
+                                    my_orig_coverage[globalIndex],
+                                    ceil(estimatedErrorrate * my_coverage[globalIndex]));*/
+
+                            bool canCorrect = true;
+                            // if(origCoverage > 2){
+                            //     canCorrect = false;
+                            // }
+                            if(canCorrect && origCoverage > 1){
+                                const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                                volatile char origBase = my_corrected_subject[i];
+                                //iterate over candidates
+                                int numFoundCandidates = 0;
+                                for(int candidatenr = 0; candidatenr < myNumIndices/* && numFoundCandidates < origCoverage*/; candidatenr++){
+                                    const int arrayindex = myIndices[candidatenr];
+
+                                    const char* candidateptr = getCandidatePtr(arrayindex);
+                                    const int candidateLength = getCandidateLength(arrayindex);
+                                    const int candidateShift = alignmentresultpointers.shifts[arrayindex];
+                                    const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
+                                    if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
+                                        char candidateBaseEnc = 0xFF;
+                                        if(alignmentresultpointers.bestAlignmentFlags[arrayindex] == BestAlignment_t::ReverseComplement){
+                                            candidateBaseEnc = get(candidateptr, candidateLength, candidateLength - candidateBasePosition-1);
+                                            candidateBaseEnc = (~candidateBaseEnc) & 0x03;
+                                        }else{
+                                            candidateBaseEnc = get(candidateptr, candidateLength, candidateBasePosition);
+                                        }
+                                        const char candidateBase = to_nuc(candidateBaseEnc);
+
+                                        const int nOps = alignmentresultpointers.nOps[arrayindex];
+                                        const int overlapsize = alignmentresultpointers.overlaps[arrayindex];
+                                        const float overlapweight = 1.0f - sqrtf(nOps / (overlapsize * desiredAlignmentMaxErrorRate));
+                                        assert(overlapweight <= 1.0f);
+                                        assert(overlapweight >= 0.0f);
+
+                                        if(origBase == candidateBase){
+                                            numFoundCandidates++;
+                                            // if(nOps > 0 || overlapsize < 50){
+                                            //     canCorrect = false;
+                                            //     //break;
+                                            // }
+
+
+
+                                             if(overlapweight >= 0.90f){
+                                                 canCorrect = false;
+                                                 //break;
+                                             }
+                                        }
+                                    }
+                                }
+                                //if(numFoundCandidates+1 != origCoverage){
+                                    assert(numFoundCandidates+1 == origCoverage);
+                                //}
+
+                                //assert(canCorrect);
+                            }
+
+                            //assert(canCorrect || origCoverage > 2);
+
+                            if(canCorrect){
+
+                                float avgsupportkregion = 0;
+                                int c = 0;
+                                bool kregioncoverageisgood = true;
+
+
+                                for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                                    if(j != i && j >= 0 && j < subjectLength){
+                                        avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                                        kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                        //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
+                                        c++;
+                                    }
+                                }
+                                avgsupportkregion /= c;
+
+                                if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
+                                    my_corrected_subject[i] = my_consensus[globalIndex];
+                                    foundAColumn = true;
+                                }else{
+                                    const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
+                                    uncorrectedPositions[smemindex] = i;
+                                }
+                            }else{
+                                const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
+                                uncorrectedPositions[smemindex] = i;
+                            }
+                        }
+                    }
+
+                    __syncthreads();
+
+                    if(threadIdx.x == 0){
+                        *globalNumUncorrectedPositionsPtr += numUncorrectedPositions;
+                    }
+
+                    for(int k = threadIdx.x; k < numUncorrectedPositions; k++){
+                        globalUncorrectedPostitionsPtr[k] = uncorrectedPositions[k];
+                    }
+                    globalUncorrectedPostitionsPtr += numUncorrectedPositions;
+
+                    if(loopIter < loopIters - 1){
+                        __syncthreads();
+                    }
+                }
+
+                //perform block wide or-reduction on foundAColumn
+                foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
+                __syncthreads();
+
+                if(threadIdx.x == 0){
+                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = foundAColumn;
+                    for(int k = 0; k < *globalNumUncorrectedPositionsPtr; k++){
+                        const int count = d_correctionResultPointers.uncorrected_positions_per_subject[subjectIndex * maximumSequenceLength + k];
+                        //printf("%d ", count);
+                    }
+                    //printf("\n");
+                }
+            }
+        }
+    }
+}
+
+#endif
 
     template<int BLOCKSIZE>
     __global__
@@ -3718,6 +4030,7 @@ namespace gpu{
                             size_t sequence_pitch,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
+                            int maximumSequenceLength,
                             float estimatedErrorrate,
                             float desiredAlignmentMaxErrorRate,
                             float avg_support_threshold,
@@ -3795,6 +4108,7 @@ namespace gpu{
                                     sequence_pitch, \
                                     msa_pitch, \
                                     msa_weights_pitch, \
+                                    maximumSequenceLength, \
                                     estimatedErrorrate, \
                                     desiredAlignmentMaxErrorRate, \
                                     avg_support_threshold, \

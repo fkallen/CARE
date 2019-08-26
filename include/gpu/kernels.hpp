@@ -335,6 +335,7 @@ void call_msa_correct_subject_implicit_kernel_async(
             size_t sequence_pitch,
             size_t msa_pitch,
             size_t msa_weights_pitch,
+            int maximumSequenceLength,
             float estimatedErrorrate,
             float desiredAlignmentMaxErrorRate,
             float avg_support_threshold,

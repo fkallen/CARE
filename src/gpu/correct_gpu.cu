@@ -71,6 +71,10 @@ namespace gpu{
     constexpr int nParallelBatches = 4;
     constexpr int sideBatchStepsPerWaitIter = 1;
 
+    //read status bitmask
+    constexpr std::uint8_t readCorrectedAsHQAnchor = 1;
+    constexpr std::uint8_t readCouldNotBeCorrectedAsAnchor = 2;
+
     constexpr int primary_stream_index = 0;
     constexpr int secondary_stream_index = 1;
     constexpr int nStreamsPerBatch = 2;
@@ -110,7 +114,8 @@ namespace gpu{
             corrected_subject(other.corrected_subject),
             corrected_candidates(other.corrected_candidates),
             corrected_candidates_read_ids(other.corrected_candidates_read_ids),
-            corrected_candidates_newColumns(other.corrected_candidates_newColumns){
+            corrected_candidates_newColumns(other.corrected_candidates_newColumns),
+            uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus){
         }
 
         CorrectionTask(CorrectionTask&& other){
@@ -140,6 +145,7 @@ namespace gpu{
             swap(l.corrected_subject, r.corrected_subject);
             swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
             swap(l.corrected_candidates_newColumns, r.corrected_candidates_newColumns);
+            swap(l.uncorrectedPositionsNoConsensus, r.uncorrectedPositionsNoConsensus);
         }
 
         bool active;
@@ -155,6 +161,7 @@ namespace gpu{
         std::vector<std::string> corrected_candidates;
         std::vector<read_number> corrected_candidates_read_ids;
         std::vector<int> corrected_candidates_newColumns;
+        std::vector<int> uncorrectedPositionsNoConsensus;
     };
 
     enum class BatchState : int{
@@ -395,7 +402,7 @@ namespace gpu{
         MinhashOptions minhashOptions;
         AlignmentOptions alignmentOptions;
         FileOptions fileOptions;
-		std::vector<char>* readIsCorrectedVector;
+		std::vector<std::uint8_t>* readIsCorrectedVector;
 		std::ofstream* featurestream;
 		std::function<void(const read_number, const std::string&)> write_read_to_stream;
         std::function<void(const TempCorrectedSequence&)> saveCorrectedSequence;
@@ -1060,10 +1067,11 @@ namespace gpu{
                 const read_number readId = batch.readIdBuffer[i];
                 task = CorrectionTask(readId);
 
-                bool ok = false;
-                if ((*transFuncData.readIsCorrectedVector)[readId] == 0) {
-                    ok = true;
-                }
+                // bool ok = false;
+                // if ((*transFuncData.readIsCorrectedVector)[readId] == 0) {
+                //     ok = true;
+                // }
+                const bool ok = true;
 
                 if(ok){
                     const char* sequenceptr = batch.sequenceDataBuffer.data() + i * seqpitch;
@@ -2511,6 +2519,7 @@ namespace gpu{
                     dataArrays.sequence_pitch,
                     dataArrays.msa_pitch,
                     dataArrays.msa_weights_pitch,
+                    transFuncData.sequenceFileProperties.maxSequenceLength,
                     transFuncData.correctionOptions.estimatedErrorrate,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
                     avg_support_threshold,
@@ -2581,6 +2590,18 @@ namespace gpu{
         cudaMemcpyAsync(dataArrays.h_is_high_quality_subject,
                         dataArrays.d_is_high_quality_subject,
                         dataArrays.d_is_high_quality_subject.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_num_uncorrected_positions_per_subject,
+                        dataArrays.d_num_uncorrected_positions_per_subject,
+                        dataArrays.d_num_uncorrected_positions_per_subject.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_uncorrected_positions_per_subject,
+                        dataArrays.d_uncorrected_positions_per_subject,
+                        dataArrays.d_uncorrected_positions_per_subject.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
@@ -2918,8 +2939,17 @@ namespace gpu{
             //    std::cerr << "\n\ncorrected: " << task.corrected << "\n";
             //}
             if(task.corrected) {
-                const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];//task.subject_string.length();//dataArrays.h_subject_sequences_lengths[subject_index];
+                const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
                 task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+
+                const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
+                if(numUncorrectedPositions > 0){
+                    task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                    std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * dataArrays.maximum_sequence_length,
+                                numUncorrectedPositions,
+                                task.uncorrectedPositionsNoConsensus.begin());
+
+                }
 
                 auto isValidSequence = [](const std::string& s){
                     return std::all_of(s.begin(), s.end(), [](char c){
@@ -3098,32 +3128,27 @@ namespace gpu{
     				//nvtx::push_range("write_subject", 4);
     				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
     				//transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
+                    //transFuncData->lock(task.readId);
+                    (*transFuncData->readIsCorrectedVector)[task.readId] |= readCorrectedAsHQAnchor;
+                    //transFuncData->unlock(task.readId);
+
                     TempCorrectedSequence tmp;
                     tmp.hq = task.highQualityAlignment;
                     tmp.type = TempCorrectedSequence::Type::Anchor;
                     tmp.readId = task.readId;
                     tmp.sequence = task.corrected_subject;
-                    tmp.uncorrectedPositionsNoConsensus = {};
+                    tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
 
                     transFuncData->saveCorrectedSequence(tmp);
-
-
 
     				//transFuncData.lock(task.readId);
     				//(*transFuncData.readIsCorrectedVector)[task.readId] = 1;
     				//transFuncData.unlock(task.readId);
     				//nvtx::pop_range();
     			}else{
-    				//nvtx::push_range("subject_not_corrected", 5);
-    				//mark read as not corrected
-    				if((*(transFuncData->readIsCorrectedVector))[task.readId] == 1) {
-    					// transFuncData.lock(task.readId);
-    					// if((*transFuncData.readIsCorrectedVector)[task.readId] == 1) {
-    					// 	(*transFuncData.readIsCorrectedVector)[task.readId] = 0;
-    					// }
-    					// transFuncData.unlock(task.readId);
-    				}
-                    //nvtx::pop_range();
+                    //transFuncData->lock(task.readId);
+                    (*transFuncData->readIsCorrectedVector)[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+                    //transFuncData->unlock(task.readId);
     			}
     			//nvtx::push_range("correctedcandidates", 6);
     			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
@@ -3136,15 +3161,19 @@ namespace gpu{
     				//const std::string original_candidate = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
 
                     //if(corrected_candidate == original_candidate){
+
                         // bool savingIsOk = false;
-        				// if((*transFuncData.readIsCorrectedVector)[candidateId] == 0) {
-        				// 	transFuncData.lock(candidateId);
-        				// 	if((*transFuncData.readIsCorrectedVector)[candidateId]== 0) {
-        				// 		(*transFuncData.readIsCorrectedVector)[candidateId] = 1;         // we will process this read
+                        // const std::uint8_t mask = (*transFuncData->readIsCorrectedVector)[candidateId];
+        				// if(!(mask & readCorrectedAsHQAnchor)) {
+        				// 	//transFuncData->lock(candidateId);
+                        //
+                        //     //mask = (*transFuncData->readIsCorrectedVector)[candidateId];
+        				// 	//if(!(mask & readCorrectedAsHQAnchor)) {
         				// 		savingIsOk = true;
         				// 		//nCorrectedCandidates++;
-        				// 	}
-        				// 	transFuncData.unlock(candidateId);
+        				// 	//}
+                        //
+        				// 	//transFuncData->unlock(candidateId);
         				// }
                         const bool savingIsOk = true;
         				if (savingIsOk) {
@@ -3356,7 +3385,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
-      std::vector<char> readIsCorrectedVector;
+      std::vector<std::uint8_t> readIsCorrectedVector;
       std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
       std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
