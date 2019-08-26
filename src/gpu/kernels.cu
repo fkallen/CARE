@@ -1920,6 +1920,7 @@ void msa_correct_subject_implicit_kernel(
 
     __shared__ int numUncorrectedPositions;
     __shared__ int uncorrectedPositions[BLOCKSIZE];
+    __shared__ float avgCountPerWeight[4];
 
     auto get = [] (const char* data, int length, int index){
         //return Sequence_t::get_as_nucleotide(data, length, index);
@@ -2029,6 +2030,58 @@ void msa_correct_subject_implicit_kernel(
                 }
             }else{
 
+                const int* const myCountsA = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                const int* const myCountsC = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                const int* const myCountsG = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                const int* const myCountsT = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+
+                const float* const myWeightsA = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                const float* const myWeightsC = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                const float* const myWeightsG = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                const float* const myWeightsT = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+
+
+                //calculate average count per weight
+                float myaverageCountPerWeightA = 0.0f;
+                float myaverageCountPerWeightG = 0.0f;
+                float myaverageCountPerWeightC = 0.0f;
+                float myaverageCountPerWeightT = 0.0f;
+
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    assert(i < lastColumn_excl);
+
+                    const float ca = myCountsA[i];
+                    const float cc = myCountsC[i];
+                    const float cg = myCountsG[i];
+                    const float ct = myCountsT[i];
+                    const float wa = myWeightsA[i];
+                    const float wc = myWeightsC[i];
+                    const float wg = myWeightsG[i];
+                    const float wt = myWeightsT[i];
+
+                    myaverageCountPerWeightA += ca / wa;
+                    myaverageCountPerWeightC += cc / wc;
+                    myaverageCountPerWeightG += cg / wg;
+                    myaverageCountPerWeightT += ct / wt;
+                }
+
+                myaverageCountPerWeightA = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightA);
+                __syncthreads();
+                myaverageCountPerWeightC = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightC);
+                __syncthreads();
+                myaverageCountPerWeightG = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightG);
+                __syncthreads();
+                myaverageCountPerWeightT = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightT);
+
+                if(threadIdx.x == 0){
+                    avgCountPerWeight[0] = myaverageCountPerWeightA / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    avgCountPerWeight[1] = myaverageCountPerWeightC / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    avgCountPerWeight[2] = myaverageCountPerWeightG / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    avgCountPerWeight[3] = myaverageCountPerWeightT / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                }
+                __syncthreads();
+
+
                 //decode orignal sequence and copy to corrected sequence
                 const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const char* const subject = getSubjectPtr(subjectIndex);
@@ -2071,6 +2124,8 @@ void msa_correct_subject_implicit_kernel(
                             // if(origCoverage > 2){
                             //     canCorrect = false;
                             // }
+                            bool anyCandidateWithSameBaseAndGoodWeight = false;
+
                             if(canCorrect && origCoverage > 1){
                                 const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
                                 volatile char origBase = my_corrected_subject[i];
@@ -2110,6 +2165,7 @@ void msa_correct_subject_implicit_kernel(
 
                                              if(overlapweight >= 0.90f){
                                                  canCorrect = false;
+                                                 anyCandidateWithSameBaseAndGoodWeight = true;
                                                  //break;
                                              }
                                         }
@@ -2124,7 +2180,8 @@ void msa_correct_subject_implicit_kernel(
 
                             //assert(canCorrect || origCoverage > 2);
 
-                            if(canCorrect){
+                            if(!anyCandidateWithSameBaseAndGoodWeight){
+                            //if(true){
 
                                 float avgsupportkregion = 0;
                                 int c = 0;
@@ -2149,8 +2206,106 @@ void msa_correct_subject_implicit_kernel(
                                     uncorrectedPositions[smemindex] = i;
                                 }
                             }else{
-                                const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
-                                uncorrectedPositions[smemindex] = i;
+                                //determine base to correct to by comparing weights and counts
+
+                                auto swap = [](auto& a, auto& b){auto tmp = a; a = b; b = tmp;};
+
+                                float maxweights[2]{0,0}; //maximum at [0], second largest at [1]
+                                float countsofweights[2]{0,0}; //maximum at [0], second largest at [1]
+                                float avgcounts[2]{0,0};
+                                char cons[2]{'F','F'};
+                                if(myWeightsA[globalIndex] > myWeightsC[globalIndex]){
+                                    maxweights[0] = myWeightsA[globalIndex];
+                                    countsofweights[0] = myCountsA[globalIndex];
+                                    cons[0] = 'A';
+                                    avgcounts[0] = avgCountPerWeight[0];
+                                    maxweights[1] = myWeightsC[globalIndex];
+                                    countsofweights[1] = myCountsC[globalIndex];
+                                    cons[1] = 'C';
+                                    avgcounts[1] = avgCountPerWeight[1];
+                                }else{
+                                    maxweights[1] = myWeightsA[globalIndex];
+                                    countsofweights[1] = myCountsA[globalIndex];
+                                    cons[1] = 'A';
+                                    avgcounts[1] = avgCountPerWeight[0];
+                                    maxweights[0] = myWeightsC[globalIndex];
+                                    countsofweights[0] = myCountsC[globalIndex];
+                                    cons[0] = 'C';
+                                    avgcounts[1] = avgCountPerWeight[1];
+                                }
+
+                                if(myWeightsG[globalIndex] > maxweights[1]){
+                                    maxweights[1] = myWeightsG[globalIndex];
+                                    countsofweights[1] = myCountsG[globalIndex];
+                                    cons[1] = 'G';
+                                    avgcounts[1] = avgCountPerWeight[2];
+                                }
+
+                                if(maxweights[1] > maxweights[0]){
+                                    swap(maxweights[1], maxweights[0]);
+                                    swap(countsofweights[1], countsofweights[0]);
+                                    swap(cons[1], cons[0]);
+                                    swap(avgcounts[1], avgcounts[0]);
+                                }
+
+                                if(myWeightsT[globalIndex] > maxweights[1]){
+                                    maxweights[1] = myWeightsT[globalIndex];
+                                    countsofweights[1] = myCountsT[globalIndex];
+                                    cons[1] = 'T';
+                                    avgcounts[1] = avgCountPerWeight[3];
+                                }
+
+                                if(maxweights[1] > maxweights[0]){
+                                    swap(maxweights[1], maxweights[0]);
+                                    swap(countsofweights[1], countsofweights[0]);
+                                    swap(cons[1], cons[0]);
+                                    swap(avgcounts[1], avgcounts[0]);
+                                }
+
+                                auto getNewBase = [&](){
+                                    constexpr float threshold = 1.5f;
+                                    const float r0 = maxweights[0] / countsofweights[0];
+                                    const float r1 = maxweights[1] / countsofweights[1];
+                                    //
+                                    // if((r0 > r1 && r0 / r1 > threshold) || (r1 > r0 && r1 / r0 > threshold)){
+                                    //     return cons[1];
+                                    // }else{
+                                    //     return cons[0];
+                                    // }
+
+                                    // if(r0 > r1){
+                                    //     return cons[0];
+                                    // }else{
+                                    //     return cons[1];
+                                    // }
+
+                                    if(r0 / avgcounts[0] < threshold || avgcounts[0] / r0 < threshold){
+                                        if(r1 / avgcounts[1] < threshold || avgcounts[1] / r1 < threshold){
+                                            return cons[0];
+                                        }else{
+                                            if(r0 > r1){
+                                                return cons[0];
+                                            }else{
+                                                return cons[1];
+                                            }
+                                        }
+                                    }else{
+                                        if(r1 / avgcounts[1] < threshold || avgcounts[1] / r1 < threshold){
+                                            if(r0 > r1){
+                                                return cons[0];
+                                            }else{
+                                                return cons[1];
+                                            }
+                                        }else{
+                                            return cons[0];
+                                        }
+                                    }
+                                };
+
+                                my_corrected_subject[i] = getNewBase();
+
+                                // const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
+                                // uncorrectedPositions[smemindex] = i;
                             }
                         }
                     }
@@ -2177,10 +2332,10 @@ void msa_correct_subject_implicit_kernel(
 
                 if(threadIdx.x == 0){
                     d_correctionResultPointers.subjectIsCorrected[subjectIndex] = foundAColumn;
-                    for(int k = 0; k < *globalNumUncorrectedPositionsPtr; k++){
-                        const int count = d_correctionResultPointers.uncorrected_positions_per_subject[subjectIndex * maximumSequenceLength + k];
-                        //printf("%d ", count);
-                    }
+                    // for(int k = 0; k < *globalNumUncorrectedPositionsPtr; k++){
+                    //     const int count = d_correctionResultPointers.uncorrected_positions_per_subject[subjectIndex * maximumSequenceLength + k];
+                    //     //printf("%d ", count);
+                    // }
                     //printf("\n");
                 }
             }
