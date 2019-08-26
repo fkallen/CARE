@@ -87,15 +87,16 @@ struct MSAProperties{
 struct CorrectionResult{
     bool isCorrected;
     std::string correctedSequence;
-    std::vector<int> uncorrectedPositionsNoConsensus;    
+    std::vector<int> uncorrectedPositionsNoConsensus;
 };
 
 struct CorrectedCandidate{
     int index;
+    int newColumns;
     std::string sequence;
     CorrectedCandidate() noexcept{}
-    CorrectedCandidate(int index, const std::string& sequence) noexcept
-        : index(index), sequence(sequence){}
+    CorrectedCandidate(int index, int newCols, const std::string& sequence) noexcept
+        : index(index), newColumns(newCols), sequence(sequence){}
 };
 
 struct RegionSelectionResult{
