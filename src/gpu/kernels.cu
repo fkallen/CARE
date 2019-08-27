@@ -1932,13 +1932,20 @@ namespace gpu{
                                 // if(origCoverage > 2){
                                 //     canCorrect = false;
                                 // }
-                                bool anyCandidateWithSameBaseAndGoodWeight = false;
+
+                                int numCandidatesWithOrigBaseAndGoodWeight = 0;
+                                int numCandidatesWithoutOrigBaseAndGoodWeight = 0;
+                                int baseCountsOfHighQualityOverlaps[4]{0};
+                                float overlapWeightPerBaseOfHighQualityOverlaps[4]{0};
 
                                 if(canCorrect && origCoverage > 1){
                                     const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-                                    volatile char origBase = my_corrected_subject[i];
+                                    char origBase = my_corrected_subject[i];
                                     //iterate over candidates
                                     int numFoundCandidates = 0;
+
+
+
                                     for(int candidatenr = 0; candidatenr < myNumIndices/* && numFoundCandidates < origCoverage*/; candidatenr++){
                                         const int arrayindex = myIndices[candidatenr];
 
@@ -1962,59 +1969,147 @@ namespace gpu{
                                             assert(overlapweight <= 1.0f);
                                             assert(overlapweight >= 0.0f);
 
+                                            constexpr float goodOverlapThreshold = 0.90f;
+
                                             if(origBase == candidateBase){
                                                 numFoundCandidates++;
-                                                // if(nOps > 0 || overlapsize < 50){
-                                                //     canCorrect = false;
-                                                //     //break;
-                                                // }
+                                                 if(overlapweight >= goodOverlapThreshold){
+                                                     numCandidatesWithOrigBaseAndGoodWeight++;
 
-
-
-                                                 if(overlapweight >= 0.90f){
-                                                     canCorrect = false;
-                                                     anyCandidateWithSameBaseAndGoodWeight = true;
-                                                     //break;
+                                                     baseCountsOfHighQualityOverlaps[candidateBaseEnc]++;
+                                                     overlapWeightPerBaseOfHighQualityOverlaps[candidateBaseEnc] += overlapweight;
+                                                 }else{
+                                                     ; //nothing
                                                  }
+                                            }else{
+                                                if(overlapweight >= goodOverlapThreshold){
+                                                    numCandidatesWithoutOrigBaseAndGoodWeight++;
+
+                                                    baseCountsOfHighQualityOverlaps[candidateBaseEnc]++;
+                                                    overlapWeightPerBaseOfHighQualityOverlaps[candidateBaseEnc] += overlapweight;
+                                                }else{
+                                                    ; //nothing
+                                                }
                                             }
                                         }
                                     }
-                                    //if(numFoundCandidates+1 != origCoverage){
-                                        assert(numFoundCandidates+1 == origCoverage);
-                                    //}
-
-                                    //assert(canCorrect);
+                                    assert(numFoundCandidates+1 == origCoverage);
                                 }
 
                                 //assert(canCorrect || origCoverage > 2);
 
-                                if(!anyCandidateWithSameBaseAndGoodWeight){
+                                if(numCandidatesWithOrigBaseAndGoodWeight == 0){
                                 //if(false){
 
-                                    // float avgsupportkregion = 0;
-                                    // int c = 0;
-                                    // bool kregioncoverageisgood = true;
-                                    //
-                                    //
-                                    // for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
-                                    //     if(j != i && j >= 0 && j < subjectLength){
-                                    //         avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                    //         kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                                    //         //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
-                                    //         c++;
-                                    //     }
-                                    // }
-                                    // avgsupportkregion /= c;
-                                    //
-                                    // if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
-                                    //     my_corrected_subject[i] = my_consensus[globalIndex];
-                                    //     foundAColumn = true;
-                                    // }else{
-                                    //     const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
-                                    //     uncorrectedPositions[smemindex] = i;
-                                    // }
-                                    my_corrected_subject[i] = my_consensus[globalIndex];
-                                    foundAColumn = true;
+                                    float avgsupportkregion = 0;
+                                    int c = 0;
+                                    bool kregioncoverageisgood = true;
+
+
+                                    for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                                        if(j != i && j >= 0 && j < subjectLength){
+                                            avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                                            kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                            //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
+                                            c++;
+                                        }
+                                    }
+                                    avgsupportkregion /= c;
+
+                                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
+
+                                        auto swap = [](auto& a, auto& b){auto tmp = a; a = b; b = tmp;};
+
+                                        float maxweights[2]{0,0}; //maximum at [0], second largest at [1]
+                                        int countsofweights[2]{0,0}; //maximum at [0], second largest at [1]
+                                        float overlapweights[2]{0,0};
+                                        float avgcounts[2]{0,0};
+                                        int hqbasecounts[2]{0,0};
+                                        char cons[2]{'F','F'};
+                                        if(myWeightsA[globalIndex] > myWeightsC[globalIndex]){
+                                            maxweights[0] = myWeightsA[globalIndex];
+                                            countsofweights[0] = myCountsA[globalIndex];
+                                            cons[0] = 'A';
+                                            avgcounts[0] = avgCountPerWeight[0];
+                                            overlapweights[0] = overlapWeightPerBaseOfHighQualityOverlaps[0];
+                                            hqbasecounts[0] = baseCountsOfHighQualityOverlaps[0];
+                                            maxweights[1] = myWeightsC[globalIndex];
+                                            countsofweights[1] = myCountsC[globalIndex];
+                                            cons[1] = 'C';
+                                            avgcounts[1] = avgCountPerWeight[1];
+                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[1];
+                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[1];
+                                        }else{
+                                            maxweights[1] = myWeightsA[globalIndex];
+                                            countsofweights[1] = myCountsA[globalIndex];
+                                            cons[1] = 'A';
+                                            avgcounts[1] = avgCountPerWeight[0];
+                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[0];
+                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[0];
+                                            maxweights[0] = myWeightsC[globalIndex];
+                                            countsofweights[0] = myCountsC[globalIndex];
+                                            cons[0] = 'C';
+                                            avgcounts[0] = avgCountPerWeight[1];
+                                            overlapweights[0] = overlapWeightPerBaseOfHighQualityOverlaps[1];
+                                            hqbasecounts[0] = baseCountsOfHighQualityOverlaps[1];
+                                        }
+
+                                        if(myWeightsG[globalIndex] > maxweights[1]){
+                                            maxweights[1] = myWeightsG[globalIndex];
+                                            countsofweights[1] = myCountsG[globalIndex];
+                                            cons[1] = 'G';
+                                            avgcounts[1] = avgCountPerWeight[2];
+                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[2];
+                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[2];
+                                        }
+
+                                        auto sortmaxima = [&](){
+                                            if(maxweights[1] > maxweights[0]){
+                                                swap(maxweights[1], maxweights[0]);
+                                                swap(countsofweights[1], countsofweights[0]);
+                                                swap(cons[1], cons[0]);
+                                                swap(avgcounts[1], avgcounts[0]);
+                                                swap(overlapweights[1], overlapweights[0]);
+                                                swap(hqbasecounts[1], hqbasecounts[0]);
+                                            }
+                                        };
+
+                                        sortmaxima();
+
+                                        if(myWeightsT[globalIndex] > maxweights[1]){
+                                            maxweights[1] = myWeightsT[globalIndex];
+                                            countsofweights[1] = myCountsT[globalIndex];
+                                            cons[1] = 'T';
+                                            avgcounts[1] = avgCountPerWeight[3];
+                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[3];
+                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[3];
+                                        }
+
+                                        sortmaxima();
+
+                                        const float averageOverlapweight0 = overlapweights[0] / hqbasecounts[0];
+                                        const float averageOverlapweight1 = overlapweights[1] / hqbasecounts[1];
+
+                                        constexpr float threshold = 2.0f;
+
+                                        if(averageOverlapweight0 / averageOverlapweight1 <= threshold || averageOverlapweight1 / averageOverlapweight0 <= threshold){
+                                            my_corrected_subject[i] = my_consensus[globalIndex];
+                                        }else{
+                                            if(averageOverlapweight0 / averageOverlapweight1 > threshold){
+                                                my_corrected_subject[i] = cons[0];
+                                            }else{
+                                                my_corrected_subject[i] = cons[1];
+                                            }
+                                        }
+
+                                        //my_corrected_subject[i] = my_consensus[globalIndex];
+                                        foundAColumn = true;
+                                    }else{
+                                        const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
+                                        uncorrectedPositions[smemindex] = i;
+                                    }
+                                    // my_corrected_subject[i] = my_consensus[globalIndex];
+                                    // foundAColumn = true;
                                 }else{
                                     //determine base to correct to by comparing weights and counts
 
@@ -2113,6 +2208,38 @@ namespace gpu{
                                     // };
 
                                     // my_corrected_subject[i] = getNewBase();
+                                    // foundAColumn = true;
+
+                                    // int numCandidatesWithOrigBaseAndGoodWeight = 0;
+                                    // int numCandidatesWithoutOrigBaseAndGoodWeight = 0;
+                                    // int baseCountsOfHighQualityOverlaps[4]{0};
+                                    // float overlapWeightPerBaseOfHighQualityOverlaps[4]{0};
+                                    //
+                                    // float agg = -1.0f;
+                                    // char cons = 'F';
+                                    //
+                                    // auto makeagg = [](int count, float overlapweight){
+                                    //     if(count > 0){
+                                    //         return overlapweight;
+                                    //     }else{
+                                    //         return 0.0f;
+                                    //     }
+                                    // };
+                                    //
+                                    // auto update = [&](int i, char c){
+                                    //     const float newagg = makeagg(baseCountsOfHighQualityOverlaps[i], overlapWeightPerBaseOfHighQualityOverlaps[i]);
+                                    //     if(newagg > agg){
+                                    //         agg = newagg;
+                                    //         cons = c;
+                                    //     }
+                                    // };
+                                    //
+                                    // update(0, 'A');
+                                    // update(1, 'C');
+                                    // update(2, 'G');
+                                    // update(3, 'T');
+                                    //
+                                    // my_corrected_subject[i] = cons;
                                     // foundAColumn = true;
 
                                     const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
