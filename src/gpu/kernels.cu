@@ -1492,7 +1492,7 @@ namespace gpu{
         }
     }
 
-
+    template<int BLOCKSIZE>
     __global__
     void msa_find_consensus_implicit_kernel(
                             MSAPointers d_msapointers,
@@ -1501,13 +1501,22 @@ namespace gpu{
                             int n_subjects,
                             size_t encoded_sequence_pitch,
                             size_t msa_pitch,
-                            size_t msa_weights_pitch,
-                            int blocks_per_msa){
+                            size_t msa_weights_pitch){
 
         constexpr char A_enc = 0x00;
         constexpr char C_enc = 0x01;
         constexpr char G_enc = 0x02;
         constexpr char T_enc = 0x03;
+
+        constexpr int blocks_per_msa = 1;
+
+        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceFloat::TempStorage floatreduce;
+        } temp_storage;
+
+        __shared__ float avgCountPerWeight[4];
 
         auto get = [] (const char* data, int length, int index){
             return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
@@ -1543,69 +1552,132 @@ namespace gpu{
                 float* const my_orig_weights = d_msapointers.origWeights + subjectIndex * msa_weights_pitch_floats;
                 int* const my_orig_coverage = d_msapointers.origCoverages + subjectIndex * msa_weights_pitch_floats;
 
+                const int* const myCountsA = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                const int* const myCountsC = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                const int* const myCountsG = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                const int* const myCountsT = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+
                 const float* const my_weightsA = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
                 const float* const my_weightsC = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
                 const float* const my_weightsG = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
                 const float* const my_weightsT = d_msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
-                for(int column = localBlockId * blockDim.x + threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += blocks_per_msa * blockDim.x){
-                    const float wA = my_weightsA[column];
-                    const float wC = my_weightsC[column];
-                    const float wG = my_weightsG[column];
-                    const float wT = my_weightsT[column];
-                    char cons = 'A';
-                    float consWeight = wA;
-                    if(wC > consWeight){
+                //calculate average count per weight
+                float myaverageCountPerWeightA = 0.0f;
+                float myaverageCountPerWeightG = 0.0f;
+                float myaverageCountPerWeightC = 0.0f;
+                float myaverageCountPerWeightT = 0.0f;
+
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    assert(i < lastColumn_excl);
+
+                    const int ca = myCountsA[i];
+                    const int cc = myCountsC[i];
+                    const int cg = myCountsG[i];
+                    const int ct = myCountsT[i];
+                    const float wa = my_weightsA[i];
+                    const float wc = my_weightsC[i];
+                    const float wg = my_weightsG[i];
+                    const float wt = my_weightsT[i];
+
+                    myaverageCountPerWeightA += ca / wa;
+                    myaverageCountPerWeightC += cc / wc;
+                    myaverageCountPerWeightG += cg / wg;
+                    myaverageCountPerWeightT += ct / wt;
+                }
+
+                myaverageCountPerWeightA = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightA);
+                __syncthreads();
+                myaverageCountPerWeightC = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightC);
+                __syncthreads();
+                myaverageCountPerWeightG = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightG);
+                __syncthreads();
+                myaverageCountPerWeightT = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightT);
+
+                if(threadIdx.x == 0){
+                    avgCountPerWeight[0] = myaverageCountPerWeightA / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    avgCountPerWeight[1] = myaverageCountPerWeightC / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    avgCountPerWeight[2] = myaverageCountPerWeightG / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    avgCountPerWeight[3] = myaverageCountPerWeightT / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                }
+                __syncthreads();
+
+                for(int column = localBlockId * blockDim.x + threadIdx.x; firstColumn_incl <= column && column < lastColumn_excl; column += blocks_per_msa * BLOCKSIZE){
+                    const int ca = myCountsA[column];
+                    const int cc = myCountsC[column];
+                    const int cg = myCountsG[column];
+                    const int ct = myCountsT[column];
+                    const float wa = my_weightsA[column];
+                    const float wc = my_weightsC[column];
+                    const float wg = my_weightsG[column];
+                    const float wt = my_weightsT[column];
+
+                    char cons = 'F';
+                    float consWeight = 0.0f;
+                    //float consWeightPerCount = 0.0f;
+                    //float weightPerCountSum = 0.0f;
+                    //if(ca != 0){
+                    if(wa > consWeight){
+                        cons = 'A';
+                        consWeight = wa;
+                        //consWeightPerCount = wa / ca;
+                        //weightPerCountSum += wa / ca;
+                    }
+                    //if(cc != 0 && wc / cc > consWeightPerCount){
+                    if(wc > consWeight){
                         cons = 'C';
-                        consWeight = wC;
+                        consWeight = wc;
+                        //consWeightPerCount = wc / cc;
+                        //weightPerCountSum += wc / cc;
                     }
-                    if(wG > consWeight){
+                    //if(cg != 0 && wg / cg > consWeightPerCount){
+                    if(wg > consWeight){
                         cons = 'G';
-                        consWeight = wG;
+                        consWeight = wg;
+                        //consWeightPerCount = wg / cg;
+                        //weightPerCountSum += wg / cg;
                     }
-                    if(wT > consWeight){
+                    //if(ct != 0 && wt / ct > consWeightPerCount){
+                    if(wt > consWeight){
                         cons = 'T';
-                        consWeight = wT;
+                        consWeight = wt;
+                        //consWeightPerCount = wt / ct;
+                        //weightPerCountSum += wt / ct;
                     }
                     my_consensus[column] = cons;
-                    const float columnWeight = wA + wC + wG + wT;
+                    const float columnWeight = wa + wc + wg + wt;
                     if(columnWeight == 0){
                         printf("s %d c %d\n", subjectIndex, column);
                         assert(columnWeight != 0);
                     }
-
+                    //assert(weightPerCountSum != 0);
                     my_support[column] = consWeight / columnWeight;
+                    //my_support[column] = consWeightPerCount / weightPerCountSum;
 
 
                     if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
-                        const int* const my_countsA = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-                        const int* const my_countsC = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-                        const int* const my_countsG = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-                        const int* const my_countsT = d_msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
 
                         const int localIndex = column - subjectColumnsBegin_incl;
                         const char subjectbase = get(subject, subjectLength, localIndex);
 
-
-
                         if(subjectbase == A_enc){
-                            my_orig_weights[column] = wA;
-                            my_orig_coverage[column] = my_countsA[column];
+                            my_orig_weights[column] = wa;
+                            my_orig_coverage[column] = myCountsA[column];
                             //printf("%c", 'A');
                             //printf("%d %d %d %c\n", column, localIndex, my_orig_coverage[column], 'A');
                         }else if(subjectbase == C_enc){
-                            my_orig_weights[column] = wC;
-                            my_orig_coverage[column] = my_countsC[column];
+                            my_orig_weights[column] = wc;
+                            my_orig_coverage[column] = myCountsC[column];
                             //printf("%c", 'C');
                             //printf("%d %d %d %c\n", column, localIndex, my_orig_coverage[column], 'C');
                         }else if(subjectbase == G_enc){
-                            my_orig_weights[column] = wG;
-                            my_orig_coverage[column] = my_countsG[column];
+                            my_orig_weights[column] = wg;
+                            my_orig_coverage[column] = myCountsG[column];
                             //printf("%c", 'G');
                             //printf("%d %d %d %c\n", column, localIndex, my_orig_coverage[column], 'G');
                         }else if(subjectbase == T_enc){
-                            my_orig_weights[column] = wT;
-                            my_orig_coverage[column] = my_countsT[column];
+                            my_orig_weights[column] = wt;
+                            my_orig_coverage[column] = myCountsT[column];
                             //printf("%c", 'T');
                             //printf("%d %d %d %c\n", column, localIndex, my_orig_coverage[column], 'T');
                         }
@@ -1750,6 +1822,7 @@ namespace gpu{
                 if(threadIdx.x == 0){
                     broadcastbuffer = isHQ;
                     d_correctionResultPointers.isHighQualitySubject[subjectIndex] = isHQ;
+                    //printf("%f %f %d %d\n", avg_support, min_support, min_coverage, isHQ);
                 }
                 __syncthreads();
 
@@ -1918,28 +1991,30 @@ namespace gpu{
                                 if(!anyCandidateWithSameBaseAndGoodWeight){
                                 //if(false){
 
-                                    float avgsupportkregion = 0;
-                                    int c = 0;
-                                    bool kregioncoverageisgood = true;
-
-
-                                    for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
-                                        if(j != i && j >= 0 && j < subjectLength){
-                                            avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                            kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                                            //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
-                                            c++;
-                                        }
-                                    }
-                                    avgsupportkregion /= c;
-
-                                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
-                                        my_corrected_subject[i] = my_consensus[globalIndex];
-                                        foundAColumn = true;
-                                    }else{
-                                        const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
-                                        uncorrectedPositions[smemindex] = i;
-                                    }
+                                    // float avgsupportkregion = 0;
+                                    // int c = 0;
+                                    // bool kregioncoverageisgood = true;
+                                    //
+                                    //
+                                    // for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                                    //     if(j != i && j >= 0 && j < subjectLength){
+                                    //         avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                                    //         kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                    //         //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
+                                    //         c++;
+                                    //     }
+                                    // }
+                                    // avgsupportkregion /= c;
+                                    //
+                                    // if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
+                                    //     my_corrected_subject[i] = my_consensus[globalIndex];
+                                    //     foundAColumn = true;
+                                    // }else{
+                                    //     const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
+                                    //     uncorrectedPositions[smemindex] = i;
+                                    // }
+                                    my_corrected_subject[i] = my_consensus[globalIndex];
+                                    foundAColumn = true;
                                 }else{
                                     //determine base to correct to by comparing weights and counts
 
@@ -3862,7 +3937,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                                                                msa_find_consensus_implicit_kernel, \
+                                                                msa_find_consensus_implicit_kernel<blocksize>, \
                                                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -3888,21 +3963,21 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
+        #define launch(blocksize) \
+            dim3 block((blocksize), 1, 1); \
+            dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1); \
+            msa_find_consensus_implicit_kernel<(blocksize)><<<grid, block, 0, stream>>>( \
+                                                                d_msapointers, \
+                                                                d_sequencePointers, \
+                                                                d_indices_per_subject, \
+                                                                n_subjects, \
+                                                                encoded_sequence_pitch, \
+                                                                msa_pitch, \
+                                                                msa_weights_pitch); CUERR;
 
-        const int blocks_per_msa = 2; //SDIV(msa_max_column_count, blocksize);
+        launch(128);
 
-        dim3 block(blocksize, 1, 1);
-        dim3 grid(std::min(max_blocks_per_device, n_subjects * blocks_per_msa), 1, 1);
-
-        msa_find_consensus_implicit_kernel<<<grid, block, 0, stream>>>(
-                                                            d_msapointers,
-                                                            d_sequencePointers,
-                                                            d_indices_per_subject,
-                                                            n_subjects,
-                                                            encoded_sequence_pitch,
-                                                            msa_pitch,
-                                                            msa_weights_pitch,
-                                                            blocks_per_msa); CUERR;
+        #undef launch
 
     }
 
