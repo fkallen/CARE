@@ -475,7 +475,7 @@ namespace gpu{
 
         auto call = [&](auto f){
             f(*batch, false);
-        }
+        };
 
         if(batch->iteration < 30){
 
@@ -487,45 +487,75 @@ namespace gpu{
                 break;
     		case BatchState::CopyReads:
                 cpugpuExecutorPtr->emplace([=](){
-                    call(state_unprepared_func);
+                    call(state_copyreads_func);
                 });
                 break;
-    		case BatchState::StartAlignment: return "StartAlignment";
-            case BatchState::RearrangeIndices: return "RearrangeIndices";
-    		case BatchState::CopyQualities: return "CopyQualities";
-    		case BatchState::BuildMSA: return "BuildMSA";
-            case BatchState::ImproveMSA: return "ImproveMSA";
-    		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
-    		case BatchState::StartForestCorrection: return "StartForestCorrection";
-            case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
-    		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
-    		case BatchState::WriteResults: return "WriteResults";
-    		case BatchState::WriteFeatures: return "WriteFeatures";
-    		case BatchState::Finished: return "Finished";
-    		case BatchState::Aborted: return "Aborted";
-    		default: assert(false); return "None";
-
-            switch(batch->state){
-                case Batch::State::A:{
-                    gpuProcessor.emplace([=](){
-                        init(*batch);
-                    });
-                    break;
-                }
-                case Batch::State::C:{
-                    cpuProcessor.emplace([=](){
-                        cpuComputation(*batch);
-                    });
-                    break;
-                }
-                case Batch::State::E:{
-                    cpuProcessor.emplace([=](){
-                        output(*batch);
-                    });
-                    break;
-                }
-            }
-
+    		case BatchState::StartAlignment:
+                gpuExecutorPtr->emplace([=](){
+                    call(state_startalignment_func);
+                });
+                break;
+            case BatchState::RearrangeIndices:
+                gpuExecutorPtr->emplace([=](){
+                    call(state_rearrangeindices_func);
+                });
+                break;
+    		case BatchState::CopyQualities:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_copyqualities_func);
+                });
+                break;
+    		case BatchState::BuildMSA:
+                gpuExecutorPtr->emplace([=](){
+                    call(state_buildmsa_func);
+                });
+                break;
+            case BatchState::ImproveMSA:
+                gpuExecutorPtr->emplace([=](){
+                    call(state_improvemsa_func);
+                });
+                break;
+    		case BatchState::StartClassicCorrection:
+                gpuExecutorPtr->emplace([=](){
+                    call(state_startclassiccorrection_func);
+                });
+                break;
+    		case BatchState::StartForestCorrection:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_startforestcorrection_func);
+                });
+                break;
+            case BatchState::StartConvnetCorrection:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_startconvnetcorrection_func);
+                });
+                break;
+    		case BatchState::UnpackClassicResults:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_unpackclassicresults_func);
+                });
+                break;
+    		case BatchState::WriteResults:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_writeresults_func);
+                });
+                break;
+    		case BatchState::WriteFeatures:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_writefeatures_func);
+                });
+                break;
+    		case BatchState::Finished:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_finished_func);
+                });
+                break;
+    		case BatchState::Aborted:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_aborted_func);
+                });
+                break;
+    		default: assert(false);;
         }
     }
 
@@ -3178,54 +3208,24 @@ namespace gpu{
 		return BatchState::Finished;
 	}
 
-	BatchState state_finished_func(Batch& batch,
-									bool isPausable){
+	void state_finished_func(Batch& batch){
 
         const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::Finished);
 
-		assert(false);         //Finished is end node
-
-		return BatchState::Finished;
-	}
-
-	BatchState state_aborted_func(Batch& batch,
-									bool isPausable){
-
-        const auto& transFuncData = *batch.transFuncData;
-
-		assert(batch.state == BatchState::Aborted);
-
-		assert(false);         //Aborted is end node
-
-		return BatchState::Aborted;
+        if(!(transFuncData.readIdGenerator->empty() && batch.readIdBuffer.empty())) {
+            //there are reads left to correct, so this batch can be reused again
+            batch.reset();
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, batch);
+        }else{
+            transFuncData.isFinishedCV.notify_one();
+        }
 	}
 
 
 
-AdvanceResult advance_one_step(Batch& batch,
-			bool isPausable,
-            const std::unordered_map<BatchState, FuncTableEntry>& transitionFunctionTable){
 
-	AdvanceResult advanceResult;
-
-	advanceResult.oldState = batch.state;
-	advanceResult.noProgressBlocking = false;
-	advanceResult.noProgressLaunching = false;
-
-	auto iter = transitionFunctionTable.find(batch.state);
-	if(iter != transitionFunctionTable.end()) {
-		batch.state = iter->second(batch, isPausable);
-	}else{
-		std::cout << nameOf(batch.state) << std::endl;
-		assert(false); // Every State should be handled above
-	}
-
-	advanceResult.newState = batch.state;
-
-	return advanceResult;
-}
 
 
 void correct_gpu(const MinhashOptions& minhashOptions,
