@@ -915,7 +915,8 @@ struct SequenceWriterThread{
 
 void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                       FileFormat originalFormat,
-                      const std::vector<std::string>& filesToMerge, const std::string& outputfile){
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile,
+                        bool isSorted){
 
 
     bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
@@ -933,18 +934,19 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     }
     commandbuilder << " > " << tempfile;
 
-#if 1
-    std::string command = commandbuilder.str();
-    TIMERSTARTCPU(sort_during_merge);
-    int r1 = std::system(command.c_str());
+    if(!isSorted || filesToMerge.size() > 1){
+        std::string command = commandbuilder.str();
+        TIMERSTARTCPU(sort_during_merge);
+        int r1 = std::system(command.c_str());
 
-    TIMERSTOPCPU(sort_during_merge);
-    if(r1 != 0){
-        throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+        TIMERSTOPCPU(sort_during_merge);
+        if(r1 != 0){
+            throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+        }
+    }else{
+        tempfile = filesToMerge[0];
     }
-#else
-    tempfile = filesToMerge[0];
-#endif
+
     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
     //std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
 

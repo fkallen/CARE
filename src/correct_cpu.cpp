@@ -1360,7 +1360,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
         TIMERSTARTCPU(merge);
 
-        mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+        mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, false);
 
         TIMERSTOPCPU(merge);
 

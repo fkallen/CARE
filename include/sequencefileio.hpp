@@ -268,7 +268,7 @@ void deleteFiles(std::vector<std::string> filenames);
 */
 void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                       FileFormat originalFormat,
-                      const std::vector<std::string>& filesToMerge, const std::string& outputfile);
+                      const std::vector<std::string>& filesToMerge, const std::string& outputfile, bool isSorted);
 
 void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& originalReadFile,
                     FileFormat originalFormat,

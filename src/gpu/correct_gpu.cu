@@ -3616,7 +3616,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
               TIMERSTARTCPU(merge);
 
-              mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile);
+              mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, false);
               //mergeResultFiles2(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, occupiedMemory);
 
               TIMERSTOPCPU(merge);
