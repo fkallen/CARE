@@ -468,6 +468,67 @@ namespace gpu{
 	BatchState state_aborted_func(Batch& batch,
 				bool isPausable);
 
+    void CUDART_CB nextStep(void* b){
+        Batch* const batch = (Batch*)b;
+        auto gpuExecutorPtr = batch->gpuExecutor;
+        auto cpugpuExecutorPtr = batch->cpugpuExecutor;
+
+        auto call = [&](auto f){
+            f(*batch, false);
+        }
+
+        if(batch->iteration < 30){
+
+            switch(state) {
+    		case BatchState::Unprepared:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_unprepared_func);
+                });
+                break;
+    		case BatchState::CopyReads:
+                cpugpuExecutorPtr->emplace([=](){
+                    call(state_unprepared_func);
+                });
+                break;
+    		case BatchState::StartAlignment: return "StartAlignment";
+            case BatchState::RearrangeIndices: return "RearrangeIndices";
+    		case BatchState::CopyQualities: return "CopyQualities";
+    		case BatchState::BuildMSA: return "BuildMSA";
+            case BatchState::ImproveMSA: return "ImproveMSA";
+    		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
+    		case BatchState::StartForestCorrection: return "StartForestCorrection";
+            case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
+    		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
+    		case BatchState::WriteResults: return "WriteResults";
+    		case BatchState::WriteFeatures: return "WriteFeatures";
+    		case BatchState::Finished: return "Finished";
+    		case BatchState::Aborted: return "Aborted";
+    		default: assert(false); return "None";
+
+            switch(batch->state){
+                case Batch::State::A:{
+                    gpuProcessor.emplace([=](){
+                        init(*batch);
+                    });
+                    break;
+                }
+                case Batch::State::C:{
+                    cpuProcessor.emplace([=](){
+                        cpuComputation(*batch);
+                    });
+                    break;
+                }
+                case Batch::State::E:{
+                    cpuProcessor.emplace([=](){
+                        output(*batch);
+                    });
+                    break;
+                }
+            }
+
+        }
+    }
+
     using FuncTableEntry = BatchState (*)(Batch&,bool);
 
     std::string nameOf(const BatchState& state){
