@@ -473,8 +473,8 @@ namespace gpu{
         auto gpuExecutorPtr = batch->gpuExecutor;
         auto cpugpuExecutorPtr = batch->cpugpuExecutor;
 
-        auto call = [&](auto f){
-            f(*batch, false);
+        auto call = [=](auto f){
+            f(*batch);
         };
 
         if(batch->iteration < 30){
@@ -3104,36 +3104,17 @@ namespace gpu{
 
         //transFuncData.backgroundThread->emplace(std::move(function));
 
-		return BatchState::Finished;
+		batch.state = BatchState::Finished;
 	}
 
-	BatchState state_writefeatures_func(Batch& batch,
-												bool isPausable){
+	void state_writefeatures_func(Batch& batch){
 
         const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::WriteFeatures;
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
+
         assert(batch.state == expectedState);
 
-
-
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = msadata_transfer_finished_event_index;
-            return expectedState;
-        }
-#endif
 
 		DataArrays& dataArrays = *batch.dataArrays;
 
@@ -3205,7 +3186,7 @@ namespace gpu{
 			}
 		}
 
-		return BatchState::Finished;
+		batch.state = BatchState::Finished;
 	}
 
 	void state_finished_func(Batch& batch){
@@ -3424,208 +3405,39 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           cudaProfilerStart();
       #endif
 
+        for(int i = 0; i < nParallelBatches; ++i) {
+            nextStep(batches[i]);
+        }
 
-
-
-      int stacksize = 0;
-      //auto previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-      while(
+        while(
             !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
-                  return batch.state == BatchState::Finished && batch.readIdBuffer.empty();
-              })
-              //&& readIdBuffer.empty()
-              && readIdGenerator.empty())) {
-
-          if(stacksize != 0)
-              assert(stacksize == 0);
-
-          Batch& mainBatch = *batchPointers[0];
-
-          // size_t hostSizeBytes = mainBatch.dataArrays->hostArraysSizeInBytes();
-          // size_t deviceSizeBytes = mainBatch.dataArrays->deviceArraysSizeInBytes();
-          // size_t hostCapacityBytes = mainBatch.dataArrays->hostArraysCapacityInBytes();
-          // size_t deviceCapacityBytes = mainBatch.dataArrays->deviceArraysCapacityInBytes();
-          //
-          // auto MB = [](auto bytes){
-          //     return bytes / 1024. / 1024;
-          // };
-          //
-          // std::cerr << "Resize: Host " << MB(hostSizeBytes) << " " << MB(hostCapacityBytes);
-          // std::cerr << " Device " << MB(deviceSizeBytes) << " " << MB(deviceCapacityBytes) << '\n';
-
-          AdvanceResult mainBatchAdvanceResult;
-          bool popMain = false;
-
-          const auto now = std::chrono::system_clock::now();
-          runtime = now - timepoint_begin;
-
-  #ifndef DO_PROFILE
-          if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
-              printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                      readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
-                      int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                      int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                      int(runtime.count()) % 60);
-              //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-          }
-  #endif
+                return batch.state == BatchState::Finished && batch.readIdBuffer.empty();
+            }) && readIdGenerator.empty())) {
 
 
+            const auto now = std::chrono::system_clock::now();
+            runtime = now - timepoint_begin;
 
-          assert(popMain == false);
-          nvtx::push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
-          ++stacksize;
-          popMain = true;
+            #ifndef DO_PROFILE
+            if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
+                printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+                int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                int(runtime.count()) % 60);
+                //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
+            }
+            #endif
 
-          while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)) {
-
-              mainBatchAdvanceResult = advance_one_step(mainBatch,
-                          false,                   //cannot be paused
-                            transitionFunctionTable);
-
-              if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)) {
-                  nvtx::pop_range("main inner");
-                  popMain = false;
-                  --stacksize;
-
-                  assert(popMain == false);
-                  nvtx::push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
-                  ++stacksize;
-                  popMain = true;
-              }
-
-
-      #if 1
-
-              while(mainBatch.isWaiting()) {
-                  /*
-                      Prepare next batch while waiting for the mainBatch gpu work to finish
-                   */
-                  if(nParallelBatches > 1) {
-
-                      // 0 <= sideBatchIndex < nParallelBatches - 1
-                      // index in batches array is sideBatchIndex + 1;
-                      int localSideBatchIndex = 0;
-                      const int nSideBatches = nParallelBatches - 1;
-
-                      bool popSide = false;
-                      bool firstSideIter = true;
-
-                      AdvanceResult sideBatchAdvanceResult;
-
-                      while(mainBatch.isWaiting()) {
-                          const int globalBatchIndex = localSideBatchIndex + 1;
-
-                          Batch& sideBatch = *batchPointers[globalBatchIndex];
-
-                          if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
-                              continue;
-                          }
-
-                          for(int i = 0; i < sideBatchStepsPerWaitIter; ++i) {
-                              if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
-                                  break;
-                              }
-
-                              if(firstSideIter) {
-                                  assert(popSide == false);
-                                  nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
-                                  ++stacksize;
-                                  popSide = true;
-                              }else{
-                                  if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-                                      assert(popSide == false);
-                                      nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
-                                      ++stacksize;
-                                      popSide = true;
-                                  }
-                              }
-
-                              //auto curstate = sideBatch.state;
-                              //if(curstate == BatchState::Unprepared){
-                              //    nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
-                              //}
-                              sideBatchAdvanceResult = advance_one_step(sideBatch,
-                                          true,                   //can be paused
-                                            transitionFunctionTable);
-
-                              //if(curstate == BatchState::Unprepared){
-                              //    nvtx::pop_range();
-                              //}
-
-                              if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-                                  nvtx::pop_range("side inner");
-                                  popSide = false;
-                                  --stacksize;
-                              }
-
-
-
-                              firstSideIter = false;
-                          }
-
-                          if(sideBatch.isWaiting()) {
-                              //current side batch is waiting, move to next side batch
-                              localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
-
-                              if(popSide) {
-                                  nvtx::pop_range("switch sidebatch");
-                                  popSide = false;
-                                  --stacksize;
-                              }
-
-                              firstSideIter = true;
-                              sideBatchAdvanceResult = AdvanceResult{};
-                          }
-                      }
-
-                      if(popSide) {
-                          nvtx::pop_range("side outer");
-                          popSide = false;
-                          --stacksize;
-                      }
-
-                      //assert(eventquerystatus == cudaSuccess);
-                  }else{
-
-                  }
-
-
-              }
-      #endif
-
-
-          }
-
-          if(popMain) {
-              nvtx::pop_range("main outer");
-              popMain = false;
-              --stacksize;
-          }
-
-          assert(stacksize == 0);
-
-          assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
-
-          if(!(readIdGenerator.empty() && mainBatch.readIdBuffer.empty() && tmptasksBuffer.empty())) {
-              //there are reads left to correct, so this batch can be reused again
-              mainBatch.reset();
-          }else{
-              mainBatch.state = BatchState::Finished;
-          }
-
-          //nProcessedReads = threadOpts.readIdGenerator->.currentId - mybatchgen.firstId;
-
-          //rotate left to position next batch at index 0
-          std::rotate(batchPointers.begin(), batchPointers.begin()+1, batchPointers.end());
-
-
-
-      } // end batch processing
+            std::this_thread::sleep_for(std::chrono::seconds{1});
+        }
 
 
       outputstream.flush();
       featurestream.flush();
+
+      cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+      gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
 
       for(auto& batch : batches){
           batch.waitUntilAllCallbacksFinished();
@@ -3633,8 +3445,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       assert(tmptasksBuffer.empty());
 
-      cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
-      gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+
 
       #ifdef DO_PROFILE
           cudaProfilerStop();
