@@ -413,7 +413,11 @@ namespace gpu{
 		std::function<void(const read_number)> lock;
 		std::function<void(const read_number)> unlock;
 
-        BackgroundThread* backgroundThread;
+        BackgroundThread* gpuExecutor;
+        BackgroundThread* cpugpuExecutor;
+
+        std::condition_variable isFinishedCV;
+        std::mutex isFinishedMutex;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         NN_Correction_Classifier nnClassifier;
@@ -3270,11 +3274,13 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
-        BackgroundThread backgroundThread;
+        BackgroundThread gpuExecutor;
+        BackgroundThread cpugpuExecutor;
 
       TransitionFunctionData transFuncData;
 
-      transFuncData.backgroundThread = &backgroundThread;
+      transFuncData.gpuExecutor = &gpuExecutor;
+      transFuncData.cpugpuExecutor = &cpugpuExecutor;
 
       //transFuncData.mybatchgen = &mybatchgen;
       transFuncData.deviceId = deviceIds[0];
@@ -3566,7 +3572,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       assert(tmptasksBuffer.empty());
 
-      backgroundThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+      cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+      gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
 
       #ifdef DO_PROFILE
           cudaProfilerStop();
