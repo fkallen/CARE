@@ -66,7 +66,7 @@ int main(int argc, char** argv){
         originalFormat = care::getFileFormat(inputfile);
     }
 
-    care::mergeResultFiles(0, inputfile, originalFormat, filesToMerge, outdir + "/" + outfile);
+    care::mergeResultFiles(0, inputfile, originalFormat, filesToMerge, outdir + "/" + outfile, true);
 }
 
 #endif
