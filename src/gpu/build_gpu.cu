@@ -11,6 +11,7 @@
 #include "sequence.hpp"
 #include "threadsafe_buffer.hpp"
 
+#include <map>
 #include <stdexcept>
 #include <iostream>
 #include <limits>
@@ -29,7 +30,7 @@ namespace gpu{
 
 
 
-    BuiltDataStructure<DistributedReadStorage> buildGpuReadStorage(const FileOptions& fileOptions,
+    BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
                                                 const RuntimeOptions& runtimeOptions,
                                                 bool useQualityScores,
                                                 read_number expectedNumberOfReads,
@@ -38,8 +39,8 @@ namespace gpu{
 
 
         if(fileOptions.load_binary_reads_from != ""){
-            BuiltDataStructure<DistributedReadStorage> result;
-            auto& readStorage = result.data;
+            BuiltDataStructure<GpuReadStorageWithFlags> result;
+            auto& readStorage = result.data.readStorage;
 
             readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
             result.builtType = BuiltType::Loaded;
@@ -59,13 +60,17 @@ namespace gpu{
             constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
             int Ncount = 0;
 
-            BuiltDataStructure<DistributedReadStorage> result;
-            DistributedReadStorage& readstorage = result.data;
+            BuiltDataStructure<GpuReadStorageWithFlags> result;
+            DistributedReadStorage& readstorage = result.data.readStorage;
+            auto& validFlags = result.data.readIsValidFlags;
 
             readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
+            validFlags.resize(expectedNumberOfReads, false);
             result.builtType = BuiltType::Constructed;
 
             constexpr size_t maxbuffersize = 1000000;
+
+            std::map<int,int> nmap{};
 
             auto flushBuffers = [&](std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
                 if(indicesBuffer.size() > 0){
@@ -91,19 +96,32 @@ namespace gpu{
                                             + "has length " + std::to_string(readLength));
                 }
 
-                for(auto& c : read.sequence){
-                    if(c == 'a') c = 'A';
-                    if(c == 'c') c = 'C';
-                    if(c == 'g') c = 'G';
-                    if(c == 't') c = 'T';
-                    if(c == 'N' || c == 'n'){
-                        c = bases[Ncount];
-                        Ncount = (Ncount + 1) % 4;
-                    }
-                }
+                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [](char c){
+                    return c == 'N' || c == 'n';
+                });
 
-                indicesBuffer.emplace_back(readIndex);
-                readsBuffer.emplace_back(read);
+                nmap[undeterminedBasesInRead]++;
+
+                //if(undeterminedBasesInRead > 10){
+                //    validFlags[readIndex] = false;
+                //}else{
+                    for(auto& c : read.sequence){
+                        if(c == 'a') c = 'A';
+                        if(c == 'c') c = 'C';
+                        if(c == 'g') c = 'G';
+                        if(c == 't') c = 'T';
+                        if(c == 'N' || c == 'n'){
+                            c = bases[Ncount];
+                            Ncount = (Ncount + 1) % 4;
+                        }
+                    }
+
+                    indicesBuffer.emplace_back(readIndex);
+                    readsBuffer.emplace_back(read);
+
+                    validFlags[readIndex] = true;
+                //}
+
                 if(indicesBuffer.size() > maxbuffersize){
                     flushBuffers(indicesBuffer, readsBuffer);
                 }
@@ -125,6 +143,11 @@ namespace gpu{
                 flushBuffers(indicesBuffer, readsBuffer);
             }
 
+            std::cerr << "occurences of n/N:\n";
+            for(const auto& p : nmap){
+                std::cerr << p.first << " " << p.second << '\n';
+            }
+
             return result;
         }
 
@@ -135,7 +158,7 @@ namespace gpu{
                                 			   const RuntimeOptions& runtimeOptions,
                                 			   std::uint64_t nReads,
                                                const MinhashOptions& minhashOptions,
-                                			   const DistributedReadStorage& readStorage){
+                                			   const GpuReadStorageWithFlags& readStoragewFlags){
 
         BuiltDataStructure<Minhasher> result;
         auto& minhasher = result.data;
@@ -163,6 +186,9 @@ namespace gpu{
 
             omp_set_num_threads(runtimeOptions.threads);
             //std::cerr << "setReads omp_set_num_threads end " << runtimeOptions.threads << "\n";
+
+            const auto& readStorage = readStoragewFlags.readStorage;
+            const auto& validFlags = readStoragewFlags.readIsValidFlags;
 
             constexpr int numMapsPerBatch = 16;
             constexpr read_number parallelReads = 10000000;
@@ -216,11 +242,15 @@ namespace gpu{
 
                     #pragma omp parallel for
                     for(read_number readId = readIdBegin; readId < readIdEnd; readId++){
-                        read_number localId = readId - readIdBegin;
-        				const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
-        				const int sequencelength = lengths[localId];
-        				std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
-                        minhasher.insertSequence(sequencestring, readId, mapIds);
+                        //if(validFlags[readId]){
+                            read_number localId = readId - readIdBegin;
+            				const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
+            				const int sequencelength = lengths[localId];
+            				std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
+                            minhasher.insertSequence(sequencestring, readId, mapIds);
+                        //}else{
+                        //    ; //invalid reads are discarded
+                        //}
                     }
                 }
 
@@ -269,7 +299,7 @@ namespace gpu{
                                                   sequenceFileProperties.maxSequenceLength);
         TIMERSTOPCPU(build_readstorage);
 
-        const auto& readStorage = result.builtReadStorage.data;
+        const auto& readStorage = result.builtReadStorage.data.readStorage;
 
         //if(result.builtReadStorage.builtType == BuiltType::Loaded) {
             sequenceFileProperties.nReads = readStorage.getNumberOfReads();
@@ -278,7 +308,7 @@ namespace gpu{
         //}
 
         TIMERSTARTCPU(build_minhasher);
-        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);
+        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);
 
         return result;

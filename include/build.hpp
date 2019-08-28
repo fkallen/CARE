@@ -67,14 +67,19 @@ namespace care{
 
     namespace gpu{
 
+        struct GpuReadStorageWithFlags{
+            std::vector<bool> readIsValidFlags;
+            DistributedReadStorage readStorage;
+        };
+
         struct BuiltGpuDataStructures{
-            BuiltDataStructure<DistributedReadStorage> builtReadStorage;
+            BuiltDataStructure<GpuReadStorageWithFlags> builtReadStorage;
             BuiltDataStructure<Minhasher> builtMinhasher;
 
             SequenceFileProperties sequenceFileProperties;
         };
 
-        BuiltDataStructure<DistributedReadStorage> buildGpuReadStorage(const FileOptions& fileOptions,
+        BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
                                                                         const RuntimeOptions& runtimeOptions,
                                                                         bool useQualityScores,
                                                                         read_number expectedNumberOfReads,
@@ -84,7 +89,7 @@ namespace care{
                                     			   const RuntimeOptions& runtimeOptions,
                                     			   std::uint64_t nReads,
                                                    const MinhashOptions& minhashOptions,
-                                    			   const DistributedReadStorage& readStorage);
+                                    			   const GpuReadStorageWithFlags& readStorage);
 
         BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
                                     			const CorrectionOptions& correctionOptions,

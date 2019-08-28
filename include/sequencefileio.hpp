@@ -288,6 +288,7 @@ struct TempCorrectedSequence{
     static constexpr char CandidateChar = 'c';
 
     bool hq = false; //if anchor
+    bool isEqual = false; //if anchor
     Type type = Type::Anchor;
     int newColumns = 0; //if candidate
     read_number readId = 0;

@@ -2940,7 +2940,12 @@ namespace gpu{
                     tmp.hq = task.highQualityAlignment;
                     tmp.type = TempCorrectedSequence::Type::Anchor;
                     tmp.readId = task.readId;
-                    tmp.sequence = task.corrected_subject;
+                    tmp.isEqual = task.corrected_subject == task.subject_string;
+                    //if(task.highQualityAlignment && task.corrected_subject == task.subject_string){
+                    //    tmp.sequence = "-";
+                    //}else{
+                        tmp.sequence = task.corrected_subject;
+                    //}
                     tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
 
                     transFuncData->saveCorrectedSequence(tmp);

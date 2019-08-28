@@ -1044,17 +1044,28 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
 
-    auto combineMultipleCorrectionResults2 = [](const std::vector<TempCorrectedSequence>& tmpresults){
+    auto combineMultipleCorrectionResults2 = [](const std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
 
         auto isHQ = [](const auto& tcs){
-            return tcs.hq;
+            return tcs.type == TempCorrectedSequence::Type::Anchor && tcs.hq;
         };
 
         //if there is a correction using a high quality alignment, use it
         auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
         if(firstHqSequence != tmpresults.end()){
-            return std::make_pair(firstHqSequence->sequence, true);
+            // if(firstHqSequence->isEqual){
+            //     if(firstHqSequence->sequence != originalSequence){
+            //         std::cerr << "orig " << originalSequence << "\n";
+            //         std::cerr << "corr " << firstHqSequence->sequence << "\n";
+            //     }
+            // }
+            // if(firstHqSequence->sequence == "-"){
+            //     //if sequence is "", the high quality anchor correction equals the original read
+            //     return std::make_pair(std::string{""}, false);
+            // }else{
+                return std::make_pair(firstHqSequence->sequence, true);
+            //}
         }
 
         auto equalsFirstSequence = [&](const auto& result){
@@ -1122,20 +1133,27 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             if(anchorIter != tmpresults.end()){
                 std::for_each(tmpresults.begin(), tmpresults.end(), countBases);
 
-                if(!anchorIter->uncorrectedPositionsNoConsensus.empty()){
-                    std::copy(anchorIter->sequence.begin(), anchorIter->sequence.end(), consensus.begin());
-                    const auto& positions = anchorIter->uncorrectedPositionsNoConsensus;
+                // if(!anchorIter->uncorrectedPositionsNoConsensus.empty()){
+                //     std::copy(anchorIter->sequence.begin(), anchorIter->sequence.end(), consensus.begin());
+                //     const auto& positions = anchorIter->uncorrectedPositionsNoConsensus;
+                //
+                //     std::for_each(positions.begin(), positions.end(), setConsensusOfPosition);
+                //     // std::copy(positions.begin(), positions.end(), std::ostream_iterator<int>(std::cerr, " "));
+                //     // std::cerr << '\n';
+                //     // std::copy(consensus.begin(), consensus.end(), std::ostream_iterator<char>(std::cerr, ""));
+                //     // std::cerr << '\n';
+                //     return std::make_pair(consensus, false);
+                // }else{
+                //     for(size_t i = 0; i < consensus.size();  i++){
+                //         setConsensusOfPosition(i);
+                //     }
+                //     return std::make_pair(consensus, false);
+                // }
 
-                    std::for_each(positions.begin(), positions.end(), setConsensusOfPosition);
-                    //std::copy(positions.begin(), positions.end(), std::ostream_iterator<int>(std::cerr, " "));
-                    //std::cerr << '\n';
-                    return std::make_pair(consensus, true);
-                }else{
-                    for(size_t i = 0; i < consensus.size();  i++){
-                        setConsensusOfPosition(i);
-                    }
-                    return std::make_pair(consensus, true);
+                for(size_t i = 0; i < consensus.size();  i++){
+                    setConsensusOfPosition(i);
                 }
+                return std::make_pair(consensus, true);
 
             }else{
                 //only candidates available
@@ -1184,7 +1202,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkNewColumns)){
                     return std::make_pair(tmpresults[0].sequence, true);
                 }else{
-                    return std::make_pair(std::string{""}, false); //always false
+                    if(tmpresults.size() == 1){
+                        //return std::make_pair(std::string{""}, true);
+                        return std::make_pair(tmpresults[0].sequence, true);
+                    }else{
+                        return std::make_pair(std::string{""}, false); //always false
+                    }
                 }
             }else{
                 //no correction as anchor. all corrections as candidate are equal.
@@ -1267,7 +1290,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector);
+        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector, read.sequence);
 
         if(correctedSequence.second){
             assert(isValidSequence(correctedSequence.first));
@@ -1305,7 +1328,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector);
+        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector, read.sequence);
 
         if(correctedSequence.second){
             assert(isValidSequence(correctedSequence.first));
@@ -1335,7 +1358,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
     os << tmp.readId << ' ' << tmp.sequence << ' ';
     if(tmp.type == TempCorrectedSequence::Type::Anchor){
-        os << TempCorrectedSequence::AnchorChar << ' ' << tmp.hq;
+        os << TempCorrectedSequence::AnchorChar << ' ' << tmp.hq << ' ' << tmp.isEqual;
         const auto& vec = tmp.uncorrectedPositionsNoConsensus;
         os << ' ' << vec.size();
         if(!vec.empty()){
@@ -1355,7 +1378,7 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
     is >> typechar;
     if(typechar == TempCorrectedSequence::AnchorChar){
         tmp.type = TempCorrectedSequence::Type::Anchor;
-        is >> tmp.hq;
+        is >> tmp.hq >> tmp.isEqual;
         size_t vecsize;
         is >> vecsize;
         if(vecsize > 0){

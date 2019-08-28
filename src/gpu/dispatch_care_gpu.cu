@@ -112,7 +112,7 @@ namespace care{
 
         TIMERSTOPCPU(load_and_build);
 
-        auto& readStorage = dataStructuresgpu.builtReadStorage.data;
+        auto& readStorage = dataStructuresgpu.builtReadStorage.data.readStorage;
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
         auto& sequenceFileProperties = dataStructuresgpu.sequenceFileProperties;
 
