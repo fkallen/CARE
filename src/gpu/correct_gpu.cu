@@ -184,6 +184,8 @@ namespace gpu{
 
     static constexpr int nBatchStates = static_cast<int>(BatchState::Aborted)+1;
 
+    struct TransitionFunctionData;
+
     struct Batch {
         struct WaitCallbackData{
             Batch* b{};
@@ -222,6 +224,8 @@ namespace gpu{
         std::array<std::atomic_int, nBatchStates> waitCounts{};
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
+
+        const TransitionFunctionData* transFuncData;
 
         int id = -1;
 
@@ -416,68 +420,51 @@ namespace gpu{
 	};
 
     BatchState state_unprepared_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_copyreads_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_startalignment_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
     BatchState state_rearrangeindices_func(Batch& batch,
-            bool isPausable,
-            TransitionFunctionData& transFuncData);
+            bool isPausable);
 
 	BatchState state_copyqualities_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_buildmsa_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
     BatchState state_improvemsa_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_startclassiccorrection_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_startforestcorrection_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
     BatchState state_startconvnetcorrection_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_unpackclassicresults_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_writeresults_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_writefeatures_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_finished_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
 	BatchState state_aborted_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
+				bool isPausable);
 
-    using FuncTableEntry = BatchState (*)(Batch&,
-				bool,
-				TransitionFunctionData&);
+    using FuncTableEntry = BatchState (*)(Batch&,bool);
 
     std::string nameOf(const BatchState& state){
 		switch(state) {
@@ -750,11 +737,12 @@ namespace gpu{
 
 
     BatchState state_unprepared_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+                          bool isPausable){
 
         assert(batch.state == BatchState::Unprepared);
         assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
+
+        const auto& transFuncData = *batch.transFuncData;
 
         auto identity = [](auto i){return i;};
 
@@ -967,11 +955,12 @@ namespace gpu{
 
 
     BatchState state_copyreads_func(Batch& batch,
-                bool isPausable,
-                TransitionFunctionData& transFuncData){
+                bool isPausable){
 
         assert(batch.state == BatchState::CopyReads);
         assert(batch.copiedTasks <= int(batch.tasks.size()));
+
+        const auto& transFuncData = *batch.transFuncData;
 
         DataArrays& dataArrays = *batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1120,10 +1109,11 @@ namespace gpu{
 
 
 	BatchState state_startalignment_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
 
 		assert(batch.state == BatchState::StartAlignment);
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1330,8 +1320,9 @@ namespace gpu{
 	}
 
     BatchState state_rearrangeindices_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         DataArrays& dataArrays = *batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1463,8 +1454,9 @@ namespace gpu{
 
 
     BatchState state_copyqualities_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::CopyQualities;
 #ifdef USE_WAIT_FLAGS
@@ -1569,8 +1561,9 @@ namespace gpu{
 
 
     BatchState state_buildmsa_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+									bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::BuildMSA;
 
@@ -1648,8 +1641,9 @@ namespace gpu{
 
 
     BatchState state_improvemsa_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+                          bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::ImproveMSA;
 
@@ -2143,11 +2137,14 @@ namespace gpu{
 
 
 	BatchState state_startclassiccorrection_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::StartClassicCorrection);
 		assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
+
+
 
 		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -2438,8 +2435,9 @@ namespace gpu{
 	}
 
     BatchState state_startconvnetcorrection_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+                          bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::StartConvnetCorrection;
 #ifdef USE_WAIT_FLAGS
@@ -2579,8 +2577,9 @@ namespace gpu{
     }
 
     BatchState state_startforestcorrection_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::StartForestCorrection;
 #ifdef USE_WAIT_FLAGS
@@ -2686,8 +2685,9 @@ namespace gpu{
 	}
 
     BatchState state_unpackclassicresults_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+                          bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::UnpackClassicResults;
     #ifdef USE_WAIT_FLAGS
@@ -2815,8 +2815,9 @@ namespace gpu{
 
 
 	BatchState state_writeresults_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::WriteResults);
 
@@ -3012,8 +3013,9 @@ namespace gpu{
 	}
 
 	BatchState state_writefeatures_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+												bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::WriteFeatures;
 #ifdef USE_WAIT_FLAGS
@@ -3112,8 +3114,9 @@ namespace gpu{
 	}
 
 	BatchState state_finished_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+									bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::Finished);
 
@@ -3123,8 +3126,9 @@ namespace gpu{
 	}
 
 	BatchState state_aborted_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+									bool isPausable){
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::Aborted);
 
@@ -3137,7 +3141,6 @@ namespace gpu{
 
 AdvanceResult advance_one_step(Batch& batch,
 			bool isPausable,
-			TransitionFunctionData& transFuncData,
             const std::unordered_map<BatchState, FuncTableEntry>& transitionFunctionTable){
 
 	AdvanceResult advanceResult;
@@ -3148,7 +3151,7 @@ AdvanceResult advance_one_step(Batch& batch,
 
 	auto iter = transitionFunctionTable.find(batch.state);
 	if(iter != transitionFunctionTable.end()) {
-		batch.state = iter->second(batch, isPausable, transFuncData);
+		batch.state = iter->second(batch, isPausable);
 	}else{
 		std::cout << nameOf(batch.state) << std::endl;
 		assert(false); // Every State should be handled above
@@ -3341,6 +3344,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             batches[i].candidateLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
             batches[i].subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
             batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
+            batches[i].transFuncData = &transFuncData;
             batchPointers[i] = &batches[i];
         }
 
@@ -3410,7 +3414,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
               mainBatchAdvanceResult = advance_one_step(mainBatch,
                           false,                   //cannot be paused
-                          transFuncData,
                             transitionFunctionTable);
 
               if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)) {
@@ -3477,7 +3480,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                               //}
                               sideBatchAdvanceResult = advance_one_step(sideBatch,
                                           true,                   //can be paused
-                                          transFuncData,
                                             transitionFunctionTable);
 
                               //if(curstate == BatchState::Unprepared){
