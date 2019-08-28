@@ -1858,10 +1858,10 @@ namespace gpu{
                     for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
                         assert(i < lastColumn_excl);
 
-                        const float ca = myCountsA[i];
-                        const float cc = myCountsC[i];
-                        const float cg = myCountsG[i];
-                        const float ct = myCountsT[i];
+                        const int ca = myCountsA[i];
+                        const int cc = myCountsC[i];
+                        const int cg = myCountsG[i];
+                        const int ct = myCountsT[i];
                         const float wa = myWeightsA[i];
                         const float wc = myWeightsC[i];
                         const float wg = myWeightsG[i];
@@ -2018,87 +2018,82 @@ namespace gpu{
 
                                     if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
 
-                                        auto swap = [](auto& a, auto& b){auto tmp = a; a = b; b = tmp;};
-
-                                        float maxweights[2]{0,0}; //maximum at [0], second largest at [1]
-                                        int countsofweights[2]{0,0}; //maximum at [0], second largest at [1]
-                                        float overlapweights[2]{0,0};
-                                        float avgcounts[2]{0,0};
-                                        int hqbasecounts[2]{0,0};
+                                        float maxweightpercount[2]{0,0};
                                         char cons[2]{'F','F'};
-                                        if(myWeightsA[globalIndex] > myWeightsC[globalIndex]){
-                                            maxweights[0] = myWeightsA[globalIndex];
-                                            countsofweights[0] = myCountsA[globalIndex];
-                                            cons[0] = 'A';
-                                            avgcounts[0] = avgCountPerWeight[0];
-                                            overlapweights[0] = overlapWeightPerBaseOfHighQualityOverlaps[0];
-                                            hqbasecounts[0] = baseCountsOfHighQualityOverlaps[0];
-                                            maxweights[1] = myWeightsC[globalIndex];
-                                            countsofweights[1] = myCountsC[globalIndex];
-                                            cons[1] = 'C';
-                                            avgcounts[1] = avgCountPerWeight[1];
-                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[1];
-                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[1];
-                                        }else{
-                                            maxweights[1] = myWeightsA[globalIndex];
-                                            countsofweights[1] = myCountsA[globalIndex];
-                                            cons[1] = 'A';
-                                            avgcounts[1] = avgCountPerWeight[0];
-                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[0];
-                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[0];
-                                            maxweights[0] = myWeightsC[globalIndex];
-                                            countsofweights[0] = myCountsC[globalIndex];
-                                            cons[0] = 'C';
-                                            avgcounts[0] = avgCountPerWeight[1];
-                                            overlapweights[0] = overlapWeightPerBaseOfHighQualityOverlaps[1];
-                                            hqbasecounts[0] = baseCountsOfHighQualityOverlaps[1];
-                                        }
-
-                                        if(myWeightsG[globalIndex] > maxweights[1]){
-                                            maxweights[1] = myWeightsG[globalIndex];
-                                            countsofweights[1] = myCountsG[globalIndex];
-                                            cons[1] = 'G';
-                                            avgcounts[1] = avgCountPerWeight[2];
-                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[2];
-                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[2];
-                                        }
 
                                         auto sortmaxima = [&](){
-                                            if(maxweights[1] > maxweights[0]){
-                                                swap(maxweights[1], maxweights[0]);
-                                                swap(countsofweights[1], countsofweights[0]);
+                                            auto swap = [](auto& a, auto& b){auto tmp = a; a = b; b = tmp;};
+
+                                            if(maxweightpercount[1] > maxweightpercount[0]){
+                                                swap(maxweightpercount[1], maxweightpercount[0]);
                                                 swap(cons[1], cons[0]);
-                                                swap(avgcounts[1], avgcounts[0]);
-                                                swap(overlapweights[1], overlapweights[0]);
-                                                swap(hqbasecounts[1], hqbasecounts[0]);
                                             }
                                         };
 
-                                        sortmaxima();
+                                        const int ca = myCountsA[i];
+                                        const int cc = myCountsC[i];
+                                        const int cg = myCountsG[i];
+                                        const int ct = myCountsT[i];
+                                        const float wa = myWeightsA[i];
+                                        const float wc = myWeightsC[i];
+                                        const float wg = myWeightsG[i];
+                                        const float wt = myWeightsT[i];
 
-                                        if(myWeightsT[globalIndex] > maxweights[1]){
-                                            maxweights[1] = myWeightsT[globalIndex];
-                                            countsofweights[1] = myCountsT[globalIndex];
-                                            cons[1] = 'T';
-                                            avgcounts[1] = avgCountPerWeight[3];
-                                            overlapweights[1] = overlapWeightPerBaseOfHighQualityOverlaps[3];
-                                            hqbasecounts[1] = baseCountsOfHighQualityOverlaps[3];
+                                        if(ca > 0 && wa / ca > maxweightpercount[1]){
+                                            maxweightpercount[1] =  wa / ca;
+                                            cons[1] = 'A';
                                         }
 
                                         sortmaxima();
 
-                                        const float averageOverlapweight0 = overlapweights[0] / hqbasecounts[0];
-                                        const float averageOverlapweight1 = overlapweights[1] / hqbasecounts[1];
+                                        if(cc > 0 && wc / cc > maxweightpercount[1]){
+                                            maxweightpercount[1] =  wc / cc;
+                                            cons[1] = 'C';
+                                        }
 
-                                        constexpr float threshold = 2.0f;
+                                        sortmaxima();
 
-                                        if(averageOverlapweight0 / averageOverlapweight1 <= threshold || averageOverlapweight1 / averageOverlapweight0 <= threshold){
+                                        if(cg > 0 && wg / cg > maxweightpercount[1]){
+                                            maxweightpercount[1] =  wg / cg;
+                                            cons[1] = 'G';
+                                        }
+
+                                        sortmaxima();
+
+                                        if(ct > 0 && wt / ct > maxweightpercount[1]){
+                                            maxweightpercount[1] =  wt / ct;
+                                            cons[1] = 'T';
+                                        }
+
+                                        sortmaxima();
+
+                                        const int validratios = (maxweightpercount[0] > 0) + (maxweightpercount[1] > 0);
+
+
+                                        assert(validratios > 0);
+
+                                        if(validratios == 1){
                                             my_corrected_subject[i] = my_consensus[globalIndex];
+
+                                            //printf("%c %f, %c %f. correct to %c. normal cons %c\n", cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
+
                                         }else{
-                                            if(averageOverlapweight0 / averageOverlapweight1 > threshold){
+                                            assert(validratios == 2);
+
+                                            constexpr float threshold = 3.0f;
+
+                                            if(maxweightpercount[0] > maxweightpercount[1] && maxweightpercount[0] / maxweightpercount[1] >= threshold){
                                                 my_corrected_subject[i] = cons[0];
-                                            }else{
+                                                //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
+                                                //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], cons[0], my_consensus[globalIndex]);
+                                            }else if(maxweightpercount[1] > maxweightpercount[0] && maxweightpercount[1] / maxweightpercount[0] >= threshold){
                                                 my_corrected_subject[i] = cons[1];
+                                                //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
+                                                //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1],cons[1], my_consensus[globalIndex]);
+                                            }else{
+                                                my_corrected_subject[i] = my_consensus[globalIndex];
+                                                //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
+                                                //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
                                             }
                                         }
 
