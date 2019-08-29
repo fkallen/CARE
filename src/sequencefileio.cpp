@@ -1004,6 +1004,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             return tmpresults[index].sequence;
         };
 
+        //check if all corrections are equal. for candidates, this only checks positions with overlap to anchor
+
         if(!std::all_of(tmpresults.begin()+1, tmpresults.end(), equalsFirstSequence)){
             // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
             // std::cerr << "\n";
@@ -1090,21 +1092,21 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
                 // int maxNewCols = 0;
                 // for(const auto& r : tmpresults){
-                //     maxNewCols = std::max(maxNewCols, r.newColumns);
+                //     maxNewCols = std::max(maxNewCols, r.shift);
                 // }
                 //
                 //
                 // for(int newCols = 0; newCols <= maxNewCols; newCols++){
-                //     auto checkNewColumns = [&](const auto& r){
-                //         return r.newColumns <= newCols;
+                //     auto checkshift = [&](const auto& r){
+                //         return r.shift <= newCols;
                 //     };
                 //
                 //     const int count = std::count_if(tmpresults.begin(),
                 //                                 tmpresults.end(),
-                //                                 checkNewColumns);
+                //                                 checkshift);
                 //     if(count > 2){
                 //         for(const auto& r : tmpresults){
-                //             if(r.newColumns <= newCols){
+                //             if(r.shift <= newCols){
                 //                 countBases(r);
                 //             }
                 //         }
@@ -1125,11 +1127,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             });
             if(anchorIter != tmpresults.end()){
                 //return std::make_pair(anchorIter->sequence, true);
-                auto checkNewColumns = [](const auto& r){
-                    return r.type == TempCorrectedSequence::Type::Candidate && r.newColumns <= 15;
+                auto checkshift = [](const auto& r){
+                    return r.type == TempCorrectedSequence::Type::Candidate && r.shift <= 15;
                     //return true;
                 };
-                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkNewColumns)){
+                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
                     return std::make_pair(tmpresults[0].sequence, true);
                 }else{
                     if(tmpresults.size() == 1){
@@ -1142,10 +1144,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             }else{
                 //no correction as anchor. all corrections as candidate are equal.
                 //only use the correction if at least one correction as candidate was performed with 0 new columns
-                auto checkNewColumns = [](const auto& r){
-                    return r.newColumns <= 3;
+                auto checkshift = [](const auto& r){
+                    return r.shift <= 3;
                 };
-                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkNewColumns)){
+                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
                     return std::make_pair(tmpresults[0].sequence, true);
                 }else{
                     return std::make_pair(std::string{""}, false); //always false
@@ -1296,7 +1298,7 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
             std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
         }
     }else{
-        os << TempCorrectedSequence::CandidateChar << ' ' << tmp.newColumns;
+        os << TempCorrectedSequence::CandidateChar << ' ' << tmp.shift;
     }
 
     return os;
@@ -1320,8 +1322,8 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
         }
     }else{
         tmp.type = TempCorrectedSequence::Type::Candidate;
-        is >> tmp.newColumns;
-        tmp.newColumns = std::abs(tmp.newColumns);
+        is >> tmp.shift;
+        tmp.shift = std::abs(tmp.shift);
     }
 
     return is;

@@ -114,7 +114,7 @@ namespace gpu{
             corrected_subject(other.corrected_subject),
             corrected_candidates(other.corrected_candidates),
             corrected_candidates_read_ids(other.corrected_candidates_read_ids),
-            corrected_candidates_newColumns(other.corrected_candidates_newColumns),
+            corrected_candidates_shifts(other.corrected_candidates_shifts),
             uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus){
         }
 
@@ -144,7 +144,7 @@ namespace gpu{
             swap(l.candidate_read_ids, r.candidate_read_ids);
             swap(l.corrected_subject, r.corrected_subject);
             swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
-            swap(l.corrected_candidates_newColumns, r.corrected_candidates_newColumns);
+            swap(l.corrected_candidates_shifts, r.corrected_candidates_shifts);
             swap(l.uncorrectedPositionsNoConsensus, r.uncorrectedPositionsNoConsensus);
         }
 
@@ -160,7 +160,7 @@ namespace gpu{
         std::string corrected_subject;
         std::vector<std::string> corrected_candidates;
         std::vector<read_number> corrected_candidates_read_ids;
-        std::vector<int> corrected_candidates_newColumns;
+        std::vector<int> corrected_candidates_shifts;
         std::vector<int> uncorrectedPositionsNoConsensus;
     };
 
@@ -2691,7 +2691,7 @@ namespace gpu{
                                                 + dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
 
-                task.corrected_candidates_newColumns.resize(n_corrected_candidates);
+                task.corrected_candidates_shifts.resize(n_corrected_candidates);
                 task.corrected_candidates_read_ids.resize(n_corrected_candidates);
                 task.corrected_candidates.resize(n_corrected_candidates);
 
@@ -2712,7 +2712,7 @@ namespace gpu{
                                 << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
                     }
                     assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
-                    task.corrected_candidates_newColumns[i] = candidate_shift;
+                    task.corrected_candidates_shifts[i] = candidate_shift;
                     task.corrected_candidates_read_ids[i] = candidate_read_id;
                     task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
 
@@ -2918,7 +2918,7 @@ namespace gpu{
 
                             TempCorrectedSequence tmp;
                             tmp.type = TempCorrectedSequence::Type::Candidate;
-                            tmp.newColumns = std::abs(task.corrected_candidates_newColumns[corrected_candidate_index]);
+                            tmp.shift = task.corrected_candidates_shifts[corrected_candidate_index];
                             tmp.readId = candidateId;
                             tmp.sequence = std::move(corrected_candidate);
 

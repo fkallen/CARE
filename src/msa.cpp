@@ -634,7 +634,7 @@ std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
 
                 std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
 
-                result.emplace_back(candidate_index, std::abs(candidateShifts[candidate_index]), std::move(correctedString));
+                result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
             }
         }
     }

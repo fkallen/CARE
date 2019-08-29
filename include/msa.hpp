@@ -92,11 +92,11 @@ struct CorrectionResult{
 
 struct CorrectedCandidate{
     int index;
-    int newColumns;
+    int shift;
     std::string sequence;
     CorrectedCandidate() noexcept{}
-    CorrectedCandidate(int index, int newCols, const std::string& sequence) noexcept
-        : index(index), newColumns(newCols), sequence(sequence){}
+    CorrectedCandidate(int index, int s, const std::string& sequence) noexcept
+        : index(index), shift(s), sequence(sequence){}
 };
 
 struct RegionSelectionResult{

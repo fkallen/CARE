@@ -61,7 +61,7 @@ namespace cpu{
                 corrected_subject(other.corrected_subject),
                 correctedCandidates(other.correctedCandidates),
                 candidate_read_ids(other.candidate_read_ids),
-                corrected_candidates_newColumns(other.corrected_candidates_newColumns),
+                corrected_candidates_shifts(other.corrected_candidates_shifts),
                 uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus){
 
             }
@@ -94,7 +94,7 @@ namespace cpu{
                 swap(l.corrected_subject, r.corrected_subject);
                 swap(l.correctedCandidates, r.correctedCandidates);
                 swap(l.candidate_read_ids, r.candidate_read_ids);
-                swap(l.corrected_candidates_newColumns, r.corrected_candidates_newColumns);
+                swap(l.corrected_candidates_shifts, r.corrected_candidates_shifts);
                 swap(l.uncorrectedPositionsNoConsensus, r.uncorrectedPositionsNoConsensus);
             }
 
@@ -108,7 +108,7 @@ namespace cpu{
             std::string corrected_subject;
             std::vector<CorrectedCandidate> correctedCandidates;
             std::vector<read_number> candidate_read_ids;
-            std::vector<int> corrected_candidates_newColumns;
+            std::vector<int> corrected_candidates_shifts;
             std::vector<int> uncorrectedPositionsNoConsensus;
         };
 
@@ -1239,7 +1239,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                             TempCorrectedSequence tmp;
                             tmp.type = TempCorrectedSequence::Type::Candidate;
                             tmp.readId = candidateId;
-                            tmp.newColumns = correctedCandidate.newColumns;
+                            tmp.shift = correctedCandidate.shift;
                             if(taskdata.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
                                 //write_candidate(candidateId, correctedCandidate.sequence);
                                 tmp.sequence = std::move(correctedCandidate.sequence);
