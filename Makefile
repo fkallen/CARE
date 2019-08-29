@@ -2,6 +2,7 @@ CXX=g++
 CUDACC=nvcc
 HOSTLINKER=g++
 
+
 CXXFLAGS = -std=c++14
 CFLAGS = -Wall -fopenmp -g -Iinclude -O3 -march=native
 CFLAGS_DEBUG = -Wall -fopenmp -g -Iinclude
