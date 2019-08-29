@@ -2313,13 +2313,6 @@ namespace gpu{
                         streams[secondary_stream_index]); CUERR;
 
             cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-        #ifdef USE_WAIT_FLAGS
-            batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
-            batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
-            batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
-        #endif
-
         }
 
         if(transFuncData.correctionOptions.extractFeatures){
