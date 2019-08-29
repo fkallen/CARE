@@ -2072,32 +2072,32 @@ namespace gpu{
 
                                         assert(validratios > 0);
 
-                                        if(validratios == 1){
-                                            my_corrected_subject[i] = my_consensus[globalIndex];
+                                        // if(validratios == 1){
+                                        //     my_corrected_subject[i] = my_consensus[globalIndex];
+                                        //
+                                        //     //printf("%c %f, %c %f. correct to %c. normal cons %c\n", cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
+                                        //
+                                        // }else{
+                                        //     assert(validratios == 2);
+                                        //
+                                        //     constexpr float threshold = 3.0f;
+                                        //
+                                        //     if(maxweightpercount[0] > maxweightpercount[1] && maxweightpercount[0] / maxweightpercount[1] >= threshold){
+                                        //         my_corrected_subject[i] = cons[0];
+                                        //         //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
+                                        //         //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], cons[0], my_consensus[globalIndex]);
+                                        //     }else if(maxweightpercount[1] > maxweightpercount[0] && maxweightpercount[1] / maxweightpercount[0] >= threshold){
+                                        //         my_corrected_subject[i] = cons[1];
+                                        //         //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
+                                        //         //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1],cons[1], my_consensus[globalIndex]);
+                                        //     }else{
+                                        //         my_corrected_subject[i] = my_consensus[globalIndex];
+                                        //         //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
+                                        //         //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
+                                        //     }
+                                        // }
 
-                                            //printf("%c %f, %c %f. correct to %c. normal cons %c\n", cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
-
-                                        }else{
-                                            assert(validratios == 2);
-
-                                            constexpr float threshold = 3.0f;
-
-                                            if(maxweightpercount[0] > maxweightpercount[1] && maxweightpercount[0] / maxweightpercount[1] >= threshold){
-                                                my_corrected_subject[i] = cons[0];
-                                                //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
-                                                //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], cons[0], my_consensus[globalIndex]);
-                                            }else if(maxweightpercount[1] > maxweightpercount[0] && maxweightpercount[1] / maxweightpercount[0] >= threshold){
-                                                my_corrected_subject[i] = cons[1];
-                                                //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
-                                                //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1],cons[1], my_consensus[globalIndex]);
-                                            }else{
-                                                my_corrected_subject[i] = my_consensus[globalIndex];
-                                                //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
-                                                //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
-                                            }
-                                        }
-
-                                        //my_corrected_subject[i] = my_consensus[globalIndex];
+                                        my_corrected_subject[i] = my_consensus[globalIndex];
                                         foundAColumn = true;
                                     }else{
                                         const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
@@ -2368,6 +2368,8 @@ namespace gpu{
 
                     if(newColMinSupport >= min_support_threshold
                        && newColMinCov >= min_coverage_threshold) {
+
+                           assert(shift <= 3);
 
                         for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE) {
                             my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];

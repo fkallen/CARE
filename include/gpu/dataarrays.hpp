@@ -146,6 +146,16 @@ struct DataArrays {
 #endif
     }
 
+    void resizeAnchorSequenceData(int numAnchors, int maximumSequenceBytes){
+        const size_t pitch = SDIV(maximumSequenceBytes, padding_bytes) * padding_bytes;
+        h_subject_read_ids.resize(numAnchors * allocfactor);
+        h_subject_sequences_data.resize(numAnchors * pitch * allocfactor);
+        h_subject_sequences_lengths.resize(numAnchors * allocfactor);
+        d_subject_read_ids.resize(numAnchors * allocfactor);
+        d_subject_sequences_data.resize(numAnchors * pitch * allocfactor);
+        d_subject_sequences_lengths.resize(numAnchors * allocfactor);
+    }
+
 	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores_){
         n_subjects = n_sub;
 		n_queries = n_quer;
