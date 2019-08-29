@@ -88,7 +88,8 @@ namespace gpu{
     constexpr int msa_build_finished_event_index = 7;
     constexpr int indices_calculated_event_index = 8;
     constexpr int num_indices_transfered_event_index = 9;
-    constexpr int nEventsPerBatch = 10;
+    constexpr int secondary_stream_finished_event_index = 10;
+    constexpr int nEventsPerBatch = 11;
 
 
     struct CorrectionTask {
@@ -175,6 +176,7 @@ namespace gpu{
 		StartClassicCorrection,
 		StartForestCorrection,
         StartConvnetCorrection,
+        CombineStreams,
 		UnpackClassicResults,
 		WriteResults,
 		WriteFeatures,
@@ -195,6 +197,8 @@ namespace gpu{
 
         int copiedSubjects = 0;
         bool handledReadIds = false;
+
+        bool combinedStreams = false;
 
 
 		std::vector<read_number> readIdBuffer;
@@ -244,6 +248,8 @@ namespace gpu{
     		copiedCandidates = 0;
             copiedSubjects = 0;
             handledReadIds = false;
+
+            combinedStreams = false;
 
     		numsortedCandidateIds = 0;
     		numsortedCandidateIdTasks = 0;
@@ -384,6 +390,7 @@ namespace gpu{
 	void state_startclassiccorrection_func(Batch& batch);
 	void state_startforestcorrection_func(Batch& batch);
     void state_startconvnetcorrection_func(Batch& batch);
+    void state_combinestreams_func(Batch& batch);
 	void state_unpackclassicresults_func(Batch& batch);
 	void state_writeresults_func(Batch& batch);
 	void state_writefeatures_func(Batch& batch);
@@ -396,7 +403,7 @@ namespace gpu{
         auto outputThreadPtr = batch->transFuncData->outputThread;
 
         auto call = [=](auto f){
-            std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
+            //std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
             nvtx::push_range("batch "+std::to_string(batch->id)+nameOf(batch->state), int(batch->state));
             f(*batch);
             nvtx::pop_range();
@@ -456,6 +463,11 @@ namespace gpu{
         case BatchState::StartConvnetCorrection:
             cpugpuExecutorPtr->emplace([=](){
                 call(state_startconvnetcorrection_func);
+            });
+            break;
+        case BatchState::CombineStreams:
+            gpuExecutorPtr->emplace([=](){
+                call(state_combinestreams_func);
             });
             break;
 		case BatchState::UnpackClassicResults:
@@ -735,81 +747,81 @@ namespace gpu{
         batch.sequenceDataBuffer.resize(batch.readIdBuffer.size() * maximumSequenceBytes);
         batch.sequenceLengthsBuffer.resize(batch.readIdBuffer.size());
 
-        transFuncData.readStorage->gatherSequenceDataToHostBuffer(
-                                    batch.candidateSequenceGatherHandle2,
-                                    batch.sequenceDataBuffer.data(),
-                                    maximumSequenceBytes,
-                                    batch.readIdBuffer.data(),
-                                    batch.readIdBuffer.size(),
-                                    transFuncData.runtimeOptions.nCorrectorThreads);
-
-        transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
-                                    batch.candidateLengthGatherHandle2,
-                                    batch.sequenceLengthsBuffer.data(),
-                                    batch.readIdBuffer.data(),
-                                    batch.readIdBuffer.size(),
-                                    transFuncData.runtimeOptions.nCorrectorThreads);
-
-
-        // dataArrays.resizeAnchorSequenceData(transFuncData.correctionOptions.batchsize, maximumSequenceBytes);
-        //
-        // std::copy(batch.readIdBuffer.begin(), batch.readIdBuffer.end(), dataArrays.h_subject_read_ids.get());
-        //
-        // cudaMemcpyAsync(dataArrays.d_subject_read_ids,
-        //                 dataArrays.h_subject_read_ids,
-        //                 dataArrays.h_subject_read_ids.sizeInBytes(),
-        //                 H2D,
-        //                 streams[primary_stream_index]); CUERR;
-        //
-        //                 cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-        //
-        // transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
-        //                             batch.subjectSequenceGatherHandle2,
-        //                             dataArrays.d_subject_sequences_data.get(),
+        // transFuncData.readStorage->gatherSequenceDataToHostBuffer(
+        //                             batch.candidateSequenceGatherHandle2,
+        //                             batch.sequenceDataBuffer.data(),
         //                             maximumSequenceBytes,
-        //                             dataArrays.h_subject_read_ids,
-        //                             dataArrays.d_subject_read_ids,
+        //                             batch.readIdBuffer.data(),
         //                             batch.readIdBuffer.size(),
-        //                             transFuncData.deviceId,
-        //                             streams[primary_stream_index],
         //                             transFuncData.runtimeOptions.nCorrectorThreads);
         //
-        // transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
-        //                             batch.subjectLengthGatherHandle2,
-        //                             dataArrays.d_subject_sequences_lengths.get(),
-        //                             dataArrays.h_subject_read_ids.get(),
-        //                             dataArrays.d_subject_read_ids.get(),
+        // transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
+        //                             batch.candidateLengthGatherHandle2,
+        //                             batch.sequenceLengthsBuffer.data(),
+        //                             batch.readIdBuffer.data(),
         //                             batch.readIdBuffer.size(),
-        //                             transFuncData.deviceId,
-        //                             streams[primary_stream_index],
         //                             transFuncData.runtimeOptions.nCorrectorThreads);
-        //
-        // cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
-        //                 dataArrays.d_subject_sequences_data,
-        //                 dataArrays.d_subject_sequences_data.sizeInBytes(),
-        //                 D2H,
-        //                 streams[primary_stream_index]); CUERR;
-        //
-        // cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
-        //                 dataArrays.d_subject_sequences_lengths,
-        //                 dataArrays.d_subject_sequences_lengths.sizeInBytes(),
-        //                 D2H,
-        //                 streams[primary_stream_index]); CUERR;
+
+
+        dataArrays.resizeAnchorSequenceData(transFuncData.correctionOptions.batchsize, maximumSequenceBytes);
+
+        std::copy(batch.readIdBuffer.begin(), batch.readIdBuffer.end(), dataArrays.h_subject_read_ids.get());
+
+        cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                        dataArrays.h_subject_read_ids,
+                        dataArrays.h_subject_read_ids.sizeInBytes(),
+                        H2D,
+                        streams[primary_stream_index]); CUERR;
+
+                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+                                    batch.subjectSequenceGatherHandle2,
+                                    dataArrays.d_subject_sequences_data.get(),
+                                    maximumSequenceBytes,
+                                    dataArrays.h_subject_read_ids,
+                                    dataArrays.d_subject_read_ids,
+                                    batch.readIdBuffer.size(),
+                                    transFuncData.deviceId,
+                                    streams[primary_stream_index],
+                                    transFuncData.runtimeOptions.nCorrectorThreads);
+
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
+                                    batch.subjectLengthGatherHandle2,
+                                    dataArrays.d_subject_sequences_lengths.get(),
+                                    dataArrays.h_subject_read_ids.get(),
+                                    dataArrays.d_subject_read_ids.get(),
+                                    batch.readIdBuffer.size(),
+                                    transFuncData.deviceId,
+                                    streams[primary_stream_index],
+                                    transFuncData.runtimeOptions.nCorrectorThreads);
+
+        cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+                        dataArrays.d_subject_sequences_data,
+                        dataArrays.d_subject_sequences_data.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
+                        dataArrays.d_subject_sequences_lengths,
+                        dataArrays.d_subject_sequences_lengths.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
         //
         // std::vector<char> sequenceDataBuffer2(batch.readIdBuffer.size() * maximumSequenceBytes);
         // std::vector<int> sequenceLengthsBuffer2(batch.readIdBuffer.size());
         //
-        // cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-        //
-        // std::copy(dataArrays.h_subject_sequences_data.get(),
-        //         dataArrays.h_subject_sequences_data.get() + batch.readIdBuffer.size() * maximumSequenceBytes,
-        //          batch.sequenceDataBuffer.begin());
-        //          //sequenceDataBuffer2.begin());
-        //
-        //  std::copy(dataArrays.h_subject_sequences_lengths.get(),
-        //          dataArrays.h_subject_sequences_lengths.get() + batch.readIdBuffer.size(),
-        //           batch.sequenceLengthsBuffer.begin());
-        //           //sequenceLengthsBuffer2.begin());
+        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+        std::copy(dataArrays.h_subject_sequences_data.get(),
+                dataArrays.h_subject_sequences_data.get() + batch.readIdBuffer.size() * maximumSequenceBytes,
+                 batch.sequenceDataBuffer.begin());
+                 //sequenceDataBuffer2.begin());
+
+         std::copy(dataArrays.h_subject_sequences_lengths.get(),
+                 dataArrays.h_subject_sequences_lengths.get() + batch.readIdBuffer.size(),
+                  batch.sequenceLengthsBuffer.begin());
+                  //sequenceLengthsBuffer2.begin());
 
         // for(int i = 0; i < batch.readIdBuffer.size(); i++){
         //     if(std::memcmp(&batch.sequenceDataBuffer[i * maximumSequenceBytes],
@@ -852,8 +864,13 @@ namespace gpu{
             const bool ok = true;
 
             if(ok){
+#if 0
+                const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
+                const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
+#else
                 const char* sequenceptr = batch.sequenceDataBuffer.data() + i * maximumSequenceBytes;
                 const int sequencelength = batch.sequenceLengthsBuffer[i];
+#endif
 
                 task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
@@ -2863,6 +2880,19 @@ namespace gpu{
         return;
 	}
 
+    void state_combinestreams_func(Batch& batch){
+        constexpr BatchState expectedState = BatchState::CombineStreams;
+
+        assert(batch.state == expectedState);
+
+        auto& events = *batch.events;
+        auto& streams = *batch.streams;
+
+        cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+        cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+    }
+
     void state_unpackclassicresults_func(Batch& batch){
 
         const auto& transFuncData = *batch.transFuncData;
@@ -2870,6 +2900,19 @@ namespace gpu{
         constexpr BatchState expectedState = BatchState::UnpackClassicResults;
 
         assert(batch.state == expectedState);
+
+        if(!batch.combinedStreams){
+            auto& events = *batch.events;
+            auto& streams = *batch.streams;
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+            batch.combinedStreams = true;
+
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        }
 
         std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
@@ -2981,6 +3024,19 @@ namespace gpu{
         const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::WriteResults);
+
+        if(!batch.combinedStreams){
+            auto& events = *batch.events;
+            auto& streams = *batch.streams;
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+            batch.combinedStreams = true;
+
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        }
 
         /*DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -3180,6 +3236,19 @@ namespace gpu{
         constexpr BatchState expectedState = BatchState::WriteFeatures;
 
         assert(batch.state == expectedState);
+
+        if(!batch.combinedStreams){
+            auto& events = *batch.events;
+            auto& streams = *batch.streams;
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+            batch.combinedStreams = true;
+
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        }
 
 
 		DataArrays& dataArrays = *batch.dataArrays;
