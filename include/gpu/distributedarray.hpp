@@ -113,6 +113,8 @@ public:
 
         std::vector<cudaStream_t> streamsPerGpu;
         std::vector<cudaEvent_t> eventsPerGpu;
+
+        cudaEvent_t readyEvent;
     };
 
     using GatherHandle = std::shared_ptr<GatherHandleStruct>;
@@ -517,6 +519,7 @@ public:
             cudaStreamCreate(&(handle->streamsPerGpu[gpu])); CUERR;
             cudaEventCreate(&(handle->eventsPerGpu[gpu])); CUERR;
         }
+        cudaEventCreate(&(handle->readyEvent)); CUERR;
         cudaSetDevice(oldDevice); CUERR;
 
         return handle;
@@ -536,6 +539,8 @@ public:
             cudaStreamDestroy(handle->streamsPerGpu[gpu]); CUERR;
             cudaEventDestroy(handle->eventsPerGpu[gpu]); CUERR;
         }
+
+        cudaEventDestroy(handle->readyEvent); CUERR;
 
         for(auto& pair : handle->tmpResultsOfDevice){
             cudaSetDevice(pair.first); CUERR;
