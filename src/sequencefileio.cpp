@@ -1004,7 +1004,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             return tmpresults[index].sequence;
         };
 
-        //check if all corrections are equal. for candidates, this only checks positions with overlap to anchor
+        auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
+            return r.type == TempCorrectedSequence::Type::Anchor;
+        });
 
         if(!std::all_of(tmpresults.begin()+1, tmpresults.end(), equalsFirstSequence)){
             // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
@@ -1053,14 +1055,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 consensus[position] = findConsensusOfPosition(position);
             };
 
-            // auto isBadAnchor = [](const auto& result){
-            //     return result.type == TempCorrectedSequence::Type::Anchor
-            //             && !result.uncorrectedPositionsNoConsensus.empty();
-            // };
-            // auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), isBadAnchor);
-            auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
-                return r.type == TempCorrectedSequence::Type::Anchor;
-            });
+
 
             if(anchorIter != tmpresults.end()){
                 std::for_each(tmpresults.begin(), tmpresults.end(), countBases);
@@ -1122,13 +1117,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         }else{
             //return std::make_pair(tmpresults[0].sequence, false);
-            auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
-                return r.type == TempCorrectedSequence::Type::Anchor;
-            });
+
             if(anchorIter != tmpresults.end()){
                 //return std::make_pair(anchorIter->sequence, true);
                 auto checkshift = [](const auto& r){
-                    return r.type == TempCorrectedSequence::Type::Candidate && r.shift <= 15;
+                    return r.type == TempCorrectedSequence::Type::Candidate && std::abs(r.shift) <= 15;
                     //return true;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
@@ -1145,7 +1138,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 //no correction as anchor. all corrections as candidate are equal.
                 //only use the correction if at least one correction as candidate was performed with 0 new columns
                 auto checkshift = [](const auto& r){
-                    return r.shift <= 3;
+                    return std::abs(r.shift) <= 3;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
                     return std::make_pair(tmpresults[0].sequence, true);
@@ -1161,6 +1154,213 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         //return tmpresults[0].sequence;
     };
+
+
+    auto combineMultipleCorrectionResults3 = [](const std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
+        assert(!tmpresults.empty());
+
+        auto isHQ = [](const auto& tcs){
+            return tcs.type == TempCorrectedSequence::Type::Anchor && tcs.hq;
+        };
+
+        static int hqcount = 0;
+
+        //if there is a correction using a high quality alignment, use it
+        auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
+        if(firstHqSequence != tmpresults.end()){
+            // if(firstHqSequence->isEqual){
+            //     if(firstHqSequence->sequence != originalSequence){
+            //         std::cerr << "orig " << originalSequence << "\n";
+            //         std::cerr << "corr " << firstHqSequence->sequence << "\n";
+            //     }
+            // }
+            // if(firstHqSequence->sequence == "-"){
+            //     //if sequence is "", the high quality anchor correction equals the original read
+            //     return std::make_pair(std::string{""}, false);
+            // }else{
+                hqcount++;
+                //std::cerr << "hq " << hqcount << "\n";
+                return std::make_pair(firstHqSequence->sequence, true);
+            //}
+        }
+
+        auto anchorIter = std::find_if(tmpresults.begin(), tmpresults.end(), [](const auto& r){
+            return r.type == TempCorrectedSequence::Type::Anchor;
+        });
+
+        auto getvalidrangeByShift = [](int length, int shift){
+            const int begin = std::max(-shift, 0);
+            const int end = length - std::max(shift, 0);
+            return std::make_pair(begin, end);
+            //return std::make_pair(0, length);
+        };
+
+        auto getvalidrangeTotal = [](int length, int shift){
+            return std::make_pair(0, length);
+        };
+
+        //check if all corrections are equal.
+
+        auto checkEquality = [&](auto getrange){
+            bool equal = true;
+
+            if(anchorIter != tmpresults.end()){
+                //anchor exists. for candidates, only check positions with overlap to anchor in their respective alignment
+
+                const auto& anchorseq = anchorIter->sequence;
+                for(const auto& cand : tmpresults){
+                    if(cand.type == TempCorrectedSequence::Type::Candidate){
+                        auto range = getrange(cand.sequence.length(), cand.shift);
+                        for(int i = range.first; i < range.second && equal; i++){
+                            if(anchorseq[i] != cand.sequence[i]){
+                                equal = false;
+                            }
+                        }
+                    }
+                    if(!equal){
+                        break;
+                    }
+                }
+            }else{
+                //anchor does not exist. only check positions which are covered by all candidates
+
+                int globalCheckBegin = 0;
+                int globalCheckEnd = std::numeric_limits<int>::max();
+
+                for(const auto& cand : tmpresults){
+                    if(cand.type == TempCorrectedSequence::Type::Candidate){
+                        auto range = getrange(cand.sequence.length(), cand.shift);
+                        globalCheckBegin = std::max(range.first, globalCheckBegin);
+                        globalCheckEnd = std::min(range.second, globalCheckEnd);
+                    }
+                }
+
+                for(auto it = tmpresults.begin()+1; it != tmpresults.end() && equal; ++it){
+                    for(int i = globalCheckBegin; i < globalCheckEnd && equal; i++){
+                        if(tmpresults[0].sequence[i] != it->sequence[i]){
+                            equal = false;
+                        }
+                    }
+                }
+            }
+
+            return equal;
+        };
+
+        bool correctionsAreEqualByShift = checkEquality(getvalidrangeByShift);
+        bool correctionsAreEqual = checkEquality(getvalidrangeTotal);
+
+        static int equalcount = 0;
+        static int differencecount = 0;
+
+
+
+        if(correctionsAreEqualByShift != correctionsAreEqual){
+            differencecount++;
+            //std::cerr << equalcount << " " << differencecount << "\n";
+        }else{
+            equalcount++;
+            //std::cerr << equalcount << " " << differencecount << "\n";
+        }
+
+
+        if(!correctionsAreEqualByShift){
+            // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
+            // std::cerr << "\n";
+            // std::exit(0);
+
+            //positions differ. if anchor exists, make consensus of anchor correction and candidate correction. else discard correction
+            if(anchorIter == tmpresults.end()){
+                //only candidates available. discard
+                return std::make_pair(std::string{""}, false);
+            }else{
+
+
+                const int length = tmpresults[0].sequence.length();
+                std::string consensus(length, 'F');
+                std::vector<int> countsA(length, 0);
+                std::vector<int> countsC(length, 0);
+                std::vector<int> countsG(length, 0);
+                std::vector<int> countsT(length, 0);
+
+                for(const auto& res : tmpresults){
+                    const auto& sequence = res.sequence;
+                    assert(sequence.size() == consensus.size());
+                    auto range = getvalidrangeByShift(sequence.length(), res.shift);
+
+                    for(int i = range.first; i < range.second; i++){
+                        const char c = sequence[i];
+                        if(c == 'A') countsA[i]++;
+                        else if(c == 'C') countsC[i]++;
+                        else if(c == 'G') countsG[i]++;
+                        else if(c == 'T') countsT[i]++;
+                        else {
+                            std::cerr << res.readId << " : " << sequence << "\n"; assert(false);
+                        }
+                    }
+                }
+
+                for(int i = 0; i < length; i++){
+                    int count = countsA[i];
+                    char c = 'A';
+                    if(countsC[i] > count){
+                        count = countsC[i];
+                        c = 'C';
+                    }
+                    if(countsG[i] > count){
+                        count = countsG[i];
+                        c = 'G';
+                    }
+                    if(countsT[i] > count){
+                        count = countsT[i];
+                        c = 'T';
+                    }
+                    consensus[i] = c;
+                }
+
+                return std::make_pair(consensus, true);
+            }
+        }else{
+            //return std::make_pair(tmpresults[0].sequence, false);
+
+            if(anchorIter != tmpresults.end()){
+                //return std::make_pair(anchorIter->sequence, true);
+                auto checkshift = [](const auto& r){
+                    return r.type == TempCorrectedSequence::Type::Candidate && std::abs(r.shift) <= 15;
+                    //return true;
+                };
+                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
+                    return std::make_pair(tmpresults[0].sequence, true);
+                }else{
+                    if(tmpresults.size() == 1){
+                        //return std::make_pair(std::string{""}, true);
+                        return std::make_pair(tmpresults[0].sequence, true);
+                    }else{
+                        return std::make_pair(std::string{""}, false); //always false
+                    }
+                }
+            }else{
+                //no correction as anchor. all corrections as candidate are equal.
+                //only use the correction if at least one correction as candidate was performed with 0 new columns
+                auto checkshift = [](const auto& r){
+                    return std::abs(r.shift) <= 3;
+                };
+                if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
+                    return std::make_pair(tmpresults[0].sequence, true);
+                }else{
+                    return std::make_pair(std::string{""}, false); //always false
+                }
+
+                //return std::make_pair(std::string{""}, false);
+
+                //return std::make_pair(tmpresults[0].sequence, true);
+            }
+        }
+
+        //return tmpresults[0].sequence;
+    };
+
+    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults3;
 
 
     std::uint64_t currentReadId = 0;
@@ -1222,7 +1422,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector, read.sequence);
+        auto correctedSequence = combineMultipleCorrectionResultsFunction(correctionVector, read.sequence);
 
         if(correctedSequence.second){
             assert(isValidSequence(correctedSequence.first));
@@ -1260,7 +1460,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
-        auto correctedSequence = combineMultipleCorrectionResults2(correctionVector, read.sequence);
+        auto correctedSequence = combineMultipleCorrectionResultsFunction(correctionVector, read.sequence);
 
         if(correctedSequence.second){
             assert(isValidSequence(correctedSequence.first));
@@ -1323,7 +1523,7 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
     }else{
         tmp.type = TempCorrectedSequence::Type::Candidate;
         is >> tmp.shift;
-        tmp.shift = std::abs(tmp.shift);
+        tmp.shift = tmp.shift;
     }
 
     return is;
