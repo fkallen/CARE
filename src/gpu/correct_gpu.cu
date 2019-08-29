@@ -56,7 +56,7 @@
 //#define REARRANGE_INDICES
 #define USE_MSA_MINIMIZATION
 
-#define USE_WAIT_FLAGS
+//#define USE_WAIT_FLAGS
 
 //#define DO_PROFILE
 
@@ -69,7 +69,6 @@ namespace care{
 namespace gpu{
 
     constexpr int nParallelBatches = 4;
-    constexpr int sideBatchStepsPerWaitIter = 1;
 
     //read status bitmask
     constexpr std::uint8_t readCorrectedAsHQAnchor = 1;
@@ -89,7 +88,8 @@ namespace gpu{
     constexpr int msa_build_finished_event_index = 7;
     constexpr int indices_calculated_event_index = 8;
     constexpr int num_indices_transfered_event_index = 9;
-    constexpr int nEventsPerBatch = 10;
+    constexpr int secondary_stream_finished_event_index = 10;
+    constexpr int nEventsPerBatch = 11;
 
 
     struct CorrectionTask {
@@ -166,6 +166,7 @@ namespace gpu{
 
     enum class BatchState : int{
 		Unprepared,
+        FindCandidateIds,
 		CopyReads,
 		StartAlignment,
         RearrangeIndices,
@@ -175,22 +176,18 @@ namespace gpu{
 		StartClassicCorrection,
 		StartForestCorrection,
         StartConvnetCorrection,
+        CombineStreams,
 		UnpackClassicResults,
 		WriteResults,
 		WriteFeatures,
 		Finished,
-		Aborted,
 	};
 
-    static constexpr int nBatchStates = static_cast<int>(BatchState::Aborted)+1;
+    static constexpr int nBatchStates = static_cast<int>(BatchState::Finished)+1;
+
+    struct TransitionFunctionData;
 
     struct Batch {
-        struct WaitCallbackData{
-            Batch* b{};
-            int index = -1;
-            WaitCallbackData(){}
-            WaitCallbackData(Batch* ptr, int i) : b(ptr), index(i){}
-        };
 		std::vector<CorrectionTask> tasks;
 		int initialNumberOfCandidates = 0;
 		BatchState state = BatchState::Unprepared;
@@ -201,8 +198,10 @@ namespace gpu{
         int copiedSubjects = 0;
         bool handledReadIds = false;
 
+        bool combinedStreams = false;
 
-		std::vector<read_number> readIdBuffer;
+        int initialNumberOfAnchorIds = 0;
+
         std::vector<char> sequenceDataBuffer;
         std::vector<int> sequenceLengthsBuffer;
 
@@ -223,6 +222,8 @@ namespace gpu{
         int activeWaitIndex = 0;
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
+        TransitionFunctionData* transFuncData;
+
         int id = -1;
 
 		KernelLaunchHandle kernelLaunchHandle;
@@ -234,59 +235,8 @@ namespace gpu{
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle2;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle2;
 
-        bool isWaiting() const{
-        #ifdef USE_WAIT_FLAGS
-            return 0 != waitCounts[activeWaitIndex].load();
-        #else
-            return cudaEventQuery((*events)[activeWaitIndex]) == cudaErrorNotReady;
-        #endif
-        }
-
-        void addWaitSignal(BatchState state, cudaStream_t stream){
-            const int wait_index = static_cast<int>(state);
-            waitCounts[wait_index]++;
-
-            //std::cout << "batch " << id << ". wait_index " << wait_index << ", count increased to " << waitCounts[wait_index] << std::endl;
-
-            #define handlethis(s) {\
-                auto waitsuccessfunc = [](void* batch){ \
-                    Batch* b = static_cast<Batch*>(batch); \
-                    int old = b->waitCounts[static_cast<int>((s))]--; \
-                }; \
-                cudaLaunchHostFunc(stream, waitsuccessfunc, (void*)this); CUERR; \
-            }
-
-            #define mycase(s) case (s): handlethis((s)); break;
-
-            //assert(old > 0);
-            //std::cout << "batch " << b->id << ". wait_index " << static_cast<int>((s)) << ", count decreased to " << b->waitCounts[static_cast<int>((s))] << std::endl;
-
-            switch(state) {
-            mycase(BatchState::Unprepared)
-            mycase(BatchState::CopyReads)
-            mycase(BatchState::StartAlignment)
-            mycase(BatchState::RearrangeIndices)
-            mycase(BatchState::CopyQualities)
-            mycase(BatchState::BuildMSA)
-            mycase(BatchState::ImproveMSA)
-            mycase(BatchState::StartClassicCorrection)
-            mycase(BatchState::StartForestCorrection)
-            mycase(BatchState::StartConvnetCorrection)
-            mycase(BatchState::UnpackClassicResults)
-            mycase(BatchState::WriteResults)
-            mycase(BatchState::WriteFeatures)
-            mycase(BatchState::Finished)
-            mycase(BatchState::Aborted)
-            default: assert(false);
-            }
-
-            #undef mycase
-            #undef handlethis
-        }
-
 		void reset(){
             tasks.clear();
-    		readIdBuffer.clear();
             sequenceDataBuffer.clear();
             sequenceLengthsBuffer.clear();
     		collectedCandidateReads.clear();
@@ -297,6 +247,10 @@ namespace gpu{
     		copiedCandidates = 0;
             copiedSubjects = 0;
             handledReadIds = false;
+
+            combinedStreams = false;
+
+            initialNumberOfAnchorIds = 0;
 
     		numsortedCandidateIds = 0;
     		numsortedCandidateIdTasks = 0;
@@ -310,13 +264,6 @@ namespace gpu{
             previousNumIndices = 0;
         }
 
-        void waitUntilAllCallbacksFinished() const{
-            assert(std::any_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i >= 0;}));
-
-            while(std::any_of(waitCounts.begin(), waitCounts.end(), [](const auto& i){return i > 0;})){
-                ;
-            }
-        }
 	};
 
     struct BackgroundThread{
@@ -380,17 +327,9 @@ namespace gpu{
         }
     };
 
-	struct AdvanceResult {
-		BatchState oldState = BatchState::Unprepared;
-		BatchState newState = BatchState::Unprepared;
-		bool noProgressBlocking = false;
-		bool noProgressLaunching = false;
-	};
-
     struct TransitionFunctionData {
         int deviceId;
 		cpu::RangeGenerator<read_number>* readIdGenerator;
-        std::vector<CorrectionTask>* tmptasksBuffer;
 		const Minhasher* minhasher;
         const DistributedReadStorage* readStorage;
 		std::mutex* locksForProcessedFlags;
@@ -409,120 +348,152 @@ namespace gpu{
 		std::function<void(const read_number)> lock;
 		std::function<void(const read_number)> unlock;
 
-        BackgroundThread* backgroundThread;
+        BackgroundThread* gpuExecutor;
+        BackgroundThread* cpugpuExecutor;
+        BackgroundThread* outputThread;
+
+        std::condition_variable isFinishedCV;
+        std::mutex isFinishedMutex;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         NN_Correction_Classifier nnClassifier;
 	};
 
-    BatchState state_unprepared_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_copyreads_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_startalignment_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-    BatchState state_rearrangeindices_func(Batch& batch,
-            bool isPausable,
-            TransitionFunctionData& transFuncData);
-
-	BatchState state_copyqualities_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_buildmsa_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-    BatchState state_improvemsa_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_startclassiccorrection_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_startforestcorrection_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-    BatchState state_startconvnetcorrection_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_unpackclassicresults_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_writeresults_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_writefeatures_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_finished_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-	BatchState state_aborted_func(Batch& batch,
-				bool isPausable,
-				TransitionFunctionData& transFuncData);
-
-    using FuncTableEntry = BatchState (*)(Batch&,
-				bool,
-				TransitionFunctionData&);
-
     std::string nameOf(const BatchState& state){
-		switch(state) {
-		case BatchState::Unprepared: return "Unprepared";
-		case BatchState::CopyReads: return "CopyReads";
-		case BatchState::StartAlignment: return "StartAlignment";
+        switch(state) {
+        case BatchState::Unprepared: return "Unprepared";
+        case BatchState::FindCandidateIds: return "FindCandidateIds";
+        case BatchState::CopyReads: return "CopyReads";
+        case BatchState::StartAlignment: return "StartAlignment";
         case BatchState::RearrangeIndices: return "RearrangeIndices";
-		case BatchState::CopyQualities: return "CopyQualities";
-		case BatchState::BuildMSA: return "BuildMSA";
+        case BatchState::CopyQualities: return "CopyQualities";
+        case BatchState::BuildMSA: return "BuildMSA";
         case BatchState::ImproveMSA: return "ImproveMSA";
-		case BatchState::StartClassicCorrection: return "StartClassicCorrection";
-		case BatchState::StartForestCorrection: return "StartForestCorrection";
+        case BatchState::StartClassicCorrection: return "StartClassicCorrection";
+        case BatchState::StartForestCorrection: return "StartForestCorrection";
         case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
-		case BatchState::UnpackClassicResults: return "UnpackClassicResults";
-		case BatchState::WriteResults: return "WriteResults";
-		case BatchState::WriteFeatures: return "WriteFeatures";
-		case BatchState::Finished: return "Finished";
-		case BatchState::Aborted: return "Aborted";
-		default: assert(false); return "None";
-		}
-	}
+        case BatchState::UnpackClassicResults: return "UnpackClassicResults";
+        case BatchState::WriteResults: return "WriteResults";
+        case BatchState::WriteFeatures: return "WriteFeatures";
+        case BatchState::Finished: return "Finished";
+        default: assert(false); return "None";
+        }
+    }
 
-    std::unordered_map<BatchState, FuncTableEntry>
-    makeTransitionFunctionTable(){
-        std::unordered_map<BatchState, FuncTableEntry> transitionFunctionTable;
+    void state_unprepared_func(Batch& batch);
+    void state_findcandidateids_func(Batch& batch);
+	void state_copyreads_func(Batch& batch);
+	void state_startalignment_func(Batch& batch);
+    void state_rearrangeindices_func(Batch& batch);
+	void state_copyqualities_func(Batch& batch);
+	void state_buildmsa_func(Batch& batch);
+    void state_improvemsa_func(Batch& batch);
+	void state_startclassiccorrection_func(Batch& batch);
+	void state_startforestcorrection_func(Batch& batch);
+    void state_startconvnetcorrection_func(Batch& batch);
+    void state_combinestreams_func(Batch& batch);
+	void state_unpackclassicresults_func(Batch& batch);
+	void state_writeresults_func(Batch& batch);
+	void state_writefeatures_func(Batch& batch);
+	void state_finished_func(Batch& batch);
 
-		transitionFunctionTable[BatchState::Unprepared] = state_unprepared_func;
-		transitionFunctionTable[BatchState::CopyReads] = state_copyreads_func;
-		transitionFunctionTable[BatchState::StartAlignment] = state_startalignment_func;
-        transitionFunctionTable[BatchState::RearrangeIndices] = state_rearrangeindices_func;
-		transitionFunctionTable[BatchState::CopyQualities] = state_copyqualities_func;
-		transitionFunctionTable[BatchState::BuildMSA] = state_buildmsa_func;
-        transitionFunctionTable[BatchState::ImproveMSA] = state_improvemsa_func;
-		transitionFunctionTable[BatchState::StartClassicCorrection] = state_startclassiccorrection_func;
-		transitionFunctionTable[BatchState::StartForestCorrection] = state_startforestcorrection_func;
-        transitionFunctionTable[BatchState::StartConvnetCorrection] = state_startconvnetcorrection_func;
-		transitionFunctionTable[BatchState::UnpackClassicResults] = state_unpackclassicresults_func;
-		transitionFunctionTable[BatchState::WriteResults] = state_writeresults_func;
-		transitionFunctionTable[BatchState::WriteFeatures] = state_writefeatures_func;
-		transitionFunctionTable[BatchState::Finished] = state_finished_func;
-		transitionFunctionTable[BatchState::Aborted] = state_aborted_func;
+    void CUDART_CB nextStep(void* b){
+        Batch* const batch = (Batch*)b;
+        auto gpuExecutorPtr = batch->transFuncData->gpuExecutor;
+        auto cpugpuExecutorPtr = batch->transFuncData->cpugpuExecutor;
+        auto outputThreadPtr = batch->transFuncData->outputThread;
 
-        return transitionFunctionTable;
-	}
+        auto call = [=](auto f){
+            //std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
+            nvtx::push_range("batch "+std::to_string(batch->id)+nameOf(batch->state), int(batch->state));
+            f(*batch);
+            nvtx::pop_range();
+        };
 
+        switch(batch->state) {
+		case BatchState::Unprepared:
+            gpuExecutorPtr->emplace([=](){
+                call(state_unprepared_func);
+            });
+            break;
+        case BatchState::FindCandidateIds:
+            cpugpuExecutorPtr->emplace([=](){
+                call(state_findcandidateids_func);
+            });
+            break;
+		case BatchState::CopyReads:
+            cpugpuExecutorPtr->emplace([=](){
+                call(state_copyreads_func);
+            });
+            break;
+		case BatchState::StartAlignment:
+            gpuExecutorPtr->emplace([=](){
+                call(state_startalignment_func);
+            });
+            break;
+        case BatchState::RearrangeIndices:
+            gpuExecutorPtr->emplace([=](){
+                call(state_rearrangeindices_func);
+            });
+            break;
+		case BatchState::CopyQualities:
+            cpugpuExecutorPtr->emplace([=](){
+                call(state_copyqualities_func);
+            });
+            break;
+		case BatchState::BuildMSA:
+            gpuExecutorPtr->emplace([=](){
+                call(state_buildmsa_func);
+            });
+            break;
+        case BatchState::ImproveMSA:
+            gpuExecutorPtr->emplace([=](){
+                call(state_improvemsa_func);
+            });
+            break;
+		case BatchState::StartClassicCorrection:
+            gpuExecutorPtr->emplace([=](){
+                call(state_startclassiccorrection_func);
+            });
+            break;
+		case BatchState::StartForestCorrection:
+            cpugpuExecutorPtr->emplace([=](){
+                call(state_startforestcorrection_func);
+            });
+            break;
+        case BatchState::StartConvnetCorrection:
+            cpugpuExecutorPtr->emplace([=](){
+                call(state_startconvnetcorrection_func);
+            });
+            break;
+        case BatchState::CombineStreams:
+            gpuExecutorPtr->emplace([=](){
+                call(state_combinestreams_func);
+            });
+            break;
+		case BatchState::UnpackClassicResults:
+            outputThreadPtr->emplace([=](){
+                call(state_unpackclassicresults_func);
+            });
+            break;
+		case BatchState::WriteResults:
+            outputThreadPtr->emplace([=](){
+                call(state_writeresults_func);
+            });
+            break;
+		case BatchState::WriteFeatures:
+            outputThreadPtr->emplace([=](){
+                call(state_writefeatures_func);
+            });
+            break;
+		case BatchState::Finished:
+            cpugpuExecutorPtr->emplace([=](){
+                call(state_finished_func);
+            });
+            break;
+		default: assert(false);;
+        }
+    }
 
 
     /*for each active read pair in tasks, if at least one read has more than threshold candidates:
@@ -749,14 +720,91 @@ namespace gpu{
     };
 
 
-    BatchState state_unprepared_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+    void state_unprepared_func(Batch& batch){
 
         assert(batch.state == BatchState::Unprepared);
-        assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
+        assert(batch.initialNumberOfCandidates == 0 && batch.tasks.empty());
 
-        auto identity = [](auto i){return i;};
+        //get next anchor read ids to correct. then begin fetching sequences and length of those anchors
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        DataArrays& dataArrays = *batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
+
+        const auto batchsize = transFuncData.correctionOptions.batchsize;
+
+        dataArrays.resizeAnchorSequenceData(batchsize, maximumSequenceBytes);
+
+        read_number* const readIdsBegin = dataArrays.h_subject_read_ids.get();
+        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
+        batch.initialNumberOfAnchorIds = std::distance(readIdsBegin, readIdsEnd);
+
+        if(batch.initialNumberOfAnchorIds == 0) {
+            batch.state = BatchState::Finished;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        };
+
+        cudaMemcpyAsync(dataArrays.d_subject_read_ids,
+                        dataArrays.h_subject_read_ids,
+                        dataArrays.h_subject_read_ids.sizeInBytes(),
+                        H2D,
+                        streams[primary_stream_index]); CUERR;
+
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+                                    batch.subjectSequenceGatherHandle2,
+                                    dataArrays.d_subject_sequences_data.get(),
+                                    maximumSequenceBytes,
+                                    dataArrays.h_subject_read_ids,
+                                    dataArrays.d_subject_read_ids,
+                                    batch.initialNumberOfAnchorIds,
+                                    transFuncData.deviceId,
+                                    streams[primary_stream_index],
+                                    transFuncData.runtimeOptions.nCorrectorThreads);
+
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
+                                    batch.subjectLengthGatherHandle2,
+                                    dataArrays.d_subject_sequences_lengths.get(),
+                                    dataArrays.h_subject_read_ids.get(),
+                                    dataArrays.d_subject_read_ids.get(),
+                                    batch.initialNumberOfAnchorIds,
+                                    transFuncData.deviceId,
+                                    streams[primary_stream_index],
+                                    transFuncData.runtimeOptions.nCorrectorThreads);
+
+        cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
+                        dataArrays.d_subject_sequences_data,
+                        dataArrays.d_subject_sequences_data.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
+                        dataArrays.d_subject_sequences_lengths,
+                        dataArrays.d_subject_sequences_lengths.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
+
+        batch.tasks.resize(batch.initialNumberOfAnchorIds);
+
+        batch.state = BatchState::FindCandidateIds;
+
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+    }
+
+
+
+    void state_findcandidateids_func(Batch& batch){
+
+        assert(batch.state == BatchState::FindCandidateIds);
+        assert(batch.initialNumberOfAnchorIds > 0);
+
+        //for each anchor, get candidates
+
+        const auto& transFuncData = *batch.transFuncData;
 
         const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
@@ -768,116 +816,69 @@ namespace gpu{
 
         const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
 
-        const size_t seqpitch = getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength) * sizeof(int);
+        const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
 
-        std::vector<CorrectionTask> tmptasks;
-        //std::vector<bool> tmpokflags(num_simultaneous_tasks);
+        int initialNumberOfCandidates = 0;
 
-        batch.tasks.reserve(transFuncData.correctionOptions.batchsize);
+        #pragma omp parallel for reduction(+: initialNumberOfCandidates)
+        for(int i = 0; i < batch.initialNumberOfAnchorIds; i++){
+            auto& task = batch.tasks[i];
 
-        while(int(batch.tasks.size()) < transFuncData.correctionOptions.batchsize
-                    && !(transFuncData.readIdGenerator->empty() && batch.readIdBuffer.empty())){
+            const read_number readId = dataArrays.h_subject_read_ids[i];
+            task = CorrectionTask(readId);
 
-            if(batch.readIdBuffer.empty()){
-                const int numNewIds = std::min(256, transFuncData.correctionOptions.batchsize);
+            // bool ok = false;
+            // if ((*transFuncData.correctionStatusFlagsPerRead)[readId] == 0) {
+            //     ok = true;
+            // }
+            const bool ok = true;
 
-                batch.readIdBuffer = transFuncData.readIdGenerator->next_n(numNewIds);
+            if(ok){
 
-                batch.sequenceDataBuffer.resize(batch.readIdBuffer.size() * seqpitch);
-                batch.sequenceLengthsBuffer.resize(batch.readIdBuffer.size());
-                transFuncData.readStorage->gatherSequenceDataToHostBuffer(
-                                            batch.candidateSequenceGatherHandle2,
-                                            batch.sequenceDataBuffer.data(),
-                                            seqpitch,
-                                            batch.readIdBuffer.data(),
-                                            batch.readIdBuffer.size(),
-                                            transFuncData.runtimeOptions.nCorrectorThreads);
+                const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
+                const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
 
-                transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
-                                            batch.candidateLengthGatherHandle2,
-                                            batch.sequenceLengthsBuffer.data(),
-                                            batch.readIdBuffer.data(),
-                                            batch.readIdBuffer.size(),
-                                            transFuncData.runtimeOptions.nCorrectorThreads);
-                if(isPausable){
-                   return BatchState::Unprepared;
+                task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+
+                task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                    hits_per_candidate,
+                                                                    transFuncData.runtimeOptions.max_candidates,
+                                                                    maxNumResultsPerMapQuery);
+
+                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+
+                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                    task.candidate_read_ids.erase(readIdPos);
                 }
-            }
 
-            const size_t oldSize = batch.tasks.size();
-            batch.tasks.resize(oldSize + batch.readIdBuffer.size());
+                std::size_t myNumCandidates = task.candidate_read_ids.size();
 
-            int initialNumberOfCandidates = 0;
+                assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
 
-            #pragma omp parallel for reduction(+: initialNumberOfCandidates)
-            for(size_t i = 0; i < batch.readIdBuffer.size(); i++){
-                auto& task = batch.tasks[oldSize + i];
-
-                const read_number readId = batch.readIdBuffer[i];
-                task = CorrectionTask(readId);
-
-                // bool ok = false;
-                // if ((*transFuncData.correctionStatusFlagsPerRead)[readId] == 0) {
-                //     ok = true;
-                // }
-                const bool ok = true;
-
-                if(ok){
-                    const char* sequenceptr = batch.sequenceDataBuffer.data() + i * seqpitch;
-                    const int sequencelength = batch.sequenceLengthsBuffer[i];
-
-                    task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
-
-                    task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
-                                                                        hits_per_candidate,
-                                                                        transFuncData.runtimeOptions.max_candidates,
-                                                                        maxNumResultsPerMapQuery);
-
-                    auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-
-                    if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
-                        task.candidate_read_ids.erase(readIdPos);
-                    }
-
-                    std::size_t myNumCandidates = task.candidate_read_ids.size();
-
-                    assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
-
-                    if(myNumCandidates == 0) {
-                        task.active = false;
-                    }
-                }else{
+                if(myNumCandidates == 0) {
                     task.active = false;
                 }
-
-                //const read_number id = task.readId;
-                // bool ok2 = false;
-                // transFuncData.lock(id);
-                // if ((*transFuncData.correctionStatusFlagsPerRead)[id] == 0) {
-                //     (*transFuncData.correctionStatusFlagsPerRead)[id] = 1;
-                //     ok2 = true;
-                // }else{
-                // }
-                // transFuncData.unlock(id);
-                const bool ok2 = true;
-                if(ok2){
-                    const int myNumCandidates = int(task.candidate_read_ids.size());
-                    initialNumberOfCandidates += myNumCandidates;
-                }
+            }else{
+                task.active = false;
             }
 
-            batch.initialNumberOfCandidates += initialNumberOfCandidates;
-
-            batch.readIdBuffer.clear();
-
-            // if(isPausable){
-            //    return BatchState::Unprepared;
+            //const read_number id = task.readId;
+            // bool ok2 = false;
+            // transFuncData.lock(id);
+            // if ((*transFuncData.correctionStatusFlagsPerRead)[id] == 0) {
+            //     (*transFuncData.correctionStatusFlagsPerRead)[id] = 1;
+            //     ok2 = true;
+            // }else{
             // }
+            // transFuncData.unlock(id);
+            const bool ok2 = true;
+            if(ok2){
+                const int myNumCandidates = int(task.candidate_read_ids.size());
+                initialNumberOfCandidates += myNumCandidates;
+            }
         }
 
-
-
-
+        batch.initialNumberOfCandidates += initialNumberOfCandidates;
 
         auto it = std::remove_if(batch.tasks.begin(), batch.tasks.end(), [](const auto& t){return !t.active;});
         batch.tasks.erase(it, batch.tasks.end());
@@ -885,11 +886,15 @@ namespace gpu{
         if(false) {
             //still more read ids to add
 
-            return BatchState::Unprepared;
+            batch.state = BatchState::Unprepared;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }else{
 
             if(batch.initialNumberOfCandidates == 0) {
-                return BatchState::Aborted;
+                batch.state = BatchState::Finished;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             }else{
 
                 //assert(batch.initialNumberOfCandidates < transFuncData.correctionOptions.batchsize + transFuncData.runtimeOptions.max_candidates);
@@ -937,12 +942,12 @@ namespace gpu{
                                                         temp_storage_bytes,
                                                         (const char*) nullptr,
                                                         (char*)nullptr,
-                                                		(const int*)nullptr,
-                                                		(int*)nullptr,
-                                                		batch.initialNumberOfCandidates,
-                                                		dataArrays.n_subjects,
-                                                		(const int*)nullptr,
-                                                		(const int*)nullptr,
+                                                        (const int*)nullptr,
+                                                        (int*)nullptr,
+                                                        batch.initialNumberOfCandidates,
+                                                        dataArrays.n_subjects,
+                                                        (const int*)nullptr,
+                                                        (const int*)nullptr,
                                                         0,
                                                         3,
                                                         streams[primary_stream_index]);
@@ -960,18 +965,20 @@ namespace gpu{
 
                 batch.initialNumberOfCandidates = 0;
 
-                return BatchState::CopyReads;
+                batch.state = BatchState::CopyReads;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             }
         }
     }
 
 
-    BatchState state_copyreads_func(Batch& batch,
-                bool isPausable,
-                TransitionFunctionData& transFuncData){
+    void state_copyreads_func(Batch& batch){
 
         assert(batch.state == BatchState::CopyReads);
         assert(batch.copiedTasks <= int(batch.tasks.size()));
+
+        const auto& transFuncData = *batch.transFuncData;
 
         DataArrays& dataArrays = *batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1114,16 +1121,17 @@ namespace gpu{
         batch.copiedSubjects = 0;
         batch.handledReadIds = false;
 
-        return BatchState::StartAlignment;
+        batch.state = BatchState::StartAlignment;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
     }
 
 
 
-	BatchState state_startalignment_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+	void state_startalignment_func(Batch& batch){
 
 		assert(batch.state == BatchState::StartAlignment);
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1321,17 +1329,17 @@ namespace gpu{
                         sizeof(int),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-#ifdef USE_WAIT_FLAGS
-        batch.addWaitSignal(BatchState::RearrangeIndices, streams[primary_stream_index]);
-#endif
+
         cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
-        return BatchState::RearrangeIndices;
+        batch.state = BatchState::RearrangeIndices;
+
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
 	}
 
-    BatchState state_rearrangeindices_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+    void state_rearrangeindices_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         DataArrays& dataArrays = *batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1340,28 +1348,8 @@ namespace gpu{
 #ifdef REARRANGE_INDICES
 
         constexpr BatchState expectedState = BatchState::RearrangeIndices;
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
+
         assert(batch.state == expectedState);
-
-
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        if(nParallelBatches == 1){
-            cudaEventSynchronize(events[num_indices_transfered_event_index]);
-        }else{
-            cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
-            if(status == cudaErrorNotReady){
-                batch.activeWaitIndex = num_indices_transfered_event_index;
-                return expectedState;
-            }
-        }
-#endif
 
         int* d_indices_segmented_partitioned;
         BestAlignment_t* d_alignment_best_alignment_flags_compact;
@@ -1446,59 +1434,35 @@ namespace gpu{
                         streams[secondary_stream_index]); CUERR;
 
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-#ifdef USE_WAIT_FLAGS
-        batch.addWaitSignal(BatchState::BuildMSA, streams[secondary_stream_index]);
-        batch.addWaitSignal(BatchState::CopyQualities, streams[secondary_stream_index]);
-        batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
-#endif
+        cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
         if(transFuncData.correctionOptions.useQualityScores) {
-            return BatchState::CopyQualities;
+            batch.state = BatchState::CopyQualities;
         }else{
-            return BatchState::BuildMSA;
+            batch.state = BatchState::BuildMSA;
         }
 
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
     }
 
 
-    BatchState state_copyqualities_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+    void state_copyqualities_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::CopyQualities;
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
+
 		assert(batch.state == expectedState);
 
         std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        if(nParallelBatches == 1){
-            cudaEventSynchronize(events[indices_transfer_finished_event_index]);
-        }else{
-                cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-                if(status == cudaErrorNotReady){
-                    batch.activeWaitIndex = indices_transfer_finished_event_index;
-                    return expectedState;
-                }
-        }
-#endif
-
-
-
 
         DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(dataArrays.h_num_indices[0] == 0){
-            return BatchState::WriteResults;
+            batch.state = BatchState::Finished;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }
 
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -1559,49 +1523,34 @@ namespace gpu{
                             D2H,
                             streams[secondary_stream_index]);
 
-            return BatchState::BuildMSA;
-
-
+            batch.state = BatchState::BuildMSA;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
         }else{
-            return BatchState::BuildMSA;
+            batch.state = BatchState::BuildMSA;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
         }
 	}
 
 
-    BatchState state_buildmsa_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+    void state_buildmsa_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::BuildMSA;
-
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
 
         assert(batch.state == expectedState);
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = num_indices_transfered_event_index;
-            return expectedState;
-        }
-#endif
-
         DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(dataArrays.h_num_indices[0] == 0){
-            std::cerr << "buildmsa *h_num_indices = " << dataArrays.h_num_indices[0] << '\n';
-            return BatchState::WriteResults;
+            //std::cerr << "buildmsa *h_num_indices = " << dataArrays.h_num_indices[0] << '\n';
+            batch.state = BatchState::Finished;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }
 
         if(transFuncData.correctionOptions.useQualityScores){
@@ -1640,47 +1589,33 @@ namespace gpu{
         //At this point the msa is built
         cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
-        return BatchState::ImproveMSA;
+        batch.state = BatchState::ImproveMSA;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
 	}
 
 
 
 
 
-    BatchState state_improvemsa_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+    void state_improvemsa_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::ImproveMSA;
-
-    #ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-    #endif
 
         assert(batch.state == expectedState);
 
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-    #ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-    #else
-        cudaError_t status = cudaEventQuery(events[num_indices_transfered_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = num_indices_transfered_event_index;
-            return expectedState;
-        }
-    #endif
-
         DataArrays& dataArrays = *batch.dataArrays;
 
         //if there are no good candidates, clean up batch and discard reads
         if(dataArrays.h_num_indices[0] == 0){
             std::cerr << "improvemsa *h_num_indices = " << dataArrays.h_num_indices[0] << '\n';
-            return BatchState::WriteResults;
+            batch.state = BatchState::Finished;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }
 
 
@@ -2006,10 +1941,6 @@ namespace gpu{
 
                 cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
 
-    #ifdef USE_WAIT_FLAGS
-                batch.addWaitSignal(expectedState, streams[primary_stream_index]);
-    #endif
-
                 cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
                 cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
@@ -2020,9 +1951,10 @@ namespace gpu{
                 batch.numMinimizations++;
                 batch.previousNumIndices = currentNumIndices;
 
-                //repeat state_buildmsa_func to rebuild the msa using the new index list
-                return expectedState;
-
+                //repeat state
+                batch.state = BatchState::ImproveMSA;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             }else{
                 //std::cerr << "minimization finished\n";
                 cudaMemcpyAsync(dataArrays.h_num_indices,
@@ -2057,10 +1989,6 @@ namespace gpu{
                                             streams[secondary_stream_index]);*/
 
         		cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-    #ifdef USE_WAIT_FLAGS
-                batch.addWaitSignal(BatchState::UnpackClassicResults, streams[secondary_stream_index]);
-    #endif
             }
         }
 #endif
@@ -2111,27 +2039,33 @@ namespace gpu{
                         streams[secondary_stream_index]); CUERR;
 
             cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-        #ifdef USE_WAIT_FLAGS
-            batch.addWaitSignal(BatchState::StartForestCorrection, streams[secondary_stream_index]);
-            batch.addWaitSignal(BatchState::StartConvnetCorrection, streams[secondary_stream_index]);
-            batch.addWaitSignal(BatchState::WriteFeatures, streams[secondary_stream_index]);
-        #endif
-
         }
 
         if(transFuncData.correctionOptions.extractFeatures){
-            return BatchState::WriteFeatures;
+            cudaStreamWaitEvent(streams[primary_stream_index], events[msadata_transfer_finished_event_index], 0); CUERR;
+            batch.state = BatchState::WriteFeatures;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }else{
             switch(transFuncData.correctionOptions.correctionType){
             case CorrectionType::Classic:
-                return BatchState::StartClassicCorrection;
+                batch.state = BatchState::StartClassicCorrection;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             case CorrectionType::Forest:
-                return BatchState::StartForestCorrection;
+                cudaStreamWaitEvent(streams[primary_stream_index], events[msadata_transfer_finished_event_index], 0); CUERR;
+                batch.state = BatchState::StartForestCorrection;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             case CorrectionType::Convnet:
-                return BatchState::StartConvnetCorrection;
+                cudaStreamWaitEvent(streams[primary_stream_index], events[msadata_transfer_finished_event_index], 0); CUERR;
+                batch.state = BatchState::StartConvnetCorrection;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             default:
-                return BatchState::StartClassicCorrection;
+                batch.state = BatchState::StartClassicCorrection;
+                cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+                return;
             }
         }
 
@@ -2139,15 +2073,14 @@ namespace gpu{
     }
 
 
+	void state_startclassiccorrection_func(Batch& batch){
 
-
-
-	BatchState state_startclassiccorrection_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+        const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::StartClassicCorrection);
 		assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
+
+
 
 		DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -2288,6 +2221,8 @@ namespace gpu{
                             D2H,
                             streams[secondary_stream_index]); CUERR;
 
+            //cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+
 			// find subject ids of subjects with high quality multiple sequence alignment
 
             size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
@@ -2376,6 +2311,8 @@ namespace gpu{
             //
             // cubCachingAllocator.DeviceFree(d_high_quality_subject_indices_backup); CUERR;
             // cubCachingAllocator.DeviceFree(d_num_high_quality_subject_indices_backup); CUERR;
+
+            //cudaStreamWaitEvent(streams[primary_stream_index], events[correction_finished_event_index], 0); //wait for shift d2h transfer
 		}
 
 		cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
@@ -2424,46 +2361,30 @@ namespace gpu{
                             dataArrays.d_indices_of_corrected_candidates.sizeInBytes(),
                             D2H,
                             streams[primary_stream_index]); CUERR;
+            cudaMemcpyAsync(dataArrays.h_alignment_shifts,
+                            dataArrays.d_alignment_shifts,
+                            dataArrays.d_alignment_shifts.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
 
-            cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-            cudaStreamWaitEvent(streams[primary_stream_index], events[result_transfer_finished_event_index], 0); CUERR;
+            //cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+            //cudaStreamWaitEvent(streams[primary_stream_index], events[result_transfer_finished_event_index], 0); CUERR;
         }
 
 		cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
-#ifdef USE_WAIT_FLAGS
-        batch.addWaitSignal(BatchState::UnpackClassicResults, streams[primary_stream_index]);
-#endif
-
-        return BatchState::UnpackClassicResults;
+        batch.state = BatchState::UnpackClassicResults;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        return;
 	}
 
-    BatchState state_startconvnetcorrection_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
+    void state_startconvnetcorrection_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::StartConvnetCorrection;
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
+
         assert(batch.state == expectedState);
-
-
-
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = msadata_transfer_finished_event_index;
-            return expectedState;
-        }
-#endif
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Convnet);
 
@@ -2575,36 +2496,18 @@ namespace gpu{
 
         }
 
-
-        return BatchState::WriteResults;
+        batch.state = BatchState::WriteResults;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        return;
     }
 
-    BatchState state_startforestcorrection_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+    void state_startforestcorrection_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::StartForestCorrection;
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
+
         assert(batch.state == expectedState);
-
-
-
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-#else
-        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = msadata_transfer_finished_event_index;
-            return expectedState;
-        }
-#endif
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Forest);
 
@@ -2680,45 +2583,48 @@ namespace gpu{
 					task.corrected_subject[msafeature.position] = consensus[globalIndex];
 				}
             }
-
         }
 
-		return BatchState::WriteResults;
+        batch.state = BatchState::WriteResults;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        return;
 	}
 
-    BatchState state_unpackclassicresults_func(Batch& batch,
-                          bool isPausable,
-                TransitionFunctionData& transFuncData){
-
-        constexpr BatchState expectedState = BatchState::UnpackClassicResults;
-    #ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-    #endif
+    void state_combinestreams_func(Batch& batch){
+        constexpr BatchState expectedState = BatchState::CombineStreams;
 
         assert(batch.state == expectedState);
 
+        auto& events = *batch.events;
+        auto& streams = *batch.streams;
+
+        cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+        cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+    }
+
+    void state_unpackclassicresults_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        constexpr BatchState expectedState = BatchState::UnpackClassicResults;
+
+        assert(batch.state == expectedState);
+
+        if(!batch.combinedStreams){
+            auto& events = *batch.events;
+            auto& streams = *batch.streams;
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+            batch.combinedStreams = true;
+
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        }
+
         std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-    #ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
-        }
-    #else
-        cudaError_t status = cudaEventQuery(events[indices_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = indices_transfer_finished_event_index;
-            return expectedState;
-        }
-
-        status = cudaEventQuery(events[result_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = result_transfer_finished_event_index;
-            return expectedState;
-        }
-    #endif
-
-
 
         DataArrays& dataArrays = *batch.dataArrays;
         //std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -2729,6 +2635,8 @@ namespace gpu{
             std::exit(0);
         }
         assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
+        assert(cudaEventQuery(events[result_transfer_finished_event_index]) == cudaSuccess); CUERR;
+
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
@@ -2799,7 +2707,11 @@ namespace gpu{
                     const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
 
                     const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
-
+                    if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
+                        std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
+                                << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                    }
+                    assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
                     task.corrected_candidates_newColumns[i] = candidate_shift;
                     task.corrected_candidates_read_ids[i] = candidate_read_id;
                     task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
@@ -2810,16 +2722,31 @@ namespace gpu{
             }
         }
 
-        return BatchState::WriteResults;
+        batch.state = BatchState::WriteResults;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        return;
     }
 
 
 
-	BatchState state_writeresults_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+	void state_writeresults_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::WriteResults);
+
+        if(!batch.combinedStreams){
+            auto& events = *batch.events;
+            auto& streams = *batch.streams;
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+            batch.combinedStreams = true;
+
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        }
 
         /*DataArrays& dataArrays = *batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
@@ -3007,37 +2934,32 @@ namespace gpu{
 
 		function();
 
-        //transFuncData.backgroundThread->emplace(std::move(function));
-
-		return BatchState::Finished;
+        batch.state = BatchState::Finished;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        return;
 	}
 
-	BatchState state_writefeatures_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+	void state_writefeatures_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
 
         constexpr BatchState expectedState = BatchState::WriteFeatures;
-#ifdef USE_WAIT_FLAGS
-        constexpr int wait_index = static_cast<int>(expectedState);
-#endif
+
         assert(batch.state == expectedState);
 
+        if(!batch.combinedStreams){
+            auto& events = *batch.events;
+            auto& streams = *batch.streams;
 
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-#ifdef USE_WAIT_FLAGS
-        if(batch.waitCounts[wait_index] != 0){
-            batch.activeWaitIndex = wait_index;
-            return expectedState;
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+            batch.combinedStreams = true;
+
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }
-#else
-        std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-        cudaError_t status = cudaEventQuery(events[msadata_transfer_finished_event_index]); CUERR;
-        if(status == cudaErrorNotReady){
-            batch.activeWaitIndex = msadata_transfer_finished_event_index;
-            return expectedState;
-        }
-#endif
 
 		DataArrays& dataArrays = *batch.dataArrays;
 
@@ -3109,56 +3031,29 @@ namespace gpu{
 			}
 		}
 
-		return BatchState::Finished;
+        batch.state = BatchState::Finished;
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        return;
 	}
 
-	BatchState state_finished_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
+	void state_finished_func(Batch& batch){
+
+        auto& transFuncData = *batch.transFuncData;
 
 		assert(batch.state == BatchState::Finished);
 
-		assert(false);         //Finished is end node
-
-		return BatchState::Finished;
-	}
-
-	BatchState state_aborted_func(Batch& batch,
-												bool isPausable,
-				TransitionFunctionData& transFuncData){
-
-		assert(batch.state == BatchState::Aborted);
-
-		assert(false);         //Aborted is end node
-
-		return BatchState::Aborted;
+        if(!(transFuncData.readIdGenerator->empty())) {
+            //there are reads left to correct, so this batch can be reused again
+            batch.reset();
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+        }else{
+            transFuncData.isFinishedCV.notify_one();
+        }
 	}
 
 
 
-AdvanceResult advance_one_step(Batch& batch,
-			bool isPausable,
-			TransitionFunctionData& transFuncData,
-            const std::unordered_map<BatchState, FuncTableEntry>& transitionFunctionTable){
 
-	AdvanceResult advanceResult;
-
-	advanceResult.oldState = batch.state;
-	advanceResult.noProgressBlocking = false;
-	advanceResult.noProgressLaunching = false;
-
-	auto iter = transitionFunctionTable.find(batch.state);
-	if(iter != transitionFunctionTable.end()) {
-		batch.state = iter->second(batch, isPausable, transFuncData);
-	}else{
-		std::cout << nameOf(batch.state) << std::endl;
-		assert(false); // Every State should be handled above
-	}
-
-	advanceResult.newState = batch.state;
-
-	return advanceResult;
-}
 
 
 void correct_gpu(const MinhashOptions& minhashOptions,
@@ -3235,9 +3130,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       cudaSetDevice(deviceIds[0]); CUERR;
 
-      auto transitionFunctionTable = makeTransitionFunctionTable();
-
-
       std::vector<DataArrays > dataArrays;
       std::array<std::array<cudaStream_t, nStreamsPerBatch>, nParallelBatches> streams;
       std::array<std::array<cudaEvent_t, nEventsPerBatch>, nParallelBatches> cudaevents;
@@ -3256,9 +3148,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       auto kernelLaunchHandle = make_kernel_launch_handle(deviceIds[0]);
 
-
-      std::vector<read_number> readIdBuffer;
-      std::vector<CorrectionTask> tmptasksBuffer;
       std::vector<char> sequenceDataBuffer;
       std::vector<int> sequenceLengthsBuffer;
 
@@ -3268,11 +3157,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
-        BackgroundThread backgroundThread;
+        BackgroundThread gpuExecutor;
+        BackgroundThread cpugpuExecutor;
+        BackgroundThread outputThread;
 
       TransitionFunctionData transFuncData;
 
-      transFuncData.backgroundThread = &backgroundThread;
+      transFuncData.gpuExecutor = &gpuExecutor;
+      transFuncData.cpugpuExecutor = &cpugpuExecutor;
+      transFuncData.outputThread = &outputThread;
 
       //transFuncData.mybatchgen = &mybatchgen;
       transFuncData.deviceId = deviceIds[0];
@@ -3285,7 +3178,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.sequenceFileProperties = sequenceFileProperties;
 
       transFuncData.readIdGenerator = &readIdGenerator;
-      transFuncData.tmptasksBuffer = &tmptasksBuffer;
       transFuncData.minhasher = &minhasher;
       transFuncData.readStorage = &readStorage;
       transFuncData.locksForProcessedFlags = locksForProcessedFlags.get();
@@ -3303,6 +3195,13 @@ void correct_gpu(const MinhashOptions& minhashOptions,
   #endif
                            };
       transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
+          auto isValidSequence = [](const std::string& s){
+              return std::all_of(s.begin(), s.end(), [](char c){
+                  return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+              });
+          };
+
+          assert(isValidSequence(tmp.sequence));
           //std::cout << tmp << '\n';
           outputstream << tmp << '\n';
       };
@@ -3342,6 +3241,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             batches[i].candidateLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
             batches[i].subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
             batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
+            batches[i].transFuncData = &transFuncData;
             batchPointers[i] = &batches[i];
         }
 
@@ -3354,218 +3254,40 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           cudaProfilerStart();
       #endif
 
+        for(int i = 0; i < nParallelBatches; ++i) {
+            nextStep(&batches[i]);
+        }
 
-
-
-      int stacksize = 0;
-      //auto previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-      while(
+        while(
             !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
-                  return batch.state == BatchState::Finished && batch.readIdBuffer.empty();
-              })
-              //&& readIdBuffer.empty()
-              && readIdGenerator.empty())) {
-
-          if(stacksize != 0)
-              assert(stacksize == 0);
-
-          Batch& mainBatch = *batchPointers[0];
-
-          // size_t hostSizeBytes = mainBatch.dataArrays->hostArraysSizeInBytes();
-          // size_t deviceSizeBytes = mainBatch.dataArrays->deviceArraysSizeInBytes();
-          // size_t hostCapacityBytes = mainBatch.dataArrays->hostArraysCapacityInBytes();
-          // size_t deviceCapacityBytes = mainBatch.dataArrays->deviceArraysCapacityInBytes();
-          //
-          // auto MB = [](auto bytes){
-          //     return bytes / 1024. / 1024;
-          // };
-          //
-          // std::cerr << "Resize: Host " << MB(hostSizeBytes) << " " << MB(hostCapacityBytes);
-          // std::cerr << " Device " << MB(deviceSizeBytes) << " " << MB(deviceCapacityBytes) << '\n';
-
-          AdvanceResult mainBatchAdvanceResult;
-          bool popMain = false;
-
-          const auto now = std::chrono::system_clock::now();
-          runtime = now - timepoint_begin;
-
-  #ifndef DO_PROFILE
-          if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
-              printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                      readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
-                      int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                      int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                      int(runtime.count()) % 60);
-              //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-          }
-  #endif
+                return batch.state == BatchState::Finished;
+            }) && readIdGenerator.empty())) {
 
 
+            const auto now = std::chrono::system_clock::now();
+            runtime = now - timepoint_begin;
 
-          assert(popMain == false);
-          nvtx::push_range("mainBatch"+nameOf(mainBatch.state)+"first", int(mainBatch.state));
-          ++stacksize;
-          popMain = true;
+            #ifndef DO_PROFILE
+            if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
+                printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+                int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                int(runtime.count()) % 60);
+                //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
+            }
+            #endif
 
-          while(!(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted)) {
-
-              mainBatchAdvanceResult = advance_one_step(mainBatch,
-                          false,                   //cannot be paused
-                          transFuncData,
-                            transitionFunctionTable);
-
-              if((mainBatchAdvanceResult.oldState != mainBatchAdvanceResult.newState)) {
-                  nvtx::pop_range("main inner");
-                  popMain = false;
-                  --stacksize;
-
-                  assert(popMain == false);
-                  nvtx::push_range("mainBatch"+nameOf(mainBatchAdvanceResult.newState), int(mainBatchAdvanceResult.newState));
-                  ++stacksize;
-                  popMain = true;
-              }
-
-
-      #if 1
-
-              while(mainBatch.isWaiting()) {
-                  /*
-                      Prepare next batch while waiting for the mainBatch gpu work to finish
-                   */
-                  if(nParallelBatches > 1) {
-
-                      // 0 <= sideBatchIndex < nParallelBatches - 1
-                      // index in batches array is sideBatchIndex + 1;
-                      int localSideBatchIndex = 0;
-                      const int nSideBatches = nParallelBatches - 1;
-
-                      bool popSide = false;
-                      bool firstSideIter = true;
-
-                      AdvanceResult sideBatchAdvanceResult;
-
-                      while(mainBatch.isWaiting()) {
-                          const int globalBatchIndex = localSideBatchIndex + 1;
-
-                          Batch& sideBatch = *batchPointers[globalBatchIndex];
-
-                          if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
-                              continue;
-                          }
-
-                          for(int i = 0; i < sideBatchStepsPerWaitIter; ++i) {
-                              if(sideBatch.state == BatchState::Finished || sideBatch.state == BatchState::Aborted) {
-                                  break;
-                              }
-
-                              if(firstSideIter) {
-                                  assert(popSide == false);
-                                  nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatch.state)+"first", int(sideBatch.state));
-                                  ++stacksize;
-                                  popSide = true;
-                              }else{
-                                  if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-                                      assert(popSide == false);
-                                      nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(sideBatchAdvanceResult.newState), int(sideBatchAdvanceResult.newState));
-                                      ++stacksize;
-                                      popSide = true;
-                                  }
-                              }
-
-                              //auto curstate = sideBatch.state;
-                              //if(curstate == BatchState::Unprepared){
-                              //    nvtx::push_range("sideBatch"+std::to_string(localSideBatchIndex)+nameOf(curstate), int(sideBatch.state));
-                              //}
-                              sideBatchAdvanceResult = advance_one_step(sideBatch,
-                                          true,                   //can be paused
-                                          transFuncData,
-                                            transitionFunctionTable);
-
-                              //if(curstate == BatchState::Unprepared){
-                              //    nvtx::pop_range();
-                              //}
-
-                              if(sideBatchAdvanceResult.oldState != sideBatchAdvanceResult.newState) {
-                                  nvtx::pop_range("side inner");
-                                  popSide = false;
-                                  --stacksize;
-                              }
-
-
-
-                              firstSideIter = false;
-                          }
-
-                          if(sideBatch.isWaiting()) {
-                              //current side batch is waiting, move to next side batch
-                              localSideBatchIndex = nextBatchIndex(localSideBatchIndex, nSideBatches);
-
-                              if(popSide) {
-                                  nvtx::pop_range("switch sidebatch");
-                                  popSide = false;
-                                  --stacksize;
-                              }
-
-                              firstSideIter = true;
-                              sideBatchAdvanceResult = AdvanceResult{};
-                          }
-                      }
-
-                      if(popSide) {
-                          nvtx::pop_range("side outer");
-                          popSide = false;
-                          --stacksize;
-                      }
-
-                      //assert(eventquerystatus == cudaSuccess);
-                  }else{
-
-                  }
-
-
-              }
-      #endif
-
-
-          }
-
-          if(popMain) {
-              nvtx::pop_range("main outer");
-              popMain = false;
-              --stacksize;
-          }
-
-          assert(stacksize == 0);
-
-          assert(mainBatch.state == BatchState::Finished || mainBatch.state == BatchState::Aborted);
-
-          if(!(readIdGenerator.empty() && mainBatch.readIdBuffer.empty() && tmptasksBuffer.empty())) {
-              //there are reads left to correct, so this batch can be reused again
-              mainBatch.reset();
-          }else{
-              mainBatch.state = BatchState::Finished;
-          }
-
-          //nProcessedReads = threadOpts.readIdGenerator->.currentId - mybatchgen.firstId;
-
-          //rotate left to position next batch at index 0
-          std::rotate(batchPointers.begin(), batchPointers.begin()+1, batchPointers.end());
-
-
-
-      } // end batch processing
+            std::this_thread::sleep_for(std::chrono::seconds{1});
+        }
 
 
       outputstream.flush();
       featurestream.flush();
 
-      for(auto& batch : batches){
-          batch.waitUntilAllCallbacksFinished();
-      }
-
-      assert(tmptasksBuffer.empty());
-
-      backgroundThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+      cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+      gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+      outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
       #ifdef DO_PROFILE
           cudaProfilerStop();

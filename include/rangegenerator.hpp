@@ -52,6 +52,27 @@ namespace cpu{
             return result;
         }
 
+        //buffer must point to memory location of at least n elements
+        //returns past the end iterator
+        Count_t* next_n_into_buffer(Count_t n, Count_t* buffer){
+            std::lock_guard<std::mutex> lm(mutex);
+            if(isEmpty)
+                return buffer;
+
+            Count_t remaining = end - current;
+
+            Count_t resultsize = std::min(remaining, n);
+
+            std::iota(buffer, buffer + resultsize, current);
+
+            current += resultsize;
+
+            if(current == end)
+                isEmpty = true;
+
+            return buffer + resultsize;
+        }
+
         Count_t getBegin() const{
             return begin;
         }
