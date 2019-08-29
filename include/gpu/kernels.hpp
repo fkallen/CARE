@@ -358,6 +358,7 @@ void call_msa_correct_candidates_kernel_async_exp(
             int n_subjects,
             int n_queries,
             const int* d_num_indices,
+            size_t encoded_sequence_pitch,
             size_t sequence_pitch,
             size_t msa_pitch,
             size_t msa_weights_pitch,

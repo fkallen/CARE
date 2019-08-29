@@ -2351,6 +2351,7 @@ namespace gpu{
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.d_num_indices,
+                    dataArrays.encoded_sequence_pitch,
                     dataArrays.sequence_pitch,
                     dataArrays.msa_pitch,
                     dataArrays.msa_weights_pitch,

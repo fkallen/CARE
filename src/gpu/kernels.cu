@@ -2290,6 +2290,7 @@ namespace gpu{
                 int n_subjects,
                 int n_queries,
                 const int* __restrict__ d_num_indices,
+                size_t encoded_sequence_pitch,
                 size_t sequence_pitch,
                 size_t msa_pitch,
                 size_t msa_weights_pitch,
@@ -2299,6 +2300,31 @@ namespace gpu{
 
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
             return reverseComplementStringInplace((char*)sequence, sequencelength);
+        };
+
+        auto get = [] (const char* data, int length, int index){
+            //return Sequence_t::get_as_nucleotide(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        };
+
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
+        auto getCandidatePtr = [&] (int candidateIndex){
+            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            return result;
         };
 
         auto getCandidateLength = [&] (int candidateIndex){
@@ -2369,9 +2395,21 @@ namespace gpu{
                     if(newColMinSupport >= min_support_threshold
                        && newColMinCov >= min_coverage_threshold) {
 
-                        for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE) {
+                           const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
+                           const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+
+                        for(int i = copyposbegin + threadIdx.x; i < copyposend; i += BLOCKSIZE) {
                             my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
                         }
+
+                        // const char* const candidate = getCandidatePtr(global_candidate_index);
+                        // for(int i = threadIdx.x; i < copyposbegin - queryColumnsBegin_incl; i += BLOCKSIZE){
+                        //     my_corrected_candidates[n_corrected_candidates * sequence_pitch + i] = to_nuc(get(candidate, candidate_length, i));
+                        // }
+                        //
+                        // for(int i = copyposend - queryColumnsBegin_incl + threadIdx.x; i < candidate_length; i += BLOCKSIZE){
+                        //     my_corrected_candidates[n_corrected_candidates * sequence_pitch + i] = to_nuc(get(candidate, candidate_length, i));
+                        // }
 
                         __syncthreads();                                         // need to wait until all threads have written my_corrected_candidates before calculating reverse complement
 
@@ -4237,6 +4275,7 @@ namespace gpu{
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
+                size_t encoded_sequence_pitch,
     			size_t sequence_pitch,
     			size_t msa_pitch,
     			size_t msa_weights_pitch,
@@ -4310,6 +4349,7 @@ namespace gpu{
     		n_subjects, \
     		n_queries, \
     		d_num_indices, \
+            encoded_sequence_pitch, \
     		sequence_pitch, \
     		msa_pitch, \
     		msa_weights_pitch, \
