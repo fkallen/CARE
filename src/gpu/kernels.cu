@@ -2369,8 +2369,6 @@ namespace gpu{
                     if(newColMinSupport >= min_support_threshold
                        && newColMinCov >= min_coverage_threshold) {
 
-                           assert(shift <= 3);
-
                         for(int i = queryColumnsBegin_incl + threadIdx.x; i < queryColumnsEnd_excl; i += BLOCKSIZE) {
                             my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
                         }
