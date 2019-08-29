@@ -744,25 +744,6 @@ namespace gpu{
 
         batch.readIdBuffer = transFuncData.readIdGenerator->next_n(transFuncData.correctionOptions.batchsize);
 
-        batch.sequenceDataBuffer.resize(batch.readIdBuffer.size() * maximumSequenceBytes);
-        batch.sequenceLengthsBuffer.resize(batch.readIdBuffer.size());
-
-        // transFuncData.readStorage->gatherSequenceDataToHostBuffer(
-        //                             batch.candidateSequenceGatherHandle2,
-        //                             batch.sequenceDataBuffer.data(),
-        //                             maximumSequenceBytes,
-        //                             batch.readIdBuffer.data(),
-        //                             batch.readIdBuffer.size(),
-        //                             transFuncData.runtimeOptions.nCorrectorThreads);
-        //
-        // transFuncData.readStorage->gatherSequenceLengthsToHostBuffer(
-        //                             batch.candidateLengthGatherHandle2,
-        //                             batch.sequenceLengthsBuffer.data(),
-        //                             batch.readIdBuffer.data(),
-        //                             batch.readIdBuffer.size(),
-        //                             transFuncData.runtimeOptions.nCorrectorThreads);
-
-
         dataArrays.resizeAnchorSequenceData(transFuncData.correctionOptions.batchsize, maximumSequenceBytes);
 
         std::copy(batch.readIdBuffer.begin(), batch.readIdBuffer.end(), dataArrays.h_subject_read_ids.get());
@@ -772,8 +753,6 @@ namespace gpu{
                         dataArrays.h_subject_read_ids.sizeInBytes(),
                         H2D,
                         streams[primary_stream_index]); CUERR;
-
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
         transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
                                     batch.subjectSequenceGatherHandle2,
@@ -807,43 +786,8 @@ namespace gpu{
                         dataArrays.d_subject_sequences_lengths.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-        //
-        // std::vector<char> sequenceDataBuffer2(batch.readIdBuffer.size() * maximumSequenceBytes);
-        // std::vector<int> sequenceLengthsBuffer2(batch.readIdBuffer.size());
-        //
+
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-        std::copy(dataArrays.h_subject_sequences_data.get(),
-                dataArrays.h_subject_sequences_data.get() + batch.readIdBuffer.size() * maximumSequenceBytes,
-                 batch.sequenceDataBuffer.begin());
-                 //sequenceDataBuffer2.begin());
-
-         std::copy(dataArrays.h_subject_sequences_lengths.get(),
-                 dataArrays.h_subject_sequences_lengths.get() + batch.readIdBuffer.size(),
-                  batch.sequenceLengthsBuffer.begin());
-                  //sequenceLengthsBuffer2.begin());
-
-        // for(int i = 0; i < batch.readIdBuffer.size(); i++){
-        //     if(std::memcmp(&batch.sequenceDataBuffer[i * maximumSequenceBytes],
-        //                     &sequenceDataBuffer2[i * maximumSequenceBytes],
-        //                     maximumSequenceBytes) != 0){
-        //
-        //         std::cerr << "1\n";
-        //         for(int k = 0; k < maximumSequenceBytes; k++){
-        //             std::cerr << int(batch.sequenceDataBuffer[i * maximumSequenceBytes + k]) << ' ';
-        //         }
-        //         std::cerr << '\n';
-        //         std::cerr << "2\n";
-        //         for(int k = 0; k < maximumSequenceBytes; k++){
-        //             std::cerr << int(sequenceDataBuffer2[i * maximumSequenceBytes + k]) << ' ';
-        //         }
-        //         std::cerr << '\n';
-        //         assert(false);
-        //     }
-        // }
-
-        // assert(batch.sequenceDataBuffer == sequenceDataBuffer2);
-        // assert(batch.sequenceLengthsBuffer == sequenceLengthsBuffer2);
 
         const size_t oldSize = batch.tasks.size();
         batch.tasks.resize(oldSize + batch.readIdBuffer.size());
@@ -864,13 +808,9 @@ namespace gpu{
             const bool ok = true;
 
             if(ok){
-#if 0
+
                 const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
                 const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
-#else
-                const char* sequenceptr = batch.sequenceDataBuffer.data() + i * maximumSequenceBytes;
-                const int sequencelength = batch.sequenceLengthsBuffer[i];
-#endif
 
                 task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
@@ -916,6 +856,9 @@ namespace gpu{
 
         batch.readIdBuffer.clear();
 
+#ifdef hostgather
+#undef hostgather
+#endif
 
 
         auto it = std::remove_if(batch.tasks.begin(), batch.tasks.end(), [](const auto& t){return !t.active;});
