@@ -200,6 +200,8 @@ namespace gpu{
 
         bool combinedStreams = false;
 
+        int initialNumberOfAnchorIds = 0;
+
         std::vector<char> sequenceDataBuffer;
         std::vector<int> sequenceLengthsBuffer;
 
@@ -247,6 +249,8 @@ namespace gpu{
             handledReadIds = false;
 
             combinedStreams = false;
+
+            initialNumberOfAnchorIds = 0;
 
     		numsortedCandidateIds = 0;
     		numsortedCandidateIdTasks = 0;
@@ -721,30 +725,29 @@ namespace gpu{
         assert(batch.state == BatchState::Unprepared);
         assert(batch.initialNumberOfCandidates == 0 && batch.tasks.empty());
 
+        //get next anchor read ids to correct. then begin fetching sequences and length of those anchors
+
         const auto& transFuncData = *batch.transFuncData;
-
-        auto identity = [](auto i){return i;};
-
-        const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
         DataArrays& dataArrays = *batch.dataArrays;
         std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
         //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
 
-        const auto& minhasher = transFuncData.minhasher;
-
-        const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
-
         const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
 
         const auto batchsize = transFuncData.correctionOptions.batchsize;
 
-        batch.tasks.reserve(batchsize);
         dataArrays.resizeAnchorSequenceData(batchsize, maximumSequenceBytes);
 
         read_number* const readIdsBegin = dataArrays.h_subject_read_ids.get();
         read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
-        const int numReadIds = std::distance(readIdsBegin, readIdsEnd);
+        batch.initialNumberOfAnchorIds = std::distance(readIdsBegin, readIdsEnd);
+
+        if(batch.initialNumberOfAnchorIds == 0) {
+            batch.state = BatchState::Finished;
+            cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+        };
 
         cudaMemcpyAsync(dataArrays.d_subject_read_ids,
                         dataArrays.h_subject_read_ids,
@@ -758,7 +761,7 @@ namespace gpu{
                                     maximumSequenceBytes,
                                     dataArrays.h_subject_read_ids,
                                     dataArrays.d_subject_read_ids,
-                                    numReadIds,
+                                    batch.initialNumberOfAnchorIds,
                                     transFuncData.deviceId,
                                     streams[primary_stream_index],
                                     transFuncData.runtimeOptions.nCorrectorThreads);
@@ -768,7 +771,7 @@ namespace gpu{
                                     dataArrays.d_subject_sequences_lengths.get(),
                                     dataArrays.h_subject_read_ids.get(),
                                     dataArrays.d_subject_read_ids.get(),
-                                    numReadIds,
+                                    batch.initialNumberOfAnchorIds,
                                     transFuncData.deviceId,
                                     streams[primary_stream_index],
                                     transFuncData.runtimeOptions.nCorrectorThreads);
@@ -785,18 +788,43 @@ namespace gpu{
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        batch.tasks.resize(batch.initialNumberOfAnchorIds);
 
-        const size_t oldSize = batch.tasks.size();
-        batch.tasks.resize(oldSize + numReadIds);
+        batch.state = BatchState::FindCandidateIds;
+
+        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
+    }
+
+
+
+    void state_findcandidateids_func(Batch& batch){
+
+        assert(batch.state == BatchState::FindCandidateIds);
+        assert(batch.initialNumberOfAnchorIds > 0);
+
+        //for each anchor, get candidates
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
+
+        DataArrays& dataArrays = *batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
+        //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
+
+        const auto& minhasher = transFuncData.minhasher;
+
+        const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
+
+        const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
 
         int initialNumberOfCandidates = 0;
 
         #pragma omp parallel for reduction(+: initialNumberOfCandidates)
-        for(int i = 0; i < numReadIds; i++){
-            auto& task = batch.tasks[oldSize + i];
+        for(int i = 0; i < batch.initialNumberOfAnchorIds; i++){
+            auto& task = batch.tasks[i];
 
-            const read_number readId = readIdsBegin[i];
+            const read_number readId = dataArrays.h_subject_read_ids[i];
             task = CorrectionTask(readId);
 
             // bool ok = false;
@@ -914,12 +942,12 @@ namespace gpu{
                                                         temp_storage_bytes,
                                                         (const char*) nullptr,
                                                         (char*)nullptr,
-                                                		(const int*)nullptr,
-                                                		(int*)nullptr,
-                                                		batch.initialNumberOfCandidates,
-                                                		dataArrays.n_subjects,
-                                                		(const int*)nullptr,
-                                                		(const int*)nullptr,
+                                                        (const int*)nullptr,
+                                                        (int*)nullptr,
+                                                        batch.initialNumberOfCandidates,
+                                                        dataArrays.n_subjects,
+                                                        (const int*)nullptr,
+                                                        (const int*)nullptr,
                                                         0,
                                                         3,
                                                         streams[primary_stream_index]);
@@ -942,237 +970,6 @@ namespace gpu{
                 return;
             }
         }
-    }
-
-
-
-    void state_findcandidateids_func(Batch& batch){
-
-
-                assert(batch.state == BatchState::Unprepared);
-                assert((batch.initialNumberOfCandidates == 0 && batch.tasks.empty()) || batch.initialNumberOfCandidates > 0);
-
-                const auto& transFuncData = *batch.transFuncData;
-
-                auto identity = [](auto i){return i;};
-
-                const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
-
-                DataArrays& dataArrays = *batch.dataArrays;
-                std::array<cudaStream_t, nStreamsPerBatch>& streams = *batch.streams;
-                //std::array<cudaEvent_t, nEventsPerBatch>& events = *batch.events;
-
-                const auto& minhasher = transFuncData.minhasher;
-
-                const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
-
-                const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
-
-                const auto batchsize = transFuncData.correctionOptions.batchsize;
-
-                batch.tasks.reserve(batchsize);
-                dataArrays.resizeAnchorSequenceData(batchsize, maximumSequenceBytes);
-
-                read_number* const readIdsBegin = dataArrays.h_subject_read_ids.get();
-                read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
-                const int numReadIds = std::distance(readIdsBegin, readIdsEnd);
-
-                cudaMemcpyAsync(dataArrays.d_subject_read_ids,
-                                dataArrays.h_subject_read_ids,
-                                dataArrays.h_subject_read_ids.sizeInBytes(),
-                                H2D,
-                                streams[primary_stream_index]); CUERR;
-
-                transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
-                                            batch.subjectSequenceGatherHandle2,
-                                            dataArrays.d_subject_sequences_data.get(),
-                                            maximumSequenceBytes,
-                                            dataArrays.h_subject_read_ids,
-                                            dataArrays.d_subject_read_ids,
-                                            numReadIds,
-                                            transFuncData.deviceId,
-                                            streams[primary_stream_index],
-                                            transFuncData.runtimeOptions.nCorrectorThreads);
-
-                transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
-                                            batch.subjectLengthGatherHandle2,
-                                            dataArrays.d_subject_sequences_lengths.get(),
-                                            dataArrays.h_subject_read_ids.get(),
-                                            dataArrays.d_subject_read_ids.get(),
-                                            numReadIds,
-                                            transFuncData.deviceId,
-                                            streams[primary_stream_index],
-                                            transFuncData.runtimeOptions.nCorrectorThreads);
-
-                cudaMemcpyAsync(dataArrays.h_subject_sequences_data,
-                                dataArrays.d_subject_sequences_data,
-                                dataArrays.d_subject_sequences_data.sizeInBytes(),
-                                D2H,
-                                streams[primary_stream_index]); CUERR;
-
-                cudaMemcpyAsync(dataArrays.h_subject_sequences_lengths,
-                                dataArrays.d_subject_sequences_lengths,
-                                dataArrays.d_subject_sequences_lengths.sizeInBytes(),
-                                D2H,
-                                streams[primary_stream_index]); CUERR;
-
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                const size_t oldSize = batch.tasks.size();
-                batch.tasks.resize(oldSize + numReadIds);
-
-                int initialNumberOfCandidates = 0;
-
-                #pragma omp parallel for reduction(+: initialNumberOfCandidates)
-                for(size_t i = 0; i < numReadIds; i++){
-                    auto& task = batch.tasks[oldSize + i];
-
-                    const read_number readId = readIdsBegin[i];
-                    task = CorrectionTask(readId);
-
-                    // bool ok = false;
-                    // if ((*transFuncData.correctionStatusFlagsPerRead)[readId] == 0) {
-                    //     ok = true;
-                    // }
-                    const bool ok = true;
-
-                    if(ok){
-
-                        const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
-                        const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
-
-                        task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
-
-                        task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
-                                                                            hits_per_candidate,
-                                                                            transFuncData.runtimeOptions.max_candidates,
-                                                                            maxNumResultsPerMapQuery);
-
-                        auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-
-                        if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
-                            task.candidate_read_ids.erase(readIdPos);
-                        }
-
-                        std::size_t myNumCandidates = task.candidate_read_ids.size();
-
-                        assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
-
-                        if(myNumCandidates == 0) {
-                            task.active = false;
-                        }
-                    }else{
-                        task.active = false;
-                    }
-
-                    //const read_number id = task.readId;
-                    // bool ok2 = false;
-                    // transFuncData.lock(id);
-                    // if ((*transFuncData.correctionStatusFlagsPerRead)[id] == 0) {
-                    //     (*transFuncData.correctionStatusFlagsPerRead)[id] = 1;
-                    //     ok2 = true;
-                    // }else{
-                    // }
-                    // transFuncData.unlock(id);
-                    const bool ok2 = true;
-                    if(ok2){
-                        const int myNumCandidates = int(task.candidate_read_ids.size());
-                        initialNumberOfCandidates += myNumCandidates;
-                    }
-                }
-
-                batch.initialNumberOfCandidates += initialNumberOfCandidates;
-
-                auto it = std::remove_if(batch.tasks.begin(), batch.tasks.end(), [](const auto& t){return !t.active;});
-                batch.tasks.erase(it, batch.tasks.end());
-
-                if(false) {
-                    //still more read ids to add
-
-                    batch.state = BatchState::Unprepared;
-                    cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
-                    return;
-                }else{
-
-                    if(batch.initialNumberOfCandidates == 0) {
-                        batch.state = BatchState::Finished;
-                        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
-                        return;
-                    }else{
-
-                        //assert(batch.initialNumberOfCandidates < transFuncData.correctionOptions.batchsize + transFuncData.runtimeOptions.max_candidates);
-
-                        //allocate data arrays
-                        nvtx::push_range("set_problem_dimensions", 4);
-                        dataArrays.set_problem_dimensions(int(batch.tasks.size()),
-                                    batch.initialNumberOfCandidates,
-                                    transFuncData.sequenceFileProperties.maxSequenceLength,
-                                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
-                                    transFuncData.goodAlignmentProperties.min_overlap,
-                                    transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                                    transFuncData.correctionOptions.useQualityScores); CUERR;
-                        nvtx::pop_range();
-
-                        std::size_t temp_storage_bytes = 0;
-                        std::size_t max_temp_storage_bytes = 0;
-                        cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
-                                    (int*)nullptr, (int*)nullptr,
-                                    dataArrays.n_subjects+1,
-                                    (int*)nullptr,
-                                    dataArrays.n_queries,
-                                    streams[primary_stream_index]); CUERR;
-
-                        max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-                        cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                    (bool*)nullptr, (int*)nullptr, (int*)nullptr,
-                                    batch.initialNumberOfCandidates,
-                                    streams[primary_stream_index]); CUERR;
-
-                        max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-                        cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                    (int*)nullptr,
-                                    dataArrays.n_subjects,
-                                    streams[primary_stream_index]); CUERR;
-
-                        cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
-                                    (int*)nullptr,
-                                    dataArrays.n_subjects,
-                                    streams[primary_stream_index]); CUERR;
-
-                        cub::DeviceSegmentedRadixSort::SortPairs((void*)nullptr,
-                                                                temp_storage_bytes,
-                                                                (const char*) nullptr,
-                                                                (char*)nullptr,
-                                                        		(const int*)nullptr,
-                                                        		(int*)nullptr,
-                                                        		batch.initialNumberOfCandidates,
-                                                        		dataArrays.n_subjects,
-                                                        		(const int*)nullptr,
-                                                        		(const int*)nullptr,
-                                                                0,
-                                                                3,
-                                                                streams[primary_stream_index]);
-
-                        max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
-
-                        temp_storage_bytes = max_temp_storage_bytes;
-
-                        dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
-                        dataArrays.zero_gpu(streams[primary_stream_index]);
-
-                        auto roundToNextMultiple = [](int num, int factor){
-                            return SDIV(num, factor) * factor;
-                        };
-
-                        batch.initialNumberOfCandidates = 0;
-
-                        batch.state = BatchState::CopyReads;
-                        cudaLaunchHostFunc((*batch.streams)[primary_stream_index], nextStep, &batch); CUERR;
-                        return;
-                    }
-                }
     }
 
 
