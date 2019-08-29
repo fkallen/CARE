@@ -7,6 +7,7 @@
 #include <gpu/simpleallocation.cuh>
 #include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
+#include <gpu/nvtxtimelinemarkers.hpp>
 
 #include <algorithm>
 #include <numeric>
@@ -754,23 +755,6 @@ public:
 
         if(numIds == 0) return;
 
-        int oldNumOMPThreads = numCpuThreads;
-        #pragma omp parallel
-        {
-            #pragma omp single
-            oldNumOMPThreads = omp_get_num_threads();
-        }
-        omp_set_num_threads(numCpuThreads);
-
-        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-
-
-        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
-        int deviceIdLocation = -1;
-        if(deviceIdIter != deviceIds.end()){
-            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
-        }
-
         //fastpath, if all elements of distributed array reside on the gpu with device id deviceId
         if(singlePartitionInfo.isSinglePartition){
             if(singlePartitionInfo.locationId == hostLocation){
@@ -785,6 +769,8 @@ public:
                     Value_t* destPtr = (Value_t*)(((const char*)(h_result.get())) + sizeOfElement * k);
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
+
+                int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
                 cudaSetDevice(resultDeviceId); CUERR;
 
@@ -812,6 +798,26 @@ public:
     	// 	int location = getLocation(indices[i]);
     	// 	hitsPerLocation[location]++;
     	// }
+        nvtx::push_range("ompgetnumthreads", 4);
+
+        int oldNumOMPThreads = numCpuThreads;
+        #pragma omp parallel
+        {
+            #pragma omp single
+            oldNumOMPThreads = omp_get_num_threads();
+        }
+        omp_set_num_threads(numCpuThreads);
+
+        nvtx::pop_range();
+
+        int oldDevice; cudaGetDevice(&oldDevice); CUERR;
+
+        auto deviceIdIter = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
+        int deviceIdLocation = -1;
+        if(deviceIdIter != deviceIds.end()){
+            deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
+        }
+
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
         const int threadlocoffset = SDIV(numLocations,32) * 32;
         std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
