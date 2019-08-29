@@ -1097,7 +1097,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     else if(c == 'C') countsC[i]++;
                     else if(c == 'G') countsG[i]++;
                     else if(c == 'T') countsT[i]++;
-                    else assert(false);
+                    else {
+                        std::cerr << result.readId << " : " << sequence << "\n"; assert(false);
+                    }
                 }
             };
 
@@ -1215,7 +1217,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 //no correction as anchor. all corrections as candidate are equal.
                 //only use the correction if at least one correction as candidate was performed with 0 new columns
                 auto checkNewColumns = [](const auto& r){
-                    return r.newColumns <= 1;
+                    return r.newColumns <= 3;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkNewColumns)){
                     return std::make_pair(tmpresults[0].sequence, true);
