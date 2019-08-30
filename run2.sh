@@ -22,7 +22,7 @@ threads=16
 threadsgpu=0
 
 candidateCorrection=true
-candidateCorrectionNewColumns=3
+candidateCorrectionNewColumns=15
 extractFeatures=false
 
 if [ $# -gt 3 ]
@@ -64,14 +64,14 @@ fileformat=fastq
 useQualityScores=true
 
 
-batchsize=50000
+batchsize=1000
 showProgress=true
 
 #minhashing parameters
 #kmer length
 k=16
 #hashmaps (one kmer hash value per map)
-maps=32
+maps=48
 
 num_hits=1
 
