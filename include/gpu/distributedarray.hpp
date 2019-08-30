@@ -194,11 +194,8 @@ public:
                     if(rows == 0){
                         continue;
                     }
-                    //std::cerr << "cudamalloc on device " << deviceIds[gpu] << '\n';
-                    //std::cerr << "bytes: " << (elements * sizeOfElement) << '\n';
+
                     cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
-                    std::cerr << "cudaMalloc " << (rows * sizeOfElement) << "\n";
-                    //std::cerr << "dataptr: " << static_cast<void*>(dataPtrPerLocation[gpu]) <<'\n';
 
                     remainingElements -= rows;
                 }
@@ -206,7 +203,6 @@ public:
                 //remaining elements are stored in host memory
                 if(remainingElements > 0){
                     dataPtrPerLocation[hostLocation] = new Value_t[remainingElements * numColumns];
-                    std::cerr << "host malloc " << (remainingElements * numColumns * sizeof(Value_t)) << "\n";
                     elementsPerLocation[hostLocation] = remainingElements;
                 }
             }
