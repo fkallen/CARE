@@ -929,23 +929,46 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     //Then, merge original file and tempfile, replacing the reads in
     //original file by the corresponding reads in the tempfile.
 
-    commandbuilder << "sort --parallel=4 -k1,1 -n ";
-    for(const auto& filename : filesToMerge){
-        commandbuilder << "\"" << filename << "\" ";
-    }
-    commandbuilder << " > " << tempfile;
 
-    if(!isSorted || filesToMerge.size() > 1){
-        std::string command = commandbuilder.str();
-        TIMERSTARTCPU(sort_during_merge);
-        int r1 = std::system(command.c_str());
 
-        TIMERSTOPCPU(sort_during_merge);
-        if(r1 != 0){
-            throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
-        }
-    }else{
+    if(isSorted && filesToMerge.size() == 1){
         tempfile = filesToMerge[0];
+    }else{
+        if(isSorted){
+            std::stringstream commandbuilder;
+            commandbuilder << "sort --parallel=4 -k1,1 -n -m ";
+            for(const auto& filename : filesToMerge){
+                commandbuilder << "\"" << filename << "\" ";
+            }
+            commandbuilder << " > " << tempfile;
+
+            std::string command = commandbuilder.str();
+            std::cerr << "Running shell command: " << command << "\n";
+            TIMERSTARTCPU(sort_during_merge);
+            int r1 = std::system(command.c_str());
+
+            TIMERSTOPCPU(sort_during_merge);
+            if(r1 != 0){
+                throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+            }
+        }else{
+            std::stringstream commandbuilder;
+            commandbuilder << "sort --parallel=4 -k1,1 -n ";
+            for(const auto& filename : filesToMerge){
+                commandbuilder << "\"" << filename << "\" ";
+            }
+            commandbuilder << " > " << tempfile;
+
+            std::string command = commandbuilder.str();
+            std::cerr << "Running shell command: " << command << "\n";
+            TIMERSTARTCPU(sort_during_merge);
+            int r1 = std::system(command.c_str());
+
+            TIMERSTOPCPU(sort_during_merge);
+            if(r1 != 0){
+                throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+            }
+        }
     }
 
     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
