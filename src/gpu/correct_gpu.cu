@@ -344,7 +344,6 @@ namespace gpu{
         FileOptions fileOptions;
 		std::vector<std::uint8_t>* correctionStatusFlagsPerRead;
 		std::ofstream* featurestream;
-		std::function<void(const read_number, const std::string&)> write_read_to_stream;
         std::function<void(const TempCorrectedSequence&)> saveCorrectedSequence;
 		std::function<void(const read_number)> lock;
 		std::function<void(const read_number)> unlock;
@@ -2858,7 +2857,6 @@ namespace gpu{
     			if(task.corrected/* && task.corrected_subject != task.subject_string*/) {
     				//nvtx::push_range("write_subject", 4);
     				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
-    				//transFuncData.write_read_to_stream(task.readId, task.corrected_subject);
                     //transFuncData->lock(task.readId);
                     if(task.highQualityAlignment){
                         (*transFuncData->correctionStatusFlagsPerRead)[task.readId] |= readCorrectedAsHQAnchor;
@@ -2922,7 +2920,6 @@ namespace gpu{
         				}
                         //const bool savingIsOk = true;
         				if (savingIsOk) {
-        					//transFuncData.write_read_to_stream(candidateId, corrected_candidate);
 
                             TempCorrectedSequence tmp;
                             tmp.type = TempCorrectedSequence::Type::Candidate;
@@ -3169,26 +3166,53 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         BackgroundThread cpugpuExecutor;
         BackgroundThread outputThread;
 
-        constexpr int maxCachedResults = 500000;
-        static_assert(maxCachedResults > 0, "");
-
-        std::vector<TempCorrectedSequence> cachedResults;
-
-        cachedResults.reserve(maxCachedResults);
-
-        auto sortByReadId = [](const auto& l, const auto& r){
-            return l.readId < r.readId;
-        };
-
-        //std::set<TempCorrectedSequence, decltype(sortByReadId)> cachedResultsSet(sortByReadId);
-
-        auto flushCachedResults = [&](){
-            std::sort(cachedResults.begin(), cachedResults.end(), sortByReadId);
-            std::copy(cachedResults.begin(), cachedResults.end(), std::ostream_iterator<TempCorrectedSequence>(outputstream, "\n"));
-            cachedResults.clear();
-            //std::copy(cachedResultsSet.begin(), cachedResultsSet.end(), std::ostream_iterator<TempCorrectedSequence>(outputstream, "\n"));
-            //cachedResultsSet.clear();
-        };
+        // constexpr int maxCachedResults = 2000000;
+        // static_assert(maxCachedResults > 0, "");
+        //
+        // std::vector<TempCorrectedSequence> cachedResults;
+        //
+        // cachedResults.reserve(maxCachedResults);
+        //
+        // std::vector<std::string> usedOutputfileNames;//{fileOptions.outputfile + "_tmp"};
+        //
+        // auto sortByReadId = [](const auto& l, const auto& r){
+        //     return l.readId < r.readId;
+        // };
+        //
+        //
+        // //std::set<TempCorrectedSequence, decltype(sortByReadId)> cachedResultsSet(sortByReadId);
+        //
+        // auto flushCachedResults = [&](){
+        //     std::vector<int> indices(cachedResults.size());
+        //     std::iota(indices.begin(), indices.end(), 0);
+        //     std::sort(indices.begin(), indices.end(), [&](int l, int r){
+        //         return sortByReadId(cachedResults[l], cachedResults[r]);
+        //     });
+        //
+        //     std::string filename = fileOptions.outputfile + "_tmp" + std::to_string(usedOutputfileNames.size());
+        //     std::ofstream outputstream(filename);
+        //     if(!outputstream){
+        //         throw std::runtime_error("Could not open output file " + filename);
+        //     }
+        //
+        //     usedOutputfileNames.emplace_back(std::move(filename));
+        //
+        //     for(int i : indices){
+        //         outputstream << cachedResults[i] << '\n';
+        //     }
+        //
+        //     outputstream.flush();
+        //     outputstream.close();
+        //
+        //     cachedResults.clear();
+        //
+        //     // std::sort(cachedResults.begin(), cachedResults.end(), sortByReadId);
+        //     // std::copy(cachedResults.begin(), cachedResults.end(), std::ostream_iterator<TempCorrectedSequence>(outputstream, "\n"));
+        //     // cachedResults.clear();
+        //
+        //     //std::copy(cachedResultsSet.begin(), cachedResultsSet.end(), std::ostream_iterator<TempCorrectedSequence>(outputstream, "\n"));
+        //     //cachedResultsSet.clear();
+        // };
 
 
       TransitionFunctionData transFuncData;
@@ -3214,36 +3238,27 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.nLocksForProcessedFlags = nLocksForProcessedFlags;
       transFuncData.correctionStatusFlagsPerRead = &correctionStatusFlagsPerRead;
       transFuncData.featurestream = &featurestream;
-      transFuncData.write_read_to_stream = [&](const read_number readId, const std::string& sequence){
-                               //std::cout << readId << " " << sequence << std::endl;
-                               auto& stream = outputstream;
-  #if 1
-                               stream << readId << ' ' << sequence << '\n';
-  #else
-                               stream << readId << '\n';
-                               stream << sequence << '\n';
-  #endif
-                           };
+
       transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
-          auto isValidSequence = [](const std::string& s){
-              return std::all_of(s.begin(), s.end(), [](char c){
-                  return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
-              });
-          };
-
-          assert(isValidSequence(tmp.sequence));
-
-          cachedResults.emplace_back(std::move(tmp));
-          //auto insertposition = std::upper_bound(cachedResults.begin(), cachedResults.end(), tmp, sortByReadId);
-          //cachedResults.insert(insertposition, std::move(tmp));
-
-          //cachedResultsSet.emplace(std::move(tmp));
-
-          if(int(cachedResults.size()) == maxCachedResults){
-              flushCachedResults();
-          }
+          // auto isValidSequence = [](const std::string& s){
+          //     return std::all_of(s.begin(), s.end(), [](char c){
+          //         return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+          //     });
+          // };
+          //
+          // assert(isValidSequence(tmp.sequence));
+          //
+          // cachedResults.emplace_back(std::move(tmp));
+          // //auto insertposition = std::upper_bound(cachedResults.begin(), cachedResults.end(), tmp, sortByReadId);
+          // //cachedResults.insert(insertposition, std::move(tmp));
+          //
+          // //cachedResultsSet.emplace(std::move(tmp));
+          //
+          // if(int(cachedResults.size()) == maxCachedResults){
+          //     flushCachedResults();
+          // }
           //std::cout << tmp << '\n';
-          //outputstream << tmp << '\n';
+          outputstream << tmp << '\n';
       };
 
       transFuncData.lock = [&](read_number readId){
@@ -3328,7 +3343,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
       outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
-      flushCachedResults();
+      //flushCachedResults();
       outputstream.flush();
       featurestream.flush();
 
@@ -3383,6 +3398,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               TIMERSTARTCPU(merge);
 
               mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, false);
+              //mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, usedOutputfileNames, fileOptions.outputfile, true);
+
+
+
               //mergeResultFiles2(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, occupiedMemory);
 
               TIMERSTOPCPU(merge);
