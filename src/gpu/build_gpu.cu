@@ -62,10 +62,10 @@ namespace gpu{
 
             BuiltDataStructure<GpuReadStorageWithFlags> result;
             DistributedReadStorage& readstorage = result.data.readStorage;
-            auto& validFlags = result.data.readIsValidFlags;
+            //auto& validFlags = result.data.readIsValidFlags;
 
             readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
-            validFlags.resize(expectedNumberOfReads, false);
+            //validFlags.resize(expectedNumberOfReads, false);
             result.builtType = BuiltType::Constructed;
 
             constexpr size_t maxbuffersize = 1000000;
@@ -102,6 +102,10 @@ namespace gpu{
 
                 nmap[undeterminedBasesInRead]++;
 
+                if(undeterminedBasesInRead > 0){
+                    readstorage.setReadContainsN(readIndex, true);
+                }
+
                 //if(undeterminedBasesInRead > 10){
                 //    validFlags[readIndex] = false;
                 //}else{
@@ -119,7 +123,7 @@ namespace gpu{
                     indicesBuffer.emplace_back(readIndex);
                     readsBuffer.emplace_back(read);
 
-                    validFlags[readIndex] = true;
+                    //validFlags[readIndex] = true;
                 //}
 
                 if(indicesBuffer.size() > maxbuffersize){
@@ -188,7 +192,7 @@ namespace gpu{
             //std::cerr << "setReads omp_set_num_threads end " << runtimeOptions.threads << "\n";
 
             const auto& readStorage = readStoragewFlags.readStorage;
-            const auto& validFlags = readStoragewFlags.readIsValidFlags;
+            //const auto& validFlags = readStoragewFlags.readIsValidFlags;
 
             constexpr int numMapsPerBatch = 16;
             constexpr read_number parallelReads = 10000000;

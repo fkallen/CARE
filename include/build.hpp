@@ -68,7 +68,7 @@ namespace care{
     namespace gpu{
 
         struct GpuReadStorageWithFlags{
-            std::vector<bool> readIsValidFlags;
+            //std::vector<bool> readIsValidFlags;
             DistributedReadStorage readStorage;
         };
 

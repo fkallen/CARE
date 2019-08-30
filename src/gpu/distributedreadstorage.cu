@@ -10,6 +10,8 @@
 
 #include <fstream>
 #include <omp.h>
+#include <algorithm>
+#include <iterator>
 
 #ifdef __NVCC__
 
@@ -27,24 +29,32 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     sequenceLengthLimit = maximum_sequence_length;
     useQualityScores = b;
 
+    readsWithUndeterminedBase.resize(nReads, false);
+
     int numGpus = deviceIds.size();
 
     if(numberOfReads > 0 && sequenceLengthLimit > 0){
+        std::vector<size_t> freeMemPerGpu(numGpus, 0);
+        std::vector<size_t> totalMemPerGpu(numGpus, 0);
         std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
 
-        auto updateMemoryLimits = [&](){
-            std::cerr << "usable mem per gpu: ";
+        auto getGpuMemoryInfo = [&](){
             for(int gpu = 0; gpu < numGpus; gpu++){
                 cudaSetDevice(deviceIds[gpu]); CUERR;
 
-                size_t total;
-                size_t freemem;
-                cudaMemGetInfo(&freemem, &total); CUERR;
-
-                const size_t usableMem = std::max(size_t(0), freemem - gpuReadStorageHeadroomPerGPU);
-                maximumUsableBytesPerGpu[gpu] = usableMem;
-                std::cerr << maximumUsableBytesPerGpu[gpu] << " ";
+                cudaMemGetInfo(&freeMemPerGpu[gpu], &totalMemPerGpu[gpu]); CUERR;
             }
+        };
+
+        auto updateMemoryLimits = [&](){
+            getGpuMemoryInfo();
+
+            for(int gpu = 0; gpu < numGpus; gpu++){
+                const size_t usableMem = std::max(size_t(0), freeMemPerGpu[gpu] - gpuReadStorageHeadroomPerGPU);
+                maximumUsableBytesPerGpu[gpu] = usableMem;
+            }
+            std::cerr << "Usable memory per gpu : ";
+            std::copy(maximumUsableBytesPerGpu.begin(), maximumUsableBytesPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
             std::cerr << "\n";
         };
 
@@ -64,6 +74,10 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
             distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, sequenceLengthLimit));
         }
 
+        std::cerr << "Free memory per gpu after construction of distributed readstorage: ";
+        std::copy(freeMemPerGpu.begin(), freeMemPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
+        std::cerr << "\n";
+
         cudaSetDevice(oldId); CUERR;
     }
 }
@@ -77,6 +91,7 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     numberOfReads = std::move(rhs.numberOfReads);
     sequenceLengthLimit = std::move(rhs.sequenceLengthLimit);
     useQualityScores = std::move(rhs.useQualityScores);
+    readsWithUndeterminedBase = std::move(rhs.readsWithUndeterminedBase);
     distributedSequenceData2 = std::move(rhs.distributedSequenceData2);
     distributedSequenceLengths2 = std::move(rhs.distributedSequenceLengths2);
     distributedQualities2 = std::move(rhs.distributedQualities2);
@@ -212,6 +227,14 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     if(canUseQualityScores()){
         setQualities(indices, qualityData.data());
     }
+}
+
+void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){
+    readsWithUndeterminedBase[readId] = contains;
+}
+
+bool DistributedReadStorage::readContainsN(read_number readId) const{
+    return readsWithUndeterminedBase[readId];
 }
 
 void DistributedReadStorage::setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data){

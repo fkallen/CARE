@@ -40,9 +40,13 @@ public:
     int sequenceLengthLimit;
     bool useQualityScores;
 
+    std::vector<bool> readsWithUndeterminedBase;
+
     DistributedArray<unsigned int, read_number> distributedSequenceData2;
     DistributedArray<Length_t, read_number> distributedSequenceLengths2;
     DistributedArray<char, read_number> distributedQualities2;
+
+
 
     Statistics statistics;
 
@@ -76,6 +80,9 @@ public:
 
     void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads, int numThreads);
     void setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads, int numThreads);
+
+    void setReadContainsN(read_number readId, bool contains);
+    bool readContainsN(read_number readId) const;
 
     GatherHandleSequences makeGatherHandleSequences() const;
 
