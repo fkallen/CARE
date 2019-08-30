@@ -27,17 +27,44 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     sequenceLengthLimit = maximum_sequence_length;
     useQualityScores = b;
 
+    int numGpus = deviceIds.size();
+
     if(numberOfReads > 0 && sequenceLengthLimit > 0){
-        std::vector<float> maxFreeMemFractions(deviceIds.size(), 0.8f);
+        std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
+
+        auto updateMemoryLimits = [&](){
+            std::cerr << "usable mem per gpu: ";
+            for(int gpu = 0; gpu < numGpus; gpu++){
+                cudaSetDevice(deviceIds[gpu]); CUERR;
+
+                size_t total;
+                size_t freemem;
+                cudaMemGetInfo(&freemem, &total); CUERR;
+
+                const size_t usableMem = std::max(size_t(0), freemem - gpuReadStorageHeadroomPerGPU);
+                maximumUsableBytesPerGpu[gpu] = usableMem;
+                std::cerr << maximumUsableBytesPerGpu[gpu] << " ";
+            }
+            std::cerr << "\n";
+        };
+
+        int oldId; cudaGetDevice(&oldId); CUERR;
+
 
         const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthLimit);
 
-        distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, intsPerSequence));
-        distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, 1));
+        updateMemoryLimits();
+        distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, intsPerSequence));
+
+        updateMemoryLimits();
+        distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, 1));
 
         if(useQualityScores){
-            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maxFreeMemFractions, numberOfReads, sequenceLengthLimit));
+            updateMemoryLimits();
+            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, sequenceLengthLimit));
         }
+
+        cudaSetDevice(oldId); CUERR;
     }
 }
 
@@ -94,7 +121,7 @@ DistributedReadStorage::Statistics DistributedReadStorage::getStatistics() const
 void DistributedReadStorage::destroy(){
     numberOfReads = 0;
     sequenceLengthLimit = 0;
-    std::vector<float> fractions(deviceIds.size(), 0.0f);
+    std::vector<size_t> fractions(deviceIds.size(), 0);
     distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, 0, 0));
     distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, 0, 0));
     distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, fractions, 0, 0));

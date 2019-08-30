@@ -135,7 +135,7 @@ public:
     size_t sizeOfElement;
     SinglePartitionInfo singlePartitionInfo;
     std::vector<int> deviceIds; //device ids which can be used to store data
-    std::vector<float> maxFreeMemFraction; // how many elements of data can be stored on wich gpu
+    std::vector<size_t> memoryLimitBytesPerGPU; // how many elements of data can be stored on wich gpu
     std::vector<Index_t> elementsPerLocation; // how many elements are stored on which location
     std::vector<Index_t> elementsPerLocationPS; //inclusive prefix sum with leading zero
     std::vector<Value_t*> dataPtrPerLocation; // the storage of each location. dataPtrPerLocation[hostLocation] is the host data. dataPtrPerLocation[gpu] is device data
@@ -145,7 +145,7 @@ public:
         : DistributedArray({},{},0,0,-1){
     }
 
-    DistributedArray(std::vector<int> deviceIds_, std::vector<float> maxFreeMemFraction_, Index_t numRows_, Index_t numCols_, int preferedLocation_ = -1)
+    DistributedArray(std::vector<int> deviceIds_, std::vector<size_t> memoryLimitBytesPerGPU_, Index_t numRows_, Index_t numCols_, int preferedLocation_ = -1)
                     : debug(false),
                     numGpus(deviceIds_.size()),
                     numLocations(numGpus+1),
@@ -155,12 +155,10 @@ public:
                     numColumns(numCols_),
                     sizeOfElement(numCols_ * sizeof(Value_t)),
                     deviceIds(std::move(deviceIds_)),
-                    maxFreeMemFraction(std::move(maxFreeMemFraction_)),
+                    memoryLimitBytesPerGPU(std::move(memoryLimitBytesPerGPU_)),
                     peerAccess(PeerAccess{}){
 
-        assert(deviceIds.size() == maxFreeMemFraction.size());
-        assert(std::all_of(maxFreeMemFraction.begin(), maxFreeMemFraction.end(), [](float f){return f <= 1.0f;}));
-        assert(std::all_of(maxFreeMemFraction.begin(), maxFreeMemFraction.end(), [](float f){return f >= 0.0f;}));
+        assert(deviceIds.size() == memoryLimitBytesPerGPU.size());
 
         elementsPerLocation.resize(numLocations, 0);
         elementsPerLocationPS.resize(numLocations+1, 0);
@@ -168,23 +166,14 @@ public:
 
         if(numRows > 0 && numColumns > 0){
 
-            std::vector<size_t> freeMemPerGpu(numGpus);
-
             int oldId; cudaGetDevice(&oldId); CUERR;
-
-            for(int gpu = 0; gpu < numGpus; gpu++){
-                cudaSetDevice(deviceIds[gpu]); CUERR;
-
-                size_t total;
-                cudaMemGetInfo(&freeMemPerGpu[gpu], &total); CUERR;
-            }
 
             size_t totalRequiredMemory = numRows * sizeOfElement;
 
             bool preferedLocationIsSufficient = false;
 
             if(preferedLocation != -1 && preferedLocation != hostLocation){
-                if(freeMemPerGpu[preferedLocation] * maxFreeMemFraction[preferedLocation] <= totalRequiredMemory){
+                if(memoryLimitBytesPerGPU[preferedLocation] >= totalRequiredMemory){
                     preferedLocationIsSufficient = true;
                 }
             }
@@ -194,13 +183,13 @@ public:
                 elementsPerLocation[preferedLocation] = numRows;
                 cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory); CUERR;
             }else{
-                std::vector<size_t> freeMemPerGpuTreshold(freeMemPerGpu.size());
+
                 size_t remainingElements = numRows;
 
                 for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
                     cudaSetDevice(deviceIds[gpu]); CUERR;
-                    freeMemPerGpuTreshold[gpu] = freeMemPerGpu[gpu] * maxFreeMemFraction[gpu];
-                    size_t rows = std::min(remainingElements, freeMemPerGpuTreshold[gpu] / sizeOfElement);
+
+                    size_t rows = std::min(remainingElements, memoryLimitBytesPerGPU[gpu] / sizeOfElement);
                     elementsPerLocation[gpu] = rows;
                     if(rows == 0){
                         continue;
@@ -262,7 +251,7 @@ public:
         sizeOfElement = rhs.sizeOfElement;
         singlePartitionInfo = rhs.singlePartitionInfo;
         deviceIds = std::move(rhs.deviceIds);
-        maxFreeMemFraction = std::move(rhs.maxFreeMemFraction);
+        memoryLimitBytesPerGPU = std::move(rhs.memoryLimitBytesPerGPU);
         elementsPerLocation = std::move(rhs.elementsPerLocation);
         elementsPerLocationPS = std::move(rhs.elementsPerLocationPS);
         dataPtrPerLocation = std::move(rhs.dataPtrPerLocation);
@@ -277,7 +266,7 @@ public:
         rhs.sizeOfElement = 0;
         rhs.singlePartitionInfo = SinglePartitionInfo{};
         rhs.deviceIds.clear();
-        rhs.maxFreeMemFraction.clear();
+        rhs.memoryLimitBytesPerGPU.clear();
         rhs.elementsPerLocation.clear();
         rhs.elementsPerLocationPS.clear();
         rhs.dataPtrPerLocation.clear();
