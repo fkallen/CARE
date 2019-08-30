@@ -283,7 +283,7 @@ void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& origin
 // Will be saved to file during correction.
 // Will be loaded from file during mergeResultFiles
 struct TempCorrectedSequence{
-    enum Type {Anchor, Candidate};
+    enum class Type : {Anchor, Candidate};
     static constexpr char AnchorChar = 'a';
     static constexpr char CandidateChar = 'c';
 

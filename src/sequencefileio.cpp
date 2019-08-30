@@ -1138,7 +1138,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 //no correction as anchor. all corrections as candidate are equal.
                 //only use the correction if at least one correction as candidate was performed with 0 new columns
                 auto checkshift = [](const auto& r){
-                    return std::abs(r.shift) <= 3;
+                    return std::abs(r.shift) <= 1;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
                     return std::make_pair(tmpresults[0].sequence, true);
@@ -1264,7 +1264,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         }
 
 
-        if(!correctionsAreEqualByShift){
+        if(!correctionsAreEqual){
             // std::copy(sequences.begin(), sequences.end(), std::ostream_iterator<std::string>(std::cerr, "\n"));
             // std::cerr << "\n";
             // std::exit(0);
@@ -1343,7 +1343,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 //no correction as anchor. all corrections as candidate are equal.
                 //only use the correction if at least one correction as candidate was performed with 0 new columns
                 auto checkshift = [](const auto& r){
-                    return std::abs(r.shift) <= 3;
+                    return std::abs(r.shift) <= 2;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
                     return std::make_pair(tmpresults[0].sequence, true);
@@ -1360,7 +1360,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         //return tmpresults[0].sequence;
     };
 
-    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults3;
+    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults2;
 
 
     std::uint64_t currentReadId = 0;
