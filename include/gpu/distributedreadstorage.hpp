@@ -40,7 +40,7 @@ public:
     int sequenceLengthLimit;
     bool useQualityScores;
 
-    std::vector<bool> readsWithUndeterminedBase;
+    std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
 
     DistributedArray<unsigned int, read_number> distributedSequenceData2;
     DistributedArray<Length_t, read_number> distributedSequenceLengths2;

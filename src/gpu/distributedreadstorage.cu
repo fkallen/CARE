@@ -29,8 +29,6 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     sequenceLengthLimit = maximum_sequence_length;
     useQualityScores = b;
 
-    readsWithUndeterminedBase.resize(nReads, false);
-
     int numGpus = deviceIds.size();
 
     if(numberOfReads > 0 && sequenceLengthLimit > 0){
@@ -91,7 +89,7 @@ DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage
     numberOfReads = std::move(rhs.numberOfReads);
     sequenceLengthLimit = std::move(rhs.sequenceLengthLimit);
     useQualityScores = std::move(rhs.useQualityScores);
-    readsWithUndeterminedBase = std::move(rhs.readsWithUndeterminedBase);
+    readIdsOfReadsWithUndeterminedBase = std::move(rhs.readIdsOfReadsWithUndeterminedBase);
     distributedSequenceData2 = std::move(rhs.distributedSequenceData2);
     distributedSequenceLengths2 = std::move(rhs.distributedSequenceLengths2);
     distributedQualities2 = std::move(rhs.distributedQualities2);
@@ -230,11 +228,36 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
 }
 
 void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){
-    readsWithUndeterminedBase[readId] = contains;
+
+    auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
+                                        readIdsOfReadsWithUndeterminedBase.end(),
+                                        readId);
+
+
+    if(contains){
+        if(pos != readIdsOfReadsWithUndeterminedBase.end()){
+            ; //already marked
+        }else{
+            readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
+        }
+    }else{
+        if(pos != readIdsOfReadsWithUndeterminedBase.end()){
+            //remove mark
+            readIdsOfReadsWithUndeterminedBase.erase(pos);
+        }else{
+            ; //already unmarked
+        }
+    }
 }
 
 bool DistributedReadStorage::readContainsN(read_number readId) const{
-    return readsWithUndeterminedBase[readId];
+
+    auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
+                                        readIdsOfReadsWithUndeterminedBase.end(),
+                                        readId);
+    bool b2 = readIdsOfReadsWithUndeterminedBase.end() != pos && *pos == readId;
+
+    return b2;
 }
 
 void DistributedReadStorage::setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data){
@@ -543,6 +566,11 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
             stream.write(reinterpret_cast<const char*>(&data[0]), databytes);
         }
     }
+
+    //read ids with N
+    std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
+    stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
+    stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 }
 
 void DistributedReadStorage::loadFromFile(const std::string& filename){
@@ -663,6 +691,12 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
         assert(totalMemoryRead == totalqualityMemory);
     }
+
+    //read ids with N
+    std::size_t numUndeterminedReads = 0;
+    stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));
+    readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
+    stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 
 }
 
