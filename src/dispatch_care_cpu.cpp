@@ -85,10 +85,6 @@ namespace care{
     	//create output directory
     	filesys::create_directories(fileOptions.outputdirectory);
 
-    	std::vector<char> readIsCorrectedVector;
-    	std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-    	std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
-
     	const int iters = 1;
     	int iter = 0;
 
@@ -172,10 +168,6 @@ namespace care{
 
             TIMERSTOPCPU(candidateestimation);
 
-            readIsCorrectedVector.resize(sequenceFileProperties.nReads, 0);
-
-            std::cerr << "readIsCorrectedVector bytes: " << readIsCorrectedVector.size() / 1024. / 1024. << " MB\n";
-
             printDataStructureMemoryUsage(minhasher, readStorage);
 
             std::cout << "Running CARE CPU" << std::endl;
@@ -184,9 +176,7 @@ namespace care{
                         goodAlignmentProperties, correctionOptions,
                         runtimeOptions, fileOptions, sequenceFileProperties,
                         minhasher, readStorage,
-                        maxCandidatesPerRead,
-                        readIsCorrectedVector, locksForProcessedFlags,
-                        nLocksForProcessedFlags);
+                        maxCandidatesPerRead);
 
     		iter++;
 

@@ -39,6 +39,10 @@
 namespace care{
 namespace cpu{
 
+        //read status bitmask
+        constexpr std::uint8_t readCorrectedAsHQAnchor = 1;
+        constexpr std::uint8_t readCouldNotBeCorrectedAsAnchor = 2;
+
         struct TaskData;
 
         struct CorrectionTask{
@@ -779,10 +783,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                   const SequenceFileProperties& sequenceFileProperties,
                   Minhasher& minhasher,
                   cpu::ContiguousReadStorage& readStorage,
-                  std::uint64_t maxCandidatesPerRead,
-                  std::vector<char>& readIsCorrectedVector,
-                  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-                  std::size_t nLocksForProcessedFlags){
+                  std::uint64_t maxCandidatesPerRead){
 
     int oldNumOMPThreads = 1;
     #pragma omp parallel
@@ -832,6 +833,14 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         outputstream << tmp << '\n';
     };
 
+    std::vector<std::uint8_t> correctionStatusFlagsPerRead;
+    std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+    std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+
+    correctionStatusFlagsPerRead.resize(sequenceFileProperties.nReads, 0);
+
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionStatusFlagsPerRead.size() / 1024. / 1024. << " MB\n";
+
     auto lock = [&](read_number readId){
         read_number index = readId % nLocksForProcessedFlags;
         locksForProcessedFlags[index].lock();
@@ -841,7 +850,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         read_number index = readId % nLocksForProcessedFlags;
         locksForProcessedFlags[index].unlock();
     };
-
 
     std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
     std::chrono::duration<double> runtime = std::chrono::seconds(0);
@@ -1198,6 +1206,11 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                 if(task.active){
                     if(task.corrected){
+
+                        if(taskdata.msaProperties.isHQ){
+                            correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+                        }
+
                         TempCorrectedSequence tmp;
                         tmp.hq = taskdata.msaProperties.isHQ;
                         tmp.type = TempCorrectedSequence::Type::Anchor;
@@ -1210,6 +1223,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         // readIsCorrectedVector[task.readId] = 1;
                         // unlock(task.readId);
                     }else{
+
+                        correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
 
                         //make subject available for correction as a candidate
                         // if(readIsCorrectedVector[task.readId] == 1){
@@ -1233,7 +1248,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         //     }
                         //     unlock(candidateId);
                         // }
-                        bool savingIsOk = true;
+                        bool savingIsOk = false;
+
+                        const std::uint8_t mask = correctionStatusFlagsPerRead[candidateId];
+        				if(!(mask & readCorrectedAsHQAnchor)) {
+                            savingIsOk = true;
+                        }
 
                         if (savingIsOk) {
                             TempCorrectedSequence tmp;

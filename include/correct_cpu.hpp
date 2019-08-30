@@ -23,10 +23,7 @@ namespace cpu{
                       const SequenceFileProperties& sequenceFileProperties,
                       Minhasher& minhasher,
                       cpu::ContiguousReadStorage& readStorage,
-                      std::uint64_t maxCandidatesPerRead,
-    				  std::vector<char>& readIsCorrectedVector,
-    				  std::unique_ptr<std::mutex[]>& locksForProcessedFlags,
-    				  std::size_t nLocksForProcessedFlags);
+                      std::uint64_t maxCandidatesPerRead);
 
 
 }
