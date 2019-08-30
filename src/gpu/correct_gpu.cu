@@ -69,6 +69,7 @@ namespace care{
 namespace gpu{
 
     constexpr int nParallelBatches = 4;
+    constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
     //read status bitmask
     constexpr std::uint8_t readCorrectedAsHQAnchor = 1;
@@ -2902,6 +2903,9 @@ namespace gpu{
                         bool savingIsOk = false;
                         const std::uint8_t mask = (*transFuncData->correctionStatusFlagsPerRead)[candidateId];
         				if(!(mask & readCorrectedAsHQAnchor)) {
+                            //std::uint8_t writtencount = mask >> 4;
+
+                            //if(writtencount < maxSavedCorrectedCandidatesPerRead){
         					//transFuncData->lock(candidateId);
 
                             //mask = (*transFuncData->correctionStatusFlagsPerRead)[candidateId];
@@ -2909,6 +2913,10 @@ namespace gpu{
         						savingIsOk = true;
         						//nCorrectedCandidates++;
         					//}
+                            //    writtencount++;
+                            //    (*transFuncData->correctionStatusFlagsPerRead)[candidateId] = (mask & 0x0F) | (writtencount << 4);
+
+                            //}
 
         					//transFuncData->unlock(candidateId);
         				}
@@ -3161,6 +3169,28 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         BackgroundThread cpugpuExecutor;
         BackgroundThread outputThread;
 
+        constexpr int maxCachedResults = 500000;
+        static_assert(maxCachedResults > 0, "");
+
+        std::vector<TempCorrectedSequence> cachedResults;
+
+        cachedResults.reserve(maxCachedResults);
+
+        auto sortByReadId = [](const auto& l, const auto& r){
+            return l.readId < r.readId;
+        };
+
+        //std::set<TempCorrectedSequence, decltype(sortByReadId)> cachedResultsSet(sortByReadId);
+
+        auto flushCachedResults = [&](){
+            std::sort(cachedResults.begin(), cachedResults.end(), sortByReadId);
+            std::copy(cachedResults.begin(), cachedResults.end(), std::ostream_iterator<TempCorrectedSequence>(outputstream, "\n"));
+            cachedResults.clear();
+            //std::copy(cachedResultsSet.begin(), cachedResultsSet.end(), std::ostream_iterator<TempCorrectedSequence>(outputstream, "\n"));
+            //cachedResultsSet.clear();
+        };
+
+
       TransitionFunctionData transFuncData;
 
       transFuncData.gpuExecutor = &gpuExecutor;
@@ -3202,8 +3232,18 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           };
 
           assert(isValidSequence(tmp.sequence));
+
+          cachedResults.emplace_back(std::move(tmp));
+          //auto insertposition = std::upper_bound(cachedResults.begin(), cachedResults.end(), tmp, sortByReadId);
+          //cachedResults.insert(insertposition, std::move(tmp));
+
+          //cachedResultsSet.emplace(std::move(tmp));
+
+          if(int(cachedResults.size()) == maxCachedResults){
+              flushCachedResults();
+          }
           //std::cout << tmp << '\n';
-          outputstream << tmp << '\n';
+          //outputstream << tmp << '\n';
       };
 
       transFuncData.lock = [&](read_number readId){
@@ -3282,12 +3322,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         }
 
 
-      outputstream.flush();
-      featurestream.flush();
+
 
       cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
       gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
       outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+      flushCachedResults();
+      outputstream.flush();
+      featurestream.flush();
 
       #ifdef DO_PROFILE
           cudaProfilerStop();

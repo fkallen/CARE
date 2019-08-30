@@ -2,6 +2,7 @@
 #include <hpc_helpers.cuh>
 #include <config.hpp>
 #include <threadsafe_buffer.hpp>
+#include <sequence.hpp>
 
 #include <iterator>
 #include <iostream>
@@ -1488,7 +1489,17 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
-    os << tmp.readId << ' ' << tmp.sequence << ' ';
+    // const int sequenceints = getEncodedNumInts2Bit(tmp.sequence.length());
+    // std::vector<unsigned int> data(sequenceints);
+    // encodeSequence2Bit(data.data(), tmp.sequence.c_str(), tmp.sequence.length());
+
+    os << tmp.readId << ' ';
+
+    os << tmp.sequence << ' ';
+    // int length = tmp.sequence.length();
+    // os.write((const char*)&length, sizeof(int));
+    // os.write((const char*)data.data(), sizeof(unsigned int) * data.size());
+
     if(tmp.type == TempCorrectedSequence::Type::Anchor){
         os << TempCorrectedSequence::AnchorChar << ' ' << tmp.hq << ' ' << tmp.isEqual;
         const auto& vec = tmp.uncorrectedPositionsNoConsensus;
@@ -1505,7 +1516,17 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
 }
 
 std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
-    is >> tmp.readId >> tmp.sequence;
+    is >> tmp.readId;
+    is >> tmp.sequence;
+
+    // int length = 0;
+    // is.read((char*)&length, sizeof(int));
+    // const int sequenceints = getEncodedNumInts2Bit(length);
+    // std::vector<unsigned int> data(sequenceints);
+    // is.read((char*)data.data(), sizeof(unsigned int) * sequenceints);
+    //
+    // tmp.sequence = get2BitString(data.data(), length);
+
     char typechar;
     is >> typechar;
     if(typechar == TempCorrectedSequence::AnchorChar){
