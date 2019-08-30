@@ -26,7 +26,8 @@ namespace care{
     constexpr int maximum_number_of_maps = 48;
     static_assert(maximum_number_of_maps > 0);
 
-
+    //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
+    constexpr size_t gpuReadStorageHeadroomPerGPU = size_t(1) << 30;
 
 //##################################################
 
