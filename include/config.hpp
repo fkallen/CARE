@@ -27,7 +27,7 @@ namespace care{
     static_assert(maximum_number_of_maps > 0);
 
     //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
-    constexpr size_t gpuReadStorageHeadroomPerGPU = size_t(1) << 30;
+    constexpr std::size_t gpuReadStorageHeadroomPerGPU = std::size_t(1) << 30;
 
 //##################################################
 

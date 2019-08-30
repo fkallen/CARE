@@ -996,7 +996,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         });
     };
 
-    auto combineMultipleCorrectionResults2 = [](const std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
+    auto combineMultipleCorrectionResults2 = [](std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
 
         auto isHQ = [](const auto& tcs){
@@ -1006,18 +1006,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         //if there is a correction using a high quality alignment, use it
         auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
         if(firstHqSequence != tmpresults.end()){
-            // if(firstHqSequence->isEqual){
-            //     if(firstHqSequence->sequence != originalSequence){
-            //         std::cerr << "orig " << originalSequence << "\n";
-            //         std::cerr << "corr " << firstHqSequence->sequence << "\n";
-            //     }
-            // }
-            // if(firstHqSequence->sequence == "-"){
-            //     //if sequence is "", the high quality anchor correction equals the original read
-            //     return std::make_pair(std::string{""}, false);
-            // }else{
+            if(firstHqSequence->isEqual){
+                assert(firstHqSequence->sequence == originalSequence);
+                return std::make_pair(std::string{""}, false);
+            }else{
                 return std::make_pair(firstHqSequence->sequence, true);
-            //}
+            }
         }
 
         auto equalsFirstSequence = [&](const auto& result){
@@ -1446,6 +1440,16 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         assert(valid);
 
+        for(auto& tmpres : correctionVector){
+            if(tmpres.isEqual){
+                tmpres.sequence = read.sequence;
+                // if(tmpres.sequence != read.sequence){
+                //     std::cerr << currentReadId << "\n" << tmpres.sequence << "\n" << read.sequence << "\n";
+                // }
+                // assert(tmpres.sequence == read.sequence);
+            }
+        }
+
         auto correctedSequence = combineMultipleCorrectionResultsFunction(correctionVector, read.sequence);
 
         if(correctedSequence.second){
@@ -1532,7 +1536,7 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
             std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
         }
     }else{
-        os << TempCorrectedSequence::CandidateChar << ' ' << tmp.shift;
+        os << TempCorrectedSequence::CandidateChar << ' ' << tmp.isEqual << ' ' << tmp.shift;
     }
 
     return os;
@@ -1566,8 +1570,9 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
         }
     }else{
         tmp.type = TempCorrectedSequence::Type::Candidate;
+        is >> tmp.isEqual;
         is >> tmp.shift;
-        tmp.shift = tmp.shift;
+        tmp.shift = std::abs(tmp.shift);
     }
 
     return is;

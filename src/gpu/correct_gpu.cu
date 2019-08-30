@@ -116,6 +116,7 @@ namespace gpu{
             corrected_candidates(other.corrected_candidates),
             corrected_candidates_read_ids(other.corrected_candidates_read_ids),
             corrected_candidates_shifts(other.corrected_candidates_shifts),
+            corrected_candidate_equals_uncorrected(other.corrected_candidate_equals_uncorrected),
             uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus){
         }
 
@@ -146,6 +147,7 @@ namespace gpu{
             swap(l.corrected_subject, r.corrected_subject);
             swap(l.corrected_candidates_read_ids, r.corrected_candidates_read_ids);
             swap(l.corrected_candidates_shifts, r.corrected_candidates_shifts);
+            swap(l.corrected_candidate_equals_uncorrected, r.corrected_candidate_equals_uncorrected);
             swap(l.uncorrectedPositionsNoConsensus, r.uncorrectedPositionsNoConsensus);
         }
 
@@ -162,6 +164,7 @@ namespace gpu{
         std::vector<std::string> corrected_candidates;
         std::vector<read_number> corrected_candidates_read_ids;
         std::vector<int> corrected_candidates_shifts;
+        std::vector<bool> corrected_candidate_equals_uncorrected;
         std::vector<int> uncorrectedPositionsNoConsensus;
     };
 
@@ -2694,6 +2697,7 @@ namespace gpu{
                 task.corrected_candidates_shifts.resize(n_corrected_candidates);
                 task.corrected_candidates_read_ids.resize(n_corrected_candidates);
                 task.corrected_candidates.resize(n_corrected_candidates);
+                task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
 
                 for(int i = 0; i < n_corrected_candidates; ++i) {
                     const int global_candidate_index = my_indices_of_corrected_candidates[i];
@@ -2715,6 +2719,18 @@ namespace gpu{
                     task.corrected_candidates_shifts[i] = candidate_shift;
                     task.corrected_candidates_read_ids[i] = candidate_read_id;
                     task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
+
+                    const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+
+                    if(!originalReadContainsN){
+                        const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
+                        const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
+                        task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
+                    }else{
+                        task.corrected_candidate_equals_uncorrected[i] = false;
+                    }
+
+
 
                     //task.corrected_candidates_read_ids.emplace_back(candidate_read_id);
                     //task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
@@ -2863,16 +2879,18 @@ namespace gpu{
                     }
                     //transFuncData->unlock(task.readId);
 
+                    const bool originalReadContainsN = transFuncData->readStorage->readContainsN(task.readId);
+
                     TempCorrectedSequence tmp;
                     tmp.hq = task.highQualityAlignment;
                     tmp.type = TempCorrectedSequence::Type::Anchor;
                     tmp.readId = task.readId;
-                    tmp.isEqual = task.corrected_subject == task.subject_string;
-                    //if(task.highQualityAlignment && task.corrected_subject == task.subject_string){
-                    //    tmp.sequence = "-";
-                    //}else{
-                        tmp.sequence = task.corrected_subject;
-                    //}
+                    tmp.isEqual = !originalReadContainsN && task.corrected_subject == task.subject_string;
+                    if(tmp.isEqual){
+                        tmp.sequence = "-";
+                    }else{
+                        tmp.sequence = std::move(task.corrected_subject);
+                    }
                     tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
 
                     transFuncData->saveCorrectedSequence(tmp);
@@ -2921,11 +2939,17 @@ namespace gpu{
                         //const bool savingIsOk = true;
         				if (savingIsOk) {
 
+
                             TempCorrectedSequence tmp;
                             tmp.type = TempCorrectedSequence::Type::Candidate;
                             tmp.shift = task.corrected_candidates_shifts[corrected_candidate_index];
                             tmp.readId = candidateId;
-                            tmp.sequence = std::move(corrected_candidate);
+                            tmp.isEqual = task.corrected_candidate_equals_uncorrected[corrected_candidate_index];
+                            if(tmp.isEqual){
+                                tmp.sequence = "-";
+                            }else{
+                                tmp.sequence = std::move(corrected_candidate);
+                            }
 
                             transFuncData->saveCorrectedSequence(tmp);
         				}
