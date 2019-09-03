@@ -33,7 +33,7 @@ namespace care{
     //a space efficient format.
     //greater number means faster construction time and greater memory usage during construction.
     //smaller number means slower construction time and less memory usage during construction.
-    constexpr int minhasherConstructionNumMaps = 8;
+    constexpr int minhasherConstructionNumMaps = 16;
 
 //##################################################
 

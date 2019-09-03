@@ -41,7 +41,8 @@ namespace care{
 		 */
 		template<class Key_t, class Index_t>
 		struct KeyIndexMap{
-			std::pair<Key_t, Index_t> EmptySlot{0, std::numeric_limits<Index_t>::max()};
+            using Pair_t = std::pair<Key_t, Index_t>;
+			Pair_t EmptySlot{0, std::numeric_limits<Index_t>::max()};
 
 			std::uint64_t murmur_hash_3_uint64_t(std::uint64_t x) const{
 				x ^= x >> 33;
@@ -53,11 +54,11 @@ namespace care{
 				return x;
 			}
 
-			std::vector<std::pair<Key_t, Index_t>> keyToIndexMap;
+			std::vector<Pair_t> keyToIndexMap;
 			std::uint64_t size;
 
             std::size_t numBytes() const{
-                return keyToIndexMap.size() * sizeof(std::pair<Key_t, Index_t>);
+                return keyToIndexMap.size() * sizeof(Pair_t);
             }
 
 			KeyIndexMap() : KeyIndexMap(0){}
@@ -109,6 +110,17 @@ namespace care{
 				clear();
 				keyToIndexMap.shrink_to_fit();
 			}
+
+            void writeToStream(std::ofstream& outstream) const{
+                outstream.write(reinterpret_cast<const char*>(&size), sizeof(std::uint64_t));
+                outstream.write(reinterpret_cast<const char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
+            }
+
+            void readFromStream(std::ifstream& instream){
+                instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
+                keyToIndexMap.resize(size);
+                instream.read(reinterpret_cast<char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
+            }
 		};
 
 		template<class key_t, class value_t, class index_t>
@@ -195,7 +207,6 @@ namespace care{
                 return !(*this == rhs);
             }
 
-
             void writeToStream(std::ofstream& outstream) const{
                 bool resultsAreSorted_towrite = resultsAreSorted;
                 outstream.write(reinterpret_cast<const char*>(&resultsAreSorted_towrite), sizeof(bool));
@@ -205,7 +216,7 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(&noMoreWrites), sizeof(bool));
                 outstream.write(reinterpret_cast<const char*>(&canUseGpu), sizeof(bool));
 
-                assert(nKeys == keys.size());
+                assert(nKeys == keys.size() || nKeys <= keyIndexMap.keyToIndexMap.size());
                 assert(nValues == values.size());
 
                 //for(const auto& key : keys)
@@ -213,7 +224,7 @@ namespace care{
                 //for(const auto& val : values)
                 //    outstream.write(reinterpret_cast<const char*>(&val), sizeof(Value_t));
 
-                outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
+                //outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
                 outstream.write(reinterpret_cast<const char*>(values.data()), sizeof(Value_t) * nValues);
 
                 std::size_t nCounts = countsPrefixSum.size();
@@ -222,6 +233,7 @@ namespace care{
                 //    outstream.write(reinterpret_cast<const char*>(&count), sizeof(Index_t));
                 outstream.write(reinterpret_cast<const char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
 
+                keyIndexMap.writeToStream(outstream);
             }
 
             void readFromStream(std::ifstream& instream){
@@ -245,7 +257,7 @@ namespace care{
                 //for(auto& val : values)
                 //    instream.read(reinterpret_cast<char*>(&val), sizeof(Value_t));
 
-                instream.read(reinterpret_cast<char*>(keys.data()), sizeof(Key_t) * nKeys);
+                //instream.read(reinterpret_cast<char*>(keys.data()), sizeof(Key_t) * nKeys);
                 instream.read(reinterpret_cast<char*>(values.data()), sizeof(Value_t) * nValues);
 
                 std::size_t nCounts = countsPrefixSum.size();
@@ -256,12 +268,7 @@ namespace care{
 
                 instream.read(reinterpret_cast<char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
 
-                keyIndexMap = KeyIndexMap<Key_t, Index_t>(keys.size() / load);
-
-                for(size_t i = 0; i < keys.size(); i++){
-                    keyIndexMap.insert(keys[i], i);
-                }
-
+                keyIndexMap.readFromStream(instream);
             }
 
             std::size_t numBytes() const{
