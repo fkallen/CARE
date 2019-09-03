@@ -276,7 +276,16 @@ namespace gpu{
         volatile bool stop{false};
         std::atomic<bool> finishRemainingTasks{true};
 
-        BackgroundThread(){
+        BackgroundThread() : stop(false){
+        }
+
+        BackgroundThread(bool doStart) : stop(false){
+            if(doStart){
+                start();
+            }
+        }
+
+        void start(){
             stop = false;
 
             thread = std::move(std::thread{
@@ -3248,9 +3257,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
-        BackgroundThread gpuExecutor;
-        BackgroundThread cpugpuExecutor;
-        BackgroundThread outputThread;
+        BackgroundThread gpuExecutor(true);
+        BackgroundThread cpugpuExecutor(true);
+        BackgroundThread outputThread(true);
 
         // constexpr int maxCachedResults = 2000000;
         // static_assert(maxCachedResults > 0, "");
