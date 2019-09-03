@@ -206,9 +206,6 @@ namespace gpu{
 
         int initialNumberOfAnchorIds = 0;
 
-        std::vector<char> sequenceDataBuffer;
-        std::vector<int> sequenceLengthsBuffer;
-
 		std::vector<char> collectedCandidateReads;
 		int numsortedCandidateIds = 0;
 		int numsortedCandidateIdTasks = 0;
@@ -242,8 +239,6 @@ namespace gpu{
 
 		void reset(){
             tasks.clear();
-            sequenceDataBuffer.clear();
-            sequenceLengthsBuffer.clear();
     		collectedCandidateReads.clear();
 
     		initialNumberOfCandidates = 0;
@@ -3246,9 +3241,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
           deviceIdIndex = (deviceIdIndex + 1) % deviceIds.size();
       }
-
-      std::vector<char> sequenceDataBuffer;
-      std::vector<int> sequenceLengthsBuffer;
 
 #ifndef DO_PROFILE
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
