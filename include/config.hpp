@@ -29,6 +29,12 @@ namespace care{
     //At least gpuReadStorageHeadroomPerGPU bytes per GPU will not be used by gpuReadStorage
     constexpr std::size_t gpuReadStorageHeadroomPerGPU = std::size_t(1) << 30;
 
+    //During construction of minhasher, minhasherConstructionNumMaps maps will be constructed before each of those is transformed into
+    //a space efficient format.
+    //greater number means faster construction time and greater memory usage during construction.
+    //smaller number means slower construction time and less memory usage during construction.
+    constexpr int minhasherConstructionNumMaps = 8;
+
 //##################################################
 
 }

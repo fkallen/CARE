@@ -136,13 +136,12 @@ namespace care{
             const int oldnumthreads = omp_get_thread_num();
 
             omp_set_num_threads(runtimeOptions.threads);
-            constexpr int numMapsPerBatch = 16;
 
-            const int numBatches = SDIV(minhashOptions.maps, numMapsPerBatch);
+            const int numBatches = SDIV(minhashOptions.maps, minhasherConstructionNumMaps);
 
             for(int batch = 0; batch < numBatches; batch++){
-                const int firstMap = batch * numMapsPerBatch;
-                const int lastMap = std::min(minhashOptions.maps, (batch+1) * numMapsPerBatch);
+                const int firstMap = batch * minhasherConstructionNumMaps;
+                const int lastMap = std::min(minhashOptions.maps, (batch+1) * minhasherConstructionNumMaps);
                 const int numMaps = lastMap - firstMap;
                 std::vector<int> mapIds(numMaps);
                 std::iota(mapIds.begin(), mapIds.end(), firstMap);
