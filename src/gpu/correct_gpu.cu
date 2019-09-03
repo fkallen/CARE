@@ -354,8 +354,6 @@ namespace gpu{
 		cpu::RangeGenerator<read_number>* readIdGenerator;
 		const Minhasher* minhasher;
         const DistributedReadStorage* readStorage;
-		std::mutex* locksForProcessedFlags;
-		std::size_t nLocksForProcessedFlags;
 		CorrectionOptions correctionOptions;
         GoodAlignmentProperties goodAlignmentProperties;
         SequenceFileProperties sequenceFileProperties;
@@ -363,7 +361,7 @@ namespace gpu{
         MinhashOptions minhashOptions;
         AlignmentOptions alignmentOptions;
         FileOptions fileOptions;
-		std::vector<std::uint8_t>* correctionStatusFlagsPerRead;
+		std::atomic_uint8_t* correctionStatusFlagsPerRead;
 		std::ofstream* featurestream;
         std::function<void(const TempCorrectedSequence&)> saveCorrectedSequence;
 		std::function<void(const read_number)> lock;
@@ -2917,7 +2915,7 @@ namespace gpu{
     				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
                     //transFuncData->lock(task.readId);
                     if(task.highQualityAlignment){
-                        (*transFuncData->correctionStatusFlagsPerRead)[task.readId] |= readCorrectedAsHQAnchor;
+                        transFuncData->correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
                     }
                     //transFuncData->unlock(task.readId);
 
@@ -2943,7 +2941,7 @@ namespace gpu{
     				//nvtx::pop_range();
     			}else{
                     //transFuncData->lock(task.readId);
-                    (*transFuncData->correctionStatusFlagsPerRead)[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+                    transFuncData->correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
                     //transFuncData->unlock(task.readId);
     			}
     			//nvtx::push_range("correctedcandidates", 6);
@@ -2959,7 +2957,7 @@ namespace gpu{
                     //if(corrected_candidate == original_candidate){
 
                         bool savingIsOk = false;
-                        const std::uint8_t mask = (*transFuncData->correctionStatusFlagsPerRead)[candidateId];
+                        const std::uint8_t mask = transFuncData->correctionStatusFlagsPerRead[candidateId];
         				if(!(mask & readCorrectedAsHQAnchor)) {
                             //std::uint8_t writtencount = mask >> 4;
 
@@ -3164,13 +3162,18 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
-      std::vector<std::uint8_t> correctionStatusFlagsPerRead;
-      std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
-      std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+      //std::vector<std::atomic_uint8_t> correctionStatusFlagsPerRead;
+      //std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+      //std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
 
-      correctionStatusFlagsPerRead.resize(sequenceFileProperties.nReads, 0);
+      std::unique_ptr<std::atomic_uint8_t[]> correctionStatusFlagsPerRead = std::make_unique<std::atomic_uint8_t[]>(sequenceFileProperties.nReads);
 
-      std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionStatusFlagsPerRead.size() / 1024. / 1024. << " MB\n";
+      #pragma omp parallel for
+      for(read_number i = 0; i < sequenceFileProperties.nReads; i++){
+          correctionStatusFlagsPerRead[i] = 0;
+      }
+
+      std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
       std::ofstream outputstream;
       std::unique_ptr<SequenceFileWriter> writer;
@@ -3322,9 +3325,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.readIdGenerator = &readIdGenerator;
       transFuncData.minhasher = &minhasher;
       transFuncData.readStorage = &readStorage;
-      transFuncData.locksForProcessedFlags = locksForProcessedFlags.get();
-      transFuncData.nLocksForProcessedFlags = nLocksForProcessedFlags;
-      transFuncData.correctionStatusFlagsPerRead = &correctionStatusFlagsPerRead;
+      transFuncData.correctionStatusFlagsPerRead = correctionStatusFlagsPerRead.get();
       transFuncData.featurestream = &featurestream;
 
       transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
@@ -3350,12 +3351,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       };
 
       transFuncData.lock = [&](read_number readId){
-                       read_number index = readId % transFuncData.nLocksForProcessedFlags;
-                       transFuncData.locksForProcessedFlags[index].lock();
+                       // read_number index = readId % transFuncData.nLocksForProcessedFlags;
+                       // transFuncData.locksForProcessedFlags[index].lock();
                    };
       transFuncData.unlock = [&](read_number readId){
-                         read_number index = readId % transFuncData.nLocksForProcessedFlags;
-                         transFuncData.locksForProcessedFlags[index].unlock();
+                         // read_number index = readId % transFuncData.nLocksForProcessedFlags;
+                         // transFuncData.locksForProcessedFlags[index].unlock();
                      };
 
       if(transFuncData.correctionOptions.correctionType == CorrectionType::Forest){
@@ -3437,6 +3438,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               cudaEventDestroy(event); CUERR;
           }
       }
+
+      correctionStatusFlagsPerRead.reset();
 
 
 
