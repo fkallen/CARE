@@ -233,6 +233,11 @@ namespace care{
         for(Index_t i = 0; i < map.nKeys; i++){
             map.keyIndexMap.insert(map.keys[i], i);
         }
+
+        {
+            std::vector<Key_t> tmp;
+            map.keys.swap(tmp);
+        }
         /*for(Index_t i = 0; i < nKeys; i++){
             assert(keyIndexMap.get(keys[i]) == i);
         }*/

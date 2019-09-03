@@ -28,6 +28,11 @@ namespace care{
             map.keyIndexMap.insert(map.keys[i], i);
         }
 
+        {
+            std::vector<Key_t> tmp;
+            map.keys.swap(tmp);
+        }
+
         /*keyIndexMap = KeyIndexMap(nKeys / load);
         for(Index_t i = 0; i < nKeys; i++){
             keyIndexMap.insert(keys[i], i);
