@@ -72,6 +72,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
             distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, sequenceLengthLimit));
         }
 
+        getGpuMemoryInfo();
+
         std::cerr << "Free memory per gpu after construction of distributed readstorage: ";
         std::copy(freeMemPerGpu.begin(), freeMemPerGpu.end(), std::ostream_iterator<size_t>(std::cerr, " "));
         std::cerr << "\n";
