@@ -92,6 +92,94 @@ namespace gpu{
     constexpr int secondary_stream_finished_event_index = 10;
     constexpr int nEventsPerBatch = 11;
 
+    struct BackgroundThread{
+        enum class StopType{FinishAndStop, Stop};
+
+        std::vector<std::function<void()>> tasks{};
+        std::mutex m{};
+        std::condition_variable condvar{};
+        std::thread thread{};
+        volatile bool stop{false};
+        std::atomic<bool> finishRemainingTasks{true};
+
+        BackgroundThread() : stop(false){
+        }
+
+        BackgroundThread(bool doStart) : stop(false){
+            if(doStart){
+                start();
+            }
+        }
+
+        void start(){
+            stop = false;
+
+            thread = std::move(std::thread{
+                [&](){
+                    while(!stop){
+                        std::unique_lock<std::mutex> mylock(m);
+                        while(tasks.empty() && !stop){
+                            condvar.wait(mylock);
+                        }
+                        if(!tasks.empty()){
+                            auto func = std::move(tasks.front());
+                            tasks.erase(tasks.begin());
+                            mylock.unlock();
+
+                            func();
+                        }
+                    }
+
+                    if(stop && finishRemainingTasks){
+                        for(const auto& func : tasks){
+                            func();
+                        }
+                        tasks.clear();
+                    }
+                }
+            });
+        }
+
+        template<class Func>
+        void emplace(Func&& func){
+            auto wrapper = [f = std::move(func)]() -> void {
+                f();
+            };
+
+            {
+                std::lock_guard<std::mutex> mylock(m);
+                tasks.emplace_back(std::move(wrapper));
+            }
+
+            condvar.notify_one();
+        }
+
+        // template<class Func, class... Params>
+        // void emplace(Func&& func, Params... params){
+        //     auto wrapper = [f = std::move(func)]() -> void {
+        //         f(params...);
+        //     };
+        //
+        //     {
+        //         std::lock_guard<std::mutex> mylock(m);
+        //         tasks.emplace_back(std::move(wrapper));
+        //     }
+        //
+        //     condvar.notify_one();
+        // }
+
+        void stopThread(StopType type){
+            if(type == StopType::FinishAndStop){
+                finishRemainingTasks = true;
+            }else{
+                finishRemainingTasks = false;
+            }
+            stop = true;
+            condvar.notify_one();
+            thread.join();
+        }
+    };
+
 
     struct CorrectionTask {
         CorrectionTask(){
@@ -224,6 +312,9 @@ namespace gpu{
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
         TransitionFunctionData* transFuncData;
+        BackgroundThread* gpuExecutor;
+        BackgroundThread* cpugpuExecutor;
+        BackgroundThread* outputThread;
 
         int id = -1;
         int deviceId = 0;
@@ -266,93 +357,7 @@ namespace gpu{
 
 	};
 
-    struct BackgroundThread{
-        enum class StopType{FinishAndStop, Stop};
 
-        std::vector<std::function<void()>> tasks{};
-        std::mutex m{};
-        std::condition_variable condvar{};
-        std::thread thread{};
-        volatile bool stop{false};
-        std::atomic<bool> finishRemainingTasks{true};
-
-        BackgroundThread() : stop(false){
-        }
-
-        BackgroundThread(bool doStart) : stop(false){
-            if(doStart){
-                start();
-            }
-        }
-
-        void start(){
-            stop = false;
-
-            thread = std::move(std::thread{
-                [&](){
-                    while(!stop){
-                        std::unique_lock<std::mutex> mylock(m);
-                        while(tasks.empty() && !stop){
-                            condvar.wait(mylock);
-                        }
-                        if(!tasks.empty()){
-                            auto func = std::move(tasks.front());
-                            tasks.erase(tasks.begin());
-                            mylock.unlock();
-
-                            func();
-                        }
-                    }
-
-                    if(stop && finishRemainingTasks){
-                        for(const auto& func : tasks){
-                            func();
-                        }
-                        tasks.clear();
-                    }
-                }
-            });
-        }
-
-        template<class Func>
-        void emplace(Func&& func){
-            auto wrapper = [f = std::move(func)]() -> void {
-                f();
-            };
-
-            {
-                std::lock_guard<std::mutex> mylock(m);
-                tasks.emplace_back(std::move(wrapper));
-            }
-
-            condvar.notify_one();
-        }
-
-        // template<class Func, class... Params>
-        // void emplace(Func&& func, Params... params){
-        //     auto wrapper = [f = std::move(func)]() -> void {
-        //         f(params...);
-        //     };
-        //
-        //     {
-        //         std::lock_guard<std::mutex> mylock(m);
-        //         tasks.emplace_back(std::move(wrapper));
-        //     }
-        //
-        //     condvar.notify_one();
-        // }
-
-        void stopThread(StopType type){
-            if(type == StopType::FinishAndStop){
-                finishRemainingTasks = true;
-            }else{
-                finishRemainingTasks = false;
-            }
-            stop = true;
-            condvar.notify_one();
-            thread.join();
-        }
-    };
 
     struct TransitionFunctionData {
 		cpu::RangeGenerator<read_number>* readIdGenerator;
@@ -370,10 +375,6 @@ namespace gpu{
         std::function<void(const TempCorrectedSequence&)> saveCorrectedSequence;
 		std::function<void(const read_number)> lock;
 		std::function<void(const read_number)> unlock;
-
-        BackgroundThread* gpuExecutor;
-        BackgroundThread* cpugpuExecutor;
-        BackgroundThread* outputThread;
 
         std::condition_variable isFinishedCV;
         std::mutex isFinishedMutex;
@@ -422,9 +423,9 @@ namespace gpu{
 
     void CUDART_CB nextStep(void* b){
         Batch* const batch = (Batch*)b;
-        auto gpuExecutorPtr = batch->transFuncData->gpuExecutor;
-        auto cpugpuExecutorPtr = batch->transFuncData->cpugpuExecutor;
-        auto outputThreadPtr = batch->transFuncData->outputThread;
+        auto gpuExecutorPtr = batch->gpuExecutor;
+        auto cpugpuExecutorPtr = batch->cpugpuExecutor;
+        auto outputThreadPtr = batch->outputThread;
 
         auto call = [=](auto f){
             //std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
@@ -3214,6 +3215,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::array<Batch, nParallelBatches> batches;
       std::array<Batch*, nParallelBatches> batchPointers;
 
+      std::vector<BackgroundThread> gpuExecutorPerGpu(deviceIds.size());
+      std::vector<BackgroundThread> cpugpuExecutorPerGpu(deviceIds.size());
+
+      BackgroundThread outputThread;
+
       int deviceIdIndex = 0;
 
       for(int i = 0; i < nParallelBatches; i++) {
@@ -3246,6 +3252,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].transFuncData = &transFuncData;
+          batches[i].gpuExecutor = &gpuExecutorPerGpu[deviceIdIndex];
+          batches[i].cpugpuExecutor = &cpugpuExecutorPerGpu[deviceIdIndex];
+          batches[i].outputThread = &outputThread;
           batchPointers[i] = &batches[i];
 
           deviceIdIndex = (deviceIdIndex + 1) % deviceIds.size();
@@ -3257,9 +3266,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
-        BackgroundThread gpuExecutor(true);
-        BackgroundThread cpugpuExecutor(true);
-        BackgroundThread outputThread(true);
+
 
         // constexpr int maxCachedResults = 2000000;
         // static_assert(maxCachedResults > 0, "");
@@ -3309,10 +3316,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         //     //cachedResultsSet.clear();
         // };
 
-
-      transFuncData.gpuExecutor = &gpuExecutor;
-      transFuncData.cpugpuExecutor = &cpugpuExecutor;
-      transFuncData.outputThread = &outputThread;
 
       //transFuncData.mybatchgen = &mybatchgen;
       transFuncData.goodAlignmentProperties = goodAlignmentProperties;
@@ -3371,6 +3374,19 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
       }
 
+      // BEGIN CORRECTION
+
+      for(auto& gpuExecutor : gpuExecutorPerGpu){
+          gpuExecutor.start();
+      }
+
+      for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
+          cpugpuExecutor.start();
+      }
+
+      outputThread.start();
+
+
       #ifdef DO_PROFILE
           cudaProfilerStart();
       #endif
@@ -3403,11 +3419,16 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         }
 
 
+        for(auto& gpuExecutor : gpuExecutorPerGpu){
+            gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+        }
 
+        for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
+            cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+        }
 
-      cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
-      gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
-      outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+        outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
 
       //flushCachedResults();
       outputstream.flush();
