@@ -37,6 +37,10 @@ struct ThreadPool{
         pq.reset(new am::parallel_queue(numThreads));
     }
 
+    int getConcurrency() const{
+        return pq->concurrency();
+    }
+
     std::unique_ptr<am::parallel_queue> pq;
     std::mutex m;
 };

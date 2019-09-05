@@ -18,6 +18,7 @@
 #include <candidatedistribution.hpp>
 #include <sequencefileio.hpp>
 #include <rangegenerator.hpp>
+#include <threadpool.hpp>
 
 #include <hpc_helpers.cuh>
 
@@ -279,6 +280,28 @@ namespace gpu{
 
     struct TransitionFunctionData;
 
+    struct FindCandidateIdsDataFrame{
+        std::atomic_int finishedChunks{0};
+        std::atomic_int initialNumberOfCandidates{0};
+        int chunks = 0;
+
+        void reset(){
+            finishedChunks = 0;
+            initialNumberOfCandidates = 0;
+            chunks = 0;
+        }
+    };
+
+    struct UnpackClassicResultsDataFrame{
+        std::atomic_int finishedChunks{0};
+        int chunks = 0;
+
+        void reset(){
+            finishedChunks = 0;
+            chunks = 0;
+        }
+    };
+
     struct Batch {
 		std::vector<CorrectionTask> tasks;
 		int initialNumberOfCandidates = 0;
@@ -328,11 +351,16 @@ namespace gpu{
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle2;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle2;
 
+        FindCandidateIdsDataFrame findcandidateidsDataFrame;
+        UnpackClassicResultsDataFrame unpackclassicresultsDataFrame;
+
 		void reset(){
             tasks.clear();
     		collectedCandidateReads.clear();
 
-    		initialNumberOfCandidates = 0;
+    		findcandidateidsDataFrame.reset();
+            unpackclassicresultsDataFrame.reset();
+
     		state = BatchState::Unprepared;
     		copiedTasks = 0;
     		copiedCandidates = 0;
@@ -421,6 +449,7 @@ namespace gpu{
 	void state_writefeatures_func(Batch& batch);
 	void state_finished_func(Batch& batch);
 
+#if 0
     void CUDART_CB nextStep(void* b){
         Batch* const batch = (Batch*)b;
         auto gpuExecutorPtr = batch->gpuExecutor;
@@ -518,7 +547,106 @@ namespace gpu{
 		default: assert(false);;
         }
     }
+#else
 
+    void CUDART_CB nextStep(void* b){
+        Batch* const batch = (Batch*)b;
+
+        auto gpuExecutorPtr = batch->gpuExecutor;
+
+        auto call = [=](auto f){
+            //std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
+            nvtx::push_range("batch "+std::to_string(batch->id)+nameOf(batch->state), int(batch->state));
+            f(*batch);
+            nvtx::pop_range();
+        };
+
+        switch(batch->state) {
+        case BatchState::Unprepared:
+            gpuExecutorPtr->emplace([=](){
+                call(state_unprepared_func);
+            });
+            break;
+        case BatchState::FindCandidateIds:
+            threadpool.enqueue([=](){
+                call(state_findcandidateids_func);
+            });
+            break;
+        case BatchState::CopyReads:
+            threadpool.enqueue([=](){
+                call(state_copyreads_func);
+            });
+            break;
+        case BatchState::StartAlignment:
+            gpuExecutorPtr->emplace([=](){
+                call(state_startalignment_func);
+            });
+            break;
+        case BatchState::RearrangeIndices:
+            gpuExecutorPtr->emplace([=](){
+                call(state_rearrangeindices_func);
+            });
+            break;
+        case BatchState::CopyQualities:
+            threadpool.enqueue([=](){
+                call(state_copyqualities_func);
+            });
+            break;
+        case BatchState::BuildMSA:
+            gpuExecutorPtr->emplace([=](){
+                call(state_buildmsa_func);
+            });
+            break;
+        case BatchState::ImproveMSA:
+            gpuExecutorPtr->emplace([=](){
+                call(state_improvemsa_func);
+            });
+            break;
+        case BatchState::StartClassicCorrection:
+            gpuExecutorPtr->emplace([=](){
+                call(state_startclassiccorrection_func);
+            });
+            break;
+        case BatchState::StartForestCorrection:
+            threadpool.enqueue([=](){
+                call(state_startforestcorrection_func);
+            });
+            break;
+        case BatchState::StartConvnetCorrection:
+            threadpool.enqueue([=](){
+                call(state_startconvnetcorrection_func);
+            });
+            break;
+        case BatchState::CombineStreams:
+            gpuExecutorPtr->emplace([=](){
+                call(state_combinestreams_func);
+            });
+            break;
+        case BatchState::UnpackClassicResults:
+            threadpool.enqueue([=](){
+                call(state_unpackclassicresults_func);
+            });
+            break;
+        case BatchState::WriteResults:
+            threadpool.enqueue([=](){
+                call(state_writeresults_func);
+            });
+            break;
+        case BatchState::WriteFeatures:
+            threadpool.enqueue([=](){
+                call(state_writefeatures_func);
+            });
+            break;
+        case BatchState::Finished:
+            threadpool.enqueue([=](){
+                call(state_finished_func);
+            });
+            break;
+        default: assert(false);;
+        }
+    }
+
+#endif
 
     /*for each active read pair in tasks, if at least one read has more than threshold candidates:
         1. find out candidates whose paired candidate is a candidate of the paired read
@@ -832,96 +960,90 @@ namespace gpu{
 
         //for each anchor, get candidates
 
-        const auto& transFuncData = *batch.transFuncData;
 
-        const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
-        DataArrays& dataArrays = batch.dataArrays;
-        std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        //std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+        auto maketasks = [](Batch* batchptr, int begin, int end){
 
-        const auto& minhasher = transFuncData.minhasher;
+            const auto& transFuncData = *(batchptr->transFuncData);
 
-        const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
+            const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
-        const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
+            DataArrays& dataArrays = batchptr->dataArrays;
 
-        int initialNumberOfCandidates = 0;
+            const auto& minhasher = transFuncData.minhasher;
 
-        #pragma omp parallel for reduction(+: initialNumberOfCandidates)
-        for(int i = 0; i < batch.initialNumberOfAnchorIds; i++){
-            auto& task = batch.tasks[i];
+            const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
 
-            const read_number readId = dataArrays.h_subject_read_ids[i];
-            task = CorrectionTask(readId);
+            const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
 
-            // bool ok = false;
-            // if ((*transFuncData.correctionStatusFlagsPerRead)[readId] == 0) {
-            //     ok = true;
-            // }
-            const bool ok = true;
+            int initialNumberOfCandidates = 0;
 
-            if(ok){
+            for(int i = begin; i < end; i++){
+                auto& task = batchptr->tasks[i];
 
-                const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
-                const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
+                const read_number readId = batchptr->dataArrays.h_subject_read_ids[i];
+                task = CorrectionTask(readId);
 
-                task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+                // bool ok = false;
+                // if ((*transFuncData.correctionStatusFlagsPerRead)[readId] == 0) {
+                //     ok = true;
+                // }
+                const bool ok = true;
 
-                task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
-                                                                    hits_per_candidate,
-                                                                    transFuncData.runtimeOptions.max_candidates,
-                                                                    maxNumResultsPerMapQuery);
+                if(ok){
 
-                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+                    const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
+                    const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
 
-                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
-                    task.candidate_read_ids.erase(readIdPos);
-                }
+                    task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
 
-                std::size_t myNumCandidates = task.candidate_read_ids.size();
+                    task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                        hits_per_candidate,
+                                                                        transFuncData.runtimeOptions.max_candidates,
+                                                                        maxNumResultsPerMapQuery);
 
-                assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+                    auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
 
-                if(myNumCandidates == 0) {
+                    if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                        task.candidate_read_ids.erase(readIdPos);
+                    }
+
+                    std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+                    assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+                    if(myNumCandidates == 0) {
+                        task.active = false;
+                    }
+                }else{
                     task.active = false;
                 }
-            }else{
-                task.active = false;
-            }
 
-            //const read_number id = task.readId;
-            // bool ok2 = false;
-            // transFuncData.lock(id);
-            // if ((*transFuncData.correctionStatusFlagsPerRead)[id] == 0) {
-            //     (*transFuncData.correctionStatusFlagsPerRead)[id] = 1;
-            //     ok2 = true;
-            // }else{
-            // }
-            // transFuncData.unlock(id);
-            const bool ok2 = true;
-            if(ok2){
                 const int myNumCandidates = int(task.candidate_read_ids.size());
                 initialNumberOfCandidates += myNumCandidates;
             }
-        }
 
-        batch.initialNumberOfCandidates += initialNumberOfCandidates;
+            batchptr->findcandidateidsDataFrame.initialNumberOfCandidates += initialNumberOfCandidates;
+        };
 
-        auto it = std::remove_if(batch.tasks.begin(), batch.tasks.end(), [](const auto& t){return !t.active;});
-        batch.tasks.erase(it, batch.tasks.end());
+        auto lastChunkAction = [](Batch* batchptr){
 
-        if(false) {
-            //still more read ids to add
+            if(batchptr->findcandidateidsDataFrame.finishedChunks < batchptr->findcandidateidsDataFrame.chunks){
+                return;
+            }
 
-            batch.state = BatchState::Unprepared;
-            cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
-            return;
-        }else{
+            const auto& transFuncData = *(batchptr->transFuncData);
 
-            if(batch.initialNumberOfCandidates == 0) {
-                batch.state = BatchState::Finished;
-                cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
+            DataArrays& dataArrays = batchptr->dataArrays;
+            std::array<cudaStream_t, nStreamsPerBatch>& streams = batchptr->streams;
+            const int initialNumberOfCandidates = batchptr->findcandidateidsDataFrame.initialNumberOfCandidates;
+
+            auto it = std::remove_if(batchptr->tasks.begin(), batchptr->tasks.end(), [](const auto& t){return !t.active;});
+            batchptr->tasks.erase(it, batchptr->tasks.end());
+
+            if(initialNumberOfCandidates == 0) {
+                batchptr->state = BatchState::Finished;
+                cudaLaunchHostFunc(streams[primary_stream_index], nextStep, batchptr); CUERR;
                 return;
             }else{
 
@@ -929,8 +1051,8 @@ namespace gpu{
 
                 //allocate data arrays
                 nvtx::push_range("set_problem_dimensions", 4);
-                dataArrays.set_problem_dimensions(int(batch.tasks.size()),
-                            batch.initialNumberOfCandidates,
+                dataArrays.set_problem_dimensions(int(batchptr->tasks.size()),
+                            initialNumberOfCandidates,
                             transFuncData.sequenceFileProperties.maxSequenceLength,
                             sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
                             transFuncData.goodAlignmentProperties.min_overlap,
@@ -951,7 +1073,7 @@ namespace gpu{
 
                 cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
                             (bool*)nullptr, (int*)nullptr, (int*)nullptr,
-                            batch.initialNumberOfCandidates,
+                            batchptr->initialNumberOfCandidates,
                             streams[primary_stream_index]); CUERR;
 
                 max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
@@ -972,7 +1094,7 @@ namespace gpu{
                                                         (char*)nullptr,
                                                         (const int*)nullptr,
                                                         (int*)nullptr,
-                                                        batch.initialNumberOfCandidates,
+                                                        batchptr->initialNumberOfCandidates,
                                                         dataArrays.n_subjects,
                                                         (const int*)nullptr,
                                                         (const int*)nullptr,
@@ -991,13 +1113,40 @@ namespace gpu{
                     return SDIV(num, factor) * factor;
                 };
 
-                batch.initialNumberOfCandidates = 0;
-
-                batch.state = BatchState::CopyReads;
-                cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
+                batchptr->state = BatchState::CopyReads;
+                cudaLaunchHostFunc(streams[primary_stream_index], nextStep, batchptr); CUERR;
                 return;
             }
+        };
+
+        const int chunks = threadpool.getConcurrency();
+        const int chunksize = batch.initialNumberOfAnchorIds / chunks;
+        batch.findcandidateidsDataFrame.chunks = chunks + (batch.initialNumberOfAnchorIds % chunksize > 0);
+
+        for(int c = 0; c < chunks; c++){
+            int begin = c * chunksize;
+            int end = (c+1) * chunksize;
+            Batch* batchptr = &batch;
+
+            threadpool.enqueue([=](){
+                maketasks(batchptr, begin, end);
+                batchptr->findcandidateidsDataFrame.finishedChunks++;
+                lastChunkAction(batchptr);
+            });
         }
+
+        if(batch.initialNumberOfAnchorIds % chunksize > 0){
+            int begin = chunks * chunksize;
+            int end = batch.initialNumberOfAnchorIds;
+            Batch* batchptr = &batch;
+
+            threadpool.enqueue([=](){
+                maketasks(batchptr, begin, end);
+                batchptr->findcandidateidsDataFrame.finishedChunks++;
+                lastChunkAction(batchptr);
+            });
+        }
+
     }
 
 
@@ -2727,63 +2876,115 @@ namespace gpu{
 
         if(transFuncData.correctionOptions.correctCandidates) {
 
-            #pragma omp parallel for schedule(dynamic, 4)
-            for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
-                auto& task = batch.tasks[subject_index];
-                const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
-                const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
-                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index] * dataArrays.sequence_pitch;
-                const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
-                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index];
+            auto unpackcandidates = [](Batch* batchptr, int begin, int end){
+                Batch& batch = *batchptr;
+                DataArrays& dataArrays = batch.dataArrays;
+                const auto& transFuncData = *batch.transFuncData;
+
+                for(int subject_index = begin; subject_index < end; ++subject_index) {
+                    auto& task = batch.tasks[subject_index];
+                    const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
+                    const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
+                                                    + dataArrays.h_indices_per_subject_prefixsum[subject_index] * dataArrays.sequence_pitch;
+                    const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
+                                                    + dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
 
-                task.corrected_candidates_shifts.resize(n_corrected_candidates);
-                task.corrected_candidates_read_ids.resize(n_corrected_candidates);
-                task.corrected_candidates.resize(n_corrected_candidates);
-                task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
+                    task.corrected_candidates_shifts.resize(n_corrected_candidates);
+                    task.corrected_candidates_read_ids.resize(n_corrected_candidates);
+                    task.corrected_candidates.resize(n_corrected_candidates);
+                    task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
 
-                for(int i = 0; i < n_corrected_candidates; ++i) {
-                    const int global_candidate_index = my_indices_of_corrected_candidates[i];
-                    //const int local_candidate_index = global_candidate_index - dataArrays.h_candidates_per_subject_prefixsum[subject_index];
+                    for(int i = 0; i < n_corrected_candidates; ++i) {
+                        const int global_candidate_index = my_indices_of_corrected_candidates[i];
+                        //const int local_candidate_index = global_candidate_index - dataArrays.h_candidates_per_subject_prefixsum[subject_index];
 
-					//const read_number candidate_read_id = task.candidate_read_ids[local_candidate_index];
-					//const read_number candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
+    					//const read_number candidate_read_id = task.candidate_read_ids[local_candidate_index];
+    					//const read_number candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
 
-                    const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
-                    const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];//transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
-                    const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
+                        const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
+                        const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];//transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
+                        const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
 
-                    const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
-                    if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
-                        std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
-                                << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                        const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
+                        if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
+                            std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
+                                    << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                        }
+                        assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
+                        task.corrected_candidates_shifts[i] = candidate_shift;
+                        task.corrected_candidates_read_ids[i] = candidate_read_id;
+                        task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
+
+                        const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+
+                        if(!originalReadContainsN){
+                            const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
+                            const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
+                            task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
+                        }else{
+                            task.corrected_candidate_equals_uncorrected[i] = false;
+                        }
+
+
+
+                        //task.corrected_candidates_read_ids.emplace_back(candidate_read_id);
+                        //task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
                     }
-                    assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
-                    task.corrected_candidates_shifts[i] = candidate_shift;
-                    task.corrected_candidates_read_ids[i] = candidate_read_id;
-                    task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
-
-                    const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
-
-                    if(!originalReadContainsN){
-                        const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
-                        const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
-                        task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
-                    }else{
-                        task.corrected_candidate_equals_uncorrected[i] = false;
-                    }
-
-
-
-                    //task.corrected_candidates_read_ids.emplace_back(candidate_read_id);
-                    //task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
                 }
-            }
+            };
+
+            auto lastChunkAction = [](Batch* batchptr){
+
+                if(batchptr->unpackclassicresultsDataFrame.finishedChunks < batchptr->unpackclassicresultsDataFrame.chunks){
+                    return;
+                }
+
+                std::array<cudaStream_t, nStreamsPerBatch>& streams = batchptr->streams;
+
+                batchptr->state = BatchState::WriteResults;
+                cudaLaunchHostFunc(streams[primary_stream_index], nextStep, batchptr); CUERR;
+            };
+
+            // const int chunks = threadpool.getConcurrency();
+            // const int chunksize = batch.tasks.size() / chunks;
+            // batch.unpackclassicresultsDataFrame.chunks = chunks + (batch.tasks.size() % chunksize > 0);
+            //
+            // for(int c = 0; c < chunks; c++){
+            //     int begin = c * chunksize;
+            //     int end = (c+1) * chunksize;
+            //     Batch* batchptr = &batch;
+            //
+            //     threadpool.enqueue([=](){
+            //         unpackcandidates(batchptr, begin, end);
+            //         batchptr->unpackclassicresultsDataFrame.finishedChunks++;
+            //         lastChunkAction(batchptr);
+            //     });
+            // }
+            //
+            // if(batch.tasks.size() % chunksize > 0){
+            //     int begin = chunks * chunksize;
+            //     int end = batch.tasks.size();
+            //     Batch* batchptr = &batch;
+            //
+            //     threadpool.enqueue([=](){
+            //         unpackcandidates(batchptr, begin, end);
+            //         batchptr->unpackclassicresultsDataFrame.finishedChunks++;
+            //         lastChunkAction(batchptr);
+            //     });
+            // }
+
+            unpackcandidates(&batch, 0, batch.tasks.size());
+            batch.state = BatchState::WriteResults;
+            cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
+            return;
+
+        }else{
+            batch.state = BatchState::WriteResults;
+            cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
+            return;
         }
 
-        batch.state = BatchState::WriteResults;
-        cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
-        return;
     }
 
 
@@ -3332,6 +3533,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.correctionStatusFlagsPerRead = correctionStatusFlagsPerRead.get();
       transFuncData.featurestream = &featurestream;
 
+      std::mutex outputstreammutex;
+
       transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
           // auto isValidSequence = [](const std::string& s){
           //     return std::all_of(s.begin(), s.end(), [](char c){
@@ -3351,6 +3554,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           //     flushCachedResults();
           // }
           //std::cout << tmp << '\n';
+          std::unique_lock<std::mutex> l(outputstreammutex);
           outputstream << tmp << '\n';
       };
 
@@ -3379,12 +3583,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       for(auto& gpuExecutor : gpuExecutorPerGpu){
           gpuExecutor.start();
       }
-
-      for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
-          cpugpuExecutor.start();
-      }
-
-      outputThread.start();
+      //
+      // for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
+      //     cpugpuExecutor.start();
+      // }
+      //
+      // outputThread.start();
 
 
       #ifdef DO_PROFILE
@@ -3418,16 +3622,18 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             std::this_thread::sleep_for(std::chrono::seconds{1});
         }
 
+        threadpool.wait();
+
 
         for(auto& gpuExecutor : gpuExecutorPerGpu){
             gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
         }
-
-        for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
-            cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
-        }
-
-        outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+        //
+        // for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
+        //     cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+        // }
+        //
+        // outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
 
       //flushCachedResults();

@@ -8,6 +8,8 @@
 
 #include <cpugpuproxy.hpp>
 
+#include <threadpool.hpp>
+
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -143,6 +145,10 @@ int main(int argc, char** argv){
 
     runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;
+
+    const int numThreads = parseresults["threads"].as<int>();
+
+    threadpool.setConcurrency(numThreads);//std::max(1, numThreads-1));
 
     care::performCorrection(minhashOptions,
 				alignmentOptions,
