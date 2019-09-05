@@ -1045,7 +1045,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     else if(c == 'C') countsC[i]++;
                     else if(c == 'G') countsG[i]++;
                     else if(c == 'T') countsT[i]++;
-                    else {
+                    else if(c == 'N'){
+                        ;
+                    }else{
                         std::cerr << result.readId << " : " << sequence << "\n"; assert(false);
                     }
                 }
