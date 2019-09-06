@@ -34,6 +34,16 @@ namespace care{
         }
     }
 
+    __inline__
+    std::string reverseComplementString(const char* sequence, int sequencelength){
+        std::string rev;
+        rev.resize(sequencelength);
+
+        reverseComplementString(&rev[0], sequence, sequencelength);
+
+        return rev;
+    }
+
     HD_WARNING_DISABLE
     HOSTDEVICEQUALIFIER
     __inline__
