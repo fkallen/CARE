@@ -3136,6 +3136,7 @@ void state_unpackclassicresults_func(Batch& batch){
                 task.corrected_candidates_read_ids.resize(n_corrected_candidates);
                 task.corrected_candidates.resize(n_corrected_candidates);
                 task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
+                task.candidatesoutput.reserve(n_corrected_candidates);
 
                 for(int i = 0; i < n_corrected_candidates; ++i) {
                     const int global_candidate_index = my_indices_of_corrected_candidates[i];
@@ -3168,10 +3169,26 @@ void state_unpackclassicresults_func(Batch& batch){
                         task.corrected_candidate_equals_uncorrected[i] = false;
                     }
 
+                    bool savingIsOk = false;
+                    const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[candidate_read_id];
+    				if(!(mask & readCorrectedAsHQAnchor)) {
+    					savingIsOk = true;
+    				}
+                    //const bool savingIsOk = true;
+    				if (savingIsOk) {
+                        TempCorrectedSequence tmp;
+                        tmp.type = TempCorrectedSequence::Type::Candidate;
+                        tmp.shift = task.corrected_candidates_shifts[i];
+                        tmp.readId = candidate_read_id;
+                        tmp.isEqual = task.corrected_candidate_equals_uncorrected[i];
+                        if(tmp.isEqual){
+                            tmp.sequence = "-";
+                        }else{
+                            tmp.sequence = std::move(task.corrected_candidates[i]);
+                        }
 
-
-                    //task.corrected_candidates_read_ids.emplace_back(candidate_read_id);
-                    //task.corrected_candidates.emplace_back(std::move(std::string{candidate_data, candidate_data + candidate_length}));
+                        task.candidatesoutput.emplace_back(std::move(tmp));
+    				}
                 }
             }
         };
@@ -3397,64 +3414,12 @@ void state_unpackclassicresults_func(Batch& batch){
     			//std::cout << "finished readId " << task.readId << std::endl;
 
     			if(task.corrected) {
-
                     transFuncData->saveCorrectedSequence(task.anchoroutput);
-
     			}
-    			//nvtx::push_range("correctedcandidates", 6);
-    			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
 
-    				read_number candidateId = task.corrected_candidates_read_ids[corrected_candidate_index];
-    				const std::string& corrected_candidate = task.corrected_candidates[corrected_candidate_index];
-
-                    //const char* sequenceptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(candidateId);
-    				//const int sequencelength = transFuncData.gpuReadStorage->fetchSequenceLength(candidateId);
-    				//const std::string original_candidate = Sequence_t::Impl_t::toString((const std::uint8_t*)sequenceptr, sequencelength);
-
-                    //if(corrected_candidate == original_candidate){
-
-                        bool savingIsOk = false;
-                        const std::uint8_t mask = transFuncData->correctionStatusFlagsPerRead[candidateId];
-        				if(!(mask & readCorrectedAsHQAnchor)) {
-                            //std::uint8_t writtencount = mask >> 4;
-
-                            //if(writtencount < maxSavedCorrectedCandidatesPerRead){
-        					//transFuncData->lock(candidateId);
-
-                            //mask = (*transFuncData->correctionStatusFlagsPerRead)[candidateId];
-        					//if(!(mask & readCorrectedAsHQAnchor)) {
-        						savingIsOk = true;
-        						//nCorrectedCandidates++;
-        					//}
-                            //    writtencount++;
-                            //    (*transFuncData->correctionStatusFlagsPerRead)[candidateId] = (mask & 0x0F) | (writtencount << 4);
-
-                            //}
-
-        					//transFuncData->unlock(candidateId);
-        				}
-                        //const bool savingIsOk = true;
-        				if (savingIsOk) {
-
-
-                            TempCorrectedSequence tmp;
-                            tmp.type = TempCorrectedSequence::Type::Candidate;
-                            tmp.shift = task.corrected_candidates_shifts[corrected_candidate_index];
-                            tmp.readId = candidateId;
-                            tmp.isEqual = task.corrected_candidate_equals_uncorrected[corrected_candidate_index];
-                            if(tmp.isEqual){
-                                tmp.sequence = "-";
-                            }else{
-                                tmp.sequence = std::move(corrected_candidate);
-                            }
-
-                            transFuncData->saveCorrectedSequence(tmp);
-        				}
-                    //}
-
-
-    			}
-    			//nvtx::pop_range();
+                for(const auto& tmp : task.candidatesoutput){
+                    transFuncData->saveCorrectedSequence(tmp);
+                }
     		}
         };
 
