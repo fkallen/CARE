@@ -57,19 +57,17 @@
 //#define REARRANGE_INDICES
 #define USE_MSA_MINIMIZATION
 
-//#define USE_WAIT_FLAGS
-
 //#define DO_PROFILE
 
 #ifdef DO_PROFILE
-    constexpr size_t num_reads_to_profile = 1000000;
+    constexpr size_t num_reads_to_profile = 100000;
 #endif
 
 
 namespace care{
 namespace gpu{
 
-    constexpr int nParallelBatches = 6;
+    constexpr int nParallelBatches = 4;
     //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
     //read status bitmask
@@ -674,8 +672,8 @@ namespace gpu{
             });
             break;
         case BatchState::UnpackClassicResults:
-            outputThreadPtr->emplace([=](){
-            //threadpool.enqueue([=](){
+            //outputThreadPtr->emplace([=](){
+            threadpool.enqueue([=](){
                 call(state_unpackclassicresults_func);
             });
             break;
@@ -3140,42 +3138,39 @@ void state_unpackclassicresults_func(Batch& batch){
 
                 for(int i = 0; i < n_corrected_candidates; ++i) {
                     const int global_candidate_index = my_indices_of_corrected_candidates[i];
-                    //const int local_candidate_index = global_candidate_index - dataArrays.h_candidates_per_subject_prefixsum[subject_index];
-
-                    //const read_number candidate_read_id = task.candidate_read_ids[local_candidate_index];
-                    //const read_number candidate_read_id = task.candidate_read_ids_begin[local_candidate_index];
 
                     const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
-                    const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];//transFuncData.gpuReadStorage->fetchSequenceLength(candidate_read_id);
-                    const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
-
-                    const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
-                    if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
-                        std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
-                                << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
-                    }
-                    assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
-                    task.corrected_candidates_shifts[i] = candidate_shift;
-                    task.corrected_candidates_read_ids[i] = candidate_read_id;
-                    task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
-
-                    const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
-
-                    if(!originalReadContainsN){
-                        const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
-                        const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
-                        task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
-                    }else{
-                        task.corrected_candidate_equals_uncorrected[i] = false;
-                    }
 
                     bool savingIsOk = false;
                     const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[candidate_read_id];
-    				if(!(mask & readCorrectedAsHQAnchor)) {
-    					savingIsOk = true;
-    				}
-                    //const bool savingIsOk = true;
-    				if (savingIsOk) {
+                    if(!(mask & readCorrectedAsHQAnchor)) {
+                        savingIsOk = true;
+                    }
+                    if (savingIsOk) {
+
+                        const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];
+                        const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
+
+                        const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
+                        if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
+                            std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
+                                    << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                        }
+                        assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
+                        task.corrected_candidates_shifts[i] = candidate_shift;
+                        task.corrected_candidates_read_ids[i] = candidate_read_id;
+                        task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
+
+                        const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+
+                        if(!originalReadContainsN){
+                            const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
+                            const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
+                            task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
+                        }else{
+                            task.corrected_candidate_equals_uncorrected[i] = false;
+                        }
+
                         TempCorrectedSequence tmp;
                         tmp.type = TempCorrectedSequence::Type::Candidate;
                         tmp.shift = task.corrected_candidates_shifts[i];
