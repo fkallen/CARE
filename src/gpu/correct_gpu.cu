@@ -2360,7 +2360,7 @@ namespace gpu{
 		const int new_columns_to_correct = transFuncData.correctionOptions.new_columns_to_correct;
 
 		// correct subjects
-#if 1
+#if 0
         cudaMemcpyAsync(dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
                         dataArrays.d_num_indices.sizeInBytes(),
@@ -2574,7 +2574,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 
 
 			// correct candidates
-            call_msa_correct_candidates_kernel_async_exp(
+            call_msa_correct_candidates_kernel_async(
                     dataArrays.getDeviceMSAPointers(),
                     dataArrays.getDeviceAlignmentResultPointers(),
                     dataArrays.getDeviceSequencePointers(),

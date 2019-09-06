@@ -2279,7 +2279,7 @@ namespace gpu{
 
     template<int BLOCKSIZE>
     __global__
-    void msa_correct_candidates_kernel_exp(
+    void msa_correct_candidates_kernel(
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
@@ -2332,11 +2332,19 @@ namespace gpu{
             return length;
         };
 
+        __shared__ int numberOfCorrectedCandidatesForThisSubject;
+
         const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
         const int num_high_quality_subject_indices = *d_correctionResultPointers.numHighQualitySubjectIndices;
         //const int n_indices = *d_num_indices;
 
         for(unsigned index = blockIdx.x; index < num_high_quality_subject_indices; index += gridDim.x) {
+
+            if(threadIdx.x == 0){
+                numberOfCorrectedCandidatesForThisSubject = 0;
+            }
+            __syncthreads();
+
             const int subjectIndex = d_correctionResultPointers.highQualitySubjectIndices[index];
             const int my_num_candidates = d_indices_per_subject[subjectIndex];
 
@@ -2352,9 +2360,7 @@ namespace gpu{
             const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
             const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
 
-            int n_corrected_candidates = 0;
-
-            for(int local_candidate_index = 0; local_candidate_index < my_num_candidates; ++local_candidate_index) {
+            for(int local_candidate_index = threadIdx.x; local_candidate_index < my_num_candidates; local_candidate_index += blockDim.x) {
                 const int global_candidate_index = my_indices[local_candidate_index];
                 const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
                 //const int candidate_length = d_candidate_sequences_lengths[global_candidate_index];
@@ -2395,43 +2401,186 @@ namespace gpu{
                     if(newColMinSupport >= min_support_threshold
                        && newColMinCov >= min_coverage_threshold) {
 
-                           const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
-                           const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+                        const int destinationindex = atomicAdd(&numberOfCorrectedCandidatesForThisSubject, 1);
 
-                        for(int i = copyposbegin + threadIdx.x; i < copyposend; i += BLOCKSIZE) {
-                            my_corrected_candidates[n_corrected_candidates * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+                        const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
+                        const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+
+                        for(int i = copyposbegin; i < copyposend; i += 1) {
+                            my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
                         }
 
                         // const char* const candidate = getCandidatePtr(global_candidate_index);
                         // for(int i = threadIdx.x; i < copyposbegin - queryColumnsBegin_incl; i += BLOCKSIZE){
-                        //     my_corrected_candidates[n_corrected_candidates * sequence_pitch + i] = to_nuc(get(candidate, candidate_length, i));
+                        //     my_corrected_candidates[destinationindex * sequence_pitch + i] = to_nuc(get(candidate, candidate_length, i));
                         // }
                         //
                         // for(int i = copyposend - queryColumnsBegin_incl + threadIdx.x; i < candidate_length; i += BLOCKSIZE){
-                        //     my_corrected_candidates[n_corrected_candidates * sequence_pitch + i] = to_nuc(get(candidate, candidate_length, i));
+                        //     my_corrected_candidates[destinationindex * sequence_pitch + i] = to_nuc(get(candidate, candidate_length, i));
                         // }
 
-                        __syncthreads();                                         // need to wait until all threads have written my_corrected_candidates before calculating reverse complement
-
-                        if(threadIdx.x == 0) {
                             //the forward strand will be returned -> make reverse complement again
-                            if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
-                                make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + n_corrected_candidates * sequence_pitch), candidate_length);
-                            }
-                            my_indices_of_corrected_candidates[n_corrected_candidates] = global_candidate_index;
-                            //printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
+                        if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+                            make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + destinationindex * sequence_pitch), candidate_length);
                         }
-
-                        ++n_corrected_candidates;
+                        my_indices_of_corrected_candidates[destinationindex] = global_candidate_index;
+                            //printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
                     }
+
                 }
             }
 
-            //printf("%d %d\n", subjectIndex, n_corrected_candidates);
-
+            __syncthreads();
             if(threadIdx.x == 0) {
-                d_correctionResultPointers.numCorrectedCandidates[subjectIndex] = n_corrected_candidates;
-                //printf("%d %d\n", subjectIndex, n_corrected_candidates);
+                d_correctionResultPointers.numCorrectedCandidates[subjectIndex] = numberOfCorrectedCandidatesForThisSubject;
+            }
+        }
+    }
+
+
+
+    template<int BLOCKSIZE>
+    __global__
+    void msa_correct_candidates_kernel_new(
+                MSAPointers d_msapointers,
+                AlignmentResultPointers d_alignmentresultpointers,
+                ReadSequencesPointers d_sequencePointers,
+                CorrectionResultPointers d_correctionResultPointers,
+                const int* __restrict__ d_indices,
+                const int* __restrict__ d_indices_per_subject,
+                const int* __restrict__ d_indices_per_subject_prefixsum,
+                const int* __restrict__ d_candidates_per_hq_subject_prefixsum, // inclusive, with leading zero
+                int n_subjects,
+                int n_queries,
+                const int* __restrict__ d_num_indices,
+                size_t encoded_sequence_pitch,
+                size_t sequence_pitch,
+                size_t msa_pitch,
+                size_t msa_weights_pitch,
+                float min_support_threshold,
+                float min_coverage_threshold,
+                int new_columns_to_correct){
+
+        auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
+            return reverseComplementStringInplace((char*)sequence, sequencelength);
+        };
+
+        auto get = [] (const char* data, int length, int index){
+            //return Sequence_t::get_as_nucleotide(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        };
+
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
+        auto getCandidatePtr = [&] (int candidateIndex){
+            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            return result;
+        };
+
+        auto getCandidateLength = [&] (int candidateIndex){
+            const int length = d_sequencePointers.candidateSequencesLength[candidateIndex];
+            return length;
+        };
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+        const int num_high_quality_subject_indices = *d_correctionResultPointers.numHighQualitySubjectIndices;
+        const int num_candidates_of_hq_subjects = d_candidates_per_hq_subject_prefixsum[num_high_quality_subject_indices];
+
+        for(int candidateHQid = threadIdx.x + blockIdx.x * blockDim.x;
+                candidateHQid < num_candidates_of_hq_subjects;
+                candidateHQid += blockDim.x * gridDim.x){
+
+            const int hqsubjectIndex = thrust::distance(d_candidates_per_hq_subject_prefixsum,
+                                                    thrust::lower_bound(
+                                                        thrust::seq,
+                                                        d_candidates_per_hq_subject_prefixsum,
+                                                        d_candidates_per_hq_subject_prefixsum + num_high_quality_subject_indices + 1,
+                                                        candidateHQid + 1))-1;
+
+            const int subjectIndex = d_correctionResultPointers.highQualitySubjectIndices[hqsubjectIndex];
+
+            const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
+            const int* const my_coverage = d_msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
+            //const int* const my_orig_coverage = d_origCoverages + msa_weights_pitch_floats * subjectIndex;
+            const char* const my_consensus = d_msapointers.consensus + msa_pitch  * subjectIndex;
+            const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+            char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
+            int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + d_indices_per_subject_prefixsum[subjectIndex];
+
+            const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+            const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+            const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+
+            const int local_candidate_index = candidateHQid - d_candidates_per_hq_subject_prefixsum[hqsubjectIndex];
+            const int global_candidate_index = my_indices[local_candidate_index];
+
+            const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
+            const int candidate_length = getCandidateLength(global_candidate_index);
+            const BestAlignment_t bestAlignmentFlag = d_alignmentresultpointers.bestAlignmentFlags[global_candidate_index];
+            const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+            const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
+
+            if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+               && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
+               && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct) {
+
+                float newColMinSupport = 1.0f;
+                int newColMinCov = std::numeric_limits<int>::max();
+                //check new columns left of subject
+                for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
+                    columnindex < subjectColumnsBegin_incl;
+                    columnindex++) {
+
+                    assert(columnindex < lastColumn_excl);
+                    if(queryColumnsBegin_incl <= columnindex) {
+                        newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
+                        newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
+                    }
+                }
+                //check new columns right of subject
+                for(int columnindex = subjectColumnsEnd_excl;
+                    columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+                    && columnindex < lastColumn_excl;
+                    columnindex++) {
+
+                    newColMinSupport = my_support[columnindex] < newColMinSupport ? my_support[columnindex] : newColMinSupport;
+                    newColMinCov = my_coverage[columnindex] < newColMinCov ? my_coverage[columnindex] : newColMinCov;
+                }
+
+                if(newColMinSupport >= min_support_threshold
+                        && newColMinCov >= min_coverage_threshold) {
+
+                    const int destinationindex = atomicAdd(d_correctionResultPointers.numCorrectedCandidates + subjectIndex, 1);
+
+                    const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
+                    const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+
+                    for(int i = copyposbegin; i < copyposend; i += 1) {
+                        my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+                    }
+
+                    //the forward strand will be returned -> make reverse complement again
+                    if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+                        make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + destinationindex * sequence_pitch), candidate_length);
+                    }
+
+                    my_indices_of_corrected_candidates[destinationindex] = global_candidate_index;
+                    //printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
+
+                }
             }
         }
     }
@@ -4264,7 +4413,7 @@ namespace gpu{
 
 
 
-    void call_msa_correct_candidates_kernel_async_exp(
+    void call_msa_correct_candidates_kernel_async(
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
@@ -4288,7 +4437,7 @@ namespace gpu{
 
 
     	const int max_block_size = 256;
-    	const int blocksize = std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+    	const int blocksize = 64;// std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
     	const std::size_t smem = 0;
 
     	int max_blocks_per_device = 1;
@@ -4308,7 +4457,7 @@ namespace gpu{
     		kernelLaunchConfig.smem = 0; \
     		KernelProperties kernelProperties; \
     		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-    					msa_correct_candidates_kernel_exp<(blocksize)>, \
+    					msa_correct_candidates_kernel<(blocksize)>, \
     					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
     		mymap[kernelLaunchConfig] = kernelProperties; \
     }
@@ -4337,7 +4486,7 @@ namespace gpu{
     	dim3 block(blocksize, 1, 1);
     	dim3 grid(std::min(max_blocks_per_device, n_subjects));
 
-    		#define mycall(blocksize) msa_correct_candidates_kernel_exp<(blocksize)> \
+    		#define mycall(blocksize) msa_correct_candidates_kernel<(blocksize)> \
     	        <<<grid, block, 0, stream>>>( \
             d_msapointers, \
             d_alignmentresultpointers, \
@@ -4695,6 +4844,8 @@ void make_candidates_per_hq_subject_prefixsum(void* d_temp_storage,
 	cub::TransformInputIterator<int, candidates_per_hq_subject_transformop, CountIt> transformIter(countingIter, transformOp);
 	cub::DeviceScan::InclusiveSum(d_temp_storage, temp_storage_bytes, transformIter, prefixsum+1, num_indices, stream);
 }*/
+
+
 
 #endif
 

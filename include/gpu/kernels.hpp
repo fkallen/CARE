@@ -347,7 +347,7 @@ void call_msa_correct_subject_implicit_kernel_async(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-void call_msa_correct_candidates_kernel_async_exp(
+void call_msa_correct_candidates_kernel_async(
             MSAPointers d_msapointers,
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
