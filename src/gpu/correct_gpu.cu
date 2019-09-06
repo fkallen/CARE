@@ -207,9 +207,9 @@ namespace gpu{
             corrected_candidates_read_ids(other.corrected_candidates_read_ids),
             corrected_candidates_shifts(other.corrected_candidates_shifts),
             corrected_candidate_equals_uncorrected(other.corrected_candidate_equals_uncorrected),
-            uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus){
-            anchoroutput(other.anchoroutput);
-            candidatesoutput(other.candidatesoutput);
+            uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus),
+            anchoroutput(other.anchoroutput),
+            candidatesoutput(other.candidatesoutput){
         }
 
         CorrectionTask(CorrectionTask&& other){
@@ -3054,6 +3054,7 @@ void state_unpackclassicresults_func(Batch& batch){
         auto unpackAnchors = [](Batch* batchptr, int begin, int end){
             Batch& batch = *batchptr;
             DataArrays& dataArrays = batch.dataArrays;
+            const auto& transFuncData = *batch.transFuncData;
 
             //std::cerr << "in unpackAnchors " << begin << " - " << end << "\n";
 
@@ -3087,6 +3088,29 @@ void state_unpackclassicresults_func(Batch& batch){
                     if(!isValidSequence(task.corrected_subject)){
                         std::cout << task.corrected_subject << std::endl;
                     }
+
+                    if(task.highQualityAlignment){
+                        transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+                    }
+                    //transFuncData->unlock(task.readId);
+
+                    const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
+
+                    task.anchoroutput.hq = task.highQualityAlignment;
+                    task.anchoroutput.type = TempCorrectedSequence::Type::Anchor;
+                    task.anchoroutput.readId = task.readId;
+                    task.anchoroutput.isEqual = !originalReadContainsN && task.correctionEqualsOriginal;
+                    if(task.anchoroutput.isEqual){
+                        task.anchoroutput.sequence = "-";
+                    }else{
+                        task.anchoroutput.sequence = std::move(task.corrected_subject);
+                    }
+                    task.anchoroutput.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+
+                }else{
+
+                    transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+
                 }
             }
         };
@@ -3372,39 +3396,10 @@ void state_unpackclassicresults_func(Batch& batch){
 
     			//std::cout << "finished readId " << task.readId << std::endl;
 
-    			if(task.corrected/* && task.corrected_subject != task.subject_string*/) {
-    				//nvtx::push_range("write_subject", 4);
-    				//std::cout << task.readId << "\n" << task.corrected_subject << std::endl;
-                    //transFuncData->lock(task.readId);
-                    if(task.highQualityAlignment){
-                        transFuncData->correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
-                    }
-                    //transFuncData->unlock(task.readId);
+    			if(task.corrected) {
 
-                    const bool originalReadContainsN = transFuncData->readStorage->readContainsN(task.readId);
+                    transFuncData->saveCorrectedSequence(task.anchoroutput);
 
-                    TempCorrectedSequence tmp;
-                    tmp.hq = task.highQualityAlignment;
-                    tmp.type = TempCorrectedSequence::Type::Anchor;
-                    tmp.readId = task.readId;
-                    tmp.isEqual = !originalReadContainsN && task.correctionEqualsOriginal;
-                    if(tmp.isEqual){
-                        tmp.sequence = "-";
-                    }else{
-                        tmp.sequence = std::move(task.corrected_subject);
-                    }
-                    tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
-
-                    transFuncData->saveCorrectedSequence(tmp);
-
-    				//transFuncData.lock(task.readId);
-    				//(*transFuncData.correctionStatusFlagsPerRead)[task.readId] = 1;
-    				//transFuncData.unlock(task.readId);
-    				//nvtx::pop_range();
-    			}else{
-                    //transFuncData->lock(task.readId);
-                    transFuncData->correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
-                    //transFuncData->unlock(task.readId);
     			}
     			//nvtx::push_range("correctedcandidates", 6);
     			for(std::size_t corrected_candidate_index = 0; corrected_candidate_index < task.corrected_candidates.size(); ++corrected_candidate_index) {
