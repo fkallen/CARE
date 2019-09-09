@@ -2313,6 +2313,7 @@ namespace gpu{
         }else{
             switch(transFuncData.correctionOptions.correctionType){
             case CorrectionType::Classic:
+                //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
                 batch.setState(BatchState::StartClassicCorrection, expectedState);
                 cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
                 return;

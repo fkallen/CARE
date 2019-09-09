@@ -4524,6 +4524,186 @@ namespace gpu{
     }
 
 
+
+    void call_msa_correct_candidates_kernel_async_experimental(
+                MSAPointers d_msapointers,
+                AlignmentResultPointers d_alignmentresultpointers,
+                ReadSequencesPointers d_sequencePointers,
+                CorrectionResultPointers d_correctionResultPointers,
+                CorrectionResultPointers h_correctionResultPointers,
+    			const int* d_indices,
+    			const int* d_indices_per_subject,
+    			const int* d_indices_per_subject_prefixsum,
+                const int* h_indices_per_subject,
+    			int n_subjects,
+    			int n_queries,
+    			const int* d_num_indices,
+                size_t encoded_sequence_pitch,
+    			size_t sequence_pitch,
+    			size_t msa_pitch,
+    			size_t msa_weights_pitch,
+    			float min_support_threshold,
+    			float min_coverage_threshold,
+    			int new_columns_to_correct,
+    			int maximum_sequence_length,
+    			cudaStream_t stream,
+    			KernelLaunchHandle& handle){
+
+        constexpr int tilesize = 32;
+
+        const int* d_highQualitySubjectIndices =  d_correctionResultPointers.highQualitySubjectIndices;
+
+        auto getCandidatesPerHQAnchor = [=] __device__(int hqIndex){
+            const int subjectIndex = d_highQualitySubjectIndices[hqIndex];
+            return d_indices_per_subject[subjectIndex];
+        };
+
+        auto getTilesPerHQAnchor = [=] __device__ (int hqIndex){
+            const int numCandidatesOfAnchor = getCandidatesPerHQAnchor(hqIndex);
+            return SDIV(numCandidatesOfAnchor, tilesize);
+        };
+
+        using CperHQA_t = decltype(getCandidatesPerHQAnchor);
+        using TperHQA_t = decltype(getTilesPerHQAnchor);
+        using CountIt = cub::CountingInputIterator<int>;
+
+        void* tempstorage = nullptr;
+        size_t tempstoragesize = 0;
+
+        const int numHQSubjects = *(h_correctionResultPointers.numHighQualitySubjectIndices);
+
+
+        //make prefixsum of number of candidates per high quality subject
+        int* d_candidatesPerHQAnchorPrefixSum = nullptr;
+        cubCachingAllocator.DeviceAllocate((void**)&d_candidatesPerHQAnchorPrefixSum, sizeof(int) * (numHQSubjects+1), stream);  CUERR;
+
+        cub::TransformInputIterator<int, CperHQA_t, CountIt> transformIter(CountIt{0}, getCandidatesPerHQAnchor);
+
+        cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
+        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+
+        call_set_kernel_async(d_candidatesPerHQAnchorPrefixSum, 0, 0, stream);
+
+        //make tiles per anchor prefixsum
+        int* d_tilesPerHQAnchorPrefixSum;
+        cubCachingAllocator.DeviceAllocate((void**)&d_tilesPerHQAnchorPrefixSum, sizeof(int) * (numHQSubjects+1), stream);  CUERR;
+
+        cub::TransformInputIterator<int, TperHQA_t, CountIt> transformIter2(CountIt{0}, getTilesPerHQAnchor);
+
+        cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter2, d_tilesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter2, d_tilesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
+        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+
+        call_set_kernel_async(d_tilesPerHQAnchorPrefixSum, 0, 0, stream);
+
+        const int blocksize = 128;
+        const int tilesPerBlock = blocksize / tilesize;
+
+        //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
+
+        int requiredTiles = 0;
+        for(int i = 0; i < numHQSubjects; i++){
+            const int subjectIndex = h_correctionResultPointers.highQualitySubjectIndices[i];
+            const int numCandidatesOfAnchor = h_indices_per_subject[subjectIndex];
+            requiredTiles += SDIV(numCandidatesOfAnchor, tilesize);
+        }
+
+        const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
+
+    	const int max_block_size = 256;
+    //	const int blocksize = 64;// std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+    	const std::size_t smem = 0;
+
+    	int max_blocks_per_device = 1;
+
+    	KernelLaunchConfig kernelLaunchConfig;
+    	kernelLaunchConfig.threads_per_block = blocksize;
+    	kernelLaunchConfig.smem = smem;
+
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::MSACorrectCandidatesExperimental);
+    	if(iter == handle.kernelPropertiesMap.end()) {
+
+    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+    	    #define getProp(blocksize) { \
+    		KernelLaunchConfig kernelLaunchConfig; \
+    		kernelLaunchConfig.threads_per_block = (blocksize); \
+    		kernelLaunchConfig.smem = 0; \
+    		KernelProperties kernelProperties; \
+    		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+    					msa_correct_candidates_kernel<(blocksize)>, \
+    					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+    		mymap[kernelLaunchConfig] = kernelProperties; \
+    }
+
+    		getProp(32);
+    		getProp(64);
+    		getProp(96);
+    		getProp(128);
+    		getProp(160);
+    		getProp(192);
+    		getProp(224);
+    		getProp(256);
+
+    		const auto& kernelProperties = mymap[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+    		handle.kernelPropertiesMap[KernelId::MSACorrectCandidatesExperimental] = std::move(mymap);
+
+    	    #undef getProp
+    	}else{
+    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    	}
+
+    	dim3 block(blocksize, 1, 1);
+    	dim3 grid(std::min(max_blocks_per_device, n_subjects));
+
+    		#define mycall(blocksize) msa_correct_candidates_kernel<(blocksize)> \
+    	        <<<grid, block, 0, stream>>>( \
+            d_msapointers, \
+            d_alignmentresultpointers, \
+            d_sequencePointers, \
+            d_correctionResultPointers, \
+    		d_indices, \
+    		d_indices_per_subject, \
+    		d_indices_per_subject_prefixsum, \
+    		n_subjects, \
+    		n_queries, \
+    		d_num_indices, \
+            encoded_sequence_pitch, \
+    		sequence_pitch, \
+    		msa_pitch, \
+    		msa_weights_pitch, \
+    		min_support_threshold, \
+    		min_coverage_threshold, \
+    		new_columns_to_correct); CUERR;
+
+    	assert(blocksize > 0 && blocksize <= max_block_size);
+
+    	switch(blocksize) {
+    	case 32: mycall(32); break;
+    	case 64: mycall(64); break;
+    	case 96: mycall(96); break;
+    	case 128: mycall(128); break;
+    	case 160: mycall(160); break;
+    	case 192: mycall(192); break;
+    	case 224: mycall(224); break;
+    	case 256: mycall(256); break;
+    	default: mycall(256); break;
+    	}
+
+    		#undef mycall
+
+        cubCachingAllocator.DeviceFree(d_tilesPerHQAnchorPrefixSum);  CUERR;
+        cubCachingAllocator.DeviceFree(d_candidatesPerHQAnchorPrefixSum);  CUERR;
+    }
+
+
     void call_msa_findCandidatesOfDifferentRegion_kernel_async(
                 MSAPointers d_msapointers,
                 AlignmentResultPointers d_alignmentresultpointers,

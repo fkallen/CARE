@@ -85,6 +85,7 @@ enum class KernelId {
 	MSAFindConsensus,
 	MSACorrectSubject,
 	MSACorrectCandidates,
+    MSACorrectCandidatesExperimental,
     MSAAddSequencesImplicitGlobal,
     MSAAddSequencesImplicitShared,
     MSAAddSequencesImplicitSharedTest,
@@ -348,6 +349,28 @@ void call_msa_correct_subject_implicit_kernel_async(
             KernelLaunchHandle& handle);
 
 void call_msa_correct_candidates_kernel_async(
+            MSAPointers d_msapointers,
+            AlignmentResultPointers d_alignmentresultpointers,
+            ReadSequencesPointers d_sequencePointers,
+            CorrectionResultPointers d_correctionResultPointers,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_indices_per_subject_prefixsum,
+            int n_subjects,
+            int n_queries,
+            const int* d_num_indices,
+            size_t encoded_sequence_pitch,
+            size_t sequence_pitch,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            float min_support_threshold,
+            float min_coverage_threshold,
+            int new_columns_to_correct,
+            int maximum_sequence_length,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
+void call_msa_correct_candidates_kernel_async_experimental(
             MSAPointers d_msapointers,
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
