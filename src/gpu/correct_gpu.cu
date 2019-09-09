@@ -2553,6 +2553,34 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 		cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
 		if(transFuncData.correctionOptions.correctCandidates) {
+            // find subject ids of subjects with high quality multiple sequence alignment
+
+            size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+
+            cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
+                        cubTempSize,
+                        cub::CountingInputIterator<int>(0),
+                        dataArrays.d_is_high_quality_subject.get(),
+                        dataArrays.d_high_quality_subject_indices.get(),
+                        dataArrays.d_num_high_quality_subject_indices.get(),
+                        dataArrays.n_subjects,
+                        streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
+                            dataArrays.d_high_quality_subject_indices,
+                            dataArrays.d_high_quality_subject_indices.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
+                            dataArrays.d_num_high_quality_subject_indices,
+                            dataArrays.d_num_high_quality_subject_indices.sizeInBytes(),
+                            D2H,
+                            streams[primary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+
+
             batch.setState(BatchState::StartClassicCandidateCorrection, expectedState);
 		}else{
             batch.setState(BatchState::UnpackClassicResults, expectedState);
@@ -2586,20 +2614,33 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 
         if(transFuncData.correctionOptions.correctCandidates) {
 
-            // find subject ids of subjects with high quality multiple sequence alignment
-
-            size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-            cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-                        cubTempSize,
-                        cub::CountingInputIterator<int>(0),
-                        dataArrays.d_is_high_quality_subject.get(),
-                        dataArrays.d_high_quality_subject_indices.get(),
-                        dataArrays.d_num_high_quality_subject_indices.get(),
-                        dataArrays.n_subjects,
-                        streams[primary_stream_index]); CUERR;
+#if 1
+            call_msa_correct_candidates_kernel_async_experimental(
+                    dataArrays.getDeviceMSAPointers(),
+                    dataArrays.getDeviceAlignmentResultPointers(),
+                    dataArrays.getDeviceSequencePointers(),
+                    dataArrays.getDeviceCorrectionResultPointers(),
+                    dataArrays.getHostCorrectionResultPointers(),
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.h_indices_per_subject,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    dataArrays.d_num_indices,
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.sequence_pitch,
+                    dataArrays.msa_pitch,
+                    dataArrays.msa_weights_pitch,
+                    min_support_threshold,
+                    min_coverage_threshold,
+                    new_columns_to_correct,
+                    dataArrays.maximum_sequence_length,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);
 
             // correct candidates
+#else
             call_msa_correct_candidates_kernel_async(
                     dataArrays.getDeviceMSAPointers(),
                     dataArrays.getDeviceAlignmentResultPointers(),
@@ -2621,6 +2662,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
                     dataArrays.maximum_sequence_length,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
+#endif
 
             cudaMemcpyAsync(dataArrays.h_corrected_candidates,
                             dataArrays.d_corrected_candidates,
@@ -3142,6 +3184,13 @@ void state_unpackclassicresults_func(Batch& batch){
                 task.corrected_candidates.resize(n_corrected_candidates);
                 task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
                 task.candidatesoutput.reserve(n_corrected_candidates);
+
+                if(task.readId == 10){
+                    for(int i = 0; i < n_corrected_candidates; ++i) {
+                        std::cerr << my_indices_of_corrected_candidates[i] << " ";
+                    }
+                    std::cerr << std::endl;
+                }
 
                 for(int i = 0; i < n_corrected_candidates; ++i) {
                     const int global_candidate_index = my_indices_of_corrected_candidates[i];
