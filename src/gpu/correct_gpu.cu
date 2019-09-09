@@ -1902,6 +1902,8 @@ namespace gpu{
 
                 const int currentNumIndices = dataArrays.h_num_indices[0];
 
+                //std::cerr << batch.numMinimizations << " " << currentNumIndices << "\n";
+
                 bool* d_shouldBeKept;
 
 
@@ -3185,12 +3187,12 @@ void state_unpackclassicresults_func(Batch& batch){
                 task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
                 task.candidatesoutput.reserve(n_corrected_candidates);
 
-                if(task.readId == 10){
-                    for(int i = 0; i < n_corrected_candidates; ++i) {
-                        std::cerr << my_indices_of_corrected_candidates[i] << " ";
-                    }
-                    std::cerr << std::endl;
-                }
+                // if(task.readId == 10){
+                //     for(int i = 0; i < n_corrected_candidates; ++i) {
+                //         std::cerr << my_indices_of_corrected_candidates[i] << " ";
+                //     }
+                //     std::cerr << std::endl;
+                // }
 
                 for(int i = 0; i < n_corrected_candidates; ++i) {
                     const int global_candidate_index = my_indices_of_corrected_candidates[i];
