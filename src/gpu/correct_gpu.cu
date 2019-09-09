@@ -277,6 +277,7 @@ namespace gpu{
 		StartClassicCorrection,
 		StartForestCorrection,
         StartConvnetCorrection,
+        StartClassicCandidateCorrection,
         CombineStreams,
 		UnpackClassicResults,
 		WriteResults,
@@ -457,6 +458,7 @@ namespace gpu{
         case BatchState::StartClassicCorrection: return "StartClassicCorrection";
         case BatchState::StartForestCorrection: return "StartForestCorrection";
         case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
+        case BatchState::StartClassicCandidateCorrection: return "StartClassicCandidateCorrection";
         case BatchState::UnpackClassicResults: return "UnpackClassicResults";
         case BatchState::WriteResults: return "WriteResults";
         case BatchState::WriteFeatures: return "WriteFeatures";
@@ -476,6 +478,7 @@ namespace gpu{
 	void state_startclassiccorrection_func(Batch& batch);
 	void state_startforestcorrection_func(Batch& batch);
     void state_startconvnetcorrection_func(Batch& batch);
+    void state_startclassiccandidatecorrection_func(Batch& batch);
     void state_combinestreams_func(Batch& batch);
 	void state_unpackclassicresults_func(Batch& batch);
 	void state_writeresults_func(Batch& batch);
@@ -663,6 +666,11 @@ namespace gpu{
         case BatchState::StartConvnetCorrection:
             threadpool.enqueue([=](){
                 call(state_startconvnetcorrection_func);
+            });
+            break;
+        case BatchState::StartClassicCandidateCorrection:
+            gpuExecutorPtr->emplace([=](){
+                call(state_startclassiccandidatecorrection_func);
             });
             break;
         case BatchState::CombineStreams:
@@ -2358,7 +2366,6 @@ namespace gpu{
 		const float min_coverage_threshold = std::max(1.0f,
 					transFuncData.correctionOptions.m_coverage / 6.0f * transFuncData.correctionOptions.estimatedCoverage);
         const float max_coverage_threshold = 0.5 * transFuncData.correctionOptions.estimatedCoverage;
-		const int new_columns_to_correct = transFuncData.correctionOptions.new_columns_to_correct;
 
 		// correct subjects
 #if 0
@@ -2513,109 +2520,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
-		if(transFuncData.correctionOptions.correctCandidates) {
-
-            cudaMemcpyAsync(dataArrays.h_alignment_shifts,
-                            dataArrays.d_alignment_shifts,
-                            dataArrays.d_alignment_shifts.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]); CUERR;
-
-            //cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-			// find subject ids of subjects with high quality multiple sequence alignment
-
-            size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-            cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-                        cubTempSize,
-                        cub::CountingInputIterator<int>(0),
-                        dataArrays.d_is_high_quality_subject.get(),
-                        dataArrays.d_high_quality_subject_indices.get(),
-                        dataArrays.d_num_high_quality_subject_indices.get(),
-                        dataArrays.n_subjects,
-                        streams[primary_stream_index]); CUERR;
-
-            // int* d_high_quality_subject_indices_backup;
-            // int* d_num_high_quality_subject_indices_backup;
-            // cubCachingAllocator.DeviceAllocate((void**)&d_high_quality_subject_indices_backup,
-            //                                     sizeof(int) * dataArrays.n_subjects,
-            //                                     streams[primary_stream_index]); CUERR;
-            // cubCachingAllocator.DeviceAllocate((void**)&d_num_high_quality_subject_indices_backup,
-            //                                     sizeof(int),
-            //                                     streams[primary_stream_index]); CUERR;
-            //
-            // cudaMemcpyAsync(d_high_quality_subject_indices_backup,
-            //                 dataArrays.d_high_quality_subject_indices.get(),
-            //                 sizeof(int) * dataArrays.n_subjects,
-            //                 D2D,
-            //                 streams[primary_stream_index]); CUERR;
-            //
-            // cudaMemcpyAsync(d_num_high_quality_subject_indices_backup,
-            //                 dataArrays.d_num_high_quality_subject_indices.get(),
-            //                 sizeof(int),
-            //                 D2D,
-            //                 streams[primary_stream_index]); CUERR;
-            //
-            // {
-            //     auto n_subjects = dataArrays.n_subjects;
-            //     auto d_high_quality_subject_indices = dataArrays.d_high_quality_subject_indices.get();
-            //     auto d_num_high_quality_subject_indices = dataArrays.d_num_high_quality_subject_indices.get();
-            //
-            //     generic_kernel<<<SDIV(dataArrays.n_subjects, 128), 128, 0, streams[primary_stream_index]>>>([=] __device__ (){
-            //         for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_subjects; i+= blockDim.x * gridDim.x){
-            //             d_high_quality_subject_indices[i] = i;
-            //         }
-            //         if(threadIdx.x + blockIdx.x * blockDim.x == 0){
-            //             *d_num_high_quality_subject_indices = n_subjects;
-            //         }
-            //     }); CUERR;
-            // }
-
-
-
-			// correct candidates
-            call_msa_correct_candidates_kernel_async(
-                    dataArrays.getDeviceMSAPointers(),
-                    dataArrays.getDeviceAlignmentResultPointers(),
-                    dataArrays.getDeviceSequencePointers(),
-                    dataArrays.getDeviceCorrectionResultPointers(),
-                    dataArrays.d_indices,
-                    dataArrays.d_indices_per_subject,
-                    dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.n_subjects,
-                    dataArrays.n_queries,
-                    dataArrays.d_num_indices,
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.sequence_pitch,
-                    dataArrays.msa_pitch,
-                    dataArrays.msa_weights_pitch,
-                    min_support_threshold,
-                    min_coverage_threshold,
-                    new_columns_to_correct,
-                    dataArrays.maximum_sequence_length,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle);
-
-            // cudaMemcpyAsync(dataArrays.d_high_quality_subject_indices.get(),
-            //                 d_high_quality_subject_indices_backup,
-            //                 sizeof(int) * dataArrays.n_subjects,
-            //                 D2D,
-            //                 streams[primary_stream_index]); CUERR;
-            //
-            // cudaMemcpyAsync(dataArrays.d_num_high_quality_subject_indices.get(),
-            //                 d_num_high_quality_subject_indices_backup,
-            //                 sizeof(int),
-            //                 D2D,
-            //                 streams[primary_stream_index]); CUERR;
-            //
-            // cubCachingAllocator.DeviceFree(d_high_quality_subject_indices_backup); CUERR;
-            // cubCachingAllocator.DeviceFree(d_num_high_quality_subject_indices_backup); CUERR;
-
-            //cudaStreamWaitEvent(streams[primary_stream_index], events[correction_finished_event_index], 0); //wait for shift d2h transfer
-		}
-
-		cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+        cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_corrected_subjects,
                         dataArrays.d_corrected_subjects,
@@ -2645,7 +2550,78 @@ cudaMemcpyAsync(dataArrays.h_consensus,
                         D2H,
                         streams[primary_stream_index]); CUERR;
 
-        if(transFuncData.correctionOptions.correctCandidates){
+		cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+
+		if(transFuncData.correctionOptions.correctCandidates) {
+            batch.setState(BatchState::StartClassicCandidateCorrection, expectedState);
+		}else{
+            batch.setState(BatchState::UnpackClassicResults, expectedState);
+        }
+
+        cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
+	}
+
+
+
+    void state_startclassiccandidatecorrection_func(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
+        constexpr BatchState expectedState = BatchState::StartClassicCandidateCorrection;
+
+        assert(batch.state == expectedState);
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        DataArrays& dataArrays = batch.dataArrays;
+        std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+
+        const float min_support_threshold = 1.0f-3.0f*transFuncData.correctionOptions.estimatedErrorrate;
+        // coverage is always >= 1
+        const float min_coverage_threshold = std::max(1.0f,
+                    transFuncData.correctionOptions.m_coverage / 6.0f * transFuncData.correctionOptions.estimatedCoverage);
+        const int new_columns_to_correct = transFuncData.correctionOptions.new_columns_to_correct;
+
+
+        if(transFuncData.correctionOptions.correctCandidates) {
+
+            // find subject ids of subjects with high quality multiple sequence alignment
+
+            size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+
+            cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
+                        cubTempSize,
+                        cub::CountingInputIterator<int>(0),
+                        dataArrays.d_is_high_quality_subject.get(),
+                        dataArrays.d_high_quality_subject_indices.get(),
+                        dataArrays.d_num_high_quality_subject_indices.get(),
+                        dataArrays.n_subjects,
+                        streams[primary_stream_index]); CUERR;
+
+            // correct candidates
+            call_msa_correct_candidates_kernel_async(
+                    dataArrays.getDeviceMSAPointers(),
+                    dataArrays.getDeviceAlignmentResultPointers(),
+                    dataArrays.getDeviceSequencePointers(),
+                    dataArrays.getDeviceCorrectionResultPointers(),
+                    dataArrays.d_indices,
+                    dataArrays.d_indices_per_subject,
+                    dataArrays.d_indices_per_subject_prefixsum,
+                    dataArrays.n_subjects,
+                    dataArrays.n_queries,
+                    dataArrays.d_num_indices,
+                    dataArrays.encoded_sequence_pitch,
+                    dataArrays.sequence_pitch,
+                    dataArrays.msa_pitch,
+                    dataArrays.msa_weights_pitch,
+                    min_support_threshold,
+                    min_coverage_threshold,
+                    new_columns_to_correct,
+                    dataArrays.maximum_sequence_length,
+                    streams[primary_stream_index],
+                    batch.kernelLaunchHandle);
+
             cudaMemcpyAsync(dataArrays.h_corrected_candidates,
                             dataArrays.d_corrected_candidates,
                             dataArrays.d_corrected_candidates.sizeInBytes(),
@@ -2666,17 +2642,13 @@ cudaMemcpyAsync(dataArrays.h_consensus,
                             dataArrays.d_alignment_shifts.sizeInBytes(),
                             D2H,
                             streams[primary_stream_index]); CUERR;
-
-            //cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
-            //cudaStreamWaitEvent(streams[primary_stream_index], events[result_transfer_finished_event_index], 0); CUERR;
         }
-
-		cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+        cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
 
         batch.setState(BatchState::UnpackClassicResults, expectedState);
         cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
         return;
-	}
+    }
 
     void state_startconvnetcorrection_func(Batch& batch){
 
@@ -3779,7 +3751,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       transFuncData.correctionStatusFlagsPerRead = correctionStatusFlagsPerRead.get();
       transFuncData.featurestream = &featurestream;
 
-      std::mutex outputstreammutex;
+      //std::mutex outputstreammutex;
 
       transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
           // auto isValidSequence = [](const std::string& s){
