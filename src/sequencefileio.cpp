@@ -1007,6 +1007,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
         if(firstHqSequence != tmpresults.end()){
             if(firstHqSequence->isEqual){
+                if(firstHqSequence->sequence != originalSequence){
+                    std::cerr << firstHqSequence->sequence << "\n" << originalSequence << "\n";
+                }
                 assert(firstHqSequence->sequence == originalSequence);
                 return std::make_pair(std::string{""}, false);
             }else{
@@ -1489,6 +1492,16 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         bool valid = reader->getNextRead(&read);
 
         assert(valid);
+
+        for(auto& tmpres : correctionVector){
+            if(tmpres.isEqual){
+                tmpres.sequence = read.sequence;
+                // if(tmpres.sequence != read.sequence){
+                //     std::cerr << currentReadId << "\n" << tmpres.sequence << "\n" << read.sequence << "\n";
+                // }
+                // assert(tmpres.sequence == read.sequence);
+            }
+        }
 
         auto correctedSequence = combineMultipleCorrectionResultsFunction(correctionVector, read.sequence);
 
