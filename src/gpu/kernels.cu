@@ -39,7 +39,7 @@ namespace gpu{
     //####################   DEVICE FUNCTIONS #############
 
     __device__
-    inline
+    __forceinline__
     float getQualityWeight(char qualitychar){
         constexpr int ascii_base = 33;
         constexpr float min_weight = 0.001f;
@@ -48,6 +48,23 @@ namespace gpu{
         const float errorprob = exp10f(-(q-ascii_base)/10.0f);
 
         return max(min_weight, 1.0f - errorprob);
+    }
+
+    __device__
+    __forceinline__
+    float calculateOverlapWeightnew(int anchorlength, int nOps, int overlapsize){
+        constexpr float maxErrorPercentInOverlap = 0.2f;
+
+        return (float(overlapsize) / anchorlength) * ((float(overlapsize) / anchorlength + (overlapsize - nOps) * maxErrorPercentInOverlap)
+                                                        / (1 + overlapsize * maxErrorPercentInOverlap));
+    }
+
+    __device__
+    __forceinline__
+    float calculateOverlapWeight(int anchorlength, int nOps, int overlapsize){
+        constexpr float maxErrorPercentInOverlap = 0.2f;
+
+        return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
     }
 
 
@@ -752,6 +769,8 @@ namespace gpu{
             if(d_indices_per_subject[subjectIndex] > 0){
 
                 const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+        		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
 
                 int* const my_coverage = d_msapointers.coverage + subjectIndex * msa_weights_row_pitch_floats;
@@ -763,8 +782,7 @@ namespace gpu{
         		const int query_alignment_overlap = d_alignmentresultpointers.overlaps[queryIndex];
         		const int query_alignment_nops = d_alignmentresultpointers.nOps[queryIndex];
 
-        		const float overlapweight = 1.0f - sqrtf(query_alignment_nops
-        					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+        		const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
 
                 assert(overlapweight <= 1.0f);
                 assert(overlapweight >= 0.0f);
@@ -921,6 +939,7 @@ namespace gpu{
 
         		const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
                 const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+        		const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const int columnsToCheck = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
 
                 int* const my_coverage = d_msapointers.coverage + subjectIndex * msa_weights_row_pitch_floats;
@@ -964,8 +983,7 @@ namespace gpu{
             		const int query_alignment_overlap = d_alignmentresultpointers.overlaps[queryIndex];
             		const int query_alignment_nops = d_alignmentresultpointers.nOps[queryIndex];
 
-            		const float overlapweight = 1.0f - sqrtf(query_alignment_nops
-            					/ (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+            		const float overlapweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
                     assert(overlapweight <= 1.0f);
                     assert(overlapweight >= 0.0f);
 
@@ -1174,6 +1192,7 @@ namespace gpu{
 
             const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
             const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+            const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
             const int columnsToCheck = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
 
             int* const my_coverage = d_msapointers.coverage + subjectIndex * msa_weights_row_pitch_floats;
@@ -1186,7 +1205,6 @@ namespace gpu{
 
             //ensure that the subject is only inserted once, by the first block
             if(blockForThisSubject == 0){
-                const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
                 const char* const subject = getSubjectPtr(subjectIndex);
                 const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
 
@@ -1219,8 +1237,7 @@ namespace gpu{
                 const int query_alignment_overlap = d_alignmentresultpointers.overlaps[queryIndex];
                 const int query_alignment_nops = d_alignmentresultpointers.nOps[queryIndex];
 
-                const float defaultweight = 1.0f - sqrtf(query_alignment_nops
-                / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+                const float defaultweight = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
 
                 assert(flag != BestAlignment_t::None); // indices should only be pointing to valid alignments
 
@@ -1454,8 +1471,7 @@ namespace gpu{
                     const int query_alignment_overlap = d_alignmentresultpointers.overlaps[candidateIndex];
                     const int query_alignment_nops = d_alignmentresultpointers.nOps[candidateIndex];
 
-                    const float weightFactor = 1.0f - sqrtf(query_alignment_nops
-                                / (query_alignment_overlap * desiredAlignmentMaxErrorRate));
+                    const float weightFactor = calculateOverlapWeight(subjectLength, query_alignment_nops, query_alignment_overlap);
 
                     //if(debug) printf("candidate %d\n", candidateIndex);
                     countSequence(candidatePtr, candidatequalPtr, candidateLength, shift, weightFactor, forward, false, indexToIndices, candidateIndex);
@@ -1971,11 +1987,11 @@ namespace gpu{
 
                                             const int nOps = alignmentresultpointers.nOps[arrayindex];
                                             const int overlapsize = alignmentresultpointers.overlaps[arrayindex];
-                                            const float overlapweight = 1.0f - sqrtf(nOps / (overlapsize * desiredAlignmentMaxErrorRate));
+                                            const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
                                             assert(overlapweight <= 1.0f);
                                             assert(overlapweight >= 0.0f);
 
-                                            constexpr float goodOverlapThreshold = 0.70f;
+                                            constexpr float goodOverlapThreshold = 0.90f;
 
                                             if(origBase == candidateBase){
 
@@ -3245,11 +3261,11 @@ namespace gpu{
                                     const int candidateIndex = myIndices[k];
                                     const int nOps = d_alignmentresultpointers.nOps[candidateIndex];
                                     const int overlapsize = d_alignmentresultpointers.overlaps[candidateIndex];
-                                    const float overlapweight = 1.0f - sqrtf(nOps / (overlapsize * desiredAlignmentMaxErrorRate));
+                                    const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
                                     assert(overlapweight <= 1.0f);
                                     assert(overlapweight >= 0.0f);
 
-                                    if(overlapweight >= 0.9f){
+                                    if(overlapweight >= 0.90f){
                                         veryGoodAlignment = true;
                                     }
                                 }
