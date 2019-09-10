@@ -276,7 +276,7 @@ namespace care{
     }
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_any_map(const std::string& sequence,
-                                        std::uint64_t max_number_candidates,
+                                        std::uint64_t,
                                         size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
@@ -290,105 +290,26 @@ namespace care{
         minhashfunc(sequence, hashValues, isForwardStrand);
         //TIMERSTOPCPU(minhashfunc);
 
-        const size_t maximumResultSize = std::min(numResultsPerMapQueryThreshold * minparams.maps, max_number_candidates);
+        using Range_t = std::pair<const Value_t*, const Value_t*>;
+        std::vector<Range_t> ranges;
+        ranges.reserve(minparams.maps);
 
-        std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
-        allUniqueResults.reserve(maximumResultSize);
-        tmp.reserve(maximumResultSize);
+        int maximumResultSize = 0;
 
-
-
-#if 1
-        allUniqueResults.resize(maximumResultSize);
-        tmp.resize(maximumResultSize);
-
-        size_t allUniqueResults_size = 0;
-        size_t tmp_size = 0;
-
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults_size < max_number_candidates; ++map) {
+        for(int map = 0; map < minparams.maps; ++map){
             kmer_type key = hashValues[map] & key_mask;
-
-            //nvtx::push_range("querymap", 6);
             auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
-            //nvtx::pop_range();
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-            //std::vector<Value_t> backup(allUniqueResults);
-
-            if(n_entries == 0){
-                continue;
+            int n_entries = std::distance(entries_range.first, entries_range.second);
+            if(n_entries > 0){
+                maximumResultSize += n_entries;
+                ranges.emplace_back(entries_range);
             }
-
-            //nvtx::push_range("union", 4);
-            // auto union_end = set_union_n_or_empty(entries_range.first,
-            //                                     entries_range.second,
-            //                                     allUniqueResults.begin(),
-            //                                     allUniqueResults.end(),
-            //                                     max_number_candidates,
-            //                                     tmp.begin());
-            auto union_end = std::set_union(entries_range.first,
-                                        entries_range.second,
-                                        allUniqueResults.begin(),
-                                        allUniqueResults.begin() + allUniqueResults_size,
-                                        tmp.begin());
-            //nvtx::pop_range();
-            tmp_size = std::distance(tmp.begin(), union_end);
-
-            std::swap(allUniqueResults, tmp);
-            std::swap(allUniqueResults_size, tmp_size);
         }
 
-        allUniqueResults.erase(allUniqueResults.begin() + allUniqueResults_size, allUniqueResults.end());
+        std::vector<Value_t> allUniqueResults(maximumResultSize);
 
-#else
-
-
-        //TIMERSTARTCPU(getcandrest);
-        for(int map = 0; map < minparams.maps && allUniqueResults.size() < max_number_candidates; ++map) {
-            kmer_type key = hashValues[map] & key_mask;
-
-            //nvtx::push_range("querymap", 6);
-            auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
-            //nvtx::pop_range();
-            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
-            //std::vector<Value_t> backup(allUniqueResults);
-
-            if(n_entries == 0){
-                continue;
-            }
-
-            tmp.resize(allUniqueResults.size() + n_entries);
-            //nvtx::push_range("union", 4);
-            // auto union_end = set_union_n_or_empty(entries_range.first,
-            //                                     entries_range.second,
-            //                                     allUniqueResults.begin(),
-            //                                     allUniqueResults.end(),
-            //                                     max_number_candidates,
-            //                                     tmp.begin());
-            auto union_end = std::set_union(entries_range.first,
-                                                entries_range.second,
-                                                allUniqueResults.begin(),
-                                                allUniqueResults.end(),
-                                                tmp.begin());
-            //nvtx::pop_range();
-            //if(tmp.begin() == union_end){
-            //    //assert(n_entries != 0 || (allUniqueResults.size() == 0 && n_entries == 0));
-            //    return {};
-            //}else{
-                //tmp.resize(std::distance(tmp.begin(), union_end));
-                //nvtx::push_range("erase", 3);
-                tmp.erase(union_end, tmp.end());
-                //nvtx::pop_range();
-                std::swap(tmp, allUniqueResults);
-            //}
-            //if(n_entries == 0){
-            //    assert(backup == allUniqueResults);
-            //}
-        }
-
-
-#endif
+        auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
+        allUniqueResults.erase(resultEnd, allUniqueResults.end());
 
         return allUniqueResults;
     }

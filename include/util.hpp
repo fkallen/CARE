@@ -41,6 +41,78 @@ public:
 };
 
 
+/*
+    Performs a set union of multiple ranges into a single output range
+*/
+template<class OutputIt, class Iter>
+OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>& ranges){
+    using OutputType = typename std::iterator_traits<OutputIt>::value_type;
+    using InputType = typename std::iterator_traits<Iter>::value_type;
+
+    static_assert(std::is_same<OutputType, InputType>::value, "");
+
+    using T = InputType;
+
+    //handle simple cases
+
+    if(ranges.empty()){
+        return outputbegin;
+    }
+
+    if(ranges.size() == 1){
+        return std::copy(ranges[0].first, ranges[0].second, outputbegin);
+    }
+
+    if(ranges.size() == 2){
+        return std::set_union(ranges[0].first,
+                              ranges[0].second,
+                              ranges[1].first,
+                              ranges[1].second,
+                              outputbegin);
+    }
+
+    //handle generic case
+
+    //sort ranges by size
+    std::sort(ranges.begin(), ranges.end(), [](const auto& l, const auto& r){
+        return std::distance(l.first, l.second) < std::distance(r.first, r.second);
+    });
+
+    int totalElements = 0;
+    for(const auto& range : ranges){
+        totalElements += std::distance(range.first, range.second);
+    }
+
+    std::vector<T> temp(totalElements);
+
+    auto tempbegin = temp.begin();
+    auto tempend = tempbegin;
+    auto outputend = outputbegin;
+
+    //to avoid a final copy from temp to outputrange, both ranges are swapped in the beginning if number of ranges is odd.
+    if(ranges.size() % 2 == 1){
+        std::swap(tempbegin, outputbegin);
+        std::swap(tempend, outputend);
+    }
+
+    for(int k = 0; k < int(ranges.size()); k++){
+        tempend = std::set_union(ranges[k].first,
+                                  ranges[k].second,
+                                  outputbegin,
+                                  outputend,
+                                  tempbegin);
+
+        std::swap(tempbegin, outputbegin);
+        std::swap(tempend, outputend);
+    }
+
+    return outputend;
+}
+
+
+
+
+
 
 
 /*
