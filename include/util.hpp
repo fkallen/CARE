@@ -10,6 +10,8 @@
 #include <numeric>
 #include <vector>
 #include <cassert>
+#include <sstream>
+
 
 template<class T>
 class View{
@@ -39,6 +41,21 @@ public:
         return int(std::distance(begin(), end()));
     }
 };
+
+inline
+std::vector<std::string> split(const std::string& str, char c){
+	std::vector<std::string> result;
+
+	std::stringstream ss(str);
+	std::string s;
+
+	while (std::getline(ss, s, c)) {
+		result.emplace_back(s);
+	}
+
+	return result;
+}
+
 
 
 /*
@@ -109,6 +126,85 @@ OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>
     return outputend;
 }
 
+template<class OutputIt, class Iter>
+OutputIt k_way_set_union_complicatedsort(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>& ranges){
+    using OutputType = typename std::iterator_traits<OutputIt>::value_type;
+    using InputType = typename std::iterator_traits<Iter>::value_type;
+
+    static_assert(std::is_same<OutputType, InputType>::value, "");
+
+    using T = InputType;
+
+    //handle simple cases
+
+    if(ranges.empty()){
+        return outputbegin;
+    }
+
+    if(ranges.size() == 1){
+        return std::copy(ranges[0].first, ranges[0].second, outputbegin);
+    }
+
+    if(ranges.size() == 2){
+        return std::set_union(ranges[0].first,
+                              ranges[0].second,
+                              ranges[1].first,
+                              ranges[1].second,
+                              outputbegin);
+    }
+
+    //handle generic case
+    auto sortAscending = [](const auto& l, const auto& r){
+        return std::distance(l.first, l.second) > std::distance(r.first, r.second);
+    };
+
+    //sort ranges by size
+    std::sort(ranges.begin(), ranges.end(), sortAscending);
+
+    int totalElements = 0;
+    for(const auto& range : ranges){
+        totalElements += std::distance(range.first, range.second);
+    }
+
+    std::vector<std::vector<T>> tempunions;
+    tempunions.resize(ranges.size() - 2);
+
+    int iteration = 0;
+
+    while(ranges.size() > 2){
+        auto& range2 = ranges[ranges.size()-1];
+        auto& range1 = ranges[ranges.size()-2];
+
+        auto& result = tempunions[iteration];
+
+        result.resize(std::distance(range1.first, range1.second) + std::distance(range2.first, range2.second));
+
+        auto resEnd = std::set_union(range1.first,
+                                  range1.second,
+                                  range2.first,
+                                  range2.second,
+                                  result.data());
+
+        auto newRange = std::make_pair(result.data(), resEnd);
+        ranges.pop_back();
+        ranges.pop_back();
+        auto insertpos = std::lower_bound(ranges.begin(), ranges.end(), newRange, sortAscending);
+        ranges.insert(insertpos, newRange);
+
+        iteration++;
+    }
+
+    auto& range1 = ranges[0];
+    auto& range2 = ranges[1];
+
+    auto outputend = std::set_union(range1.first,
+                              range1.second,
+                              range2.first,
+                              range2.second,
+                              outputbegin);
+
+    return outputend;
+}
 
 
 
