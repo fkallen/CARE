@@ -155,7 +155,7 @@ namespace gpu{
 
         // template<class Func, class... Params>
         // void emplace(Func&& func, Params... params){
-        //     auto wrapper = [f = std::move(func)]() -> void {
+        //     auto wrapper = [f = std::move(func)]() -> void {  
         //         f(params...);
         //     };
         //
@@ -1046,7 +1046,9 @@ namespace gpu{
                 auto& task = batchptr->tasks[i];
 
                 const read_number readId = batchptr->dataArrays.h_subject_read_ids[i];
+                //TIMERSTARTCPU(CorrectionTask);
                 task = CorrectionTask(readId);
+                //TIMERSTOPCPU(CorrectionTask);
 
                 // bool ok = false;
                 // if ((*transFuncData.correctionStatusFlagsPerRead)[readId] == 0) {
@@ -1059,17 +1061,25 @@ namespace gpu{
                     const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
                     const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
 
+                    //TIMERSTARTCPU(get2BitHiLoString);
                     task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+                    //TIMERSTOPCPU(get2BitHiLoString);
 
+                    //TIMERSTARTCPU(getCandidates);
                     task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
                                                                         hits_per_candidate,
                                                                         transFuncData.runtimeOptions.max_candidates,
                                                                         maxNumResultsPerMapQuery);
+                    //TIMERSTOPCPU(getCandidates);
 
+                    //TIMERSTARTCPU(lower_bound);
                     auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+                    //TIMERSTOPCPU(lower_bound);
 
                     if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                        //TIMERSTARTCPU(erase);
                         task.candidate_read_ids.erase(readIdPos);
+                        //TIMERSTOPCPU(erase);
                     }
 
                     std::size_t myNumCandidates = task.candidate_read_ids.size();
