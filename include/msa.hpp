@@ -88,6 +88,8 @@ struct CorrectionResult{
     bool isCorrected;
     std::string correctedSequence;
     std::vector<int> uncorrectedPositionsNoConsensus;
+    std::vector<float> bestAlignmentWeightOfConsensusBase;
+    std::vector<float> bestAlignmentWeightOfAnchorBase;
 };
 
 struct CorrectedCandidate{

@@ -477,6 +477,8 @@ CorrectionResult getCorrectedSubject(const char* consensus,
     result.isCorrected = false;
     result.correctedSequence.resize(nColumns);
     result.uncorrectedPositionsNoConsensus.reserve(nColumns);
+    result.bestAlignmentWeightOfConsensusBase.resize(nColumns);
+    result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
 
     if(isHQ){
         //corrected sequence = consensus;
@@ -506,6 +508,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                 bool canCorrect = true;
                 if(canCorrect && origCoverage > 1){
                     int numFoundCandidates = 0;
+
                     for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
 
                         const char* candidateptr = candidates + candidatenr * candidatesPitch;
@@ -528,15 +531,55 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                             if(origBase == candidateBase){
                                 numFoundCandidates++;
 
-                                 if(overlapweight >= 0.90f){
-                                     canCorrect = false;
-                                     //break;
-                                 }
+                                if(overlapweight >= 0.90f){
+                                    canCorrect = false;
+                                    //break;
+                                }
+                            }else{
+                                ;
                             }
                         }
                     }
                     assert(numFoundCandidates+1 == origCoverage);
+
                 }
+
+#if 1
+                float maxweightOrig = 0;
+                float maxweightCons = 0;
+
+                for(int candidatenr = 0; candidatenr < nCandidates/* && numFoundCandidates < origCoverage*/; candidatenr++){
+
+                    const char* candidateptr = candidates + candidatenr * candidatesPitch;
+                    const int candidateLength = candidateLengths[candidatenr];
+                    const int candidateShift = candidateShifts[candidatenr];
+                    const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
+                    if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
+                        //char candidateBase = 'F';
+
+                        //if(bestAlignmentFlags[candidatenr] == cpu::BestAlignment_t::ReverseComplement){
+                        //    candidateBase = candidateptr[candidateLength - candidateBasePosition-1];
+                        //}else{
+                        const char candidateBase = candidateptr[candidateBasePosition];
+                        //}
+
+                        const float overlapweight = candidateAlignmentWeights[candidatenr];
+                        assert(overlapweight <= 1.0f);
+                        assert(overlapweight > 0.0f);
+
+                        if(origBase == candidateBase){
+                            maxweightOrig = std::max(maxweightOrig, overlapweight);
+                        }else{
+                            if(cons == candidateBase){
+                                maxweightCons = std::max(maxweightCons, overlapweight);
+                            }
+                        }
+                    }
+                }
+
+                result.bestAlignmentWeightOfConsensusBase[column] = maxweightCons;
+                result.bestAlignmentWeightOfAnchorBase[column] = maxweightOrig;
+#endif
 
                 if(canCorrect){
 
