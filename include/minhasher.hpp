@@ -54,6 +54,24 @@ namespace care{
 				return x;
 			}
 
+            std::uint32_t mueller_hash_uint32_t(std::uint32_t x) const{
+                x = ((x >> 16) ^ x) * 0x45d9f3b;
+                x = ((x >> 16) ^ x) * 0x45d9f3b;
+                x = ((x >> 16) ^ x);
+
+				return x;
+			}
+
+            std::uint32_t murmur_integer_finalizer_hash_uint32_t(std::uint32_t x) const{
+                x ^= x >> 16;
+                x *= 0x85ebca6b;
+                x ^= x >> 13;
+                x *= 0xc2b2ae35;
+                x ^= x >> 16;
+
+				return x;
+			}
+
 			std::vector<Pair_t> keyToIndexMap;
 			std::uint64_t size;
 
@@ -84,21 +102,25 @@ namespace care{
 			void insert(Key_t key, Index_t value) noexcept{
 				std::uint64_t probes = 1;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
+                //std::uint32_t probes = 1;
+                //std::uint32_t pos = murmur_integer_finalizer_hash_uint32_t(key) % size;
 				while(keyToIndexMap[pos] != KeyIndexMap::EmptySlot){
 					pos = (pos + 1) % size;
 					probes++;
 				}
 				keyToIndexMap[pos].first = key;
 				keyToIndexMap[pos].second = value;
+                //std::cerr << "probes insert: " << probes << "\n";
 			}
 
 			Index_t get(Key_t key) const noexcept{
-				std::uint64_t probes = 1;
+                std::uint64_t probes = 1;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
 				while(keyToIndexMap[pos].first != key){
 					pos = (pos + 1) % size;
 					probes++;
 				}
+                //std::cerr << "probes get: " << probes << "\n";
 				return keyToIndexMap[pos].second;
 			}
 

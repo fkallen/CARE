@@ -279,7 +279,7 @@ namespace care{
                                         std::uint64_t,
                                         size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-        // we do not consider reads which are shorter than k
+        // we do not consider reads which are shorter than k 
         if(sequence.size() < unsigned(minparams.k))
             return {};
 
@@ -296,6 +296,8 @@ namespace care{
 
         int maximumResultSize = 0;
 
+        //TIMERSTARTCPU(query);
+
         for(int map = 0; map < minparams.maps; ++map){
             kmer_type key = hashValues[map] & key_mask;
             auto entries_range = queryMap(map, key, numResultsPerMapQueryThreshold);
@@ -306,10 +308,15 @@ namespace care{
             }
         }
 
+        //TIMERSTOPCPU(query);
+
+        //TIMERSTARTCPU(setunion);
         std::vector<Value_t> allUniqueResults(maximumResultSize);
 
         auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
         allUniqueResults.erase(resultEnd, allUniqueResults.end());
+
+        //TIMERSTOPCPU(setunion);
 
         return allUniqueResults;
     }
