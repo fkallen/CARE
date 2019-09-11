@@ -152,6 +152,14 @@ namespace cpu{
             std::vector<int> indicesOfCandidatesEqualToSubject;
         };
 
+        struct InterestingStruct{
+            read_number readId;
+            std::vector<int> positions;
+        };
+
+        std::vector<read_number> interestingReadIds;
+        std::mutex interestingMutex;
+
 
         void getCandidates(CorrectionTask& task,
                             const Minhasher& minhasher,
@@ -657,6 +665,22 @@ namespace cpu{
                                                         correctionOptions.m_coverage,
                                                         correctionOptions.kmerlength);
 
+            auto it = std::lower_bound(interestingReadIds.begin(), interestingReadIds.end(), task.readId);
+            if(it != interestingReadIds.end() && *it == task.readId){
+                std::lock_guard<std::mutex> lg(interestingMutex);
+
+                std::cerr << "read id " << task.readId << " HQ: " << data.msaProperties.isHQ << "\n";
+                if(!data.msaProperties.isHQ){
+                    for(int i = 0; i < int(correctionResult.bestAlignmentWeightOfConsensusBase.size()); i++){
+                        if(correctionResult.bestAlignmentWeightOfConsensusBase[i] != 0 || correctionResult.bestAlignmentWeightOfAnchorBase[i]){
+                            std::cerr << "position " << i
+                                        << " " << correctionResult.bestAlignmentWeightOfConsensusBase[i]
+                                        << " " << correctionResult.bestAlignmentWeightOfAnchorBase[i] << "\n";
+                        }
+                    }
+                }
+            }
+
             if(correctionResult.isCorrected){
                 task.corrected_subject = std::move(correctionResult.correctedSequence);
                 task.uncorrectedPositionsNoConsensus = std::move(correctionResult.uncorrectedPositionsNoConsensus);
@@ -869,6 +893,26 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
     std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
     std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
+
+
+    std::ifstream interestingstream("interestingIds.txt");
+    if(interestingstream){
+        std::string line;
+        while(std::getline(interestingstream, line)){
+            auto tokens = split(line, ' ');
+            if(!tokens.empty()){
+                read_number n = std::stoull(tokens[0]);
+                interestingReadIds.emplace_back(n);
+            }
+        }
+        auto it = std::unique(interestingReadIds.begin(), interestingReadIds.end());
+        interestingReadIds.erase(it, interestingReadIds.end());
+
+        std::cerr << "Looking for " << interestingReadIds.size() << " interesting read ids\n";
+    }else{
+        std::cerr << "Looking for no interesting read id\n";
+    }
+
 
 
     const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength);
