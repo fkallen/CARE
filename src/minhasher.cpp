@@ -279,7 +279,7 @@ namespace care{
                                         std::uint64_t,
                                         size_t numResultsPerMapQueryThreshold) const noexcept{
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
-        // we do not consider reads which are shorter than k 
+        // we do not consider reads which are shorter than k
         if(sequence.size() < unsigned(minparams.k))
             return {};
 
@@ -296,6 +296,60 @@ namespace care{
 
         int maximumResultSize = 0;
 
+#if 0
+        std::array<Index_t, 64> preparedIndices{};
+
+        auto prepare_map = [&](int mapid, kmer_type key){
+            assert(mapid < minparams.maps);
+            preparedIndices[mapid] = minhashTables[mapid]->prepare_get_ranged(key);
+        };
+
+        auto query_map = [&](int mapid, Index_t preparedIndex){
+            auto entries_range = minhashTables[mapid]->execute_get_ranged(preparedIndex);
+            std::size_t n_entries = std::distance(entries_range.first, entries_range.second);
+
+            if(n_entries > numResultsPerMapQueryThreshold){
+                return std::make_pair(entries_range.first, entries_range.first); //return empty range
+            }
+
+            return entries_range;
+        };
+
+        constexpr int preparedistance = 8;
+        const int chunks = SDIV(minparams.maps, preparedistance);
+
+        for(int map = 0; map < std::min(preparedistance, minparams.maps); map++){
+            kmer_type key = hashValues[map] & key_mask;
+            prepare_map(map, key);
+        }
+
+        for(int iteration = 0; iteration < chunks; iteration++){
+            if(iteration < chunks - 1){
+                const int nextIteration = iteration + 1;
+                const int begin = nextIteration * preparedistance;
+                const int end = std::min((nextIteration+1) * preparedistance, minparams.maps);
+
+                for(int map = begin; map < end; map++){
+                    kmer_type key = hashValues[map] & key_mask;
+                    prepare_map(map, key);
+                }
+            }
+
+            const int begin = iteration * preparedistance;
+            const int end = std::min((iteration+1) * preparedistance, minparams.maps);
+            for(int map = begin; map < end; map++){
+                auto entries_range = query_map(map, preparedIndices[map]);
+                int n_entries = std::distance(entries_range.first, entries_range.second);
+                if(n_entries > 0){
+                    maximumResultSize += n_entries;
+                    ranges.emplace_back(entries_range);
+                }
+            }
+
+        }
+
+#else
+
         //TIMERSTARTCPU(query);
 
         for(int map = 0; map < minparams.maps; ++map){
@@ -307,7 +361,7 @@ namespace care{
                 ranges.emplace_back(entries_range);
             }
         }
-
+#endif
         //TIMERSTOPCPU(query);
 
         //TIMERSTARTCPU(setunion);

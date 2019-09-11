@@ -366,6 +366,19 @@ namespace care{
 				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
 			}
 
+            Index_t prepare_get_ranged(Key_t key) const noexcept{
+                assert(noMoreWrites);
+                Index_t index = keyIndexMap.get(key);
+                __builtin_prefetch(countsPrefixSum.data() + index, 0, 0);
+                __builtin_prefetch(countsPrefixSum.data() + index + 1, 0, 0);
+
+				return index;
+			}
+
+            std::pair<const Value_t*, const Value_t*> execute_get_ranged(Index_t preparedIndex) const noexcept{
+
+				return {&values[countsPrefixSum[preparedIndex]], &values[countsPrefixSum[preparedIndex+1]]};
+			}
 
 			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) const noexcept{
                 assert(noMoreWrites);
