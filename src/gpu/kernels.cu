@@ -1854,56 +1854,56 @@ namespace gpu{
                     }
                 }else{
 
-                    const int* const myCountsA = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-                    const int* const myCountsC = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-                    const int* const myCountsG = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-                    const int* const myCountsT = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
-
-                    const float* const myWeightsA = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-                    const float* const myWeightsC = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-                    const float* const myWeightsG = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-                    const float* const myWeightsT = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
-
-
-                    //calculate average count per weight
-                    float myaverageCountPerWeightA = 0.0f;
-                    float myaverageCountPerWeightG = 0.0f;
-                    float myaverageCountPerWeightC = 0.0f;
-                    float myaverageCountPerWeightT = 0.0f;
-
-                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                        assert(i < lastColumn_excl);
-
-                        const int ca = myCountsA[i];
-                        const int cc = myCountsC[i];
-                        const int cg = myCountsG[i];
-                        const int ct = myCountsT[i];
-                        const float wa = myWeightsA[i];
-                        const float wc = myWeightsC[i];
-                        const float wg = myWeightsG[i];
-                        const float wt = myWeightsT[i];
-
-                        myaverageCountPerWeightA += ca / wa;
-                        myaverageCountPerWeightC += cc / wc;
-                        myaverageCountPerWeightG += cg / wg;
-                        myaverageCountPerWeightT += ct / wt;
-                    }
-
-                    myaverageCountPerWeightA = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightA);
-                    __syncthreads();
-                    myaverageCountPerWeightC = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightC);
-                    __syncthreads();
-                    myaverageCountPerWeightG = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightG);
-                    __syncthreads();
-                    myaverageCountPerWeightT = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightT);
-
-                    if(threadIdx.x == 0){
-                        avgCountPerWeight[0] = myaverageCountPerWeightA / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                        avgCountPerWeight[1] = myaverageCountPerWeightC / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                        avgCountPerWeight[2] = myaverageCountPerWeightG / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                        avgCountPerWeight[3] = myaverageCountPerWeightT / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                    }
-                    __syncthreads();
+                    // const int* const myCountsA = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                    // const int* const myCountsC = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                    // const int* const myCountsG = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                    // const int* const myCountsT = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+                    //
+                    // const float* const myWeightsA = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
+                    // const float* const myWeightsC = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
+                    // const float* const myWeightsG = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
+                    // const float* const myWeightsT = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
+                    //
+                    //
+                    // //calculate average count per weight
+                    // float myaverageCountPerWeightA = 0.0f;
+                    // float myaverageCountPerWeightG = 0.0f;
+                    // float myaverageCountPerWeightC = 0.0f;
+                    // float myaverageCountPerWeightT = 0.0f;
+                    //
+                    // for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    //     assert(i < lastColumn_excl);
+                    //
+                    //     const int ca = myCountsA[i];
+                    //     const int cc = myCountsC[i];
+                    //     const int cg = myCountsG[i];
+                    //     const int ct = myCountsT[i];
+                    //     const float wa = myWeightsA[i];
+                    //     const float wc = myWeightsC[i];
+                    //     const float wg = myWeightsG[i];
+                    //     const float wt = myWeightsT[i];
+                    //
+                    //     myaverageCountPerWeightA += ca / wa;
+                    //     myaverageCountPerWeightC += cc / wc;
+                    //     myaverageCountPerWeightG += cg / wg;
+                    //     myaverageCountPerWeightT += ct / wt;
+                    // }
+                    //
+                    // myaverageCountPerWeightA = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightA);
+                    // __syncthreads();
+                    // myaverageCountPerWeightC = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightC);
+                    // __syncthreads();
+                    // myaverageCountPerWeightG = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightG);
+                    // __syncthreads();
+                    // myaverageCountPerWeightT = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightT);
+                    //
+                    // if(threadIdx.x == 0){
+                    //     avgCountPerWeight[0] = myaverageCountPerWeightA / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    //     avgCountPerWeight[1] = myaverageCountPerWeightC / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    //     avgCountPerWeight[2] = myaverageCountPerWeightG / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    //     avgCountPerWeight[3] = myaverageCountPerWeightT / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+                    // }
+                    // __syncthreads();
 
 
                     //decode orignal sequence and copy to corrected sequence
@@ -2058,86 +2058,6 @@ namespace gpu{
 
                                     if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
 
-
-                                        float maxweightpercount[2]{0,0};
-                                        char cons[2]{'F','F'};
-
-                                        auto sortmaxima = [&](){
-                                            auto swap = [](auto& a, auto& b){auto tmp = a; a = b; b = tmp;};
-
-                                            if(maxweightpercount[1] > maxweightpercount[0]){
-                                                swap(maxweightpercount[1], maxweightpercount[0]);
-                                                swap(cons[1], cons[0]);
-                                            }
-                                        };
-
-                                        const int ca = myCountsA[i];
-                                        const int cc = myCountsC[i];
-                                        const int cg = myCountsG[i];
-                                        const int ct = myCountsT[i];
-                                        const float wa = myWeightsA[i];
-                                        const float wc = myWeightsC[i];
-                                        const float wg = myWeightsG[i];
-                                        const float wt = myWeightsT[i];
-
-                                        if(ca > 0 && wa / ca > maxweightpercount[1]){
-                                            maxweightpercount[1] =  wa / ca;
-                                            cons[1] = 'A';
-                                        }
-
-                                        sortmaxima();
-
-                                        if(cc > 0 && wc / cc > maxweightpercount[1]){
-                                            maxweightpercount[1] =  wc / cc;
-                                            cons[1] = 'C';
-                                        }
-
-                                        sortmaxima();
-
-                                        if(cg > 0 && wg / cg > maxweightpercount[1]){
-                                            maxweightpercount[1] =  wg / cg;
-                                            cons[1] = 'G';
-                                        }
-
-                                        sortmaxima();
-
-                                        if(ct > 0 && wt / ct > maxweightpercount[1]){
-                                            maxweightpercount[1] =  wt / ct;
-                                            cons[1] = 'T';
-                                        }
-
-                                        sortmaxima();
-
-                                        const int validratios = (maxweightpercount[0] > 0) + (maxweightpercount[1] > 0);
-
-
-                                        assert(validratios > 0);
-
-                                        // if(validratios == 1){
-                                        //     my_corrected_subject[i] = my_consensus[globalIndex];
-                                        //
-                                        //     //printf("%c %f, %c %f. correct to %c. normal cons %c\n", cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
-                                        //
-                                        // }else{
-                                        //     assert(validratios == 2);
-                                        //
-                                        //     constexpr float threshold = 3.0f;
-                                        //
-                                        //     if(maxweightpercount[0] > maxweightpercount[1] && maxweightpercount[0] / maxweightpercount[1] >= threshold){
-                                        //         my_corrected_subject[i] = cons[0];
-                                        //         //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
-                                        //         //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], cons[0], my_consensus[globalIndex]);
-                                        //     }else if(maxweightpercount[1] > maxweightpercount[0] && maxweightpercount[1] / maxweightpercount[0] >= threshold){
-                                        //         my_corrected_subject[i] = cons[1];
-                                        //         //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
-                                        //         //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1],cons[1], my_consensus[globalIndex]);
-                                        //     }else{
-                                        //         my_corrected_subject[i] = my_consensus[globalIndex];
-                                        //         //printf("%c %f, %c %f. correct to %c. normal cons %c\n",
-                                        //         //        cons[0], maxweightpercount[0], cons[1], maxweightpercount[1], my_consensus[globalIndex], my_consensus[globalIndex]);
-                                        //     }
-                                        // }
-
                                         my_corrected_subject[i] = my_consensus[globalIndex];
                                         foundAColumn = true;
                                     }else{
@@ -2147,136 +2067,6 @@ namespace gpu{
                                     // my_corrected_subject[i] = my_consensus[globalIndex];
                                     // foundAColumn = true;
                                 }else{
-                                    //determine base to correct to by comparing weights and counts
-
-                                    // auto swap = [](auto& a, auto& b){auto tmp = a; a = b; b = tmp;};
-                                    //
-                                    // float maxweights[2]{0,0}; //maximum at [0], second largest at [1]
-                                    // float countsofweights[2]{0,0}; //maximum at [0], second largest at [1]
-                                    // float avgcounts[2]{0,0};
-                                    // char cons[2]{'F','F'};
-                                    // if(myWeightsA[globalIndex] > myWeightsC[globalIndex]){
-                                    //     maxweights[0] = myWeightsA[globalIndex];
-                                    //     countsofweights[0] = myCountsA[globalIndex];
-                                    //     cons[0] = 'A';
-                                    //     avgcounts[0] = avgCountPerWeight[0];
-                                    //     maxweights[1] = myWeightsC[globalIndex];
-                                    //     countsofweights[1] = myCountsC[globalIndex];
-                                    //     cons[1] = 'C';
-                                    //     avgcounts[1] = avgCountPerWeight[1];
-                                    // }else{
-                                    //     maxweights[1] = myWeightsA[globalIndex];
-                                    //     countsofweights[1] = myCountsA[globalIndex];
-                                    //     cons[1] = 'A';
-                                    //     avgcounts[1] = avgCountPerWeight[0];
-                                    //     maxweights[0] = myWeightsC[globalIndex];
-                                    //     countsofweights[0] = myCountsC[globalIndex];
-                                    //     cons[0] = 'C';
-                                    //     avgcounts[1] = avgCountPerWeight[1];
-                                    // }
-                                    //
-                                    // if(myWeightsG[globalIndex] > maxweights[1]){
-                                    //     maxweights[1] = myWeightsG[globalIndex];
-                                    //     countsofweights[1] = myCountsG[globalIndex];
-                                    //     cons[1] = 'G';
-                                    //     avgcounts[1] = avgCountPerWeight[2];
-                                    // }
-                                    //
-                                    // if(maxweights[1] > maxweights[0]){
-                                    //     swap(maxweights[1], maxweights[0]);
-                                    //     swap(countsofweights[1], countsofweights[0]);
-                                    //     swap(cons[1], cons[0]);
-                                    //     swap(avgcounts[1], avgcounts[0]);
-                                    // }
-                                    //
-                                    // if(myWeightsT[globalIndex] > maxweights[1]){
-                                    //     maxweights[1] = myWeightsT[globalIndex];
-                                    //     countsofweights[1] = myCountsT[globalIndex];
-                                    //     cons[1] = 'T';
-                                    //     avgcounts[1] = avgCountPerWeight[3];
-                                    // }
-                                    //
-                                    // if(maxweights[1] > maxweights[0]){
-                                    //     swap(maxweights[1], maxweights[0]);
-                                    //     swap(countsofweights[1], countsofweights[0]);
-                                    //     swap(cons[1], cons[0]);
-                                    //     swap(avgcounts[1], avgcounts[0]);
-                                    // }
-                                    //
-                                    // auto getNewBase = [&](){
-                                    //     constexpr float threshold = 1.5f;
-                                    //     const float r0 = maxweights[0] / countsofweights[0];
-                                    //     const float r1 = maxweights[1] / countsofweights[1];
-                                    //     //
-                                    //     // if((r0 > r1 && r0 / r1 > threshold) || (r1 > r0 && r1 / r0 > threshold)){
-                                    //     //     return cons[1];
-                                    //     // }else{
-                                    //     //     return cons[0];
-                                    //     // }
-                                    //
-                                    //     // if(r0 > r1){
-                                    //     //     return cons[0];
-                                    //     // }else{
-                                    //     //     return cons[1];
-                                    //     // }
-                                    //
-                                    //     if(r0 / avgcounts[0] < threshold || avgcounts[0] / r0 < threshold){
-                                    //         if(r1 / avgcounts[1] < threshold || avgcounts[1] / r1 < threshold){
-                                    //             return cons[0];
-                                    //         }else{
-                                    //             if(r0 > r1){
-                                    //                 return cons[0];
-                                    //             }else{
-                                    //                 return cons[1];
-                                    //             }
-                                    //         }
-                                    //     }else{
-                                    //         if(r1 / avgcounts[1] < threshold || avgcounts[1] / r1 < threshold){
-                                    //             if(r0 > r1){
-                                    //                 return cons[0];
-                                    //             }else{
-                                    //                 return cons[1];
-                                    //             }
-                                    //         }else{
-                                    //             return cons[0];
-                                    //         }
-                                    //     }
-                                    // };
-
-                                    // my_corrected_subject[i] = getNewBase();
-                                    // foundAColumn = true;
-
-                                    // int numCandidatesWithOrigBaseAndGoodWeight = 0;
-                                    // int numCandidatesWithoutOrigBaseAndGoodWeight = 0;
-                                    // int baseCountsOfHighQualityOverlaps[4]{0};
-                                    // float overlapWeightPerBaseOfHighQualityOverlaps[4]{0};
-                                    //
-                                    // float agg = -1.0f;
-                                    // char cons = 'F';
-                                    //
-                                    // auto makeagg = [](int count, float overlapweight){
-                                    //     if(count > 0){
-                                    //         return overlapweight;
-                                    //     }else{
-                                    //         return 0.0f;
-                                    //     }
-                                    // };
-                                    //
-                                    // auto update = [&](int i, char c){
-                                    //     const float newagg = makeagg(baseCountsOfHighQualityOverlaps[i], overlapWeightPerBaseOfHighQualityOverlaps[i]);
-                                    //     if(newagg > agg){
-                                    //         agg = newagg;
-                                    //         cons = c;
-                                    //     }
-                                    // };
-                                    //
-                                    // update(0, 'A');
-                                    // update(1, 'C');
-                                    // update(2, 'G');
-                                    // update(3, 'T');
-                                    //
-                                    // my_corrected_subject[i] = cons;
-                                    // foundAColumn = true;
 
                                     const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
                                     uncorrectedPositions[smemindex] = i;
@@ -2316,6 +2106,325 @@ namespace gpu{
             }
         }
     }
+
+    template<int BLOCKSIZE>
+    __global__
+    void msa_correct_subject_implicit_kernel2(
+                            MSAPointers msapointers,
+                            AlignmentResultPointers alignmentresultpointers,
+                            ReadSequencesPointers d_sequencePointers,
+                            CorrectionResultPointers d_correctionResultPointers,
+                            const int* __restrict__ d_indices,
+                            const int* __restrict__ d_indices_per_subject,
+                            const int* __restrict__ d_indices_per_subject_prefixsum,
+                            int n_subjects,
+                            size_t encoded_sequence_pitch,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            int maximumSequenceLength,
+                            float estimatedErrorrate,
+                            float desiredAlignmentMaxErrorRate,
+                            float avg_support_threshold,
+                            float min_support_threshold,
+                            float min_coverage_threshold,
+                            float max_coverage_threshold,
+                            int k_region){
+
+        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceBool::TempStorage boolreduce;
+            typename BlockReduceInt::TempStorage intreduce;
+            typename BlockReduceFloat::TempStorage floatreduce;
+        } temp_storage;
+
+        __shared__ bool broadcastbuffer;
+
+        __shared__ int numUncorrectedPositions;
+        __shared__ int uncorrectedPositions[BLOCKSIZE];
+        __shared__ float avgCountPerWeight[4];
+
+        auto get = [] (const char* data, int length, int index){
+            //return Sequence_t::get_as_nucleotide(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        };
+
+        auto getSubjectPtr = [&] (int subjectIndex){
+            const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+            return result;
+        };
+
+        auto getCandidatePtr = [&] (int candidateIndex){
+            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            return result;
+        };
+
+        auto getCandidateLength = [&](int candidateIndex){
+            return d_sequencePointers.candidateSequencesLength[candidateIndex];
+        };
+
+        auto isGoodAvgSupport = [&](float avgsupport){
+            return avgsupport >= avg_support_threshold;
+        };
+        auto isGoodMinSupport = [&](float minsupport){
+            return minsupport >= min_support_threshold;
+        };
+        auto isGoodMinCoverage = [&](float mincoverage){
+            return mincoverage >= min_coverage_threshold;
+        };
+
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
+        auto saveUncorrectedPositionInSmem = [&](int pos){
+            const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
+            uncorrectedPositions[smemindex] = pos;
+        };
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+            const int myNumIndices = d_indices_per_subject[subjectIndex];
+            if(myNumIndices > 0){
+
+                const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
+                const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
+                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
+
+                const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+                const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+
+                float avg_support = 0;
+                float min_support = 1.0f;
+                //int max_coverage = 0;
+                int min_coverage = std::numeric_limits<int>::max();
+
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    assert(i < lastColumn_excl);
+
+                    avg_support += my_support[i];
+                    min_support = min(my_support[i], min_support);
+                    //max_coverage = max(my_coverage[i], max_coverage);
+                    min_coverage = min(my_coverage[i], min_coverage);
+                }
+
+                avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
+                __syncthreads();
+
+                min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
+                __syncthreads();
+
+                //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
+
+                min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
+                __syncthreads();
+
+                avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+
+                bool isHQ = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+                //bool isHQ = true;
+
+                if(threadIdx.x == 0){
+                    broadcastbuffer = isHQ;
+                    d_correctionResultPointers.isHighQualitySubject[subjectIndex] = isHQ;
+                    //printf("%f %f %d %d\n", avg_support, min_support, min_coverage, isHQ);
+                }
+                __syncthreads();
+
+                isHQ = broadcastbuffer;
+
+                if(isHQ){
+                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                        //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                        my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                    }
+                    if(threadIdx.x == 0){
+                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;
+                    }
+                }else{
+
+                    //decode orignal sequence and copy to corrected sequence
+                    const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
+                    const char* const subject = getSubjectPtr(subjectIndex);
+                    for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
+                        my_corrected_subject[i] = to_nuc(get(subject, subjectLength, i));
+                    }
+
+                    bool foundAColumn = false;
+                    int* globalUncorrectedPostitionsPtr = d_correctionResultPointers.uncorrected_positions_per_subject + subjectIndex * maximumSequenceLength;
+                    int* const globalNumUncorrectedPositionsPtr = d_correctionResultPointers.num_uncorrected_positions_per_subject + subjectIndex;
+
+                    //round up to next multiple of BLOCKSIZE;
+                    const int loopIters = SDIV(subjectLength, BLOCKSIZE) * BLOCKSIZE;
+                    for(int loopIter = 0; loopIter < loopIters; loopIter++){
+                        if(threadIdx.x == 0){
+                            numUncorrectedPositions = 0;
+                        }
+                        __syncthreads();
+
+                        const int i = threadIdx.x + loopIter * BLOCKSIZE;
+
+                        if(i < subjectLength){
+                            const int globalIndex = subjectColumnsBegin_incl + i;
+
+                            const int origCoverage = my_orig_coverage[globalIndex];
+                            const char origBase = my_corrected_subject[i];
+                            const char consensusBase = my_consensus[globalIndex];
+
+                            float maxOverlapWeightOrigBase = 0.0f;
+                            float maxOverlapWeightConsensusBase = 0.0f;
+
+                            bool goodOrigOverlapExists = false;
+
+                            const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+
+                            for(int candidatenr = 0; candidatenr < myNumIndices; candidatenr++){
+                                const int arrayindex = myIndices[candidatenr];
+
+                                const char* candidateptr = getCandidatePtr(arrayindex);
+                                const int candidateLength = getCandidateLength(arrayindex);
+                                const int candidateShift = alignmentresultpointers.shifts[arrayindex];
+                                const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
+                                if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
+                                    char candidateBaseEnc = 0xFF;
+                                    if(alignmentresultpointers.bestAlignmentFlags[arrayindex] == BestAlignment_t::ReverseComplement){
+                                        candidateBaseEnc = get(candidateptr, candidateLength, candidateLength - candidateBasePosition-1);
+                                        candidateBaseEnc = (~candidateBaseEnc) & 0x03;
+                                    }else{
+                                        candidateBaseEnc = get(candidateptr, candidateLength, candidateBasePosition);
+                                    }
+                                    const char candidateBase = to_nuc(candidateBaseEnc);
+
+                                    const int nOps = alignmentresultpointers.nOps[arrayindex];
+                                    const int overlapsize = alignmentresultpointers.overlaps[arrayindex];
+                                    const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
+                                    assert(overlapweight <= 1.0f);
+                                    assert(overlapweight >= 0.0f);
+
+                                    constexpr float goodOverlapThreshold = 0.90f;
+
+                                    if(origBase == candidateBase){
+                                        maxOverlapWeightOrigBase = max(maxOverlapWeightOrigBase, overlapweight);
+
+                                        if(overlapweight >= goodOverlapThreshold){
+                                            goodOrigOverlapExists = true;
+                                        }
+                                    }else{
+                                        if(consensusBase == candidateBase){
+                                            maxOverlapWeightConsensusBase = max(maxOverlapWeightConsensusBase, overlapweight);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if(!goodOrigOverlapExists && origBase != consensusBase
+                                                        && my_support[globalIndex] > 0.5f){
+                                float avgsupportkregion = 0;
+                                int c = 0;
+                                bool kregioncoverageisgood = true;
+
+
+                                for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                                    if(j != i && j >= 0 && j < subjectLength){
+                                        avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                                        kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                        //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
+                                        c++;
+                                    }
+                                }
+                                avgsupportkregion /= c;
+
+                                if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
+
+
+                                    // constexpr float maxOverlapWeightLowerBound = 0.25f;
+                                    //
+                                    // bool correctToConsensus = false;//maxOverlapWeightOrigBase < maxOverlapWeightLowerBound;
+                                    // // correctToConsensus |= maxOverlapWeightConsensusBase >= maxOverlapWeightOrigBase;
+                                    // // correctToConsensus &= !goodOrigOverlapExists;
+                                    // if(!goodOrigOverlapExists && (origBase != consensusBase && my_support[globalIndex] > 0.5f)){
+                                    //     correctToConsensus = true;
+                                    // }
+
+                                    // if(maxOverlapWeightOrigBase == 0 && maxOverlapWeightConsensusBase == 0){
+                                    //     //correct to orig;
+                                    // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightLowerBound){
+                                    //     //correct to orig
+                                    // }else if(maxOverlapWeightOrigBase < maxOverlapWeightLowerBound){
+                                    //     //correct to consensus
+                                    //     my_corrected_subject[i] = consensusBase;
+                                    // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightOrigBase){
+                                    //     //maybe correct to orig
+                                    // }else if(maxOverlapWeightConsensusBase >= maxOverlapWeightOrigBase){
+                                    //     //maybe correct to consensus
+                                    //     my_corrected_subject[i] = consensusBase;
+                                    // }
+
+                                    //if(correctToConsensus){
+                                        my_corrected_subject[i] = consensusBase;
+                                        foundAColumn = true;
+                                    // }else{
+                                    //     saveUncorrectedPositionInSmem(i);
+                                    // }
+                                }else{
+                                    saveUncorrectedPositionInSmem(i);
+                                }
+                            }else{
+                                saveUncorrectedPositionInSmem(i);
+                            }
+                        }
+
+                        __syncthreads();
+
+                        if(threadIdx.x == 0){
+                            *globalNumUncorrectedPositionsPtr += numUncorrectedPositions;
+                        }
+
+                        for(int k = threadIdx.x; k < numUncorrectedPositions; k += BLOCKSIZE){
+                            globalUncorrectedPostitionsPtr[k] = uncorrectedPositions[k];
+                        }
+                        globalUncorrectedPostitionsPtr += numUncorrectedPositions;
+
+                        if(loopIter < loopIters - 1){
+                            __syncthreads();
+                        }
+                    }
+
+                    //perform block wide or-reduction on foundAColumn
+                    foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
+                    __syncthreads();
+
+                    if(threadIdx.x == 0){
+                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;//foundAColumn;
+                    }
+                }
+            }
+        }
+    }
+
+
+
+
+
+
 
     __device__ __forceinline__
     bool checkIfCandidateShouldBeCorrected(const MSAPointers& d_msapointers,
@@ -4689,7 +4798,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                                                                msa_correct_subject_implicit_kernel<(blocksize)>, \
+                                                                msa_correct_subject_implicit_kernel2<(blocksize)>, \
                                                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -4720,7 +4829,7 @@ namespace gpu{
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(n_subjects, max_blocks_per_device));
 
-        #define mycall(blocksize) msa_correct_subject_implicit_kernel<(blocksize)> \
+        #define mycall(blocksize) msa_correct_subject_implicit_kernel2<(blocksize)> \
                                 <<<grid, block, 0, stream>>>( \
                                     d_msapointers, \
                                     d_alignmentresultpointers, \
