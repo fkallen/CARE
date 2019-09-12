@@ -155,7 +155,7 @@ namespace gpu{
 
         // template<class Func, class... Params>
         // void emplace(Func&& func, Params... params){
-        //     auto wrapper = [f = std::move(func)]() -> void {  
+        //     auto wrapper = [f = std::move(func)]() -> void {
         //         f(params...);
         //     };
         //
@@ -686,8 +686,8 @@ namespace gpu{
             });
             break;
         case BatchState::WriteResults:
-            outputThreadPtr->emplace([=](){
-            //threadpool.enqueue([=](){
+            //outputThreadPtr->emplace([=](){
+            threadpool.enqueue([=](){
                 call(state_writeresults_func);
             });
             break;
@@ -3256,7 +3256,7 @@ void state_unpackclassicresults_func(Batch& batch){
             }
         };
 
-        auto allChunksFinished = [](Batch* batchptr){
+        auto allChunksFinished = [&](Batch* batchptr){
 
             std::unique_lock<std::mutex> l(batchptr->unpackclassicresultsDataFrame.m);
 
@@ -3466,8 +3466,10 @@ void state_unpackclassicresults_func(Batch& batch){
             }
         }*/
 
-        auto function = [tasks = std::move(batch.tasks), transFuncData = &transFuncData](){
-
+        auto function = [tasks = std::move(batch.tasks),
+                         transFuncData = &transFuncData,
+                         id = batch.id](){
+            nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread", 4);
             //write result to file
     		for(std::size_t subject_index = 0; subject_index < tasks.size(); ++subject_index) {
 
@@ -3484,9 +3486,13 @@ void state_unpackclassicresults_func(Batch& batch){
                     transFuncData->saveCorrectedSequence(tmp);
                 }
     		}
+
+            nvtx::pop_range();
         };
 
-		function();
+		//function();
+
+        batch.outputThread->emplace(std::move(function));
 
         batch.setState(BatchState::Finished, expectedState);
         cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
