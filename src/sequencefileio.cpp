@@ -1080,7 +1080,25 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
 
-            if(anchorIter != tmpresults.end()){
+            if(anchorIter != tmpresults.end() && (anchorIter->uncorrectedPositionsNoConsensus.size() >= 5)){
+
+                const int maxShiftInResult = std::max_element(tmpresults.begin(),
+                                                            tmpresults.end(),
+                                                            [](const auto& l, const auto& r){
+                                                                return l.shift < r.shift;
+                                                            })->shift;
+                // if(maxShiftInResult > 3){
+                //     return std::make_pair(std::string{""}, false);
+                // }
+                // //return std::make_pair(anchorIter->sequence, true);
+                // for(const auto& t : tmpresults){
+                //     if(t.shift <= 3){
+                //         //const int iters = maxShiftInResult - t.shift + 1;
+                //         //for(int k = 0; k < iters; k++){
+                //             countBases(t);
+                //         //}
+                //     }
+                // }
                 std::for_each(tmpresults.begin(), tmpresults.end(), countBases);
 
                 // if(!anchorIter->uncorrectedPositionsNoConsensus.empty()){
@@ -1108,33 +1126,6 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             }else{
                 //only candidates available
 
-                // int maxNewCols = 0;
-                // for(const auto& r : tmpresults){
-                //     maxNewCols = std::max(maxNewCols, r.shift);
-                // }
-                //
-                //
-                // for(int newCols = 0; newCols <= maxNewCols; newCols++){
-                //     auto checkshift = [&](const auto& r){
-                //         return r.shift <= newCols;
-                //     };
-                //
-                //     const int count = std::count_if(tmpresults.begin(),
-                //                                 tmpresults.end(),
-                //                                 checkshift);
-                //     if(count > 2){
-                //         for(const auto& r : tmpresults){
-                //             if(r.shift <= newCols){
-                //                 countBases(r);
-                //             }
-                //         }
-                //         for(size_t i = 0; i < consensus.size();  i++){
-                //             setConsensusOfPosition(i);
-                //         }
-                //         return std::make_pair(consensus, true);
-                //     }
-                // }
-
                 return std::make_pair(std::string{""}, false); //always false
             }
 
@@ -1151,8 +1142,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     return std::make_pair(tmpresults[0].sequence, true);
                 }else{
                     if(tmpresults.size() == 1){
-                        //return std::make_pair(std::string{""}, true);
-                        return std::make_pair(tmpresults[0].sequence, true);
+                        if(tmpresults[0].uncorrectedPositionsNoConsensus.size() < 1){
+                            return std::make_pair(tmpresults[0].sequence, true);
+                        }else{
+                            return std::make_pair(std::string{""}, false); //always false
+                        }
+
                     }else{
                         return std::make_pair(std::string{""}, false); //always false
                     }
