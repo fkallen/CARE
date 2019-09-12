@@ -2291,6 +2291,8 @@ namespace gpu{
 
                             float maxOverlapWeightOrigBase = 0.0f;
                             float maxOverlapWeightConsensusBase = 0.0f;
+                            int origBaseCount = 1;
+                            int consensusBaseCount = 0;
 
                             bool goodOrigOverlapExists = false;
 
@@ -2323,6 +2325,7 @@ namespace gpu{
 
                                     if(origBase == candidateBase){
                                         maxOverlapWeightOrigBase = max(maxOverlapWeightOrigBase, overlapweight);
+                                        origBaseCount++;
 
                                         if(overlapweight >= goodOverlapThreshold){
                                             goodOrigOverlapExists = true;
@@ -2330,62 +2333,96 @@ namespace gpu{
                                     }else{
                                         if(consensusBase == candidateBase){
                                             maxOverlapWeightConsensusBase = max(maxOverlapWeightConsensusBase, overlapweight);
+                                            consensusBaseCount++;
                                         }
                                     }
                                 }
                             }
 
-                            if(!goodOrigOverlapExists && origBase != consensusBase
-                                                        && my_support[globalIndex] > 0.5f){
-                                float avgsupportkregion = 0;
-                                int c = 0;
-                                bool kregioncoverageisgood = true;
+                            if(my_support[globalIndex] > 0.5f){
+
+                                constexpr float maxOverlapWeightLowerBound = 0.15f;
+
+                                bool allowCorrectionToConsensus = false;
+
+                                //if(maxOverlapWeightOrigBase < maxOverlapWeightConsensusBase){
+                                    allowCorrectionToConsensus = true;
+                                //}
+
+                                // if(maxOverlapWeightOrigBase == 0 && maxOverlapWeightConsensusBase == 0){
+                                //     //correct to orig;
+                                //     allowCorrectionToConsensus = false;
+                                // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightLowerBound){
+                                //     //correct to orig
+                                //     allowCorrectionToConsensus = false;
+                                // }else if(maxOverlapWeightOrigBase < maxOverlapWeightLowerBound){
+                                //     //correct to consensus
+                                //     allowCorrectionToConsensus = true;
+                                //     if(origBaseCount < 4){
+                                //         allowCorrectionToConsensus = true;
+                                //     }
+                                // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightOrigBase - 0.2f){
+                                //     //maybe correct to orig
+                                //     allowCorrectionToConsensus = false;
+                                // }else if(maxOverlapWeightConsensusBase  - 0.2f > maxOverlapWeightOrigBase){
+                                //     //maybe correct to consensus
+                                //     if(origBaseCount < 4){
+                                //         allowCorrectionToConsensus = true;
+                                //     }
+                                // }
+
+                                if(!goodOrigOverlapExists && allowCorrectionToConsensus){
+
+                                    float avgsupportkregion = 0;
+                                    int c = 0;
+                                    bool kregioncoverageisgood = true;
 
 
-                                for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
-                                    if(j != i && j >= 0 && j < subjectLength){
-                                        avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                        kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                                        //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
-                                        c++;
+                                    for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
+                                        if(j != i && j >= 0 && j < subjectLength){
+                                            avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
+                                            kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
+                                            //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
+                                            c++;
+                                        }
                                     }
-                                }
-                                avgsupportkregion /= c;
+                                    avgsupportkregion /= c;
 
-                                if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
+                                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate / 2.0f){
 
 
-                                    // constexpr float maxOverlapWeightLowerBound = 0.25f;
-                                    //
-                                    // bool correctToConsensus = false;//maxOverlapWeightOrigBase < maxOverlapWeightLowerBound;
-                                    // // correctToConsensus |= maxOverlapWeightConsensusBase >= maxOverlapWeightOrigBase;
-                                    // // correctToConsensus &= !goodOrigOverlapExists;
-                                    // if(!goodOrigOverlapExists && (origBase != consensusBase && my_support[globalIndex] > 0.5f)){
-                                    //     correctToConsensus = true;
-                                    // }
+                                        // constexpr float maxOverlapWeightLowerBound = 0.25f;
+                                        //
+                                        // bool correctToConsensus = false;//maxOverlapWeightOrigBase < maxOverlapWeightLowerBound;
+                                        // // correctToConsensus |= maxOverlapWeightConsensusBase >= maxOverlapWeightOrigBase;
+                                        // // correctToConsensus &= !goodOrigOverlapExists;
+                                        // if(!goodOrigOverlapExists && (origBase != consensusBase && my_support[globalIndex] > 0.5f)){
+                                        //     correctToConsensus = true;
+                                        // }
 
-                                    // if(maxOverlapWeightOrigBase == 0 && maxOverlapWeightConsensusBase == 0){
-                                    //     //correct to orig;
-                                    // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightLowerBound){
-                                    //     //correct to orig
-                                    // }else if(maxOverlapWeightOrigBase < maxOverlapWeightLowerBound){
-                                    //     //correct to consensus
-                                    //     my_corrected_subject[i] = consensusBase;
-                                    // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightOrigBase){
-                                    //     //maybe correct to orig
-                                    // }else if(maxOverlapWeightConsensusBase >= maxOverlapWeightOrigBase){
-                                    //     //maybe correct to consensus
-                                    //     my_corrected_subject[i] = consensusBase;
-                                    // }
+                                        // if(maxOverlapWeightOrigBase == 0 && maxOverlapWeightConsensusBase == 0){
+                                        //     //correct to orig;
+                                        // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightLowerBound){
+                                        //     //correct to orig
+                                        // }else if(maxOverlapWeightOrigBase < maxOverlapWeightLowerBound){
+                                        //     //correct to consensus
+                                        //     my_corrected_subject[i] = consensusBase;
+                                        // }else if(maxOverlapWeightConsensusBase < maxOverlapWeightOrigBase){
+                                        //     //maybe correct to orig
+                                        // }else if(maxOverlapWeightConsensusBase >= maxOverlapWeightOrigBase){
+                                        //     //maybe correct to consensus
+                                        //     my_corrected_subject[i] = consensusBase;
+                                        // }
 
-                                    //if(correctToConsensus){
-                                        my_corrected_subject[i] = consensusBase;
-                                        foundAColumn = true;
-                                    // }else{
-                                    //     saveUncorrectedPositionInSmem(i);
-                                    // }
-                                }else{
-                                    saveUncorrectedPositionInSmem(i);
+                                        //if(correctToConsensus){
+                                            my_corrected_subject[i] = consensusBase;
+                                            foundAColumn = true;
+                                        // }else{
+                                        //     saveUncorrectedPositionInSmem(i);
+                                        // }
+                                    }else{
+                                        saveUncorrectedPositionInSmem(i);
+                                    }
                                 }
                             }else{
                                 saveUncorrectedPositionInSmem(i);
