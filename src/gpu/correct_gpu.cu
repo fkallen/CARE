@@ -96,7 +96,8 @@ namespace gpu{
 
         std::vector<std::function<void()>> tasks{};
         std::mutex m{};
-        std::condition_variable condvar{};
+        std::condition_variable consumer_cv{};
+        std::condition_variable producer_cv{};
         std::thread thread{};
         volatile bool stop{false};
         std::atomic<bool> finishRemainingTasks{true};
@@ -117,13 +118,13 @@ namespace gpu{
                 [&](){
                     while(!stop){
                         std::unique_lock<std::mutex> mylock(m);
-                        while(tasks.empty() && !stop){
-                            condvar.wait(mylock);
-                        }
+                        consumer_cv.wait(mylock, [&](){return !tasks.empty() || stop;});
+                        
                         if(!tasks.empty()){
                             auto func = std::move(tasks.front());
                             tasks.erase(tasks.begin());
                             mylock.unlock();
+			    producer_cv.notify_one();
 
                             func();
                         }
@@ -146,11 +147,12 @@ namespace gpu{
             };
 
             {
-                std::lock_guard<std::mutex> mylock(m);
+                std::unique_lock<std::mutex> mylock(m);
+		producer_cv.wait(mylock, [&](){return tasks.size() < 16;});
                 tasks.emplace_back(std::move(wrapper));
             }
 
-            condvar.notify_one();
+            consumer_cv.notify_one();
         }
 
         // template<class Func, class... Params>
@@ -174,7 +176,8 @@ namespace gpu{
                 finishRemainingTasks = false;
             }
             stop = true;
-            condvar.notify_one();
+	    
+            consumer_cv.notify_one();
             thread.join();
         }
     };
