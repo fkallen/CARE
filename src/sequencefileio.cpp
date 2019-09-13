@@ -999,6 +999,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     auto combineMultipleCorrectionResults2 = [](std::vector<TempCorrectedSequence>& tmpresults, const std::string& originalSequence){
         assert(!tmpresults.empty());
 
+        constexpr bool outputHQ = true;
+        constexpr bool outputLQAnchorDifferentCand = true;
+        constexpr bool outputLQAnchorSameCand = true;
+        constexpr bool outputLQAnchorNoCand = true;
+        constexpr bool outputLQOnlyCand = true;
+
         auto isHQ = [](const auto& tcs){
             return tcs.type == TempCorrectedSequence::Type::Anchor && tcs.hq;
         };
@@ -1013,7 +1019,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 assert(firstHqSequence->sequence == originalSequence);
                 return std::make_pair(std::string{""}, false);
             }else{
-                return std::make_pair(firstHqSequence->sequence, true);
+                return std::make_pair(firstHqSequence->sequence, outputHQ);
             }
         }
 
@@ -1121,7 +1127,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 for(size_t i = 0; i < consensus.size();  i++){
                     setConsensusOfPosition(i);
                 }
-                return std::make_pair(consensus, true);
+                return std::make_pair(consensus, outputLQAnchorDifferentCand);
 
             }else{
                 //only candidates available
@@ -1139,11 +1145,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     //return true;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
-                    return std::make_pair(tmpresults[0].sequence, true);
+                    return std::make_pair(tmpresults[0].sequence, outputLQAnchorSameCand);
                 }else{
                     if(tmpresults.size() == 1){
                         if(tmpresults[0].uncorrectedPositionsNoConsensus.size() < 1){
-                            return std::make_pair(tmpresults[0].sequence, true);
+                            return std::make_pair(tmpresults[0].sequence, outputLQAnchorNoCand);
                         }else{
                             return std::make_pair(std::string{""}, false); //always false
                         }
@@ -1159,7 +1165,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                     return std::abs(r.shift) <= 1;
                 };
                 if(0 < std::count_if(tmpresults.begin(), tmpresults.end(), checkshift)){
-                    return std::make_pair(tmpresults[0].sequence, true);
+                    return std::make_pair(tmpresults[0].sequence, outputLQOnlyCand);
                 }else{
                     return std::make_pair(std::string{""}, false); //always false
                 }
