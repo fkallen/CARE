@@ -1000,10 +1000,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(!tmpresults.empty());
 
         constexpr bool outputHQ = true;
-        constexpr bool outputLQAnchorDifferentCand = true;
-        constexpr bool outputLQAnchorSameCand = true;
-        constexpr bool outputLQAnchorNoCand = true;
-        constexpr bool outputLQOnlyCand = true;
+        constexpr bool outputLQAnchorDifferentCand = false;
+        constexpr bool outputLQAnchorSameCand = false;
+        constexpr bool outputLQAnchorNoCand = false;
+        constexpr bool outputLQOnlyCand = false;
 
         auto isHQ = [](const auto& tcs){
             return tcs.type == TempCorrectedSequence::Type::Anchor && tcs.hq;
