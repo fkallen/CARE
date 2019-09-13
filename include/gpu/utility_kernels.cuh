@@ -1,17 +1,23 @@
 #ifndef UTILITY_KERNELS_HPP
 #define UTILITY_KERNELS_HPP
 
-#include "../hpc_helpers.cuh"
-
 #ifdef __NVCC__
 
+#ifndef SDIV
+    #define SDIV(x,y)(((x)+(y)-1)/(y))
+#endif
+
+
+/*
+    Assigns value to the first nElements elements of data
+*/
 template<class T>
 __global__
-void fill_kernel(T* data, int elements, T value){
+void fill_kernel(T* data, int nElements, T value){
     int index = threadIdx.x + blockDim.x * blockIdx.x;
     const int stride = blockDim.x * gridDim.x;
 
-    for(; index < elements; index += stride){
+    for(; index < nElements; index += stride){
         data[index] = value;
     }
 }
@@ -26,7 +32,9 @@ void call_fill_kernel_async(T* d_data, int elements, const T& value, cudaStream_
     fill_kernel<<<grid, block, 0, stream>>>(d_data, elements, value); CUERR;
 }
 
-
+/*
+    Assign value to data[index]
+*/
 template<class T>
 __global__
 void set_kernel(T* data, int index, T value){
@@ -44,9 +52,14 @@ void generic_kernel(Func f){
     f();
 }
 
+/*
+    Gather input elements at positions given by indices in output array.
+    input and output must not overlap
+    n is the number of indices.
+*/
 template<class T>
 __global__
-void compact_kernel(T* out, const T* in, const int* indices, int n){
+void compact_kernel(T* __restrict__ out, const T* __restrict__ in, const int* __restrict__ indices, int n){
 
     for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < n; i += blockDim.x * gridDim.x){
         const int srcindex = indices[i];
@@ -56,7 +69,7 @@ void compact_kernel(T* out, const T* in, const int* indices, int n){
 
 template<class T>
 __global__
-void compact_kernel_nptr(T* out, const T* in, const int* indices, const int* n){
+void compact_kernel_nptr(T* __restrict__ out, const T* __restrict__ in, const int* __restrict__ indices, const int* n){
 
     for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < *n; i += blockDim.x * gridDim.x){
         const int srcindex = indices[i];
@@ -65,19 +78,19 @@ void compact_kernel_nptr(T* out, const T* in, const int* indices, const int* n){
 }
 
 template<class T>
-void call_compact_kernel_async(T* out, const T* in, const int* indices, int n, cudaStream_t stream){
+void call_compact_kernel_async(T* d_out, const T* d_in, const int* d_indices, int n, cudaStream_t stream){
     dim3 block(128,1,1);
     dim3 grid(SDIV(n, block.x),1,1);
 
-    compact_kernel<<<grid, block, 0, stream>>>(out, in, indices, n); CUERR;
+    compact_kernel<<<grid, block, 0, stream>>>(d_out, d_in, d_indices, n); CUERR;
 }
 
 template<class T>
-void call_compact_kernel_async(T* out, const T* in, const int* indices, const int* n, int maxN, cudaStream_t stream){
+void call_compact_kernel_async(T* d_out, const T* d_in, const int* d_indices, const int* d_n, int maxN, cudaStream_t stream){
     dim3 block(128,1,1);
     dim3 grid(SDIV(maxN, block.x),1,1);
 
-    compact_kernel_nptr<<<grid, block, 0, stream>>>(out, in, indices, n); CUERR;
+    compact_kernel_nptr<<<grid, block, 0, stream>>>(d_out, d_in, d_indices, d_n); CUERR;
 }
 
 
@@ -124,15 +137,19 @@ void transpose_kernel(T* __restrict__ output, const T* __restrict__ input, int n
     }
 }
 
+/*
+    Transpose input and save to output.
+    The size in bytes of each row in input must be columnpitchelements * sizeof(T)
+*/
 template<class T>
-void call_transpose_kernel(T* output, const T* input, int numRows, int numColumns, int columnpitchelements, cudaStream_t stream){
+void call_transpose_kernel(T* d_output, const T* d_input, int numRows, int numColumns, int columnpitchelements, cudaStream_t stream){
     dim3 block(32,8);
     const int blocks_x = SDIV(numColumns, block.x);
     const int blocks_y = SDIV(numRows, block.y);
     dim3 grid(min(65535, blocks_x * blocks_y), 1, 1);
 
-    transpose_kernel<32,8><<<grid, block, 0, stream>>>(output,
-                                                input,
+    transpose_kernel<32,8><<<grid, block, 0, stream>>>(d_output,
+                                                d_input,
                                                 numRows,
                                                 numColumns,
                                                 columnpitchelements); CUERR;
