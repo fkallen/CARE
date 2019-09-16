@@ -4,6 +4,8 @@
 
 #include <options.hpp>
 
+#include <hpc_helpers.cuh>
+
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
 #include "readstorage.hpp"
@@ -127,7 +129,9 @@ namespace gpu{
                 //}
 
                 if(indicesBuffer.size() > maxbuffersize){
+                    TIMERSTARTCPU(flushBuffers);
                     flushBuffers(indicesBuffer, readsBuffer);
+                    TIMERSTOPCPU(flushBuffers);
                 }
             };
 
@@ -144,7 +148,9 @@ namespace gpu{
             );
 
             if(indicesBuffer.size() > 0){
+                TIMERSTARTCPU(flushBuffers);
                 flushBuffers(indicesBuffer, readsBuffer);
+                TIMERSTOPCPU(flushBuffers);
             }
 
             std::cerr << "occurences of n/N:\n";
