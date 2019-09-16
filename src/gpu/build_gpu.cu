@@ -315,7 +315,61 @@ namespace gpu{
         TIMERSTOPCPU(build_minhasher);
 
         return result;
+    }
 
+    BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
+                                                        const CorrectionOptions& correctionOptions,
+                                                        const RuntimeOptions& runtimeOptions,
+                                                        const FileOptions& fileOptions){
+
+        BuiltGpuDataStructures result;
+
+        auto& sequenceFileProperties = result.sequenceFileProperties;
+
+        if(fileOptions.load_binary_reads_from == "") {
+            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
+                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
+                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+            }else{
+                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+                sequenceFileProperties.minSequenceLength = 0;
+                sequenceFileProperties.nReads = fileOptions.nReads;
+            }
+        }
+
+        TIMERSTARTCPU(build_readstorage);
+        result.builtReadStorage = buildGpuReadStorage(fileOptions,
+                                                  runtimeOptions,
+                                                  correctionOptions.useQualityScores,
+                                                  sequenceFileProperties.nReads,
+                                                  sequenceFileProperties.maxSequenceLength);
+        TIMERSTOPCPU(build_readstorage);
+
+        const auto& readStorage = result.builtReadStorage.data.readStorage;
+
+        if(fileOptions.save_binary_reads_to != "") {
+            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+    		readStorage.saveToFile(fileOptions.save_binary_reads_to);
+    		std::cout << "Saved reads" << std::endl;
+    	}
+
+        //if(result.builtReadStorage.builtType == BuiltType::Loaded) {
+            sequenceFileProperties.nReads = readStorage.getNumberOfReads();
+            sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+            sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+        //}
+
+        TIMERSTARTCPU(build_minhasher);
+        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);
+        TIMERSTOPCPU(build_minhasher);
+
+        if(fileOptions.save_hashtables_to != "") {
+            std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+    		result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
+    		std::cout << "Saved minhasher" << std::endl;
+    	}
+
+        return result;
     }
 
 }

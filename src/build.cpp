@@ -176,24 +176,6 @@ namespace care{
         return result;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     BuiltDataStructures buildDataStructures(const MinhashOptions& minhashOptions,
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
@@ -235,13 +217,62 @@ namespace care{
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);
         TIMERSTOPCPU(build_minhasher);
 
-        //auto& minhasher = result.builtMinhasher.data;
+        return result;
+    }
 
-        //TIMERSTARTCPU(finalize_hashtables);
-        //transform_minhasher(minhasher, runtimeOptions.deviceIds);
-        //TIMERSTOPCPU(finalize_hashtables);
+    BuiltDataStructures buildAndSaveDataStructures(const MinhashOptions& minhashOptions,
+                                            const CorrectionOptions& correctionOptions,
+                                            const RuntimeOptions& runtimeOptions,
+                                            const FileOptions& fileOptions){
+
+        BuiltDataStructures result;
+
+        auto& sequenceFileProperties = result.sequenceFileProperties;
+
+        if(fileOptions.load_binary_reads_from == "") {
+            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
+                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
+                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+            }else{
+                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+                sequenceFileProperties.minSequenceLength = 0;
+                sequenceFileProperties.nReads = fileOptions.nReads;
+            }
+        }
+
+        TIMERSTARTCPU(build_readstorage);
+        result.builtReadStorage = build_readstorage(fileOptions,
+                                                  runtimeOptions,
+                                                  correctionOptions.useQualityScores,
+                                                  sequenceFileProperties.nReads,
+                                                  sequenceFileProperties.maxSequenceLength);
+        TIMERSTOPCPU(build_readstorage);
+
+        auto& readStorage = result.builtReadStorage.data;
+
+        if(fileOptions.save_binary_reads_to != "") {
+            std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
+            readStorage.saveToFile(fileOptions.save_binary_reads_to);
+            std::cout << "Saved reads" << std::endl;
+        }
+
+        if(result.builtReadStorage.builtType == BuiltType::Loaded) {
+            auto stats = readStorage.getSequenceStatistics(runtimeOptions.threads);
+            sequenceFileProperties.nReads = readStorage.getNumberOfSequences();
+            sequenceFileProperties.maxSequenceLength = stats.maxSequenceLength;
+            sequenceFileProperties.minSequenceLength = stats.minSequenceLength;
+        }
+
+        TIMERSTARTCPU(build_minhasher);
+        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);
+        TIMERSTOPCPU(build_minhasher);
+
+        if(fileOptions.save_hashtables_to != "") {
+            std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
+            result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
+            std::cout << "Saved minhasher" << std::endl;
+        }
 
         return result;
-
     }
 }

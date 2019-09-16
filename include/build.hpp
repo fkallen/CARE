@@ -63,6 +63,11 @@ namespace care{
                                 			const RuntimeOptions& runtimeOptions,
                                 			const FileOptions& fileOptions);
 
+    BuiltDataStructures buildAndSaveDataStructures(const MinhashOptions& minhashOptions,
+                                			const CorrectionOptions& correctionOptions,
+                                			const RuntimeOptions& runtimeOptions,
+                                			const FileOptions& fileOptions);
+
 #ifdef __NVCC__
 
     namespace gpu{
@@ -95,6 +100,11 @@ namespace care{
                                     			const CorrectionOptions& correctionOptions,
                                     			const RuntimeOptions& runtimeOptions,
                                     			const FileOptions& fileOptions);
+
+        BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
+                                                            const CorrectionOptions& correctionOptions,
+                                                            const RuntimeOptions& runtimeOptions,
+                                                            const FileOptions& fileOptions);
     }
 #endif
 }
