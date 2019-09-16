@@ -7,6 +7,7 @@
 #include <config.hpp>
 #include <sequence.hpp>
 #include <sequencefileio.hpp>
+#include <threadpool.hpp>
 
 #include <fstream>
 #include <omp.h>
@@ -197,30 +198,70 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
         qualityData.resize(getSequenceLengthLimit() * numReads, 0);
     }
 
-    int oldNumOMPThreads = 1;
-    #pragma omp parallel
-    {
-        #pragma omp single
-        oldNumOMPThreads = omp_get_num_threads();
-    }
+    int chunksToWaitFor = 0;
+    int finishedChunks = 0;
+    std::mutex mutex;
+    std::condition_variable cv;
 
-    omp_set_num_threads(numThreads);
+    auto prepare = [&](int begin, int end){
+        for(int i = begin; i < end; i++){
+            const Read& r = reads[i];
 
-    #pragma omp parallel for
-    for(size_t i = 0; i < numReads; i++){
-        const Read& r = reads[i];
+            unsigned int* dest = (unsigned int*)&sequenceData[std::size_t(i) * encodedSequencePitch];
+            encodeSequence2BitHiLo(dest,
+                                    r.sequence.c_str(),
+                                    r.sequence.length());
+            sequenceLengths[i] = Length_t(r.sequence.length());
+            if(canUseQualityScores()){
+                std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + i * qualityPitch);
+            }
+        }
+        std::lock_guard<std::mutex> l(mutex);
+        finishedChunks++;
+        cv.notify_one();
+        //std::cerr << indices[0] << " " << indices.back() << " prepare " << begin << " " << end << " finished\n";
+    };
 
-        unsigned int* dest = (unsigned int*)&sequenceData[std::size_t(i) * encodedSequencePitch];
-        encodeSequence2BitHiLo(dest,
-                                r.sequence.c_str(),
-                                r.sequence.length());
-        sequenceLengths[i] = Length_t(r.sequence.length());
-        if(canUseQualityScores()){
-            std::copy(r.quality.begin(), r.quality.end(), qualityData.begin() + i * qualityPitch);
+    const int chunks = threadpool.getConcurrency();
+    const int chunksize = numReads / chunks;
+    const int leftover = numReads % chunks;
+
+    int begin = 0;
+    int end = chunksize;
+
+    for(int c = 0; c < chunks-1; c++){
+        if(c < leftover){
+            end++;
+        }
+        if(end - begin > 0){
+            chunksToWaitFor++;
+
+            threadpool.enqueue([=](){
+                prepare(begin, end);
+            });
+            begin = end;
+            end = end + chunksize;
+        }else{
+            break;
         }
     }
 
-    omp_set_num_threads(oldNumOMPThreads);
+    //handle last chunk in current thread.
+    if(end - begin > 0){
+        chunksToWaitFor++;
+        prepare(begin, end);
+        begin = end;
+        end = end + chunksize;
+    }
+
+    {
+        std::unique_lock<std::mutex> l(mutex);
+        if(finishedChunks < chunksToWaitFor){
+            cv.wait(l, [&](){
+                return finishedChunks == chunksToWaitFor;
+            });
+        }
+    }
 
     setSequences(indices, sequenceData.data());
     setSequenceLengths(indices, sequenceLengths.data());
