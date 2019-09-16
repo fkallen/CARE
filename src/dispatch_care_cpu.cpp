@@ -85,9 +85,6 @@ namespace care{
     	//create output directory
     	filesys::create_directories(fileOptions.outputdirectory);
 
-    	const int iters = 1;
-    	int iter = 0;
-
     	auto thread_id = std::this_thread::get_id();
     	std::string thread_id_string;
     	{
@@ -96,145 +93,73 @@ namespace care{
     		thread_id_string = ss.str();
     	}
 
-    	#define DO_ALTERNATE
+    	FileOptions iterFileOptions = fileOptions;
 
-    	// correct file in multiple passes
-    	do {
-    		FileOptions iterFileOptions = fileOptions;
+    	iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
 
-    	#ifdef DO_ALTERNATE
-    		//alternate between two output files
-    		// on even iteration, correct file _iter_odd and save to _iter_even
-    		// on odd iteration, correct file _iter_even and save to _iter_odd
-    		if(iter == 0) {
-    			//inputfile remains original input file
-    			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    		}else{
-    			if(iter % 2 == 0) {
-    				iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
-    				iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    			}else{
-    				iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    				iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
-    			}
-    		}
+        std::cout << "loading file and building data structures..." << std::endl;
 
-    	#else
-    		if(iter == 0) {
-    			//inputfile remains original input file
-    			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_0";
-    		}else{
-    			iterFileOptions.inputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iter-1);
-    			iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iter);
-    		}
-    	#endif
+        TIMERSTARTCPU(load_and_build);
 
-            std::cout << "loading file and building data structures..." << std::endl;
+        BuiltDataStructures dataStructures = buildAndSaveDataStructures(minhashOptions,
+                                                                correctionOptions,
+                                                                runtimeOptions,
+                                                                iterFileOptions);
 
-            TIMERSTARTCPU(load_and_build);
+        TIMERSTOPCPU(load_and_build);
 
-            BuiltDataStructures dataStructures = buildAndSaveDataStructures(minhashOptions,
-                                                                    correctionOptions,
-                                                                    runtimeOptions,
-                                                                    iterFileOptions);
+        auto& readStorage = dataStructures.builtReadStorage.data;
+        auto& minhasher = dataStructures.builtMinhasher.data;
+        auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
 
-            TIMERSTOPCPU(load_and_build);
+        // saveReadStorageToFile(readStorage, iterFileOptions);
+        // saveMinhasherToFile(minhasher, iterFileOptions);
 
-            auto& readStorage = dataStructures.builtReadStorage.data;
-            auto& minhasher = dataStructures.builtMinhasher.data;
-            auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
+        printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
-            // saveReadStorageToFile(readStorage, iterFileOptions);
-            // saveMinhasherToFile(minhasher, iterFileOptions);
+        TIMERSTARTCPU(candidateestimation);
+        std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
 
-            printFileProperties(fileOptions.inputfile, sequenceFileProperties);
+        if(maxCandidatesPerRead == 0){
+            maxCandidatesPerRead = calculateMaxCandidatesPerReadThreshold(minhasher,
+                                                    readStorage,
+                                                    sequenceFileProperties.nReads / 10,
+                                                    correctionOptions.hits_per_candidate,
+                                                    runtimeOptions.threads
+                                                    //,"ncandidates.txt"
+                                                    );
 
-            TIMERSTARTCPU(candidateestimation);
-            std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
-
-            if(maxCandidatesPerRead == 0){
-                maxCandidatesPerRead = calculateMaxCandidatesPerReadThreshold(minhasher,
-                                                        readStorage,
-                                                        sequenceFileProperties.nReads / 10,
-                                                        correctionOptions.hits_per_candidate,
-                                                        runtimeOptions.threads
-                                                        //,"ncandidates.txt"
-                                                        );
-
-                std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
-            }
+            std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
+        }
 
 
 
-            TIMERSTOPCPU(candidateestimation);
+        TIMERSTOPCPU(candidateestimation);
 
-            printDataStructureMemoryUsage(minhasher, readStorage);
+        printDataStructureMemoryUsage(minhasher, readStorage);
 
-            std::cout << "Running CARE CPU" << std::endl;
+        std::cout << "Running CARE CPU" << std::endl;
 
-            cpu::correct_cpu(minhashOptions, alignmentOptions,
-                        goodAlignmentProperties, correctionOptions,
-                        runtimeOptions, fileOptions, sequenceFileProperties,
-                        minhasher, readStorage,
-                        maxCandidatesPerRead);
-
-    		iter++;
-
-    	} while(iter < iters);
+        cpu::correct_cpu(minhashOptions, alignmentOptions,
+                    goodAlignmentProperties, correctionOptions,
+                    runtimeOptions, fileOptions, sequenceFileProperties,
+                    minhasher, readStorage,
+                    maxCandidatesPerRead);
 
 
     	//rename final result to requested output file name and delete intermediate files
     	bool keepIntermediateResults = false;
 
         TIMERSTARTCPU(finalizing_files);
-
-    	#ifdef DO_ALTERNATE
-    	if(iters % 2 == 0) {
-    		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd";
-    		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
-
-            //rename feature file
-            if(correctionOptions.extractFeatures){
-                std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd_features";
-                std::string outputfeaturename = fileOptions.outputfile + "_features";
-
-        		std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
-            }
-
-    		if(!keepIntermediateResults && iters > 1)
-    			deleteFiles({fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even"});
-    	}else{
-    		std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    		std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
-
-            if(correctionOptions.extractFeatures){
-                std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
-                std::string outputfeaturename = fileOptions.outputfile + "_features";
-
-        		std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
-            }
-
-    		if(!keepIntermediateResults && iters > 1)
-    			deleteFiles({fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_odd"});
-    	}
-    	#else
-    	std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iters-1);
+        std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
     	std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 
         if(correctionOptions.extractFeatures){
-            std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(iters-1) + "_features";
+            std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
             std::string outputfeaturename = fileOptions.outputfile + "_features";
 
             std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
         }
-
-    	if(!keepIntermediateResults) {
-    		std::vector<std::string> filestodelete;
-    		for(int i = 0; i < iters-1; i++)
-    			filestodelete.push_back(fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_" + std::to_string(i));
-    		deleteFiles(filestodelete);
-    	}
-    	#endif
 
         TIMERSTOPCPU(finalizing_files);
     }
