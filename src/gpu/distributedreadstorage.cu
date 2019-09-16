@@ -160,23 +160,30 @@ std::vector<int> DistributedReadStorage::getDeviceIds() const{
     return deviceIds;
 }
 
-
-void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads, int numThreads){
+void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads){
     std::vector<read_number> indices(lastIndex_excl-firstIndex);
     std::iota(indices.begin(), indices.end(), firstIndex);
 
-    setReads(indices, reads, numThreads);
+    setReads(indices, reads, numReads);
 }
 
-void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads, int numThreads){
+void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads){
+    setReads(firstIndex, lastIndex_excl, reads.data(), int(reads.size()));
+}
 
+void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads){
+    setReads(indices, reads.data(), int(reads.size()));
+}
+
+void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const Read* reads, int numReads){
+    //TIMERSTARTCPU(internalinit);
     assert(indices.size() > 0);
-    assert(reads.size() == indices.size());
+    assert(numReads == int(indices.size()));
     assert(std::all_of(indices.begin(), indices.end(), [&](auto i){ return i < getNumberOfReads();}));
-    assert(std::all_of(reads.begin(), reads.end(), [&](const auto& r){ return Length_t(r.sequence.length()) <= getSequenceLengthLimit();}));
-    assert(std::all_of(reads.begin(), reads.end(), [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
+    assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return Length_t(r.sequence.length()) <= getSequenceLengthLimit();}));
+    assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
 
-    auto minmax = std::minmax_element(reads.begin(), reads.end(), [](const auto& r1, const auto& r2){
+    auto minmax = std::minmax_element(reads, reads + numReads, [](const auto& r1, const auto& r2){
         return r1.sequence.length() < r2.sequence.length();
     });
 
@@ -187,8 +194,6 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     std::vector<Length_t> sequenceLengths;
     std::vector<char> qualityData;
 
-    const size_t numReads = indices.size();
-
     const size_t encodedSequencePitch = getEncodedNumInts2BitHiLo(getSequenceLengthLimit()) * sizeof(int);
     const size_t qualityPitch = getSequenceLengthLimit();
 
@@ -197,6 +202,8 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     if(canUseQualityScores()){
         qualityData.resize(getSequenceLengthLimit() * numReads, 0);
     }
+
+    //TIMERSTOPCPU(internalinit);
 
     int chunksToWaitFor = 0;
     int finishedChunks = 0;
@@ -228,6 +235,8 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
 
     int begin = 0;
     int end = chunksize;
+
+    //TIMERSTARTCPU(internal);
 
     for(int c = 0; c < chunks-1; c++){
         if(c < leftover){
@@ -263,11 +272,15 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
         }
     }
 
+    //TIMERSTOPCPU(internal);
+
+    //TIMERSTARTCPU(internalset);
     setSequences(indices, sequenceData.data());
     setSequenceLengths(indices, sequenceLengths.data());
     if(canUseQualityScores()){
         setQualities(indices, qualityData.data());
     }
+    //TIMERSTOPCPU(internalset);
 }
 
 void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){
@@ -281,11 +294,13 @@ void DistributedReadStorage::setReadContainsN(read_number readId, bool contains)
         if(pos != readIdsOfReadsWithUndeterminedBase.end()){
             ; //already marked
         }else{
+            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
             readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
         }
     }else{
         if(pos != readIdsOfReadsWithUndeterminedBase.end()){
             //remove mark
+            std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
             readIdsOfReadsWithUndeterminedBase.erase(pos);
         }else{
             ; //already unmarked

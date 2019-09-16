@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <mutex>
 
 namespace care{
 namespace gpu{
@@ -41,6 +42,7 @@ public:
     bool useQualityScores;
 
     std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
+    std::mutex mutexUndeterminedBaseReads;
 
     DistributedArray<unsigned int, read_number> distributedSequenceData2;
     DistributedArray<Length_t, read_number> distributedSequenceLengths2;
@@ -78,8 +80,10 @@ public:
     void loadFromFile(const std::string& filename);
     void loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_);
 
-    void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads, int numThreads);
-    void setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads, int numThreads);
+    void setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
+    void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
+    void setReads(const std::vector<read_number>& indices, const Read* reads, int numReads);
+    void setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads);
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;

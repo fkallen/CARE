@@ -78,7 +78,7 @@ namespace gpu{
             auto flushBuffers = [&](std::vector<read_number>* indicesBuffer, std::vector<Read>* readsBuffer){
                 if(indicesBuffer->size() > 0){
                     TIMERSTARTCPU(setReads);
-                    readstorage.setReads(*indicesBuffer, *readsBuffer, nThreads);
+                    readstorage.setReads(*indicesBuffer, *readsBuffer);
                     TIMERSTOPCPU(setReads);
 
                     std::cerr << "clearing " << indicesBuffer->size() << " indices\n";
