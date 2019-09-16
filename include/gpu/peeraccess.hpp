@@ -53,7 +53,9 @@
         }
 
         ~PeerAccessBase(){
-            setEnabledPeerAccesses(oldEnabledPeerAccesses);
+            if(resetOnDestruction && oldEnabledPeerAccesses.size() == numGpus * numGpus){
+                setEnabledPeerAccesses(oldEnabledPeerAccesses);
+            }
         }
 
         PeerAccessBase(const PeerAccessBase&) = default;
@@ -168,11 +170,13 @@
         void setEnabledPeerAccesses(const std::vector<int>& vec){
             for(int i = 0; i < numGpus; i++){
                 for(int k = 0; k < numGpus; k++){
-                    int flag = vec[i * numGpus + k];
-                    if(flag == 1){
-                        enablePeerAccess(i,k);
-                    }else{
-                        disablePeerAccess(i,k);
+                    if(canAccessPeer(i,k)){
+                        int flag = vec[i * numGpus + k];
+                        if(flag == 1){
+                            enablePeerAccess(i,k);
+                        }else{
+                            disablePeerAccess(i,k);
+                        }
                     }
                 }
             }

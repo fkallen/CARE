@@ -8,6 +8,7 @@
 #include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
 #include <gpu/nvtxtimelinemarkers.hpp>
+#include <gpu/peeraccess.hpp>
 
 #include <algorithm>
 #include <numeric>
@@ -19,79 +20,7 @@
 #include <cassert>
 #include <omp.h>
 
-struct PeerAccess{
-    int numGpus;
-    std::vector<int> accessMatrix;
 
-    PeerAccess(){
-        cudaGetDeviceCount(&numGpus); CUERR;
-        accessMatrix.resize(numGpus * numGpus);
-        for(int i = 0; i < numGpus; i++){
-            for(int k = 0; k < numGpus; k++){
-                //device i can access device k?
-                cudaDeviceCanAccessPeer(&accessMatrix[i * numGpus + k], i, k); CUERR;
-            }
-        }
-    }
-
-    bool hasPeerAccess(int device, int peerDevice) const{
-        assert(device < numGpus);
-        assert(peerDevice < numGpus);
-        return accessMatrix[device * numGpus + peerDevice] == 1;
-    }
-
-    void enablePeerAccess(int device, int peerDevice) const{
-        assert(hasPeerAccess(device, peerDevice));
-        int oldId; cudaGetDevice(&oldId); CUERR;
-        cudaSetDevice(device); CUERR;
-        cudaError_t status = cudaDeviceEnablePeerAccess(peerDevice, 0);
-        if(status != cudaSuccess){
-            if(status == cudaErrorPeerAccessAlreadyEnabled){
-                std::cerr << "Peer access from " << device << " to " << peerDevice << " has already been enabled\n";
-                cudaGetLastError(); //reset error state;
-            }else{
-                CUERR;
-            }
-        }
-        cudaSetDevice(oldId); CUERR;
-    }
-
-    void disablePeerAccess(int device, int peerDevice) const{
-        assert(hasPeerAccess(device, peerDevice));
-        int oldId; cudaGetDevice(&oldId); CUERR;
-        cudaSetDevice(device); CUERR;
-        cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice); CUERR;
-        if(status != cudaSuccess){
-            if(status == cudaErrorPeerAccessNotEnabled){
-                std::cerr << "Peer access from " << device << " to " << peerDevice << " has not yet been enabled\n";
-                cudaGetLastError(); //reset error state;
-            }else{
-                CUERR;
-            }
-        }
-        cudaSetDevice(oldId); CUERR;
-    }
-
-    void enableAllPeerAccesses(){
-        for(int i = 0; i < numGpus; i++){
-            for(int k = 0; k < numGpus; k++){
-                if(hasPeerAccess(i, k)){
-                    enablePeerAccess(i, k);
-                }
-            }
-        }
-    }
-
-    void disableAllPeerAccesses(){
-        for(int i = 0; i < numGpus; i++){
-            for(int k = 0; k < numGpus; k++){
-                if(hasPeerAccess(i, k)){
-                    disablePeerAccess(i, k);
-                }
-            }
-        }
-    }
-};
 
 
 
@@ -119,6 +48,7 @@ public:
     };
 
     using GatherHandle = std::shared_ptr<GatherHandleStruct>;
+    using PeerAccess_t = PeerAccessDebug;
 
     struct SinglePartitionInfo{
         bool isSinglePartition = false;
@@ -139,7 +69,7 @@ public:
     std::vector<Index_t> elementsPerLocation; // how many elements are stored on which location
     std::vector<Index_t> elementsPerLocationPS; //inclusive prefix sum with leading zero
     std::vector<Value_t*> dataPtrPerLocation; // the storage of each location. dataPtrPerLocation[hostLocation] is the host data. dataPtrPerLocation[gpu] is device data
-    PeerAccess peerAccess;
+    PeerAccess_t peerAccess;
 
     DistributedArray()
         : DistributedArray({},{},0,0,-1){
@@ -156,7 +86,7 @@ public:
                     sizeOfElement(numCols_ * sizeof(Value_t)),
                     deviceIds(std::move(deviceIds_)),
                     memoryLimitBytesPerGPU(std::move(memoryLimitBytesPerGPU_)),
-                    peerAccess(PeerAccess{}){
+                    peerAccess(PeerAccess_t{}){
 
         assert(deviceIds.size() == memoryLimitBytesPerGPU.size());
 
@@ -900,7 +830,7 @@ public:
                 cudaStream_t mystream = handle->streamsPerGpu[gpu];
                 cudaEvent_t myevent = handle->eventsPerGpu[gpu];
 
-                if(true && (peerAccess.hasPeerAccess(resultDeviceId, mydeviceId) || resultDeviceId == mydeviceId)){
+                if(true && (peerAccess.canAccessPeer(resultDeviceId, mydeviceId) || resultDeviceId == mydeviceId)){
                     if(debug) std::cerr << "use peer access / local access: " << resultDeviceId << " <---- " << mydeviceId << "\n";
 
                     cudaSetDevice(resultDeviceId); CUERR;
