@@ -210,12 +210,16 @@ namespace care{
 		bool isForwardStrand[maximum_number_of_maps]{0};
 
 		//get hash values
+        //TIMERSTARTCPU(minhashfunc);
 		minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
 
 		// insert
+        //TIMERSTARTCPU(insertTupleIntoMap);
 		for (int map = 0; map < minparams.maps; ++map) {
             insertTupleIntoMap(map, &hashValues[0], readnum);
 		}
+        //TIMERSTOPCPU(insertTupleIntoMap);
 	}
 
     void Minhasher::insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds){
@@ -234,13 +238,18 @@ namespace care{
 		bool isForwardStrand[maximum_number_of_maps]{0};
 
 		//get hash values
+        //TIMERSTARTCPU(minhashfunc);
 		minhashfunc(sequence, hashValues, isForwardStrand);
+        //TIMERSTOPCPU(minhashfunc);
 
 		// insert
+        //TIMERSTARTCPU(insertTupleIntoMap);
         for(auto mapId : mapIds){
             assert(mapId < minparams.maps);
             insertTupleIntoMap(mapId, &hashValues[0], readnum);
+
         }
+        //TIMERSTOPCPU(insertTupleIntoMap);
 
 	}
 
