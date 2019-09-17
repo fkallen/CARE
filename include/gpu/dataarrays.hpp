@@ -33,7 +33,7 @@ namespace gpu {
 
 struct DataArrays {
 	static constexpr int padding_bytes = 4;
-	static constexpr float allocfactor = 1.1;
+	//static constexpr float allocfactor = 1.1;
 
 	DataArrays() : DataArrays(0){
 	}
@@ -150,12 +150,12 @@ struct DataArrays {
 
     void resizeAnchorSequenceData(int numAnchors, int maximumSequenceBytes){
         const size_t pitch = SDIV(maximumSequenceBytes, padding_bytes) * padding_bytes;
-        h_subject_read_ids.resize(numAnchors * allocfactor);
-        h_subject_sequences_data.resize(numAnchors * pitch * allocfactor);
-        h_subject_sequences_lengths.resize(numAnchors * allocfactor);
-        d_subject_read_ids.resize(numAnchors * allocfactor);
-        d_subject_sequences_data.resize(numAnchors * pitch * allocfactor);
-        d_subject_sequences_lengths.resize(numAnchors * allocfactor);
+        h_subject_read_ids.resize(numAnchors);
+        h_subject_sequences_data.resize(numAnchors * pitch);
+        h_subject_sequences_lengths.resize(numAnchors);
+        d_subject_read_ids.resize(numAnchors);
+        d_subject_sequences_data.resize(numAnchors * pitch);
+        d_subject_sequences_lengths.resize(numAnchors);
     }
 
 	void set_problem_dimensions(int n_sub, int n_quer, int max_seq_length, int max_seq_bytes, int min_overlap_, float min_overlap_ratio_, bool useQualityScores_){
@@ -172,91 +172,91 @@ struct DataArrays {
 
 		//sequence input data
 
-        h_subject_sequences_data.resize(n_sub * encoded_sequence_pitch * allocfactor);
-        h_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch * allocfactor);
-        h_subject_sequences_lengths.resize(n_sub * allocfactor);
-        h_candidate_sequences_lengths.resize(n_quer * allocfactor);
-        h_candidates_per_subject.resize(n_sub * allocfactor);
-        h_candidates_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
-        h_subject_read_ids.resize(n_sub * allocfactor);
-        h_candidate_read_ids.resize(n_quer * allocfactor);
+        h_subject_sequences_data.resize(n_sub * encoded_sequence_pitch);
+        h_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch);
+        h_subject_sequences_lengths.resize(n_sub);
+        h_candidate_sequences_lengths.resize(n_quer);
+        h_candidates_per_subject.resize(n_sub);
+        h_candidates_per_subject_prefixsum.resize((n_sub + 1));
+        h_subject_read_ids.resize(n_sub);
+        h_candidate_read_ids.resize(n_quer);
 
-        d_subject_sequences_data.resize(n_sub * encoded_sequence_pitch * allocfactor);
-        d_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch * allocfactor);
-        d_subject_sequences_lengths.resize(n_sub * allocfactor);
-        d_candidate_sequences_lengths.resize(n_quer * allocfactor);
-        d_candidates_per_subject.resize(n_sub * allocfactor);
-        d_candidates_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
-        d_subject_read_ids.resize(n_sub * allocfactor);
-        d_candidate_read_ids.resize(n_quer * allocfactor);
+        d_subject_sequences_data.resize(n_sub * encoded_sequence_pitch);
+        d_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch);
+        d_subject_sequences_lengths.resize(n_sub);
+        d_candidate_sequences_lengths.resize(n_quer);
+        d_candidates_per_subject.resize(n_sub);
+        d_candidates_per_subject_prefixsum.resize((n_sub + 1));
+        d_subject_read_ids.resize(n_sub);
+        d_candidate_read_ids.resize(n_quer);
 
-        d_subject_sequences_data_transposed.resize(n_sub * encoded_sequence_pitch * allocfactor);
-        d_candidate_sequences_data_transposed.resize(n_quer * encoded_sequence_pitch * allocfactor);
+        d_subject_sequences_data_transposed.resize(n_sub * encoded_sequence_pitch);
+        d_candidate_sequences_data_transposed.resize(n_quer * encoded_sequence_pitch);
 
 		//alignment output
 
-		h_alignment_scores.resize(2*n_quer * allocfactor);
-        h_alignment_overlaps.resize(2*n_quer * allocfactor);
-        h_alignment_shifts.resize(2*n_quer * allocfactor);
-        h_alignment_nOps.resize(2*n_quer * allocfactor);
-        h_alignment_isValid.resize(2*n_quer * allocfactor);
-        h_alignment_best_alignment_flags.resize(n_quer * allocfactor);
+		h_alignment_scores.resize(2*n_quer);
+        h_alignment_overlaps.resize(2*n_quer);
+        h_alignment_shifts.resize(2*n_quer);
+        h_alignment_nOps.resize(2*n_quer);
+        h_alignment_isValid.resize(2*n_quer);
+        h_alignment_best_alignment_flags.resize(n_quer);
 
-        d_alignment_scores.resize(2*n_quer * allocfactor);
-        d_alignment_overlaps.resize(2*n_quer * allocfactor);
-        d_alignment_shifts.resize(2*n_quer * allocfactor);
-        d_alignment_nOps.resize(2*n_quer * allocfactor);
-        d_alignment_isValid.resize(2*n_quer * allocfactor);
-        d_alignment_best_alignment_flags.resize(n_quer * allocfactor);
+        d_alignment_scores.resize(2*n_quer);
+        d_alignment_overlaps.resize(2*n_quer);
+        d_alignment_shifts.resize(2*n_quer);
+        d_alignment_nOps.resize(2*n_quer);
+        d_alignment_isValid.resize(2*n_quer);
+        d_alignment_best_alignment_flags.resize(n_quer);
 
 		// candidate indices
 
-        h_indices.resize(n_quer * allocfactor);
-        h_indices_per_subject.resize(n_sub * allocfactor);
-        h_indices_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
+        h_indices.resize(n_quer);
+        h_indices_per_subject.resize(n_sub);
+        h_indices_per_subject_prefixsum.resize((n_sub + 1));
         h_num_indices.resize(1);
 
-        d_indices.resize(n_quer * allocfactor);
-        d_indices_per_subject.resize(n_sub * allocfactor);
-        d_indices_per_subject_prefixsum.resize((n_sub + 1) * allocfactor);
+        d_indices.resize(n_quer);
+        d_indices_per_subject.resize(n_sub);
+        d_indices_per_subject_prefixsum.resize((n_sub + 1));
         d_num_indices.resize(1);
 
 		//qualitiy scores
 		if(useQualityScores) {
-            h_subject_qualities.resize(n_sub * quality_pitch * allocfactor);
-            h_candidate_qualities.resize(n_quer * quality_pitch * allocfactor);
+            h_subject_qualities.resize(n_sub * quality_pitch);
+            h_candidate_qualities.resize(n_quer * quality_pitch);
 
-            d_subject_qualities.resize(n_sub * quality_pitch * allocfactor);
-            d_candidate_qualities.resize(n_quer * quality_pitch * allocfactor);
-            d_candidate_qualities_transposed.resize(n_quer * quality_pitch * allocfactor);
-            d_candidate_qualities_tmp.resize(n_quer * quality_pitch * allocfactor);
+            d_subject_qualities.resize(n_sub * quality_pitch);
+            d_candidate_qualities.resize(n_quer * quality_pitch);
+            d_candidate_qualities_transposed.resize(n_quer * quality_pitch);
+            d_candidate_qualities_tmp.resize(n_quer * quality_pitch);
 		}
 
 
 		//correction results
 
-        h_corrected_subjects.resize(n_sub * sequence_pitch * allocfactor);
-        h_corrected_candidates.resize(n_quer * sequence_pitch * allocfactor);
-        h_num_corrected_candidates.resize(n_sub * allocfactor);
-        h_subject_is_corrected.resize(n_sub * allocfactor);
-        h_indices_of_corrected_candidates.resize(n_quer * allocfactor);
-        h_num_uncorrected_positions_per_subject.resize(n_sub * allocfactor);
-        h_uncorrected_positions_per_subject.resize(n_sub * max_seq_length * allocfactor);
+        h_corrected_subjects.resize(n_sub * sequence_pitch);
+        h_corrected_candidates.resize(n_quer * sequence_pitch);
+        h_num_corrected_candidates.resize(n_sub);
+        h_subject_is_corrected.resize(n_sub);
+        h_indices_of_corrected_candidates.resize(n_quer);
+        h_num_uncorrected_positions_per_subject.resize(n_sub);
+        h_uncorrected_positions_per_subject.resize(n_sub * max_seq_length);
 
-        d_corrected_subjects.resize(n_sub * sequence_pitch * allocfactor);
-        d_corrected_candidates.resize(n_quer * sequence_pitch * allocfactor);
-        d_num_corrected_candidates.resize(n_sub * allocfactor);
-        d_subject_is_corrected.resize(n_sub * allocfactor);
-        d_indices_of_corrected_candidates.resize(n_quer * allocfactor);
-        d_num_uncorrected_positions_per_subject.resize(n_sub * allocfactor);
-        d_uncorrected_positions_per_subject.resize(n_sub * max_seq_length * allocfactor);
+        d_corrected_subjects.resize(n_sub * sequence_pitch);
+        d_corrected_candidates.resize(n_quer * sequence_pitch);
+        d_num_corrected_candidates.resize(n_sub);
+        d_subject_is_corrected.resize(n_sub);
+        d_indices_of_corrected_candidates.resize(n_quer);
+        d_num_uncorrected_positions_per_subject.resize(n_sub);
+        d_uncorrected_positions_per_subject.resize(n_sub * max_seq_length);
 
-        h_is_high_quality_subject.resize(n_sub * allocfactor);
-        h_high_quality_subject_indices.resize(n_sub * allocfactor);
+        h_is_high_quality_subject.resize(n_sub);
+        h_high_quality_subject_indices.resize(n_sub);
         h_num_high_quality_subject_indices.resize(1);
 
-        d_is_high_quality_subject.resize(n_sub * allocfactor);
-        d_high_quality_subject_indices.resize(n_sub * allocfactor);
+        d_is_high_quality_subject.resize(n_sub);
+        d_high_quality_subject_indices.resize(n_sub);
         d_num_high_quality_subject_indices.resize(1);
 
 		//multiple sequence alignment
@@ -266,23 +266,23 @@ struct DataArrays {
         msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, padding_bytes) * padding_bytes;
         size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
 
-        h_consensus.resize(n_sub * msa_pitch * allocfactor);
-        h_support.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        h_coverage.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        h_origWeights.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        h_origCoverages.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        h_msa_column_properties.resize(n_sub * allocfactor);
-        h_counts.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
-        h_weights.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
+        h_consensus.resize(n_sub * msa_pitch);
+        h_support.resize(n_sub * msa_weights_pitch_floats);
+        h_coverage.resize(n_sub * msa_weights_pitch_floats);
+        h_origWeights.resize(n_sub * msa_weights_pitch_floats);
+        h_origCoverages.resize(n_sub * msa_weights_pitch_floats);
+        h_msa_column_properties.resize(n_sub);
+        h_counts.resize(n_sub * 4 * msa_weights_pitch_floats);
+        h_weights.resize(n_sub * 4 * msa_weights_pitch_floats);
 
-        d_consensus.resize(n_sub * msa_pitch * allocfactor);
-        d_support.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        d_coverage.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        d_origWeights.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        d_origCoverages.resize(n_sub * msa_weights_pitch_floats * allocfactor);
-        d_msa_column_properties.resize(n_sub * allocfactor);
-        d_counts.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
-        d_weights.resize(n_sub * 4 * msa_weights_pitch_floats * allocfactor);
+        d_consensus.resize(n_sub * msa_pitch);
+        d_support.resize(n_sub * msa_weights_pitch_floats);
+        d_coverage.resize(n_sub * msa_weights_pitch_floats);
+        d_origWeights.resize(n_sub * msa_weights_pitch_floats);
+        d_origCoverages.resize(n_sub * msa_weights_pitch_floats);
+        d_msa_column_properties.resize(n_sub);
+        d_counts.resize(n_sub * 4 * msa_weights_pitch_floats);
+        d_weights.resize(n_sub * 4 * msa_weights_pitch_floats);
 
         // size_t hostSizeBytes = hostArraysSizeInBytes();
         // size_t deviceSizeBytes = deviceArraysSizeInBytes();
@@ -299,7 +299,7 @@ struct DataArrays {
 
 
 	void set_cub_temp_storage_size(std::size_t newsize){
-		d_cub_temp_storage.resize(newsize * allocfactor);
+		d_cub_temp_storage.resize(newsize);
 	}
 
 	void zero_gpu(cudaStream_t stream){

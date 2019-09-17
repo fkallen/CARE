@@ -99,10 +99,13 @@ namespace detail{
         }
     };
 
-	template<DataLocation location, class T>
+	template<DataLocation location, class T, int overprovisioningPercent = 10>
 	struct SimpleAllocation{
 		using Allocator = SimpleAllocator<location, T>;
         using Accessor = SimpleAllocationAccessor<location, T>;
+
+        static_assert(overprovisioningPercent >= 0, "overprovisioningPercent < 0");
+        static constexpr float allocFactor = overprovisioningPercent / 100.f + 1.0f;
 
 		T* data_{};
 		size_t size_{};
@@ -190,8 +193,8 @@ namespace detail{
 			if(capacity_ < newsize){
 				Allocator alloc;
 				alloc.deallocate(data_);
-				data_ = alloc.allocate(newsize);
-				capacity_ = newsize;
+				data_ = alloc.allocate(newsize * allocFactor);
+				capacity_ = newsize * allocFactor;
 			}
 			size_ = newsize;
 		}
