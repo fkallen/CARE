@@ -16,6 +16,21 @@ namespace gpu {
 
 
 #ifdef __NVCC__
+
+struct AnchorHighQualityFlag{
+    char data;
+
+    __host__ __device__
+    bool hq() const{
+        return data == 1;
+    }
+
+    __host__ __device__
+    void hq(bool isHq){
+        data = isHq ? 1 : 0;
+    }
+};
+
 struct MSAColumnProperties{
     //int startindex;
     //int endindex;
@@ -67,7 +82,7 @@ struct CorrectionResultPointers{
         int* numCorrectedCandidates;
         bool* subjectIsCorrected;
         int* indicesOfCorrectedCandidates;
-        bool* isHighQualitySubject;
+        AnchorHighQualityFlag* isHighQualitySubject;
         int* highQualitySubjectIndices;
         int* numHighQualitySubjectIndices;
         int* num_uncorrected_positions_per_subject;

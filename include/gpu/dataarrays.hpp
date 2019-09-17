@@ -29,6 +29,8 @@ namespace gpu {
 #ifdef __NVCC__
 
 
+
+
 struct DataArrays {
 	static constexpr int padding_bytes = 4;
 	static constexpr float allocfactor = 1.1;
@@ -68,7 +70,7 @@ struct DataArrays {
         const int* origCoverages = &h_origCoverages[msa_weights_pitch_floats * subjectIndex];
 
         const bool subject_is_corrected = h_subject_is_corrected[subjectIndex];
-        const bool is_high_quality_subject = h_is_high_quality_subject[subjectIndex];
+        const bool is_high_quality_subject = h_is_high_quality_subject[subjectIndex].hq();
 
         const int numCandidates = h_candidates_per_subject_prefixsum[subjectIndex+1] - h_candidates_per_subject_prefixsum[subjectIndex];
         //std::ostream_iterator<double>(std::cout, " ")
@@ -413,7 +415,7 @@ struct DataArrays {
         h_num_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
         h_subject_is_corrected = std::move(SimpleAllocationPinnedHost<bool>{});
         h_indices_of_corrected_candidates = std::move(SimpleAllocationPinnedHost<int>{});
-        h_is_high_quality_subject = std::move(SimpleAllocationPinnedHost<bool>{});
+        h_is_high_quality_subject = std::move(SimpleAllocationPinnedHost<AnchorHighQualityFlag>{});
         h_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
         h_num_high_quality_subject_indices = std::move(SimpleAllocationPinnedHost<int>{});
         h_num_uncorrected_positions_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
@@ -424,7 +426,7 @@ struct DataArrays {
         d_num_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
         d_subject_is_corrected = std::move(SimpleAllocationDevice<bool>{});
         d_indices_of_corrected_candidates = std::move(SimpleAllocationDevice<int>{});
-        d_is_high_quality_subject = std::move(SimpleAllocationDevice<bool>{});
+        d_is_high_quality_subject = std::move(SimpleAllocationDevice<AnchorHighQualityFlag>{});
         d_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
         d_num_high_quality_subject_indices = std::move(SimpleAllocationDevice<int>{});
         d_num_uncorrected_positions_per_subject = std::move(SimpleAllocationDevice<int>{});
@@ -830,11 +832,11 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_num_uncorrected_positions_per_subject;
     SimpleAllocationDevice<int> d_uncorrected_positions_per_subject;
 
-    SimpleAllocationPinnedHost<bool> h_is_high_quality_subject;
+    SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
     SimpleAllocationPinnedHost<int> h_high_quality_subject_indices;
     SimpleAllocationPinnedHost<int> h_num_high_quality_subject_indices;
 
-    SimpleAllocationDevice<bool> d_is_high_quality_subject;
+    SimpleAllocationDevice<AnchorHighQualityFlag> d_is_high_quality_subject;
     SimpleAllocationDevice<int> d_high_quality_subject_indices;
     SimpleAllocationDevice<int> d_num_high_quality_subject_indices;
 

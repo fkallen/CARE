@@ -1789,408 +1789,6 @@ namespace gpu{
             }
         };
 
-        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
-
-        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
-            const int myNumIndices = d_indices_per_subject[subjectIndex];
-            if(myNumIndices > 0){
-
-                const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
-                const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
-                const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
-                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
-
-                const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
-                const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
-                const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
-
-                float avg_support = 0;
-                float min_support = 1.0f;
-                //int max_coverage = 0;
-                int min_coverage = std::numeric_limits<int>::max();
-
-                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    assert(i < lastColumn_excl);
-
-                    avg_support += my_support[i];
-                    min_support = min(my_support[i], min_support);
-                    //max_coverage = max(my_coverage[i], max_coverage);
-                    min_coverage = min(my_coverage[i], min_coverage);
-                }
-
-                avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
-                __syncthreads();
-
-                min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
-                __syncthreads();
-
-                //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
-
-                min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
-                __syncthreads();
-
-                avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-
-                bool isHQ = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
-                //bool isHQ = true;
-
-                if(threadIdx.x == 0){
-                    broadcastbuffer = isHQ;
-                    d_correctionResultPointers.isHighQualitySubject[subjectIndex] = isHQ;
-                    //printf("%f %f %d %d\n", avg_support, min_support, min_coverage, isHQ);
-                }
-                __syncthreads();
-
-                isHQ = broadcastbuffer;
-
-                if(isHQ){
-                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                        //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
-                        my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
-                    }
-                    if(threadIdx.x == 0){
-                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true;
-                    }
-                }else{
-
-                    // const int* const myCountsA = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-                    // const int* const myCountsC = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-                    // const int* const myCountsG = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-                    // const int* const myCountsT = msapointers.counts + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
-                    //
-                    // const float* const myWeightsA = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 0 * msa_weights_pitch_floats;
-                    // const float* const myWeightsC = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 1 * msa_weights_pitch_floats;
-                    // const float* const myWeightsG = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 2 * msa_weights_pitch_floats;
-                    // const float* const myWeightsT = msapointers.weights + 4 * msa_weights_pitch_floats * subjectIndex + 3 * msa_weights_pitch_floats;
-                    //
-                    //
-                    // //calculate average count per weight
-                    // float myaverageCountPerWeightA = 0.0f;
-                    // float myaverageCountPerWeightG = 0.0f;
-                    // float myaverageCountPerWeightC = 0.0f;
-                    // float myaverageCountPerWeightT = 0.0f;
-                    //
-                    // for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    //     assert(i < lastColumn_excl);
-                    //
-                    //     const int ca = myCountsA[i];
-                    //     const int cc = myCountsC[i];
-                    //     const int cg = myCountsG[i];
-                    //     const int ct = myCountsT[i];
-                    //     const float wa = myWeightsA[i];
-                    //     const float wc = myWeightsC[i];
-                    //     const float wg = myWeightsG[i];
-                    //     const float wt = myWeightsT[i];
-                    //
-                    //     myaverageCountPerWeightA += ca / wa;
-                    //     myaverageCountPerWeightC += cc / wc;
-                    //     myaverageCountPerWeightG += cg / wg;
-                    //     myaverageCountPerWeightT += ct / wt;
-                    // }
-                    //
-                    // myaverageCountPerWeightA = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightA);
-                    // __syncthreads();
-                    // myaverageCountPerWeightC = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightC);
-                    // __syncthreads();
-                    // myaverageCountPerWeightG = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightG);
-                    // __syncthreads();
-                    // myaverageCountPerWeightT = BlockReduceFloat(temp_storage.floatreduce).Sum(myaverageCountPerWeightT);
-                    //
-                    // if(threadIdx.x == 0){
-                    //     avgCountPerWeight[0] = myaverageCountPerWeightA / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                    //     avgCountPerWeight[1] = myaverageCountPerWeightC / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                    //     avgCountPerWeight[2] = myaverageCountPerWeightG / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                    //     avgCountPerWeight[3] = myaverageCountPerWeightT / (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
-                    // }
-                    // __syncthreads();
-
-
-                    //decode orignal sequence and copy to corrected sequence
-                    const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-                    const char* const subject = getSubjectPtr(subjectIndex);
-                    for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
-                        my_corrected_subject[i] = to_nuc(get(subject, subjectLength, i));
-                    }
-
-                    bool foundAColumn = false;
-                    int* globalUncorrectedPostitionsPtr = d_correctionResultPointers.uncorrected_positions_per_subject + subjectIndex * maximumSequenceLength;
-                    int* const globalNumUncorrectedPositionsPtr = d_correctionResultPointers.num_uncorrected_positions_per_subject + subjectIndex;
-
-                    //round up to next multiple of BLOCKSIZE;
-                    const int loopIters = SDIV(subjectLength, BLOCKSIZE) * BLOCKSIZE;
-                    for(int loopIter = 0; loopIter < loopIters; loopIter++){
-                        if(threadIdx.x == 0){
-                            numUncorrectedPositions = 0;
-                        }
-                        __syncthreads();
-
-                        const int i = threadIdx.x + loopIter * BLOCKSIZE;
-
-                        if(i < subjectLength){
-                            const int globalIndex = subjectColumnsBegin_incl + i;
-                            const int origCoverage = my_orig_coverage[globalIndex];
-                            const char origBase = my_corrected_subject[i];
-
-                            if(origBase != my_consensus[globalIndex]
-                                        && my_support[globalIndex] > 0.5f
-                                        //&& my_orig_coverage[globalIndex] <= ceil(min_coverage_threshold * 0.5f)+1
-                                        //&& origCoverage <= 7//ceil(estimatedErrorrate * my_coverage[globalIndex])
-                                        //&& my_orig_coverage[globalIndex] <= 1
-                                    ){
-                                /*printf("%f %d, %d <= %f\n",
-                                        estimatedErrorrate,
-                                        my_coverage[globalIndex],
-                                        my_orig_coverage[globalIndex],
-                                        ceil(estimatedErrorrate * my_coverage[globalIndex]));*/
-
-                                bool canCorrect = true;
-                                // if(origCoverage > 2){
-                                //     canCorrect = false;
-                                // }
-
-                                int numCandidatesWithOrigBaseAndGoodWeight = 0;
-                                int numCandidatesWithoutOrigBaseAndGoodWeight = 0;
-                                int baseCountsOfHighQualityOverlaps[4]{0};
-                                float overlapWeightPerBaseOfHighQualityOverlaps[4]{0};
-
-                                float bestoverlapweightofmatchingbase = -1.0f;
-                                float bestoverlapweightofconsensusbase = -1.0f;
-                                int numFoundCandidates = 0;
-
-                                if(canCorrect && origCoverage > 1){
-                                    const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-                                    char origBase = my_corrected_subject[i];
-                                    //iterate over candidates
-
-
-                                    int origsToFind = origCoverage;
-
-                                    assert(origCoverage <= myNumIndices);
-
-                                    for(int candidatenr = 0; candidatenr < myNumIndices/* && numFoundCandidates < origCoverage*/; candidatenr++){
-                                        const int arrayindex = myIndices[candidatenr];
-
-                                        const char* candidateptr = getCandidatePtr(arrayindex);
-                                        const int candidateLength = getCandidateLength(arrayindex);
-                                        const int candidateShift = alignmentresultpointers.shifts[arrayindex];
-                                        const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
-                                        if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
-                                            char candidateBaseEnc = 0xFF;
-                                            if(alignmentresultpointers.bestAlignmentFlags[arrayindex] == BestAlignment_t::ReverseComplement){
-                                                candidateBaseEnc = get(candidateptr, candidateLength, candidateLength - candidateBasePosition-1);
-                                                candidateBaseEnc = (~candidateBaseEnc) & 0x03;
-                                            }else{
-                                                candidateBaseEnc = get(candidateptr, candidateLength, candidateBasePosition);
-                                            }
-                                            const char candidateBase = to_nuc(candidateBaseEnc);
-
-                                            const int nOps = alignmentresultpointers.nOps[arrayindex];
-                                            const int overlapsize = alignmentresultpointers.overlaps[arrayindex];
-                                            const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
-                                            assert(overlapweight <= 1.0f);
-                                            assert(overlapweight >= 0.0f);
-
-                                            constexpr float goodOverlapThreshold = 0.90f;
-
-                                            if(origBase == candidateBase){
-
-                                                numFoundCandidates++;
-                                                 if(overlapweight >= goodOverlapThreshold){
-                                                     numCandidatesWithOrigBaseAndGoodWeight++;
-
-                                                     baseCountsOfHighQualityOverlaps[candidateBaseEnc]++;
-                                                     overlapWeightPerBaseOfHighQualityOverlaps[candidateBaseEnc] += overlapweight;
-                                                 }else{
-                                                     ; //nothing
-                                                 }
-
-                                                 bestoverlapweightofmatchingbase = max(bestoverlapweightofmatchingbase, overlapweight);
-
-                                            }else{
-                                                if(candidateBase == my_consensus[globalIndex]){
-                                                    bestoverlapweightofconsensusbase = max(bestoverlapweightofconsensusbase, overlapweight);
-                                                }
-
-                                                if(overlapweight >= goodOverlapThreshold){
-                                                    numCandidatesWithoutOrigBaseAndGoodWeight++;
-
-                                                    baseCountsOfHighQualityOverlaps[candidateBaseEnc]++;
-                                                    overlapWeightPerBaseOfHighQualityOverlaps[candidateBaseEnc] += overlapweight;
-                                                }else{
-                                                    ; //nothing
-                                                }
-                                            }
-                                        }
-                                    }
-                                    assert(numFoundCandidates+1 == origCoverage);
-                                }
-
-                                //assert(canCorrect || origCoverage > 2);
-
-                                // if(numFoundCandidates != 0){
-                                //     printf("%f %f myNumIndices %d numFoundorigCandidates %d, do correct %d\n",
-                                //             bestoverlapweightofconsensusbase, bestoverlapweightofmatchingbase,
-                                //             myNumIndices, numFoundCandidates, numCandidatesWithOrigBaseAndGoodWeight == 0);
-                                // }
-
-
-
-                                if(numCandidatesWithOrigBaseAndGoodWeight == 0){
-                                //if(false){
-
-
-
-                                    float avgsupportkregion = 0;
-                                    int c = 0;
-                                    bool kregioncoverageisgood = true;
-
-
-                                    for(int j = i - k_region/2; j <= i + k_region/2 && kregioncoverageisgood; j++){
-                                        if(j != i && j >= 0 && j < subjectLength){
-                                            avgsupportkregion += my_support[subjectColumnsBegin_incl + j];
-                                            kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= min_coverage_threshold);
-                                            //kregioncoverageisgood &= (my_coverage[subjectColumnsBegin_incl + j] >= 1);
-                                            c++;
-                                        }
-                                    }
-                                    avgsupportkregion /= c;
-
-                                    if(kregioncoverageisgood && avgsupportkregion >= 1.0f-4*estimatedErrorrate){
-
-                                        my_corrected_subject[i] = my_consensus[globalIndex];
-                                        foundAColumn = true;
-                                    }else{
-                                        const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
-                                        uncorrectedPositions[smemindex] = i;
-                                    }
-                                    // my_corrected_subject[i] = my_consensus[globalIndex];
-                                    // foundAColumn = true;
-                                }else{
-
-                                    const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
-                                    uncorrectedPositions[smemindex] = i;
-                                }
-                            }
-                        }
-
-                        __syncthreads();
-
-                        if(threadIdx.x == 0){
-                            *globalNumUncorrectedPositionsPtr += numUncorrectedPositions;
-                        }
-
-                        for(int k = threadIdx.x; k < numUncorrectedPositions; k++){
-                            globalUncorrectedPostitionsPtr[k] = uncorrectedPositions[k];
-                        }
-                        globalUncorrectedPostitionsPtr += numUncorrectedPositions;
-
-                        if(loopIter < loopIters - 1){
-                            __syncthreads();
-                        }
-                    }
-
-                    //perform block wide or-reduction on foundAColumn
-                    foundAColumn = BlockReduceBool(temp_storage.boolreduce).Reduce(foundAColumn, [](bool a, bool b){return a || b;});
-                    __syncthreads();
-
-                    if(threadIdx.x == 0){
-                        d_correctionResultPointers.subjectIsCorrected[subjectIndex] = foundAColumn;
-                        // for(int k = 0; k < *globalNumUncorrectedPositionsPtr; k++){
-                        //     const int count = d_correctionResultPointers.uncorrected_positions_per_subject[subjectIndex * maximumSequenceLength + k];
-                        //     //printf("%d ", count);
-                        // }
-                        //printf("\n");
-                    }
-                }
-            }
-        }
-    }
-
-    template<int BLOCKSIZE>
-    __global__
-    void msa_correct_subject_implicit_kernel2(
-                            MSAPointers msapointers,
-                            AlignmentResultPointers alignmentresultpointers,
-                            ReadSequencesPointers d_sequencePointers,
-                            CorrectionResultPointers d_correctionResultPointers,
-                            const int* __restrict__ d_indices,
-                            const int* __restrict__ d_indices_per_subject,
-                            const int* __restrict__ d_indices_per_subject_prefixsum,
-                            int n_subjects,
-                            size_t encoded_sequence_pitch,
-                            size_t sequence_pitch,
-                            size_t msa_pitch,
-                            size_t msa_weights_pitch,
-                            int maximumSequenceLength,
-                            float estimatedErrorrate,
-                            float desiredAlignmentMaxErrorRate,
-                            float avg_support_threshold,
-                            float min_support_threshold,
-                            float min_coverage_threshold,
-                            float max_coverage_threshold,
-                            int k_region){
-
-        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
-        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
-        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
-
-        __shared__ union {
-            typename BlockReduceBool::TempStorage boolreduce;
-            typename BlockReduceInt::TempStorage intreduce;
-            typename BlockReduceFloat::TempStorage floatreduce;
-        } temp_storage;
-
-        __shared__ bool broadcastbuffer;
-
-        __shared__ int numUncorrectedPositions;
-        __shared__ int uncorrectedPositions[BLOCKSIZE];
-        __shared__ float avgCountPerWeight[4];
-
-        auto get = [] (const char* data, int length, int index){
-            //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
-        };
-
-        auto getSubjectPtr = [&] (int subjectIndex){
-            const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
-            return result;
-        };
-
-        auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
-            return result;
-        };
-
-        auto getCandidateLength = [&](int candidateIndex){
-            return d_sequencePointers.candidateSequencesLength[candidateIndex];
-        };
-
-        auto isGoodAvgSupport = [&](float avgsupport){
-            return avgsupport >= avg_support_threshold;
-        };
-        auto isGoodMinSupport = [&](float minsupport){
-            return minsupport >= min_support_threshold;
-        };
-        auto isGoodMinCoverage = [&](float mincoverage){
-            return mincoverage >= min_coverage_threshold;
-        };
-
-        constexpr char A_enc = 0x00;
-        constexpr char C_enc = 0x01;
-        constexpr char G_enc = 0x02;
-        constexpr char T_enc = 0x03;
-
-        auto to_nuc = [](char c){
-            switch(c){
-            case A_enc: return 'A';
-            case C_enc: return 'C';
-            case G_enc: return 'G';
-            case T_enc: return 'T';
-            default: return 'F';
-            }
-        };
-
         auto saveUncorrectedPositionInSmem = [&](int pos){
             const int smemindex = atomicAdd(&numUncorrectedPositions, 1);
             uncorrectedPositions[smemindex] = pos;
@@ -2244,7 +1842,7 @@ namespace gpu{
 
                 if(threadIdx.x == 0){
                     broadcastbuffer = isHQ;
-                    d_correctionResultPointers.isHighQualitySubject[subjectIndex] = isHQ;
+                    d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
                     //printf("%f %f %d %d\n", avg_support, min_support, min_coverage, isHQ);
                 }
                 __syncthreads();
@@ -2461,6 +2059,183 @@ namespace gpu{
 
 
 
+    template<int BLOCKSIZE>
+    __global__
+    void msa_correct_subject_implicit_kernel2(
+                            MSAPointers msapointers,
+                            AlignmentResultPointers alignmentresultpointers,
+                            ReadSequencesPointers d_sequencePointers,
+                            CorrectionResultPointers d_correctionResultPointers,
+                            const int* __restrict__ d_indices,
+                            const int* __restrict__ d_indices_per_subject,
+                            const int* __restrict__ d_indices_per_subject_prefixsum,
+                            int n_subjects,
+                            size_t encoded_sequence_pitch,
+                            size_t sequence_pitch,
+                            size_t msa_pitch,
+                            size_t msa_weights_pitch,
+                            int maximumSequenceLength,
+                            float estimatedErrorrate,
+                            float desiredAlignmentMaxErrorRate,
+                            float avg_support_threshold,
+                            float min_support_threshold,
+                            float min_coverage_threshold,
+                            float max_coverage_threshold,
+                            int k_region){
+
+        using BlockReduceBool = cub::BlockReduce<bool, BLOCKSIZE>;
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+        using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
+
+        __shared__ union {
+            typename BlockReduceBool::TempStorage boolreduce;
+            typename BlockReduceInt::TempStorage intreduce;
+            typename BlockReduceFloat::TempStorage floatreduce;
+        } temp_storage;
+
+        __shared__ bool broadcastbuffer;
+
+        __shared__ int numUncorrectedPositions;
+        __shared__ int uncorrectedPositions[BLOCKSIZE];
+        __shared__ float avgCountPerWeight[4];
+
+        auto get = [] (const char* data, int length, int index){
+            //return Sequence_t::get_as_nucleotide(data, length, index);
+            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+        };
+
+        auto getSubjectPtr = [&] (int subjectIndex){
+            const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+            return result;
+        };
+
+        auto getCandidatePtr = [&] (int candidateIndex){
+            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            return result;
+        };
+
+        auto getCandidateLength = [&](int candidateIndex){
+            return d_sequencePointers.candidateSequencesLength[candidateIndex];
+        };
+
+        auto isGoodAvgSupport = [&](float avgsupport){
+            return avgsupport >= avg_support_threshold;
+        };
+        auto isGoodMinSupport = [&](float minsupport){
+            return minsupport >= min_support_threshold;
+        };
+        auto isGoodMinCoverage = [&](float mincoverage){
+            return mincoverage >= min_coverage_threshold;
+        };
+
+        constexpr char A_enc = 0x00;
+        constexpr char C_enc = 0x01;
+        constexpr char G_enc = 0x02;
+        constexpr char T_enc = 0x03;
+
+        auto to_nuc = [](char c){
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+
+        for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x){
+            const int myNumIndices = d_indices_per_subject[subjectIndex];
+            if(myNumIndices > 0){
+
+                const float* const my_support = msapointers.support + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_coverage = msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
+                const int* const my_orig_coverage = msapointers.origCoverages + msa_weights_pitch_floats * subjectIndex;
+                const char* const my_consensus = msapointers.consensus + msa_pitch  * subjectIndex;
+                char* const my_corrected_subject = d_correctionResultPointers.correctedSubjects + subjectIndex * sequence_pitch;
+
+                const int subjectColumnsBegin_incl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+                const int subjectColumnsEnd_excl = msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+                const int lastColumn_excl = msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+
+                float avg_support = 0;
+                float min_support = 1.0f;
+                //int max_coverage = 0;
+                int min_coverage = std::numeric_limits<int>::max();
+
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    assert(i < lastColumn_excl);
+
+                    avg_support += my_support[i];
+                    min_support = min(my_support[i], min_support);
+                    //max_coverage = max(my_coverage[i], max_coverage);
+                    min_coverage = min(my_coverage[i], min_coverage);
+                }
+
+                avg_support = BlockReduceFloat(temp_storage.floatreduce).Sum(avg_support);
+                __syncthreads();
+
+                min_support = BlockReduceFloat(temp_storage.floatreduce).Reduce(min_support, cub::Min());
+                __syncthreads();
+
+                //max_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(max_coverage, cub::Max());
+
+                min_coverage = BlockReduceInt(temp_storage.intreduce).Reduce(min_coverage, cub::Min());
+                __syncthreads();
+
+                avg_support /= (subjectColumnsEnd_excl - subjectColumnsBegin_incl);
+
+
+                const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+        		const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+
+                if(threadIdx.x == 0){
+                    const bool canBeCorrected = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = canBeCorrected;
+
+                    if(canBeCorrected){
+                        int smallestErrorrateThatWouldMakeHQ = 100;
+
+                        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+                        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+                            float factor = percent / 100.0f;
+                            if(avg_support >= 1.0f - 1.0f * factor && min_support >= 1.0f - 3.0f * factor){
+                                smallestErrorrateThatWouldMakeHQ = percent;
+                            }
+                        }
+
+                        const bool isHQ = isGoodMinCoverage(min_coverage)
+                                            && smallestErrorrateThatWouldMakeHQ < estimatedErrorratePercent * 0.5f;
+
+                        //broadcastbuffer = isHQ;
+                        d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
+                    }
+                }
+                __syncthreads();
+
+                //isHQ = broadcastbuffer;
+
+                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                    //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                    //if(my_support[i] > 0.95f){
+                        my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                    // }else{
+                    //     const char* subject = getSubjectPtr(subjectIndex);
+                    //     const char encodedBase = get(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
+                    //     const char base = to_nuc(encodedBase);
+                    //     my_corrected_subject[i - subjectColumnsBegin_incl] = base;
+                    // }
+                }
+
+            }
+        }
+    }
+
+
+
+
+
 
 
     __device__ __forceinline__
@@ -2523,7 +2298,7 @@ namespace gpu{
             bool result = newColMinSupport >= min_support_threshold
                             && newColMinCov >= min_coverage_threshold;
 
-            return result;
+            return true;
         }else{
             return false;
         }

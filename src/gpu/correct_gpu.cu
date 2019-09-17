@@ -119,7 +119,7 @@ namespace gpu{
                     while(!stop){
                         std::unique_lock<std::mutex> mylock(m);
                         consumer_cv.wait(mylock, [&](){return !tasks.empty() || stop;});
-                        
+
                         if(!tasks.empty()){
                             auto func = std::move(tasks.front());
                             tasks.erase(tasks.begin());
@@ -176,7 +176,7 @@ namespace gpu{
                 finishRemainingTasks = false;
             }
             stop = true;
-	    
+
             consumer_cv.notify_one();
             thread.join();
         }
@@ -1542,6 +1542,7 @@ namespace gpu{
 
 		//choose the most appropriate subset of alignments from the good alignments.
 		//This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
+
 		call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 					dataArrays.getDeviceAlignmentResultPointers(),
 					dataArrays.d_candidates_per_subject_prefixsum.get(),
@@ -2572,10 +2573,18 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 
             size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
+            auto isHqSubject = [] __device__ (const AnchorHighQualityFlag& flag){
+                return flag.hq();
+            };
+
+            cub::TransformInputIterator<bool,decltype(isHqSubject), AnchorHighQualityFlag*>
+                d_isHqSubject(dataArrays.d_is_high_quality_subject,
+                                isHqSubject);
+
             cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
                         cubTempSize,
                         cub::CountingInputIterator<int>(0),
-                        dataArrays.d_is_high_quality_subject.get(),
+                        d_isHqSubject,
                         dataArrays.d_high_quality_subject_indices.get(),
                         dataArrays.d_num_high_quality_subject_indices.get(),
                         dataArrays.n_subjects,
@@ -3124,7 +3133,7 @@ void state_unpackclassicresults_func(Batch& batch){
                 auto& task = batch.tasks[subject_index];
                 const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * dataArrays.sequence_pitch;
                 task.corrected = dataArrays.h_subject_is_corrected[subject_index];
-                task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index];
+                task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
 
                 if(task.corrected) {
                     const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
@@ -3473,6 +3482,9 @@ void state_unpackclassicresults_func(Batch& batch){
                          transFuncData = &transFuncData,
                          id = batch.id](){
             nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread", 4);
+            int notCorrectedNoCandidates = 0;
+            int notCorrected = 0;
+
             //write result to file
     		for(std::size_t subject_index = 0; subject_index < tasks.size(); ++subject_index) {
 
@@ -3483,12 +3495,21 @@ void state_unpackclassicresults_func(Batch& batch){
 
     			if(task.corrected) {
                     transFuncData->saveCorrectedSequence(task.anchoroutput);
-    			}
+    			}else{
+                    if(task.candidate_read_ids.empty()){
+                        notCorrectedNoCandidates++;
+                    }
+
+                    notCorrected++;
+
+                }
 
                 for(const auto& tmp : task.candidatesoutput){
                     transFuncData->saveCorrectedSequence(tmp);
                 }
     		}
+
+            //std::cerr << "not corrected "<< " " << notCorrectedNoCandidates << " " << notCorrected << "/" << tasks.size() << "\n";
 
             nvtx::pop_range();
         };
@@ -3843,7 +3864,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           // }
           //std::cout << tmp << '\n';
           //std::unique_lock<std::mutex> l(outputstreammutex);
-          outputstream << tmp << '\n';
+          if(!(tmp.isEqual && tmp.hq))
+            outputstream << tmp << '\n';
       };
 
       transFuncData.lock = [&](read_number readId){
