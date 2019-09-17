@@ -77,19 +77,19 @@ namespace gpu{
 
             auto flushBuffers = [&](std::vector<read_number>* indicesBuffer, std::vector<Read>* readsBuffer){
                 if(indicesBuffer->size() > 0){
-                    TIMERSTARTCPU(setReads);
+                    //TIMERSTARTCPU(setReads);
                     readstorage.setReads(*indicesBuffer, *readsBuffer);
-                    TIMERSTOPCPU(setReads);
+                    //TIMERSTOPCPU(setReads);
 
-                    std::cerr << "clearing " << indicesBuffer->size() << " indices\n";
-                    TIMERSTARTCPU(fbclearindices);
+                    //std::cerr << "clearing " << indicesBuffer->size() << " indices\n";
+                    //TIMERSTARTCPU(fbclearindices);
                     indicesBuffer->clear();
-                    TIMERSTOPCPU(fbclearindices);
+                    //TIMERSTOPCPU(fbclearindices);
 
-                    std::cerr << "clearing " << readsBuffer->size() << " reads\n";
-                    TIMERSTARTCPU(fbclearreads);
+                    //std::cerr << "clearing " << readsBuffer->size() << " reads\n";
+                    //TIMERSTARTCPU(fbclearreads);
                     readsBuffer->clear();
-                    TIMERSTOPCPU(fbclearreads);
+                    //TIMERSTOPCPU(fbclearreads);
                 }
             };
 
@@ -162,52 +162,52 @@ namespace gpu{
                             fileOptions.format,
                             [&](auto readnum, auto& read){
 
-                                if(!canBeUsed[bufferindex]){
-                                    std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                                    if(!canBeUsed[bufferindex]){
-                                        std::cerr << "waiting for other buffer\n";
-                                        cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                                    }
-                                }
+                    if(!canBeUsed[bufferindex]){
+                        std::unique_lock<std::mutex> ul(mutex[bufferindex]);
+                        if(!canBeUsed[bufferindex]){
+                            //std::cerr << "waiting for other buffer\n";
+                            cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
+                        }
+                    }
 
-                                auto indicesBufferPtr = &indicesBuffers[bufferindex];
-                                auto readsBufferPtr = &readsBuffers[bufferindex];
+                    auto indicesBufferPtr = &indicesBuffers[bufferindex];
+                    auto readsBufferPtr = &readsBuffers[bufferindex];
 
-                                handle_read(readnum, read, indicesBufferPtr, readsBufferPtr);
+                    handle_read(readnum, read, indicesBufferPtr, readsBufferPtr);
 
-                                if(indicesBufferPtr->size() > maxbuffersize){
-                                    //TIMERSTARTCPU(flushBuffers);
-                                    //flushBuffers(indicesBufferPtr, readsBufferPtr);
-                                    //TIMERSTOPCPU(flushBuffers);
+                    if(indicesBufferPtr->size() > maxbuffersize){
+                        //TIMERSTARTCPU(flushBuffers);
+                        //flushBuffers(indicesBufferPtr, readsBufferPtr);
+                        //TIMERSTOPCPU(flushBuffers);
 
-                                    canBeUsed[bufferindex] = false;
+                        canBeUsed[bufferindex] = false;
 
-                                    std::cerr << "launch other thread\n";
-                                    threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                                        //TIMERSTARTCPU(flushBufferswithcv);
+                        //std::cerr << "launch other thread\n";
+                        threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                            //TIMERSTARTCPU(flushBufferswithcv);
 
-                                        TIMERSTARTCPU(flushBuffers);
+                            TIMERSTARTCPU(flushBuffers);
 
-                                        flushBuffers(indicesBufferPtr, readsBufferPtr);
+                            flushBuffers(indicesBufferPtr, readsBufferPtr);
 
-                                        TIMERSTOPCPU(flushBuffers);
+                            TIMERSTOPCPU(flushBuffers);
 
-                                        std::lock_guard<std::mutex> l(mutex[bufferindex]);
-                                        canBeUsed[bufferindex] = true;
-                                        cv[bufferindex].notify_one();
+                            std::lock_guard<std::mutex> l(mutex[bufferindex]);
+                            canBeUsed[bufferindex] = true;
+                            cv[bufferindex].notify_one();
 
-                                        //TIMERSTOPCPU(flushBufferswithcv);
+                            //TIMERSTOPCPU(flushBufferswithcv);
 
-                                        std::cerr << "other thread done\n";
-                                    });
+                            //std::cerr << "other thread done\n";
+                        });
 
-                                    bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
-                                    //std::cerr << "bufferindex is now " << bufferindex << "\n";
+                        bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
+                        //std::cerr << "bufferindex is now " << bufferindex << "\n";
 
 
 
-                                }
-                            }
+                    }
+                }
             );
 
             auto indicesBufferPtr = &indicesBuffers[bufferindex];
@@ -288,6 +288,7 @@ namespace gpu{
                 auto lengthhandle = readStorage.makeGatherHandleLengths();
                 size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthLimit()) * sizeof(int);
 
+                //TIMERSTARTCPU(iter);
                 for(int iter = 0; iter < numIters; iter++){
                     read_number readIdBegin = iter * parallelReads;
                     read_number readIdEnd = std::min((iter+1) * parallelReads, numReads);
@@ -297,6 +298,8 @@ namespace gpu{
 
                     std::vector<char> sequenceData(indices.size() * sequencepitch);
                     std::vector<DistributedReadStorage::Length_t> lengths(indices.size());
+
+                    //TIMERSTARTCPU(gather);
 
                     auto future1 = readStorage.gatherSequenceDataToHostBufferAsync(
                                                 sequencehandle,
@@ -315,6 +318,10 @@ namespace gpu{
                     future1.wait();
                     future2.wait();
 
+                    //TIMERSTOPCPU(gather);
+
+                    //TIMERSTARTCPU(insert);
+
                     #pragma omp parallel for
                     for(read_number readId = readIdBegin; readId < readIdEnd; readId++){
                         //if(validFlags[readId]){
@@ -327,7 +334,10 @@ namespace gpu{
                         //    ; //invalid reads are discarded
                         //}
                     }
+
+                    //TIMERSTOPCPU(insert);
                 }
+                //TIMERSTOPCPU(iter);
 
                 for(auto mapId : mapIds){
                     transform_minhasher_gpu(minhasher, mapId, runtimeOptions.deviceIds);
