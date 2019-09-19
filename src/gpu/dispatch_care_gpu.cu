@@ -124,7 +124,7 @@ namespace care{
         TIMERSTARTCPU(candidateestimation);
         std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
 
-        if(maxCandidatesPerRead == 0){
+        //if(maxCandidatesPerRead == 0){
             // maxCandidatesPerRead = cpu::calculateMaxCandidatesPerReadThreshold(minhasher,
             //                                         readStorage,
             //                                         sequenceFileProperties.nReads / 10,
@@ -132,9 +132,9 @@ namespace care{
             //                                         runtimeOptions.threads
             //                                         //,"ncandidates.txt"
             //                                         );
-            assert(maxCandidatesPerRead != 0);
-            std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
-        }
+            //assert(maxCandidatesPerRead != 0);
+            //std::cout << "maxCandidates option not specified. Using estimation: " << maxCandidatesPerRead << std::endl;
+        //}
 
 
 

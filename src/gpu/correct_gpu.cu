@@ -1087,7 +1087,7 @@ namespace gpu{
 
                     std::size_t myNumCandidates = task.candidate_read_ids.size();
 
-                    assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+                    //assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
 
                     if(myNumCandidates == 0) {
                         task.active = false;
@@ -3655,7 +3655,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                   std::uint64_t maxCandidatesPerRead){
 
       assert(runtimeOptions.canUseGpu);
-      assert(runtimeOptions.max_candidates > 0);
+      //assert(runtimeOptions.max_candidates > 0);
       assert(runtimeOptions.deviceIds.size() > 0);
 
       int oldNumOMPThreads = 1;
