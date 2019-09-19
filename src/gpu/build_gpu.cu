@@ -183,14 +183,14 @@ namespace gpu{
                         canBeUsed[bufferindex] = false;
 
                         //std::cerr << "launch other thread\n";
-                        threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                        //threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
                             //TIMERSTARTCPU(flushBufferswithcv);
 
-                            TIMERSTARTCPU(flushBuffers);
+                            //TIMERSTARTCPU(flushBuffers);
 
                             flushBuffers(indicesBufferPtr, readsBufferPtr);
 
-                            TIMERSTOPCPU(flushBuffers);
+                            //TIMERSTOPCPU(flushBuffers);
 
                             std::lock_guard<std::mutex> l(mutex[bufferindex]);
                             canBeUsed[bufferindex] = true;
@@ -199,9 +199,9 @@ namespace gpu{
                             //TIMERSTOPCPU(flushBufferswithcv);
 
                             //std::cerr << "other thread done\n";
-                        });
+                        //});
 
-                        bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
+                        //bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
                         //std::cerr << "bufferindex is now " << bufferindex << "\n";
 
 
