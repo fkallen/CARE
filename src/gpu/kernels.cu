@@ -2093,7 +2093,7 @@ namespace gpu{
             typename BlockReduceFloat::TempStorage floatreduce;
         } temp_storage;
 
-        __shared__ bool broadcastbuffer;
+        __shared__ int broadcastbuffer;
 
         __shared__ int numUncorrectedPositions;
         __shared__ int uncorrectedPositions[BLOCKSIZE];
@@ -2191,10 +2191,12 @@ namespace gpu{
         		const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
 
                 if(threadIdx.x == 0){
-                    const bool canBeCorrected = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
-                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = canBeCorrected;
+                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = true; //canBeCorrected;
 
-                    if(canBeCorrected){
+                    const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) && isGoodMinSupport(min_support) && isGoodMinCoverage(min_coverage);
+                    int flag = 0;
+
+                    if(canBeCorrectedByConsensus){
                         int smallestErrorrateThatWouldMakeHQ = 100;
 
                         const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
@@ -2210,24 +2212,46 @@ namespace gpu{
 
                         //broadcastbuffer = isHQ;
                         d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
+
+                        flag = isHQ ? 2 : 1;
                     }
+
+                    broadcastbuffer = flag;
                 }
                 __syncthreads();
 
-                //isHQ = broadcastbuffer;
+                // for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                //     //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                //     if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
+                //         my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                //     }else{
+                //         const char* subject = getSubjectPtr(subjectIndex);
+                //         const char encodedBase = get(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
+                //         const char base = to_nuc(encodedBase);
+                //         my_corrected_subject[i - subjectColumnsBegin_incl] = base;
+                //     }
+                // }
 
-                for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
-                    //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
-                    //if(my_support[i] > 0.95f){
+                const int flag = broadcastbuffer;
+
+                if(flag > 0){
+                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
                         my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
-                    // }else{
-                    //     const char* subject = getSubjectPtr(subjectIndex);
-                    //     const char encodedBase = get(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
-                    //     const char base = to_nuc(encodedBase);
-                    //     my_corrected_subject[i - subjectColumnsBegin_incl] = base;
-                    // }
+                    }
+                }else{
+                    //correct only positions with high support.
+                    for(int i = subjectColumnsBegin_incl + threadIdx.x; i < subjectColumnsEnd_excl; i += BLOCKSIZE){
+                        //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                        if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
+                            my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
+                        }else{
+                            const char* subject = getSubjectPtr(subjectIndex);
+                            const char encodedBase = get(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
+                            const char base = to_nuc(encodedBase);
+                            my_corrected_subject[i - subjectColumnsBegin_incl] = base;
+                        }
+                    }
                 }
-
             }
         }
     }
@@ -2618,6 +2642,20 @@ namespace gpu{
                     for(int i = copyposbegin; i < copyposend; i += 1) {
                         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
                     }
+
+                    const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
+                    const char* candidate = d_sequencePointers.candidateSequencesData + std::size_t(global_candidate_index) * encoded_sequence_pitch;
+
+                    // for(int i = copyposbegin; i < copyposend; i += 1) {
+                    //     //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                    //     if(my_support[i] > 0.90f){
+                    //         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+                    //     }else{
+                    //         const char encodedBase = get(candidate, queryColumnsEnd_excl- queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+                    //         const char base = to_nuc(encodedBase);
+                    //         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = base;
+                    //     }
+                    // }
 
                     const BestAlignment_t bestAlignmentFlag = d_alignmentresultpointers.bestAlignmentFlags[global_candidate_index];
 
