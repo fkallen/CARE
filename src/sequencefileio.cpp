@@ -1280,14 +1280,16 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 const TempCorrectedSequence anchor = *anchorIter;
                 //tmpresults.erase(anchorIter);
 
-                tmpresults.erase(std::remove_if(tmpresults.begin(),
-                                                tmpresults.end(),
-                                                [](const auto& tcs){
-                                                    return tcs.shift > 5;
-                                                }),
-                                  tmpresults.end());
+                // tmpresults.erase(std::remove_if(tmpresults.begin(),
+                //                                 tmpresults.end(),
+                //                                 [](const auto& tcs){
+                //                                     return tcs.shift > 5;
+                //                                 }),
+                //                   tmpresults.end());
 
-                if(tmpresults.size() > 3){
+                if(tmpresults.size() >= 3){
+
+                    const bool sizelimitok = true; //tmpresults.size() > 3;
 
                     const bool sameCorrections = std::all_of(tmpresults.begin()+1,
                                                             tmpresults.end(),
@@ -1295,7 +1297,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                                                                 return tmpresults[0].sequence == tcs.sequence;
                                                             });
 
-                    if(sameCorrections){
+                    if(sameCorrections && sizelimitok){
                         numberOfUsableLQCorrectionsWithCandidates++;
 
                         return std::make_pair(tmpresults[0].sequence, outputLQWithCandidates);
@@ -1305,7 +1307,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                 }else{
                     numberOfUsableLQCorrectionsOnlyAnchor++;
                     //return std::make_pair(std::string{""}, false);
-                    return std::make_pair(tmpresults[0].sequence, outputLQOnlyAnchor);
+                    return std::make_pair(anchor.sequence, outputLQOnlyAnchor);
                 }
             }
         }else{
@@ -1389,7 +1391,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
             assert(valid);
 
-            assert(isValidSequence(read.sequence));
+            //assert(isValidSequence(read.sequence));
 
             writer->writeRead(read);
             //swt.push(read);
@@ -1414,7 +1416,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         auto correctedSequence = combineMultipleCorrectionResultsFunction(correctionVector, read.sequence);
 
         if(correctedSequence.second){
-            assert(isValidSequence(correctedSequence.first));
+            //assert(isValidSequence(correctedSequence.first));
+            std::cerr << "Warning. Corrected read " << currentReadId
+                    << " with header " << read.name << " " << read.comment
+                    << "does contain an invalid DNA base!\n"
+                    << "Corrected sequence is: "  << correctedSequence.first << '\n';
             writer->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
         }else{
             writer->writeRead(read.name, read.comment, read.sequence, read.quality);
@@ -1437,7 +1443,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
             assert(valid);
 
-            assert(isValidSequence(read.sequence));
+            //assert(isValidSequence(read.sequence));
 
             writer->writeRead(read);
             //swt.push(read);
@@ -1473,7 +1479,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
     Read read;
 
     while(reader->getNextRead(&read)){
-        assert(isValidSequence(read.sequence));
+        //assert(isValidSequence(read.sequence));
 
         writer->writeRead(read);
     }
