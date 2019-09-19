@@ -1006,10 +1006,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(!tmpresults.empty());
 
         constexpr bool outputHQ = true;
-        constexpr bool outputLQAnchorDifferentCand = false;
-        constexpr bool outputLQAnchorSameCand = false;
-        constexpr bool outputLQAnchorNoCand = false;
-        constexpr bool outputLQOnlyCand = false;
+        constexpr bool outputLQAnchorDifferentCand = true;
+        constexpr bool outputLQAnchorSameCand = true;
+        constexpr bool outputLQAnchorNoCand = true;
+        constexpr bool outputLQOnlyCand = true;
 
         auto isHQ = [](const auto& tcs){
             return tcs.type == TempCorrectedSequence::Type::Anchor && tcs.hq;
@@ -1341,7 +1341,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     };
 
-    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults4NewHQLQ;
+    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults2;
 
 
     std::uint64_t currentReadId = 0;
@@ -1417,10 +1417,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
         if(correctedSequence.second){
             //assert(isValidSequence(correctedSequence.first));
-            std::cerr << "Warning. Corrected read " << currentReadId
-                    << " with header " << read.name << " " << read.comment
-                    << "does contain an invalid DNA base!\n"
-                    << "Corrected sequence is: "  << correctedSequence.first << '\n';
+            if(!isValidSequence(correctedSequence.first)){
+                std::cerr << "Warning. Corrected read " << currentReadId
+                        << " with header " << read.name << " " << read.comment
+                        << "does contain an invalid DNA base!\n"
+                        << "Corrected sequence is: "  << correctedSequence.first << '\n';
+            }
             writer->writeRead(read.name, read.comment, correctedSequence.first, read.quality);
         }else{
             writer->writeRead(read.name, read.comment, read.sequence, read.quality);
