@@ -36,6 +36,47 @@ struct ThreadPool{
     */
     template<class Index_t, class Func>
     void parallelFor(Index_t begin, Index_t end, Func&& loop){
+        parallelFor(begin, end, std::forward<Func>(loop), getConcurrency());
+    }
+
+    template<class Index_t, class Func>
+    void parallelFor(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+        constexpr bool waitForCompletion = true;
+
+        parallelFor_impl<waitForCompletion>(begin, end, std::forward<Func>(loop), numThreads);
+    }
+
+    template<class Index_t, class Func>
+    void parallelForNoWait(Index_t begin, Index_t end, Func&& loop){
+        parallelForNoWait(begin, end, std::forward<Func>(loop), getConcurrency());
+    }
+
+    template<class Index_t, class Func>
+    void parallelForNoWait(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+        constexpr bool waitForCompletion = false;
+
+        parallelFor_impl<waitForCompletion>(begin, end, std::forward<Func>(loop), numThreads);
+    }
+
+    void wait(){
+        pq->wait();
+    }
+
+    void setConcurrency(int numThreads){
+        std::unique_lock<std::mutex> l(m);
+        pq->wait();
+
+        pq.reset(new am::parallel_queue(numThreads));
+    }
+
+    int getConcurrency() const{
+        return pq->concurrency();
+    }
+
+private:
+
+    template<bool waitForCompletion, class Index_t, class Func>
+    void parallelFor_impl(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         std::mutex m;
         std::condition_variable cv;
         std::size_t finishedWork = 0;
@@ -44,7 +85,7 @@ struct ThreadPool{
         auto work = [&, func = std::forward<Func>(loop)](Index_t begin, Index_t end, int threadId){
             func(begin, end, threadId);
 
-            {
+            if(waitForCompletion){
                 std::lock_guard<std::mutex> lg(m);
                 finishedWork++;
                 cv.notify_one();
@@ -53,7 +94,7 @@ struct ThreadPool{
 
         Index_t totalIterations = end - begin;
         if(totalIterations > 0){
-            const std::size_t chunks = getConcurrency();
+            const std::size_t chunks = numThreads;
             const Index_t chunksize = totalIterations / chunks;
             const Index_t leftover = totalIterations % chunks;
 
@@ -81,26 +122,13 @@ struct ThreadPool{
                 work(begin, end, chunks-1);                
             }
 
-            std::unique_lock<std::mutex> ul(m);
-            if(finishedWork != startedWork){
-                cv.wait(ul, [&](){return finishedWork == startedWork;});
+            if(waitForCompletion){
+                std::unique_lock<std::mutex> ul(m);
+                if(finishedWork != startedWork){
+                    cv.wait(ul, [&](){return finishedWork == startedWork;});
+                }
             }
         }   
-    }
-
-    void wait(){
-        pq->wait();
-    }
-
-    void setConcurrency(int numThreads){
-        std::unique_lock<std::mutex> l(m);
-        pq->wait();
-
-        pq.reset(new am::parallel_queue(numThreads));
-    }
-
-    int getConcurrency() const{
-        return pq->concurrency();
     }
 
     std::unique_ptr<am::parallel_queue> pq;
