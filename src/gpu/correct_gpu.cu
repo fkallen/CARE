@@ -3167,15 +3167,24 @@ void state_unpackclassicresults_func(Batch& batch){
 
                     const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
 
-                    task.anchoroutput.hq = task.highQualityAlignment;
+                    if(!originalReadContainsN){
+                        const int maxEdits = subject_length / 7;
+                        int edits = 0;
+                        for(int i = 0; i < subject_length && edits <= maxEdits; i++){
+                            if(task.corrected_subject[i] != task.subject_string[i]){
+                                task.anchoroutput.edits.emplace_back(i, task.corrected_subject[i]);
+                                edits++;
+                            }
+                        }
+                        task.anchoroutput.useEdits = edits <= maxEdits;
+                    }else{
+                        task.anchoroutput.useEdits = false;
+                    }
+
+                    task.anchoroutput.hq = task.highQualityAlignment;                    
                     task.anchoroutput.type = TempCorrectedSequence::Type::Anchor;
                     task.anchoroutput.readId = task.readId;
-                    task.anchoroutput.isEqual = !originalReadContainsN && task.correctionEqualsOriginal;
-                    if(task.anchoroutput.isEqual){
-                        task.anchoroutput.sequence = "-";
-                    }else{
-                        task.anchoroutput.sequence = std::move(task.corrected_subject);
-                    }
+                    task.anchoroutput.sequence = std::move(task.corrected_subject);
                     task.anchoroutput.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
 
                 }else{
@@ -3243,24 +3252,39 @@ void state_unpackclassicresults_func(Batch& batch){
 
                         const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
 
+                        // if(!originalReadContainsN){
+                            
+                        //     task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
+                        // }else{
+                        //     task.corrected_candidate_equals_uncorrected[i] = false;
+                        // }
+
+                       
+
+                        TempCorrectedSequence tmp;
+
                         if(!originalReadContainsN){
                             const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
                             const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
-                            task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
-                        }else{
-                            task.corrected_candidate_equals_uncorrected[i] = false;
-                        }
 
-                        TempCorrectedSequence tmp;
+                            const int maxEdits = candidate_length / 7;
+                            int edits = 0;
+                            for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
+                                if(task.corrected_candidates[i][pos] != uncorrectedCandidate[pos]){
+                                    tmp.edits.emplace_back(pos, task.corrected_candidates[i][pos]);
+                                    edits++;
+                                }
+                            }
+
+                            tmp.useEdits = edits <= maxEdits;
+                        }else{
+                            tmp.useEdits = false;
+                        }
+                        
                         tmp.type = TempCorrectedSequence::Type::Candidate;
                         tmp.shift = task.corrected_candidates_shifts[i];
                         tmp.readId = candidate_read_id;
-                        tmp.isEqual = task.corrected_candidate_equals_uncorrected[i];
-                        if(tmp.isEqual){
-                            tmp.sequence = "-";
-                        }else{
-                            tmp.sequence = std::move(task.corrected_candidates[i]);
-                        }
+                        tmp.sequence = std::move(task.corrected_candidates[i]);
 
                         task.candidatesoutput.emplace_back(std::move(tmp));
     				}
@@ -3864,7 +3888,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           // }
           //std::cout << tmp << '\n';
           //std::unique_lock<std::mutex> l(outputstreammutex);
-          if(!(tmp.isEqual && tmp.hq))
+          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty()))
             outputstream << tmp << '\n';
       };
 

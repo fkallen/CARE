@@ -1006,10 +1006,10 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(!tmpresults.empty());
 
         constexpr bool outputHQ = true;
-        constexpr bool outputLQAnchorDifferentCand = true;
-        constexpr bool outputLQAnchorSameCand = true;
-        constexpr bool outputLQAnchorNoCand = true;
-        constexpr bool outputLQOnlyCand = true;
+        constexpr bool outputLQAnchorDifferentCand = false;
+        constexpr bool outputLQAnchorSameCand = false;
+        constexpr bool outputLQAnchorNoCand = false;
+        constexpr bool outputLQOnlyCand = false;
 
         auto isHQ = [](const auto& tcs){
             return tcs.type == TempCorrectedSequence::Type::Anchor && tcs.hq;
@@ -1018,15 +1018,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         //if there is a correction using a high quality alignment, use it
         auto firstHqSequence = std::find_if(tmpresults.begin(), tmpresults.end(), isHQ);
         if(firstHqSequence != tmpresults.end()){
-            if(firstHqSequence->isEqual){
-                if(firstHqSequence->sequence != originalSequence){
-                    std::cerr << firstHqSequence->sequence << "\n" << originalSequence << "\n";
-                }
-                assert(firstHqSequence->sequence == originalSequence);
-                return std::make_pair(std::string{""}, false);
-            }else{
-                return std::make_pair(firstHqSequence->sequence, outputHQ);
-            }
+            assert(firstHqSequence->sequence.size() == originalSequence.size());
+            return std::make_pair(firstHqSequence->sequence, outputHQ);
         }
 
         auto equalsFirstSequence = [&](const auto& result){
@@ -1200,15 +1193,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         if(anchorIter != tmpresults.end()){
             //if there is a correction using a high quality alignment, use it
             if(anchorIter->hq){
-                if(anchorIter->isEqual){
-                    if(anchorIter->sequence != originalSequence){
-                        std::cerr << anchorIter->sequence << "\n" << originalSequence << "\n";
-                    }
-                    assert(anchorIter->sequence == originalSequence);
-                    return std::make_pair(std::string{""}, false);
-                }else{
-                    return std::make_pair(anchorIter->sequence, outputHQ);
-                }
+                assert(anchorIter->sequence.size() == originalSequence.size());
+                return std::make_pair(anchorIter->sequence, outputHQ);
             }else{
 
                 const TempCorrectedSequence anchor = *anchorIter;
@@ -1263,17 +1249,8 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             if(anchorIter->hq){
                 numberOfHQCorrections++;
 
-                if(anchorIter->isEqual){
-                    numberOfEqualHQCorrections++;
-
-                    if(anchorIter->sequence != originalSequence){
-                        std::cerr << anchorIter->sequence << "\n" << originalSequence << "\n";
-                    }
-                    assert(anchorIter->sequence == originalSequence);
-                    return std::make_pair(std::string{""}, false);
-                }else{
-                    return std::make_pair(anchorIter->sequence, outputHQ);
-                }
+                assert(anchorIter->sequence.size() == originalSequence.size());
+                return std::make_pair(anchorIter->sequence, outputHQ);
             }else{
                 numberOfLQCorrections++;
 
@@ -1341,7 +1318,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     };
 
-    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults2;
+    auto combineMultipleCorrectionResultsFunction = combineMultipleCorrectionResults4NewHQLQ;
 
 
     std::uint64_t currentReadId = 0;
@@ -1404,8 +1381,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(valid);
 
         for(auto& tmpres : correctionVector){
-            if(tmpres.isEqual){
+            if(tmpres.useEdits){
                 tmpres.sequence = read.sequence;
+                for(const auto& edit : tmpres.edits){
+                    tmpres.sequence[edit.pos] = edit.base;
+                }
                 // if(tmpres.sequence != read.sequence){
                 //     std::cerr << currentReadId << "\n" << tmpres.sequence << "\n" << read.sequence << "\n";
                 // }
@@ -1458,8 +1438,11 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         assert(valid);
 
         for(auto& tmpres : correctionVector){
-            if(tmpres.isEqual){
+            if(tmpres.useEdits){
                 tmpres.sequence = read.sequence;
+                for(const auto& edit : tmpres.edits){
+                    tmpres.sequence[edit.pos] = edit.base;
+                }
                 // if(tmpres.sequence != read.sequence){
                 //     std::cerr << currentReadId << "\n" << tmpres.sequence << "\n" << read.sequence << "\n";
                 // }
@@ -1501,27 +1484,30 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
-    // const int sequenceints = getEncodedNumInts2Bit(tmp.sequence.length());
-    // std::vector<unsigned int> data(sequenceints);
-    // encodeSequence2Bit(data.data(), tmp.sequence.c_str(), tmp.sequence.length());
-
     os << tmp.readId << ' ';
 
-    os << tmp.sequence << ' ';
-    // int length = tmp.sequence.length();
-    // os.write((const char*)&length, sizeof(int));
-    // os.write((const char*)data.data(), sizeof(unsigned int) * data.size());
+    os << tmp.hq << ' ';
+    os << tmp.useEdits << ' ';
+    os << int(tmp.type) << ' ';
+
+    if(tmp.useEdits){
+        os << tmp.edits.size() << ' ';
+        for(const auto& edit : tmp.edits){
+            os << edit.pos << ' ' << edit.base << ' ';
+        }
+    }else{
+        os << tmp.sequence << ' ';
+    }
 
     if(tmp.type == TempCorrectedSequence::Type::Anchor){
-        os << TempCorrectedSequence::AnchorChar << ' ' << tmp.hq << ' ' << tmp.isEqual;
         const auto& vec = tmp.uncorrectedPositionsNoConsensus;
-        os << ' ' << vec.size();
+        os << vec.size();
         if(!vec.empty()){
             os << ' ';
             std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
         }
     }else{
-        os << TempCorrectedSequence::CandidateChar << ' ' << tmp.isEqual << ' ' << tmp.shift;
+        os << tmp.shift;
     }
 
     return os;
@@ -1529,21 +1515,25 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
 
 std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
     is >> tmp.readId;
-    is >> tmp.sequence;
+    is >> tmp.hq;
+    is >> tmp.useEdits;
+    int type;
+    is >> type;
+    tmp.type = TempCorrectedSequence::Type(type);
 
-    // int length = 0;
-    // is.read((char*)&length, sizeof(int));
-    // const int sequenceints = getEncodedNumInts2Bit(length);
-    // std::vector<unsigned int> data(sequenceints);
-    // is.read((char*)data.data(), sizeof(unsigned int) * sequenceints);
-    //
-    // tmp.sequence = get2BitString(data.data(), length);
+    if(tmp.useEdits){
+        size_t size;
+        is >> size;
+        tmp.edits.resize(size);
+        for(size_t i = 0; i < size; i++){
+            is >> tmp.edits[i].pos;
+            is >> tmp.edits[i].base;
+        }
+    }else{
+        is >> tmp.sequence;
+    }
 
-    char typechar;
-    is >> typechar;
-    if(typechar == TempCorrectedSequence::AnchorChar){
-        tmp.type = TempCorrectedSequence::Type::Anchor;
-        is >> tmp.hq >> tmp.isEqual;
+    if(tmp.type == TempCorrectedSequence::Type::Anchor){
         size_t vecsize;
         is >> vecsize;
         if(vecsize > 0){
@@ -1554,8 +1544,6 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
             }
         }
     }else{
-        tmp.type = TempCorrectedSequence::Type::Candidate;
-        is >> tmp.isEqual;
         is >> tmp.shift;
         tmp.shift = std::abs(tmp.shift);
     }
