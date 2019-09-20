@@ -915,15 +915,6 @@ public:
                 }
             }); CUERR;
 
-            generic_kernel<<<grid, block, 0, stream>>>([=] __device__ (){
-            for(size_t i = threadIdx.x + size_t(blockIdx.x) * blockDim.x; i < nIndices * numCols; i += size_t(blockDim.x) * gridDim.x){
-                const Index_t outputrow = i / numCols;
-                const Index_t inputrow = d_indices[outputrow] + indexOffset;
-                const Index_t col = i % numCols;
-                d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
-            }
-        }); CUERR;
-
         }
 
         // cudaStreamSynchronize(stream); CUERR;
