@@ -9,6 +9,7 @@
 #include <hpc_helpers.cuh>
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/peeraccess.hpp>
+#include <threadpool.hpp>
 
 #include <algorithm>
 #include <numeric>
@@ -20,7 +21,8 @@
 #include <cassert>
 #include <omp.h>
 
-
+#include <mutex>
+#include <condition_variable>
 
 
 
@@ -678,10 +680,11 @@ public:
                 auto& h_result = handle->pinnedResultData;
                 h_result.resize(numIds * numColumns);
 
+                //#pragma omp parallel for
                 for(Index_t k = 0; k < numIds; k++){
                     const Index_t localId = indices[k];
                     const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                    Value_t* destPtr = (Value_t*)(((const char*)(h_result.get())) + sizeOfElement * k);
+                    Value_t* destPtr = offsetPtr(h_result.get(), k);
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
 
@@ -713,17 +716,17 @@ public:
     	// 	int location = getLocation(indices[i]);
     	// 	hitsPerLocation[location]++;
     	// }
-        nvtx::push_range("ompgetnumthreads", 4);
+        // nvtx::push_range("ompgetnumthreads", 4);
 
-        int oldNumOMPThreads = numCpuThreads;
-        #pragma omp parallel
-        {
-            #pragma omp single
-            oldNumOMPThreads = omp_get_num_threads();
-        }
-        omp_set_num_threads(numCpuThreads);
+        // int oldNumOMPThreads = numCpuThreads;
+        // #pragma omp parallel
+        // {
+        //     #pragma omp single
+        //     oldNumOMPThreads = omp_get_num_threads();
+        // }
+        // omp_set_num_threads(numCpuThreads);
 
-        nvtx::pop_range();
+        // nvtx::pop_range();
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
@@ -733,9 +736,24 @@ public:
             deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
         }
 
-        std::vector<Index_t> hitsPerLocation(numLocations, 0);
         const int threadlocoffset = SDIV(numLocations,32) * 32;
+        // std::vector<Index_t> aaaaahitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
+
+        // care::threadpool.parallelFor(
+        //     Index_t(0), 
+        //     numIds, 
+        //     [&](Index_t begin, Index_t end, int threadId){                
+        //         Index_t* hitsptr = aaaaahitsPerLocationPerThread.data() + threadlocoffset * threadId;
+        //         for(Index_t i = begin; i < end; i++){
+        //             int location = getLocation(indices[i]);
+        //             hitsptr[location]++;
+        //         }
+        //     }
+        // );   
+
+        std::vector<Index_t> hitsPerLocation(numLocations, 0);
         std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
+
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
@@ -746,6 +764,8 @@ public:
                 hitsptr[location]++;
             }
         }
+
+        //assert(aaaaahitsPerLocationPerThread == hitsPerLocationPerThread);
 
         for(int k = 0; k < numCpuThreads; k++){
             for(int l = 0; l < numLocations; l++){
@@ -860,7 +880,8 @@ public:
 
                     copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, mydeviceId, myLocalIds.get(), numHits, mydeviceId, mystream, 0);
 
-                    cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                    Value_t* const myPinnedResults = offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[gpu]);
+                    cudaMemcpyAsync(myPinnedResults,
                                     myResult.get(),
                                     sizeOfElement * numHits,
                                     D2H,
@@ -872,8 +893,9 @@ public:
                     cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
 
                     //copy partial results to tmp result buffer on device
-                    cudaMemcpyAsync(handle->tmpResultsOfDevice[resultDeviceId].get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
-                                    handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                    Value_t* mytmpResultsOfDevice = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
+                    cudaMemcpyAsync(mytmpResultsOfDevice,
+                                    myPinnedResults,
                                     sizeOfElement * hitsPerLocation[gpu],
                                     H2D,
                                     stream); CUERR;
@@ -884,14 +906,15 @@ public:
         //gather from host to host
         if(hitsPerLocation[hostLocation] > 0){
             const Index_t numHits = hitsPerLocation[hostLocation];
-            const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[hostLocation];
-            Value_t* hostResult = offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[hostLocation]);
+            const auto hitsOffset = hitsPerLocationPrefixSum[hostLocation];
+            const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsOffset;            
 
             #pragma omp parallel for
             for(Index_t k = 0; k < numHits; k++){
                 const Index_t localId = hostLocalIds[k];
                 const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                std::copy_n(srcPtr, numColumns, &hostResult[k * sizeOfElement]);
+                Value_t* destPtr = offsetPtr(handle->pinnedResultData.get(), hitsOffset + k);
+                std::copy_n(srcPtr, numColumns, destPtr);
             }
         }
 
@@ -903,8 +926,8 @@ public:
 
         //cudaStreamSynchronize(stream); CUERR;
 
-        cudaMemcpyAsync(handle->tmpResultsOfDevice[resultDeviceId].get() + hitsPerLocationPrefixSum[hostLocation] * sizeOfElement,
-                        handle->pinnedResultData.get() + hitsPerLocationPrefixSum[hostLocation] * sizeOfElement,
+        cudaMemcpyAsync(offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[hostLocation]),
+                        offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[hostLocation]),
                         hitsPerLocation[hostLocation] * sizeOfElement,
                         H2D,
                         stream); CUERR;
@@ -973,7 +996,7 @@ public:
         // std::cerr << "\n";
 
         cudaSetDevice(oldDevice); CUERR;
-        omp_set_num_threads(oldNumOMPThreads);
+        //omp_set_num_threads(oldNumOMPThreads);
 
     }
 
@@ -1095,6 +1118,16 @@ private:
 
         cudaSetDevice(oldDevice); CUERR;
     }
+
+    template<class Func>
+    void maybeAsync(Func&& f){
+        #if 0
+            f();
+        #else
+            care::threadpool.enqueue(std::forward<Func>(f));
+        #endif
+    }
+
 };
 
 
