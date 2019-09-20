@@ -29,6 +29,8 @@ namespace cpu{
         Data structure to store sequences and their quality scores
     */
 
+   //TODO store read ids of reads which contain a base other than A,C,G,T
+
     struct ContiguousReadStorage{
 
         static constexpr bool has_reverse_complement = false;

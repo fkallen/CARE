@@ -1255,6 +1255,30 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                             correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
                         }
 
+                        // TODO USE CORRECT OUTPUT FORMAT FOR CPU
+
+                    //    const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
+                    //
+                    // if(!originalReadContainsN){
+                    //     const int maxEdits = subject_length / 7;
+                    //     int edits = 0;
+                    //     for(int i = 0; i < subject_length && edits <= maxEdits; i++){
+                    //         if(task.corrected_subject[i] != task.subject_string[i]){
+                    //             task.anchoroutput.edits.emplace_back(i, task.corrected_subject[i]);
+                    //             edits++;
+                    //         }
+                    //     }
+                    //     task.anchoroutput.useEdits = edits <= maxEdits;
+                    // }else{
+                    //     task.anchoroutput.useEdits = false;
+                    // }
+
+                    //                     task.anchoroutput.hq = task.highQualityAlignment;                    
+                    // task.anchoroutput.type = TempCorrectedSequence::Type::Anchor;
+                    // task.anchoroutput.readId = task.readId;
+                    // task.anchoroutput.sequence = std::move(task.corrected_subject);
+                    // task.anchoroutput.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+
                         TempCorrectedSequence tmp;
                         tmp.hq = taskdata.msaProperties.isHQ;
                         tmp.type = TempCorrectedSequence::Type::Anchor;
