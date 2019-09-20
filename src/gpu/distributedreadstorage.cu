@@ -32,8 +32,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
     int numGpus = deviceIds.size();
 
-    constexpr size_t headRoom = gpuReadStorageHeadroomPerGPU;
-    //constexpr size_t headRoom = (size_t(1) << 30) * 11;
+    constexpr size_t headRoom = gpuReadStorageHeadroomPerGPU; 
+    //constexpr size_t headRoom = (size_t(1) << 30) * 12;
 
     if(numberOfReads > 0 && sequenceLengthLimit > 0){
         std::vector<size_t> freeMemPerGpu(numGpus, 0);

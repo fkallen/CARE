@@ -674,13 +674,19 @@ public:
                 auto& h_result = handle->pinnedResultData;
                 h_result.resize(numIds * numColumns);
 
-                //#pragma omp parallel for
-                for(Index_t k = 0; k < numIds; k++){
-                    const Index_t localId = indices[k];
-                    const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                    Value_t* destPtr = offsetPtr(h_result.get(), k);
-                    std::copy_n(srcPtr, numColumns, destPtr);
-                }
+                care::threadpool.parallelFor(
+                    Index_t(0), 
+                    numIds, 
+                    [&](Index_t begin, Index_t end, int threadId){
+                        for(Index_t k = begin; k < end; k++){
+                            const Index_t localId = indices[k];
+                            const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                            Value_t* destPtr = offsetPtr(h_result.get(), k);
+                            std::copy_n(srcPtr, numColumns, destPtr);
+                        }
+                    },
+                    numCpuThreads
+                );
 
                 int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
