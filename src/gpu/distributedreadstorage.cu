@@ -366,7 +366,7 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             int nReadIds,
                             int deviceId,
                             cudaStream_t stream,
-                            int numCpuThreads) const{
+                            int) const{
 
     distributedSequenceData2.gatherElementsInGpuMemAsync(handle,
                                                         h_readIds,
@@ -375,8 +375,7 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                                                         deviceId,
                                                         (unsigned int*)d_sequence_data,
                                                         out_sequence_pitch,
-                                                        stream,
-                                                        numCpuThreads);
+                                                        stream);
 
 }
 
@@ -391,7 +390,7 @@ void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync(
                             int nReadIds,
                             int deviceId,
                             cudaStream_t stream,
-                            int numCpuThreads) const{
+                            int) const{
 
     distributedSequenceLengths2.gatherElementsInGpuMemAsync(handle,
                                                         h_readIds,
@@ -400,8 +399,7 @@ void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync(
                                                         deviceId,
                                                         d_lengths,
                                                         sizeof(int),
-                                                        stream,
-                                                        numCpuThreads);
+                                                        stream);
 
 }
 
@@ -414,7 +412,7 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             int nReadIds,
                             int deviceId,
                             cudaStream_t stream,
-                            int numCpuThreads) const{
+                            int) const{
 
     distributedQualities2.gatherElementsInGpuMemAsync(handle,
                                                         h_readIds,
@@ -423,8 +421,7 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                                                         deviceId,
                                                         d_quality_data,
                                                         out_quality_pitch,
-                                                        stream,
-                                                        numCpuThreads);
+                                                        stream);
 
 }
 
