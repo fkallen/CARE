@@ -35,13 +35,13 @@ struct ThreadPool{
         }
     */
     template<class Index_t, class Func>
-    void parallelFor(Index_t begin, Index_t end, Func&& loopBody){
+    void parallelFor(Index_t begin, Index_t end, Func&& loop){
         std::mutex m;
         std::condition_variable cv;
         std::size_t finishedWork = 0;
         std::size_t startedWork = 0;
 
-        auto work = [&, func = std::forward<Func>(loopBody)](Index_t begin, Index_t end, int threadId){
+        auto work = [&, func = std::forward<Func>(loop)](Index_t begin, Index_t end, int threadId){
             func(begin, end, threadId);
 
             {
