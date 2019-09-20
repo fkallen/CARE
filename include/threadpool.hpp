@@ -4,6 +4,7 @@
 #include <parallel/parallel_task_queue.h>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 
 namespace care{
 
@@ -24,6 +25,67 @@ struct ThreadPool{
     void enqueue(task_type&& t){
         std::unique_lock<std::mutex> l(m);
         pq->enqueue(std::move(t));
+    }
+
+    /*
+        loopBody(begin, end, threadId) must be equivalent to
+
+        for(Index_t i = begin; i < end; i++){
+            doStuff(threadId)
+        }
+    */
+    template<class Index_t, class Func>
+    void parallelFor(Index_t begin, Index_t end, Func&& loopBody){
+        std::mutex m;
+        std::condition_variable cv;
+        std::size_t finishedWork = 0;
+        std::size_t startedWork = 0;
+
+        auto work = [&, func = std::forward<Func>(loopBody)](Index_t begin, Index_t end, int threadId){
+            func(begin, end, threadId);
+
+            {
+                std::lock_guard<std::mutex> lg(m);
+                finishedWork++;
+                cv.notify_one();
+            }            
+        };
+
+        Index_t totalIterations = end - begin;
+        if(totalIterations > 0){
+            const std::size_t chunks = getConcurrency();
+            const Index_t chunksize = totalIterations / chunks;
+            const Index_t leftover = totalIterations % chunks;
+
+            Index_t begin = 0;
+            Index_t end = chunksize;
+            for(Index_t c = 0; c < chunks-1; c++){
+                if(c < leftover){
+                    end++;
+                }
+
+                if(end-begin > 0){
+                    startedWork++;
+
+                    enqueue([begin, end, c, work](){
+                        work(begin, end, c);
+                    });
+
+                    begin = end;
+                    end += chunksize;
+                }                
+            }
+
+            if(end-begin > 0){
+                startedWork++;
+                work(begin, end, chunks-1);                
+            }
+
+            std::unique_lock<std::mutex> ul(m);
+            if(finishedWork != startedWork){
+                cv.wait(ul, [&](){return finishedWork == startedWork;});
+            }
+        }   
     }
 
     void wait(){
