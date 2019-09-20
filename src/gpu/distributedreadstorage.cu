@@ -32,6 +32,9 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
     int numGpus = deviceIds.size();
 
+    constexpr size_t headRoom = gpuReadStorageHeadroomPerGPU;
+    //constexpr size_t headRoom = (size_t(1) << 30) * 11;
+
     if(numberOfReads > 0 && sequenceLengthLimit > 0){
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
@@ -49,7 +52,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
             getGpuMemoryInfo();
 
             for(int gpu = 0; gpu < numGpus; gpu++){
-                const size_t usableMem = freeMemPerGpu[gpu] > gpuReadStorageHeadroomPerGPU ? freeMemPerGpu[gpu] - gpuReadStorageHeadroomPerGPU : 0;
+                const size_t usableMem = freeMemPerGpu[gpu] > headRoom ? freeMemPerGpu[gpu] - headRoom : 0;
                 maximumUsableBytesPerGpu[gpu] = usableMem;
             }
             std::cerr << "Usable memory per gpu : ";

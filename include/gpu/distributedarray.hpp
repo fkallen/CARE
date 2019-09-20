@@ -754,16 +754,28 @@ public:
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
         std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
 
-        #pragma omp parallel
-        {
-            int tid = omp_get_thread_num();
-            Index_t* hitsptr = hitsPerLocationPerThread.data() + threadlocoffset * tid;
-            #pragma omp for
-            for(Index_t i = 0; i < numIds; i++){
-                int location = getLocation(indices[i]);
-                hitsptr[location]++;
+        // #pragma omp parallel
+        // {
+        //     int tid = omp_get_thread_num();
+        //     Index_t* hitsptr = hitsPerLocationPerThread.data() + threadlocoffset * tid;
+        //     #pragma omp for
+        //     for(Index_t i = 0; i < numIds; i++){
+        //         int location = getLocation(indices[i]);
+        //         hitsptr[location]++;
+        //     }
+        // }
+
+        care::threadpool.parallelFor(
+            Index_t(0), 
+            numIds, 
+            [&](Index_t begin, Index_t end, int threadId){                
+                Index_t* hitsptr = hitsPerLocationPerThread.data() + threadlocoffset * threadId;
+                for(Index_t i = begin; i < end; i++){
+                    int location = getLocation(indices[i]);
+                    hitsptr[location]++;
+                }
             }
-        }
+        );
 
         //assert(aaaaahitsPerLocationPerThread == hitsPerLocationPerThread);
 
@@ -909,13 +921,26 @@ public:
             const auto hitsOffset = hitsPerLocationPrefixSum[hostLocation];
             const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsOffset;            
 
-            #pragma omp parallel for
-            for(Index_t k = 0; k < numHits; k++){
-                const Index_t localId = hostLocalIds[k];
-                const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                Value_t* destPtr = offsetPtr(handle->pinnedResultData.get(), hitsOffset + k);
-                std::copy_n(srcPtr, numColumns, destPtr);
-            }
+            // #pragma omp parallel for
+            // for(Index_t k = 0; k < numHits; k++){
+            //     const Index_t localId = hostLocalIds[k];
+            //     const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+            //     Value_t* destPtr = offsetPtr(handle->pinnedResultData.get(), hitsOffset + k);
+            //     std::copy_n(srcPtr, numColumns, destPtr);
+            // }
+
+            care::threadpool.parallelFor(
+                Index_t(0), 
+                numHits, 
+                [&](Index_t begin, Index_t end, int threadId){
+                    for(Index_t k = begin; k < end; k++){
+                        const Index_t localId = hostLocalIds[k];
+                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                        Value_t* destPtr = offsetPtr(handle->pinnedResultData.get(), hitsOffset + k);
+                        std::copy_n(srcPtr, numColumns, destPtr);
+                    }
+                }
+            );
         }
 
         cudaSetDevice(resultDeviceId); CUERR;
