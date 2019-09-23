@@ -508,7 +508,7 @@ public:
                 for(Index_t k = 0; k < numIds; k++){
                     const Index_t localId = indices[k];
                     const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                    Value_t* destPtr = (Value_t*)(((const char*)(result)) + sizeOfElement * k);
+                    Value_t* destPtr = (Value_t*)(((const char*)(result)) + resultPitch * k);
                     std::copy_n(srcPtr, numColumns, destPtr);
                 }
 
@@ -615,7 +615,7 @@ public:
             for(Index_t k = 0; k < numHits; k++){
                 const Index_t localId = hostLocalIds[k];
                 const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                Value_t* destPtr = (Value_t*)(((const char*)(hostResult)) + sizeOfElement * k);
+                Value_t* destPtr = offsetPtr(hostResult, k);
                 std::copy_n(srcPtr, numColumns, destPtr);
             }
         }
