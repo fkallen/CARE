@@ -109,8 +109,16 @@ namespace gpu{
                                             + "has length " + std::to_string(readLength));
                 }
 
-                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [](char c){
-                    return c == 'N' || c == 'n';
+                auto isValidBase = [](char c){
+                    constexpr std::array<char, 10> validBases{'A','C','G','T','a','c','g','t'};
+                    return validBases.end() != std::find(validBases.begin(), validBases.end(), c);
+                };
+
+                const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
+                    //return c == 'N' || c == 'n';
+                    // return c != 'A' && c != 'C' && c != 'G' && c != 'T'
+                    //         && c != 'a' && c != 'c' && c != 'g' && c != 't';
+                    return !isValidBase(c);
                 });
 
                 nmap[undeterminedBasesInRead]++;
@@ -124,13 +132,18 @@ namespace gpu{
                 //}else{
                     for(auto& c : read.sequence){
                         if(c == 'a') c = 'A';
-                        if(c == 'c') c = 'C';
-                        if(c == 'g') c = 'G';
-                        if(c == 't') c = 'T';
-                        if(c == 'N' || c == 'n'){
+                        else if(c == 'c') c = 'C';
+                        else if(c == 'g') c = 'G';
+                        else if(c == 't') c = 'T';
+                        else if(!isValidBase(c)){
                             c = bases[Ncount];
                             Ncount = (Ncount + 1) % 4;
                         }
+                        
+                        // if(c == 'N' || c == 'n'){
+                        //     c = bases[Ncount];
+                        //     Ncount = (Ncount + 1) % 4;
+                        // }
                     }
 
                     indicesBuffer->emplace_back(readIndex);
@@ -253,16 +266,6 @@ namespace gpu{
         }else{
             result.builtType = BuiltType::Constructed;
 
-            int oldnumthreads = 1;
-            #pragma omp parallel
-            {
-                #pragma omp single
-                oldnumthreads = omp_get_num_threads();
-            }
-
-            omp_set_num_threads(runtimeOptions.threads);
-            //std::cerr << "setReads omp_set_num_threads end " << runtimeOptions.threads << "\n";
-
             const auto& readStorage = readStoragewFlags.readStorage;
             //const auto& validFlags = readStoragewFlags.readIsValidFlags;
 
@@ -322,18 +325,19 @@ namespace gpu{
 
                     //TIMERSTARTCPU(insert);
 
-                    #pragma omp parallel for
-                    for(read_number readId = readIdBegin; readId < readIdEnd; readId++){
-                        //if(validFlags[readId]){
+                    auto lambda = [&, readIdBegin](auto begin, auto end, int threadId){
+                        for(read_number readId = begin; readId < end; readId++){
                             read_number localId = readId - readIdBegin;
-            				const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
-            				const int sequencelength = lengths[localId];
-            				std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
+                            const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
+                            const int sequencelength = lengths[localId];
+                            std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
                             minhasher.insertSequence(sequencestring, readId, mapIds);
-                        //}else{
-                        //    ; //invalid reads are discarded
-                        //}
-                    }
+                        }
+                    };
+
+                    threadpool.parallelFor(readIdBegin, 
+                                             readIdEnd,
+                                             std::move(lambda));
 
                     //TIMERSTOPCPU(insert);
                 }
@@ -343,13 +347,7 @@ namespace gpu{
                     transform_minhasher_gpu(minhasher, mapId, runtimeOptions.deviceIds);
                 }
             }
-            omp_set_num_threads(oldnumthreads);
-
         }
-
-        //TIMERSTARTCPU(finalize_hashtables);
-        //minhasher.transform();
-        //TIMERSTOPCPU(finalize_hashtables);
 
         return result;
     }
