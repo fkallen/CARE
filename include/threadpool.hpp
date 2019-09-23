@@ -76,7 +76,7 @@ struct ThreadPool{
 private:
 
     template<bool waitForCompletion, class Index_t, class Func>
-    void parallelFor_impl(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    void parallelFor_impl(Index_t firstIndex, Index_t lastIndex, Func&& loop, std::size_t numThreads){
         std::mutex m;
         std::condition_variable cv;
         std::size_t finishedWork = 0;
@@ -92,14 +92,14 @@ private:
             }            
         };
 
-        Index_t totalIterations = end - begin;
+        Index_t totalIterations = lastIndex - firstIndex;
         if(totalIterations > 0){
             const std::size_t chunks = numThreads;
             const Index_t chunksize = totalIterations / chunks;
             const Index_t leftover = totalIterations % chunks;
 
-            Index_t begin = 0;
-            Index_t end = chunksize;
+            Index_t begin = firstIndex;
+            Index_t end = begin + chunksize;
             for(Index_t c = 0; c < chunks-1; c++){
                 if(c < leftover){
                     end++;
@@ -123,9 +123,12 @@ private:
             }
 
             if(waitForCompletion){
+                //std::cerr << "Wait for completion " << finishedWork << " / " << startedWork << "\n";
                 std::unique_lock<std::mutex> ul(m);
                 if(finishedWork != startedWork){
+                    //std::cerr << "Waiting\n";
                     cv.wait(ul, [&](){return finishedWork == startedWork;});
+                    //std::cerr << "No longer waiting\n";
                 }
             }
         }   
