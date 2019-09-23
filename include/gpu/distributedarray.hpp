@@ -533,10 +533,16 @@ public:
 
                 std::copy_n(indices, numIds, h_indices.get());
                 cudaMemcpyAsync(d_indices.get(), h_indices.get(), sizeof(Index_t) * numIds, H2D, stream); CUERR;
-                copyDataToGpuBufferAsync(d_result.get(), resultPitch, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]); CUERR;
+                copyDataToGpuBufferAsync(d_result.get(), sizeOfElement, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]); CUERR;
                 cudaMemcpyAsync(h_result.get(), d_result.get(), sizeof(Value_t) * numIds * numColumns, D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
-                std::copy_n(h_result.get(), numIds * numColumns, result);
+                
+                for(Index_t i = 0; i < numIds; i++){
+                    const Value_t* srcPtr = offsetPtr(h_result.get(), i);
+                    Value_t* destPtr = (Value_t*)(((const char*)(result)) + resultPitch * i);
+                    std::copy_n(srcPtr, numColumns, destPtr);
+                }
+                
 
                 return;
             }
