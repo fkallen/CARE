@@ -2208,7 +2208,7 @@ namespace gpu{
                         }
 
                         const bool isHQ = isGoodMinCoverage(min_coverage)
-                                            && smallestErrorrateThatWouldMakeHQ < estimatedErrorratePercent * 0.5f;
+                                            && smallestErrorrateThatWouldMakeHQ <= estimatedErrorratePercent * 0.5f;
 
                         //broadcastbuffer = isHQ;
                         d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(isHQ);
