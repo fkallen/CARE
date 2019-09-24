@@ -47,7 +47,7 @@ namespace care{
 
         auto& tableptr = minhasher.minhashTables[map];
         if(!tableptr->noMoreWrites){
-            std::cerr << "Transforming table " << map << std::endl;
+            std::cout << "Transforming table " << map << ". ";
             transform_keyvaluemap(*tableptr);
         }
     }

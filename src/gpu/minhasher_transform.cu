@@ -115,7 +115,7 @@ namespace care{
                                                     thrust::plus<Key_t>(),
                                                     thrust::not_equal_to<Key_t>());
 
-                std::cout << "nkeys = " << keys.size() << ", unique keys = " << nUniqueKeys << std::endl;
+                std::cout << "unique keys " << nUniqueKeys << ". ";
 
                 //histogram storage
                 thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_histogram_keys(nUniqueKeys);
@@ -192,7 +192,7 @@ namespace care{
                 throw std::runtime_error("Could not revert device id!");
 
             if(success)
-                std::cout << "Transformation done" << std::endl;
+                std::cout << "Transformation done." << std::endl;
             return success;
         }
 
@@ -212,12 +212,12 @@ namespace care{
             bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, deviceIds);
 
             if(!success){
-                std::cerr << "Fallback to managed memory transformation\n";
+                std::cout << "\nFallback to managed memory transformation" << std::endl;
                 success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, deviceIds);
             }
 
             if(!success){
-                std::cerr << "Fallback to cpu transformation\n";
+                std::cout << "\nFallback to cpu transformation" << std::endl;
                 cpu_transformation(map.keys, map.values, map.countsPrefixSum);
             }
         }
@@ -248,7 +248,7 @@ namespace care{
 
         auto& tableptr = minhasher.minhashTables[map];
         if(!tableptr->noMoreWrites){
-            std::cerr << "Transforming table " << map << std::endl;
+            std::cerr << "Transforming table " << map << ". ";
             transform_keyvaluemap(*tableptr, deviceIds);
         }
     }
