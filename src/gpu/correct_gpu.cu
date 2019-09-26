@@ -3108,7 +3108,9 @@ void state_unpackclassicresults_func(Batch& batch){
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
-        auto unpackAnchors = [](Batch* batchptr, int begin, int end){
+        Batch* batchptr = &batch;
+
+        auto unpackAnchors = [batchptr](int begin, int end){
             Batch& batch = *batchptr;
             DataArrays& dataArrays = batch.dataArrays;
             const auto& transFuncData = *batch.transFuncData;
@@ -3181,7 +3183,7 @@ void state_unpackclassicresults_func(Batch& batch){
             }
         };
 
-        auto unpackcandidates = [](Batch* batchptr, int begin, int end){
+        auto unpackcandidates = [batchptr](int begin, int end){
             Batch& batch = *batchptr;
             DataArrays& dataArrays = batch.dataArrays;
             const auto& transFuncData = *batch.transFuncData;
@@ -3278,13 +3280,7 @@ void state_unpackclassicresults_func(Batch& batch){
             }
         };
 
-        auto allChunksFinished = [&](Batch* batchptr){
-
-            std::unique_lock<std::mutex> l(batchptr->unpackclassicresultsDataFrame.m);
-
-            batchptr->unpackclassicresultsDataFrame.cv.wait(l, [batchptr](){
-                return batchptr->unpackclassicresultsDataFrame.finishedChunks == batchptr->unpackclassicresultsDataFrame.chunksToWaitFor;
-            });
+        auto allChunksFinished = [batchptr](){
 
             std::array<cudaStream_t, nStreamsPerBatch>& streams = batchptr->streams;
 
@@ -3293,78 +3289,18 @@ void state_unpackclassicresults_func(Batch& batch){
             cudaLaunchHostFunc(streams[primary_stream_index], nextStep, batchptr); CUERR;
         };
 
-        Batch* batchptr = &batch;
-
-        const int chunks = threadpool.getConcurrency();
-        const int chunksize = batch.tasks.size() / chunks;
-        const int leftover = batch.tasks.size() % chunks;
-
-        int begin = 0;
-        int end = chunksize;
-
-        for(int c = 0; c < chunks; c++){
-            if(c < leftover){
-                end++;
-            }
-            if(end - begin > 0){
-                batch.unpackclassicresultsDataFrame.chunksToWaitFor++;
-                //std::cerr << "unpackAnchors " << begin << " - " << end << "\n";
-                threadpool.enqueue([=](){
-                    nvtx::ScopedRange sr("unpackAnchors",7);
-                    unpackAnchors(batchptr, begin, end);
-
-                    {
-                        std::unique_lock<std::mutex> l(batchptr->unpackclassicresultsDataFrame.m);
-                        batchptr->unpackclassicresultsDataFrame.finishedChunks++;
-                    }
-
-                    batchptr->unpackclassicresultsDataFrame.cv.notify_one();
-                });
-
-                begin = end;
-                end = end + chunksize;
-            }else{
-                break;
-            }
+        if(!transFuncData.correctionOptions.correctCandidates){
+            threadpool.parallelFor(0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
+                unpackAnchors(begin, end);
+            });
+        }else{
+            threadpool.parallelFor(0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
+                unpackAnchors(begin, end);
+                unpackcandidates(begin, end);
+            });
         }
 
-        if(transFuncData.correctionOptions.correctCandidates) {
-
-            begin = 0;
-            end = chunksize;
-
-            for(int c = 0; c < chunks; c++){
-                if(c < leftover){
-                    end++;
-                }
-                if(end - begin > 0){
-                    batch.unpackclassicresultsDataFrame.chunksToWaitFor++;
-                    //std::cerr << "unpackAnchors " << begin << " - " << end << "\n";
-                    threadpool.enqueue([=](){
-                        nvtx::ScopedRange sr("unpackcandidates",7);
-                        unpackcandidates(batchptr, begin, end);
-
-                        {
-                            std::unique_lock<std::mutex> l(batchptr->unpackclassicresultsDataFrame.m);
-                            batchptr->unpackclassicresultsDataFrame.finishedChunks++;
-                        }
-
-                        batchptr->unpackclassicresultsDataFrame.cv.notify_one();
-                    });
-
-                    begin = end;
-                    end = end + chunksize;
-                }else{
-                    break;
-                }
-            }
-        }
-
-        threadpool.enqueue([=](){
-            nvtx::ScopedRange sr("allchunksfinishedunpack",6);
-            allChunksFinished(batchptr);
-        });
-
+        allChunksFinished();
     }
 #endif
 
