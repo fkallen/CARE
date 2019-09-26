@@ -53,7 +53,7 @@
         }
 
         ~PeerAccessBase(){
-            if(resetOnDestruction && oldEnabledPeerAccesses.size() == numGpus * numGpus){
+            if(resetOnDestruction && int(oldEnabledPeerAccesses.size()) == numGpus * numGpus){
                 setEnabledPeerAccesses(oldEnabledPeerAccesses);
             }
         }
