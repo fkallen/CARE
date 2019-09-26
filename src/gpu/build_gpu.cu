@@ -72,7 +72,8 @@ namespace gpu{
             DistributedReadStorage& readstorage = result.data.readStorage;
             //auto& validFlags = result.data.readIsValidFlags;
 
-            readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
+            readstorage = std::move(DistributedReadStorage{runtimeOptions.deviceIds, expectedNumberOfReads, useQualityScores, 
+                                                            expectedMinimumReadLength, expectedMaximumReadLength});
             //validFlags.resize(expectedNumberOfReads, false);
             result.builtType = BuiltType::Constructed;
 
@@ -238,6 +239,8 @@ namespace gpu{
             //     std::cerr << p.first << " " << p.second << '\n';
             // }
 
+            readstorage.constructionIsComplete();
+
             return result;
         }
 
@@ -290,7 +293,7 @@ namespace gpu{
 
                 auto sequencehandle = readStorage.makeGatherHandleSequences();
                 auto lengthhandle = readStorage.makeGatherHandleLengths();
-                size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthLimit()) * sizeof(int);
+                size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
 
                 //TIMERSTARTCPU(iter);
                 for(int iter = 0; iter < numIters; iter++){
@@ -326,11 +329,19 @@ namespace gpu{
 
                     //TIMERSTARTCPU(insert);
 
+                    std::vector<int> testlengths(indices.size());
+                    readStorage.gatherSequenceLengthsToHostBufferNew(
+                        testlengths.data(),
+                        indices.data(),
+                        int(indices.size()));
+
+
                     auto lambda = [&, readIdBegin](auto begin, auto end, int threadId){
                         for(read_number readId = begin; readId < end; readId++){
                             read_number localId = readId - readIdBegin;
                             const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
                             const int sequencelength = lengths[localId];
+                            assert(sequencelength == testlengths[localId]);
                             std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
                             minhasher.insertSequence(sequencestring, readId, mapIds);
                         }

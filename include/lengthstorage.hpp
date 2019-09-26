@@ -18,6 +18,7 @@ struct LengthStore{
 
     LengthStore(int minL, int maxL, std::int64_t numElements_) : minLength(minL), maxLength(maxL), numElements(numElements_){
         assert(minL <= maxL);
+        assert(numElements <= std::int64_t(std::numeric_limits<read_number>::max())+1);
 
         const int diff = maxL - minL;
         if(diff == 0){
@@ -80,8 +81,8 @@ struct LengthStore{
         return data.size();
     }
 
-    int getLength(std::int64_t index) const{
-        assert(index >= 0 && index < getNumElements());
+    int getLength(read_number index) const{
+        assert(index < getNumElements());
 
         if(getMinLength() == getMaxLength()){
             return getMinLength();
@@ -101,7 +102,8 @@ struct LengthStore{
         return int(lengthBits) + minLength;
     }
 
-    void setLength(std::int64_t index, int length){
+    void setLength(read_number index, int length){
+        assert(index < getNumElements());
         assert(minLength <= length && length <= maxLength);
 
         if(getMinLength() == getMaxLength()){

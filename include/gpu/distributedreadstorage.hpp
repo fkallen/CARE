@@ -5,6 +5,7 @@
 #ifdef __NVCC__
 
 #include <gpu/distributedarray.hpp>
+#include <gpu/gpulengthstorage.hpp>
 #include <config.hpp>
 #include <sequencefileio.hpp>
 
@@ -36,6 +37,7 @@ public:
     using GatherHandleLengths = DistributedArray<Length_t, read_number>::GatherHandle;
     using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
 
+    bool isReadOnly;
     std::vector<int> deviceIds;
     read_number numberOfReads;
     int sequenceLengthLowerBound;
@@ -44,7 +46,8 @@ public:
 
     std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
     std::mutex mutexUndeterminedBaseReads;
-
+    LengthStore lengthStorage;
+    GPULengthStore gpulengthStorage;
     DistributedArray<unsigned int, read_number> distributedSequenceData2;
     DistributedArray<Length_t, read_number> distributedSequenceLengths2;
     DistributedArray<char, read_number> distributedQualities2;
@@ -90,6 +93,9 @@ public:
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
+
+    void constructionIsComplete();
+    void allowModifications();
 
     GatherHandleSequences makeGatherHandleSequences() const;
 
@@ -174,6 +180,18 @@ public:
                                 const read_number* h_readIds,
                                 int nReadIds,
                                 int numCpuThreads) const;
+
+    void gatherSequenceLengthsToGpuBufferAsyncNew(
+                                int* d_lengths,
+                                int deviceId,
+                                const read_number* d_readIds,
+                                int nReadIds,    
+                                cudaStream_t stream) const;
+
+    void gatherSequenceLengthsToHostBufferNew(
+                                int* lengths,
+                                const read_number* readIds,
+                                int nReadIds) const;
 
 
     private:

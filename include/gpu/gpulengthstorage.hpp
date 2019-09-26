@@ -1,6 +1,8 @@
 #ifndef CARE_GPU_LENGTH_STORAGE_HPP
 #define CARE_GPU_LENGTH_STORAGE_HPP
 
+#include <config.hpp>
+
 #include <gpu/utility_kernels.cuh>
 #include <hpc_helpers.cuh>
 #include <lengthstorage.hpp>
@@ -62,7 +64,7 @@ struct GPULengthStore{
         return lengthStore.getNumElements();
     }
 
-    void gatherLengthsOnHost(int* result, const std::int64_t* ids, std::int64_t numIds){
+    void gatherLengthsOnHost(int* result, const read_number* ids, int numIds) const{
         auto loop = [&](auto begin, auto end){
             for(decltype(begin) i = begin; i < end; i++){
                 result[i] =  lengthStore.getLength(ids[i]);
@@ -74,9 +76,9 @@ struct GPULengthStore{
 
     void gatherLengthsOnDeviceAsync(int* d_result, 
                                     int resultDeviceId,
-                                    const std::int64_t* d_ids, 
+                                    const read_number* d_ids, 
                                     int numIds,
-                                    cudaStream_t stream){
+                                    cudaStream_t stream) const{
         auto it = std::find(deviceIds.begin(), deviceIds.end(), resultDeviceId);
         assert(it != deviceIds.end());
 
@@ -89,7 +91,7 @@ struct GPULengthStore{
         const Data_t* gpuData = deviceDataPointers[gpuIndex];
         int minLen = getMinLength();
         int maxLen = getMaxLength();
-        //std::int64_t size = getSize();
+
         int databits = DataTBits;
         int numRawElements = lengthStore.getRawSizeInElements();
         int bitsPerLength = lengthStore.getRawBitsPerLength();
@@ -128,7 +130,7 @@ struct GPULengthStore{
                 };
 
                 for(int i = threadIdx.x + blockIdx.x * blockDim.x; i < numIds; i += blockDim.x * gridDim.x){
-                    std::int64_t index = d_ids[i];
+                    read_number index = d_ids[i];
                     const std::uint64_t firstBit = bitsPerLength * index;
                     const std::uint64_t lastBitExcl = bitsPerLength * (index+1);
                     const std::uint64_t firstuintindex = firstBit / databits;
@@ -149,8 +151,13 @@ struct GPULengthStore{
         cudaSetDevice(oldDevice); CUERR;
     }
 
-    int getLength(std::int64_t index) const{
+    int getLength(read_number index) const{
         return lengthStore.getLength(index);
+    }
+
+    //After extractCpuLengthStorage, consider this GPULengthStore instance to be in a moved-from state
+    void extractCpuLengthStorage(LengthStore& target){
+        target = std::move(lengthStore);
     }
 
 private:

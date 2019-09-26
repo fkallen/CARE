@@ -29,6 +29,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                     int minimum_sequence_length, int maximum_sequence_length){
     assert(minimum_sequence_length <= maximum_sequence_length);
 
+    isReadOnly = false;
     deviceIds = deviceIds_;
     numberOfReads = nReads;
     sequenceLengthLowerBound = minimum_sequence_length;
@@ -41,6 +42,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     //constexpr size_t headRoom = (size_t(1) << 30) * 11; 
 
     if(numberOfReads > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
+        lengthStorage = std::move(LengthStore(sequenceLengthLowerBound, sequenceLengthUpperBound, numberOfReads));
+
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
         std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
@@ -96,12 +99,15 @@ DistributedReadStorage::DistributedReadStorage(DistributedReadStorage&& other){
 }
 
 DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage&& rhs){
+    isReadOnly = rhs.isReadOnly;
     deviceIds = std::move(rhs.deviceIds);
     numberOfReads = std::move(rhs.numberOfReads);
     sequenceLengthLowerBound = std::move(rhs.sequenceLengthLowerBound);
     sequenceLengthUpperBound = std::move(rhs.sequenceLengthUpperBound);
     useQualityScores = std::move(rhs.useQualityScores);
     readIdsOfReadsWithUndeterminedBase = std::move(rhs.readIdsOfReadsWithUndeterminedBase);
+    lengthStorage = std::move(rhs.lengthStorage);
+    gpulengthStorage = std::move(rhs.gpulengthStorage);
     distributedSequenceData2 = std::move(rhs.distributedSequenceData2);
     distributedSequenceLengths2 = std::move(rhs.distributedSequenceLengths2);
     distributedQualities2 = std::move(rhs.distributedQualities2);
@@ -147,6 +153,8 @@ void DistributedReadStorage::destroy(){
     numberOfReads = 0;
     sequenceLengthUpperBound = 0;
     std::vector<size_t> fractions(deviceIds.size(), 0);
+    lengthStorage = std::move(LengthStore{});
+    gpulengthStorage = std::move(GPULengthStore{});
     distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, 0, 0));
     distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, 0, 0));
     distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, fractions, 0, 0));
@@ -174,6 +182,8 @@ std::vector<int> DistributedReadStorage::getDeviceIds() const{
 }
 
 void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads){
+    assert(!isReadOnly);
+
     std::vector<read_number> indices(lastIndex_excl-firstIndex);
     std::iota(indices.begin(), indices.end(), firstIndex);
 
@@ -181,14 +191,20 @@ void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIn
 }
 
 void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads){
+    assert(!isReadOnly);
+
     setReads(firstIndex, lastIndex_excl, reads.data(), int(reads.size()));
 }
 
 void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads){
+    assert(!isReadOnly);
+
     setReads(indices, reads.data(), int(reads.size()));
 }
 
 void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const Read* reads, int numReads){
+    assert(!isReadOnly);
+
     //TIMERSTARTCPU(internalinit);
     auto lengthInRange = [&](Length_t length){
         return getSequenceLengthLowerBound() <= length && length <= getSequenceLengthUpperBound();
@@ -300,6 +316,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
 }
 
 void DistributedReadStorage::setReadContainsN(read_number readId, bool contains){
+    assert(!isReadOnly);
 
     auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
                                         readIdsOfReadsWithUndeterminedBase.end(),
@@ -334,27 +351,58 @@ bool DistributedReadStorage::readContainsN(read_number readId) const{
     return b2;
 }
 
+void DistributedReadStorage::constructionIsComplete(){
+    gpulengthStorage = std::move(GPULengthStore{std::move(lengthStorage), deviceIds});
+    isReadOnly = true;
+}
+
+void DistributedReadStorage::allowModifications(){
+    isReadOnly = false;
+    gpulengthStorage.extractCpuLengthStorage(lengthStorage);
+    gpulengthStorage = std::move(GPULengthStore{});
+}
+
 void DistributedReadStorage::setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data){
+    assert(!isReadOnly);
+
     distributedSequenceData2.setSafe(firstIndex, lastIndex_excl, reinterpret_cast<const unsigned int*>(data));
 }
 
 void DistributedReadStorage::setSequences(const std::vector<read_number>& indices, const char* data){
+    assert(!isReadOnly);
+
     distributedSequenceData2.setSafe(indices, reinterpret_cast<const unsigned int*>(data));
 }
 
 void DistributedReadStorage::setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data){
+    assert(!isReadOnly);
+
     distributedSequenceLengths2.setSafe(firstIndex, lastIndex_excl, data);
+
+    for(read_number i = firstIndex; i < lastIndex_excl; i++){
+        lengthStorage.setLength(i, data[i - firstIndex]);
+    }
 }
 
 void DistributedReadStorage::setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data){
+    assert(!isReadOnly);
+
     distributedSequenceLengths2.setSafe(indices, data);
+
+    for(std::size_t i = 0; i < indices.size(); i++){
+        lengthStorage.setLength(indices[i], data[i]);
+    }
 }
 
 void DistributedReadStorage::setQualities(read_number firstIndex, read_number lastIndex_excl, const char* data){
+    assert(!isReadOnly);
+
     distributedQualities2.setSafe(firstIndex, lastIndex_excl, data);
 }
 
 void DistributedReadStorage::setQualities(const std::vector<read_number>& indices, const char* data){
+    assert(!isReadOnly);
+    
     distributedQualities2.setSafe(indices, data);
 }
 
@@ -528,6 +576,35 @@ void DistributedReadStorage::gatherQualitiesToHostBuffer(
                                                         nReadIds,
                                                         h_quality_data,
                                                         out_quality_pitch);
+}
+
+
+void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsyncNew(
+                            int* d_lengths,
+                            int deviceId,
+                            const read_number* d_readIds,
+                            int nReadIds,    
+                            cudaStream_t stream) const{
+
+    assert(isReadOnly);
+
+    gpulengthStorage.gatherLengthsOnDeviceAsync(d_lengths, 
+                                                deviceId,
+                                                d_readIds, 
+                                                nReadIds,
+                                                stream);
+
+}
+
+void DistributedReadStorage::gatherSequenceLengthsToHostBufferNew(
+                            int* lengths,
+                            const read_number* readIds,
+                            int nReadIds) const{
+
+    assert(isReadOnly);
+
+    gpulengthStorage.gatherLengthsOnHost(lengths, readIds, nReadIds);
+
 }
 
 
