@@ -116,11 +116,6 @@ namespace care{
         auto& minhasher = dataStructuresgpu.builtMinhasher.data;
         auto& sequenceFileProperties = dataStructuresgpu.sequenceFileProperties;
 
-        // saveReadStorageToFile(readStorage, iterFileOptions);
-        // saveMinhasherToFile(minhasher, iterFileOptions);
-
-        printFileProperties(fileOptions.inputfile, sequenceFileProperties);
-
         TIMERSTARTCPU(candidateestimation);
         std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
 
