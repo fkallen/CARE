@@ -12,18 +12,14 @@ struct ThreadPool{
     using task_type = am::parallel_queue::task_type;
 
     ThreadPool()
-        : pq(std::make_unique<am::parallel_queue>()),
-            m{}{
-
+        : pq(std::make_unique<am::parallel_queue>()){
     }
 
     void enqueue(const task_type& t){
-        std::unique_lock<std::mutex> l(m);
         pq->enqueue(t);
     }
 
     void enqueue(task_type&& t){
-        std::unique_lock<std::mutex> l(m);
         pq->enqueue(std::move(t));
     }
 
@@ -62,8 +58,8 @@ struct ThreadPool{
         pq->wait();
     }
 
+    //don't call this in a situation where another thread could insert work
     void setConcurrency(int numThreads){
-        std::unique_lock<std::mutex> l(m);
         pq->wait();
 
         pq.reset(new am::parallel_queue(numThreads));
@@ -94,7 +90,7 @@ private:
 
         Index_t totalIterations = lastIndex - firstIndex;
         if(totalIterations > 0){
-            const std::size_t chunks = numThreads;
+            const Index_t chunks = numThreads;
             const Index_t chunksize = totalIterations / chunks;
             const Index_t leftover = totalIterations % chunks;
 
@@ -135,7 +131,6 @@ private:
     }
 
     std::unique_ptr<am::parallel_queue> pq;
-    std::mutex m;
 };
 
 
