@@ -19,23 +19,28 @@
 namespace care{
 namespace gpu{
 
-DistributedReadStorage::DistributedReadStorage(const std::vector<int>& deviceIds_, read_number nReads, bool b, int maximum_sequence_length){
+DistributedReadStorage::DistributedReadStorage(const std::vector<int>& deviceIds_, read_number nReads, bool b, 
+                    int minimum_sequence_length, int maximum_sequence_length){
 
-    init(deviceIds_, nReads, b, maximum_sequence_length);
+    init(deviceIds_, nReads, b, minimum_sequence_length, maximum_sequence_length);
 }
 
-void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_number nReads, bool b, int maximum_sequence_length){
+void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_number nReads, bool b, 
+                    int minimum_sequence_length, int maximum_sequence_length){
+    assert(minimum_sequence_length <= maximum_sequence_length);
+
     deviceIds = deviceIds_;
     numberOfReads = nReads;
-    sequenceLengthLimit = maximum_sequence_length;
+    sequenceLengthLowerBound = minimum_sequence_length;
+    sequenceLengthUpperBound = maximum_sequence_length;
     useQualityScores = b;
 
     int numGpus = deviceIds.size();
 
     constexpr size_t headRoom = gpuReadStorageHeadroomPerGPU; 
-    //constexpr size_t headRoom = (size_t(1) << 30) * 12;
+    //constexpr size_t headRoom = (size_t(1) << 30) * 11; 
 
-    if(numberOfReads > 0 && sequenceLengthLimit > 0){
+    if(numberOfReads > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
         std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
@@ -63,7 +68,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         int oldId; cudaGetDevice(&oldId); CUERR;
 
 
-        const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthLimit);
+        const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound);
 
         updateMemoryLimits();
         distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, intsPerSequence));
@@ -73,7 +78,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
 
         if(useQualityScores){
             updateMemoryLimits();
-            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, sequenceLengthLimit));
+            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, sequenceLengthUpperBound));
         }
 
         getGpuMemoryInfo();
@@ -93,7 +98,8 @@ DistributedReadStorage::DistributedReadStorage(DistributedReadStorage&& other){
 DistributedReadStorage& DistributedReadStorage::operator=(DistributedReadStorage&& rhs){
     deviceIds = std::move(rhs.deviceIds);
     numberOfReads = std::move(rhs.numberOfReads);
-    sequenceLengthLimit = std::move(rhs.sequenceLengthLimit);
+    sequenceLengthLowerBound = std::move(rhs.sequenceLengthLowerBound);
+    sequenceLengthUpperBound = std::move(rhs.sequenceLengthUpperBound);
     useQualityScores = std::move(rhs.useQualityScores);
     readIdsOfReadsWithUndeterminedBase = std::move(rhs.readIdsOfReadsWithUndeterminedBase);
     distributedSequenceData2 = std::move(rhs.distributedSequenceData2);
@@ -139,7 +145,7 @@ DistributedReadStorage::Statistics DistributedReadStorage::getStatistics() const
 
 void DistributedReadStorage::destroy(){
     numberOfReads = 0;
-    sequenceLengthLimit = 0;
+    sequenceLengthUpperBound = 0;
     std::vector<size_t> fractions(deviceIds.size(), 0);
     distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, 0, 0));
     distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, 0, 0));
@@ -155,8 +161,12 @@ bool DistributedReadStorage::canUseQualityScores() const{
     return useQualityScores;
 }
 
-int DistributedReadStorage::getSequenceLengthLimit() const{
-    return sequenceLengthLimit;
+int DistributedReadStorage::getSequenceLengthLowerBound() const{
+    return sequenceLengthLowerBound;
+}
+
+int DistributedReadStorage::getSequenceLengthUpperBound() const{
+    return sequenceLengthUpperBound;
 }
 
 std::vector<int> DistributedReadStorage::getDeviceIds() const{
@@ -180,10 +190,13 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
 
 void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const Read* reads, int numReads){
     //TIMERSTARTCPU(internalinit);
+    auto lengthInRange = [&](Length_t length){
+        return getSequenceLengthLowerBound() <= length && length <= getSequenceLengthUpperBound();
+    };
     assert(indices.size() > 0);
     assert(numReads == int(indices.size()));
     assert(std::all_of(indices.begin(), indices.end(), [&](auto i){ return i < getNumberOfReads();}));
-    assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return Length_t(r.sequence.length()) <= getSequenceLengthLimit();}));
+    assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return lengthInRange(Length_t(r.sequence.length()));}));
     assert(std::all_of(reads, reads + numReads, [&](const auto& r){ return r.sequence.length() == r.quality.length();}));
 
     auto minmax = std::minmax_element(reads, reads + numReads, [](const auto& r1, const auto& r2){
@@ -197,13 +210,13 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     std::vector<Length_t> sequenceLengths;
     std::vector<char> qualityData;
 
-    const size_t encodedSequencePitch = getEncodedNumInts2BitHiLo(getSequenceLengthLimit()) * sizeof(int);
-    const size_t qualityPitch = getSequenceLengthLimit();
+    const size_t encodedSequencePitch = getEncodedNumInts2BitHiLo(getSequenceLengthUpperBound()) * sizeof(int);
+    const size_t qualityPitch = getSequenceLengthUpperBound();
 
     sequenceData.resize(encodedSequencePitch * numReads, 0);
     sequenceLengths.resize(numReads, 0);
     if(canUseQualityScores()){
-        qualityData.resize(getSequenceLengthLimit() * numReads, 0);
+        qualityData.resize(getSequenceLengthUpperBound() * numReads, 0);
     }
 
     //TIMERSTOPCPU(internalinit);
@@ -526,7 +539,8 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
     stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
 
     stream.write(reinterpret_cast<const char*>(&numberOfReads), sizeof(read_number));
-    stream.write(reinterpret_cast<const char*>(&sequenceLengthLimit), sizeof(int));
+    stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
+    stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
     stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
     stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
 
@@ -535,7 +549,7 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
 
     {
         auto sequencehandle = makeGatherHandleSequences();
-        size_t outputpitch = getEncodedNumInts2BitHiLo(sequenceLengthLimit) * sizeof(int);
+        size_t outputpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
 
         size_t totalSequenceMemory = outputpitch * numberOfReads;
         stream.write(reinterpret_cast<const char*>(&totalSequenceMemory), sizeof(size_t));
@@ -596,7 +610,7 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
 
     if(useQualityScores){
         auto qualityhandle = makeGatherHandleQualities();
-        size_t outputpitch = sequenceLengthLimit;
+        size_t outputpitch = sequenceLengthUpperBound;
 
         size_t totalqualityMemory = outputpitch * numberOfReads;
         stream.write(reinterpret_cast<const char*>(&totalqualityMemory), sizeof(size_t));
@@ -651,14 +665,17 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
 
     read_number loaded_numberOfReads;
-    int loaded_sequenceLengthLimit;
+    int loaded_sequenceLengthLowerBound;
+    int loaded_sequenceLengthUpperBound;
     bool loaded_useQualityScores;
 
     stream.read(reinterpret_cast<char*>(&loaded_numberOfReads), sizeof(read_number));
-    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLimit), sizeof(int));
+    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
+    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));
     stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
 
-    init(deviceIds_, loaded_numberOfReads, loaded_useQualityScores, loaded_sequenceLengthLimit);
+    init(deviceIds_, loaded_numberOfReads, loaded_useQualityScores, 
+        loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
 
     stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
 
@@ -666,7 +683,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     int numBatches = SDIV(numberOfReads, batchsize);
 
     {
-        size_t seqpitch = getEncodedNumInts2BitHiLo(sequenceLengthLimit) * sizeof(int);
+        size_t seqpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
 
         size_t totalSequenceMemory = 1;
         stream.read(reinterpret_cast<char*>(&totalSequenceMemory), sizeof(size_t));
@@ -725,7 +742,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     }
 
     if(useQualityScores){
-        size_t qualitypitch = sequenceLengthLimit;
+        size_t qualitypitch = sequenceLengthUpperBound;
 
         size_t totalqualityMemory = 1;
         stream.read(reinterpret_cast<char*>(&totalqualityMemory), sizeof(size_t));

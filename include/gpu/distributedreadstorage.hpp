@@ -38,7 +38,8 @@ public:
 
     std::vector<int> deviceIds;
     read_number numberOfReads;
-    int sequenceLengthLimit;
+    int sequenceLengthLowerBound;
+    int sequenceLengthUpperBound;
     bool useQualityScores;
 
     std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
@@ -54,9 +55,10 @@ public:
 
 	bool hasMoved = false;
 
-    DistributedReadStorage() : DistributedReadStorage({}, 0, false, 0){};
+    DistributedReadStorage() : DistributedReadStorage({}, 0, false, 0, 0){};
 
-    DistributedReadStorage(const std::vector<int>& deviceIds_, read_number nReads, bool b, int maximum_sequence_length);
+    DistributedReadStorage(const std::vector<int>& deviceIds_, read_number nReads, bool b, 
+                            int minimum_sequence_length, int maximum_sequence_length);
 
     DistributedReadStorage(const DistributedReadStorage& other) = delete;
     DistributedReadStorage& operator=(const DistributedReadStorage& other) = delete;
@@ -73,7 +75,8 @@ public:
 
     read_number getNumberOfReads() const;
     bool canUseQualityScores() const;
-    int getSequenceLengthLimit() const;
+    int getSequenceLengthLowerBound() const;
+    int getSequenceLengthUpperBound() const;
     std::vector<int> getDeviceIds() const;
 
     void saveToFile(const std::string& filename) const;
@@ -174,7 +177,8 @@ public:
 
 
     private:
-        void init(const std::vector<int>& deviceIds, read_number nReads, bool b, int maximum_sequence_length);
+        void init(const std::vector<int>& deviceIds, read_number nReads, bool b, 
+                    int minimum_sequence_length, int maximum_sequence_length);
 
         void setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data);
         void setSequences(const std::vector<read_number>& indices, const char* data);
