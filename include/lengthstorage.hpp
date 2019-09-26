@@ -1,9 +1,12 @@
 #ifndef CARE_LENGTH_STORAGE_HPP
 #define CARE_LENGTH_STORAGE_HPP
 
+#include <config.hpp>
+
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace care{
