@@ -32,6 +32,7 @@ namespace care{
                                                 const RuntimeOptions& runtimeOptions,
                                                 bool useQualityScores,
                                                 read_number expectedNumberOfReads,
+                                                int expectedMinimumReadLength,
                                                 int expectedMaximumReadLength){
 
 
@@ -186,14 +187,9 @@ namespace care{
         auto& sequenceFileProperties = result.sequenceFileProperties;
 
         if(fileOptions.load_binary_reads_from == "") {
-            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
-                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
-                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-            }else{
-                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-                sequenceFileProperties.minSequenceLength = 0;
-                sequenceFileProperties.nReads = fileOptions.nReads;
-            }
+            sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
+
+            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
         }
 
         TIMERSTARTCPU(build_readstorage);
@@ -201,6 +197,7 @@ namespace care{
                                                   runtimeOptions,
                                                   correctionOptions.useQualityScores,
                                                   sequenceFileProperties.nReads,
+                                                  sequenceFileProperties.minSequenceLength,
                                                   sequenceFileProperties.maxSequenceLength);
         TIMERSTOPCPU(build_readstorage);
 
@@ -230,14 +227,9 @@ namespace care{
         auto& sequenceFileProperties = result.sequenceFileProperties;
 
         if(fileOptions.load_binary_reads_from == "") {
-            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
-                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
-                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-            }else{
-                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-                sequenceFileProperties.minSequenceLength = 0;
-                sequenceFileProperties.nReads = fileOptions.nReads;
-            }
+            sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
+
+            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
         }
 
         TIMERSTARTCPU(build_readstorage);
@@ -245,6 +237,7 @@ namespace care{
                                                   runtimeOptions,
                                                   correctionOptions.useQualityScores,
                                                   sequenceFileProperties.nReads,
+                                                  sequenceFileProperties.minSequenceLength,
                                                   sequenceFileProperties.maxSequenceLength);
         TIMERSTOPCPU(build_readstorage);
 

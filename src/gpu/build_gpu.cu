@@ -40,6 +40,7 @@ namespace gpu{
                                                 const RuntimeOptions& runtimeOptions,
                                                 bool useQualityScores,
                                                 read_number expectedNumberOfReads,
+                                                int expectedMinimumReadLength,
                                                 int expectedMaximumReadLength){
 
 
@@ -364,22 +365,18 @@ namespace gpu{
         auto& sequenceFileProperties = result.sequenceFileProperties;
 
         if(fileOptions.load_binary_reads_from == "") {
-            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
-                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
-                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-            }else{
-                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-                sequenceFileProperties.minSequenceLength = 0;
-                sequenceFileProperties.nReads = fileOptions.nReads;
-            }
+            sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
+
+            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
         }
 
         TIMERSTARTCPU(build_readstorage);
         result.builtReadStorage = buildGpuReadStorage(fileOptions,
-                                                  runtimeOptions,
-                                                  correctionOptions.useQualityScores,
-                                                  sequenceFileProperties.nReads,
-                                                  sequenceFileProperties.maxSequenceLength);
+                                                    runtimeOptions,
+                                                    correctionOptions.useQualityScores,
+                                                    sequenceFileProperties.nReads,
+                                                    sequenceFileProperties.minSequenceLength,
+                                                    sequenceFileProperties.maxSequenceLength);
         TIMERSTOPCPU(build_readstorage);
 
         const auto& readStorage = result.builtReadStorage.data.readStorage;
@@ -400,21 +397,16 @@ namespace gpu{
     BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
                                                         const CorrectionOptions& correctionOptions,
                                                         const RuntimeOptions& runtimeOptions,
-                                                        const FileOptions& fileOptions){
+                                                        const FileOptions& fileOptions){                                                     
 
         BuiltGpuDataStructures result;
 
         auto& sequenceFileProperties = result.sequenceFileProperties;
 
         if(fileOptions.load_binary_reads_from == "") {
-            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0) {
-                std::cout << "Scanning file to get number of reads and maximum sequence length." << std::endl;
-                sequenceFileProperties = getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
-            }else{
-                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
-                sequenceFileProperties.minSequenceLength = 0;
-                sequenceFileProperties.nReads = fileOptions.nReads;
-            }
+            sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
+
+            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
         }
 
         TIMERSTARTCPU(build_readstorage);
@@ -422,6 +414,7 @@ namespace gpu{
                                                   runtimeOptions,
                                                   correctionOptions.useQualityScores,
                                                   sequenceFileProperties.nReads,
+                                                  sequenceFileProperties.minSequenceLength,
                                                   sequenceFileProperties.maxSequenceLength);
         TIMERSTOPCPU(build_readstorage);
 

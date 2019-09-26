@@ -16,6 +16,7 @@
 #include <gpu/distributedreadstorage.hpp>
 #endif
 
+#include <string>
 #include <stdexcept>
 #include <iostream>
 #include <limits>
@@ -27,6 +28,37 @@
 #include <omp.h>
 
 namespace care{
+
+    namespace detail{
+
+        inline
+        SequenceFileProperties getSequenceFilePropertiesFromFileOptions(const FileOptions& fileOptions){
+            if(fileOptions.nReads == 0 || fileOptions.maximum_sequence_length == 0 || fileOptions.minimum_sequence_length < 0) {
+                std::cout << "Scanning file to get number of reads and min/max sequence length." << std::endl;
+
+                return getSequenceFileProperties(fileOptions.inputfile, fileOptions.format);
+            }else{
+                std::cout << "Using the supplied number of reads and min/max sequence length." << std::endl;
+
+                SequenceFileProperties sequenceFileProperties;
+                sequenceFileProperties.maxSequenceLength = fileOptions.maximum_sequence_length;
+                sequenceFileProperties.minSequenceLength = fileOptions.minimum_sequence_length;
+                sequenceFileProperties.nReads = fileOptions.nReads;
+                return sequenceFileProperties;
+            }
+        }
+
+        inline
+        void printInputFileProperties(std::ostream& os, const std::string& filename, const SequenceFileProperties& props){
+            os << "----------------------------------------\n";
+            os << "File: " << filename << "\n";
+            os << "Reads: " << props.nReads << "\n";
+            os << "Minimum sequence length: " << props.minSequenceLength << "\n";
+            os << "Maximum sequence length: " << props.maxSequenceLength << "\n";
+            os << "----------------------------------------\n";
+        }; 
+
+    }
 
     enum class BuiltType {Constructed, Loaded};
 
@@ -42,9 +74,6 @@ namespace care{
 
         SequenceFileProperties sequenceFileProperties;
     };
-
-
-
 
     BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
                                                 const RuntimeOptions& runtimeOptions,
