@@ -22,6 +22,7 @@ struct LengthStore{
 
         const int diff = maxL - minL;
         if(diff == 0){
+            bitsPerLength = 0;
             return;
         }
 

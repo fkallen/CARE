@@ -64,6 +64,10 @@ struct GPULengthStore{
         return lengthStore.getNumElements();
     }
 
+    int getRawBitsPerLength() const{
+        return lengthStore.getRawBitsPerLength();
+    }
+
     void gatherLengthsOnHost(int* result, const read_number* ids, int numIds) const{
         auto loop = [&](auto begin, auto end){
             for(decltype(begin) i = begin; i < end; i++){
