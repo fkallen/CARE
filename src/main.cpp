@@ -72,11 +72,13 @@ int main(int argc, char** argv){
 		//cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("correctionType", "0: Classic, 1: Forest, 2: Convnet",
 		cxxopts::value<int>()->default_value("0")->implicit_value("0"))
-		("maxCandidates", "Upper limit for number of candidates per read. Reads with more than max_candidates candidates will not be corrected. The program will guess the limit if max_candidates == 0",
+		("maxCandidates", "Upper bound for number of candidates per read. Reads with more than max_candidates candidates will not be corrected. The program will guess the limit if max_candidates == 0",
 		cxxopts::value<int>()->default_value("0")->implicit_value("0"))
-		("nReads", "Upper limit for number of reads in the inputfile. The program will determine the exact number of reads before building the datastructures if nReads == 0",
+		("nReads", "Upper bound for number of reads in the inputfile. If set 0, the input file is parsed to find the exact number of reads before any work is done.",
 		cxxopts::value<std::uint64_t>()->default_value("0")->implicit_value("0"))
-		("max_length", "Upper limit for read length in file.",
+		("min_length", "Lower bound for read length in file. If set negative, the input file is parsed to find the exact minimum length before any work is done.",
+		cxxopts::value<int>()->default_value("-1")->implicit_value("-1"))
+		("max_length", "Upper bound for read length in file. If set 0, the input file is parsed to find the exact maximum length before any work is done.",
 		cxxopts::value<int>()->default_value("0")->implicit_value("0"))
 
 		("progress", "If set, progress bar is shown during correction",

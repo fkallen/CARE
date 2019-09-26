@@ -157,6 +157,7 @@ namespace args{
         }
 
 		result.nReads = pr["nReads"].as<std::uint64_t>();
+        result.minimum_sequence_length = pr["min_length"].as<int>();
         result.maximum_sequence_length = pr["max_length"].as<int>();
         result.save_binary_reads_to = pr["save-binary-reads-to"].as<std::string>();
         result.load_binary_reads_from = pr["load-binary-reads-from"].as<std::string>();
