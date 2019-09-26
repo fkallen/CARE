@@ -44,6 +44,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     if(numberOfReads > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
         lengthStorage = std::move(LengthStore(sequenceLengthLowerBound, sequenceLengthUpperBound, numberOfReads));
 
+        std::cout << "Using " << lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
+
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
         std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
@@ -76,8 +78,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         updateMemoryLimits();
         distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, intsPerSequence));
 
-        updateMemoryLimits();
-        distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, 1));
+        //updateMemoryLimits();
+        //distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, maximumUsableBytesPerGpu, numberOfReads, 1));
 
         if(useQualityScores){
             updateMemoryLimits();
@@ -377,7 +379,7 @@ void DistributedReadStorage::setSequences(const std::vector<read_number>& indice
 void DistributedReadStorage::setSequenceLengths(read_number firstIndex, read_number lastIndex_excl, const Length_t* data){
     assert(!isReadOnly);
 
-    distributedSequenceLengths2.setSafe(firstIndex, lastIndex_excl, data);
+    //distributedSequenceLengths2.setSafe(firstIndex, lastIndex_excl, data);
 
     for(read_number i = firstIndex; i < lastIndex_excl; i++){
         lengthStorage.setLength(i, data[i - firstIndex]);
@@ -387,7 +389,7 @@ void DistributedReadStorage::setSequenceLengths(read_number firstIndex, read_num
 void DistributedReadStorage::setSequenceLengths(const std::vector<read_number>& indices, const Length_t* data){
     assert(!isReadOnly);
 
-    distributedSequenceLengths2.setSafe(indices, data);
+    //distributedSequenceLengths2.setSafe(indices, data);
 
     for(std::size_t i = 0; i < indices.size(); i++){
         lengthStorage.setLength(indices[i], data[i]);
@@ -411,6 +413,7 @@ DistributedReadStorage::GatherHandleSequences DistributedReadStorage::makeGather
 }
 
 DistributedReadStorage::GatherHandleLengths DistributedReadStorage::makeGatherHandleLengths() const{
+    assert(false);
     return distributedSequenceLengths2.makeGatherHandle();
 }
 
@@ -452,7 +455,7 @@ void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync(
                             int deviceId,
                             cudaStream_t stream,
                             int) const{
-
+    assert(false);
     distributedSequenceLengths2.gatherElementsInGpuMemAsync(handle,
                                                         h_readIds,
                                                         d_readIds,
@@ -509,6 +512,8 @@ std::future<void> DistributedReadStorage::gatherSequenceLengthsToHostBufferAsync
                             int nReadIds,
                             int numCpuThreads) const{
 
+    assert(false);
+
     return distributedSequenceLengths2.gatherElementsInHostMemAsync(handle,
                                                         h_readIds,
                                                         nReadIds,
@@ -555,6 +560,7 @@ void DistributedReadStorage::gatherSequenceLengthsToHostBuffer(
                             int nReadIds,
                             int numCpuThreads) const{
 
+    assert(false);
     return distributedSequenceLengths2.gatherElementsInHostMem(handle,
                                                         h_readIds,
                                                         nReadIds,

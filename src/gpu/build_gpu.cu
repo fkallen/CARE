@@ -292,7 +292,7 @@ namespace gpu{
                 int numIters = SDIV(numReads, parallelReads);
 
                 auto sequencehandle = readStorage.makeGatherHandleSequences();
-                auto lengthhandle = readStorage.makeGatherHandleLengths();
+                //auto lengthhandle = readStorage.makeGatherHandleLengths();
                 size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
 
                 //TIMERSTARTCPU(iter);
@@ -315,33 +315,30 @@ namespace gpu{
                                                 indices.data(),
                                                 indices.size(),
                                                 1);
-                    auto future2 = readStorage.gatherSequenceLengthsToHostBufferAsync(
-                                                lengthhandle,
-                                                lengths.data(),
-                                                indices.data(),
-                                                indices.size(),
-                                                1);
+                    // auto future2 = readStorage.gatherSequenceLengthsToHostBufferAsync(
+                    //                             lengthhandle,
+                    //                             lengths.data(),
+                    //                             indices.data(),
+                    //                             indices.size(),
+                    //                             1);
+
+                    readStorage.gatherSequenceLengthsToHostBufferNew(
+                        lengths.data(),
+                        indices.data(),
+                        int(indices.size()));
 
                     future1.wait();
-                    future2.wait();
+                    //future2.wait();
 
                     //TIMERSTOPCPU(gather);
 
                     //TIMERSTARTCPU(insert);
-
-                    std::vector<int> testlengths(indices.size());
-                    readStorage.gatherSequenceLengthsToHostBufferNew(
-                        testlengths.data(),
-                        indices.data(),
-                        int(indices.size()));
-
 
                     auto lambda = [&, readIdBegin](auto begin, auto end, int threadId){
                         for(read_number readId = begin; readId < end; readId++){
                             read_number localId = readId - readIdBegin;
                             const char* encodedsequence = (const char*)&sequenceData[localId * sequencepitch];
                             const int sequencelength = lengths[localId];
-                            assert(sequencelength == testlengths[localId]);
                             std::string sequencestring = get2BitHiLoString((const unsigned int*)encodedsequence, sequencelength);
                             minhasher.insertSequence(sequencestring, readId, mapIds);
                         }
