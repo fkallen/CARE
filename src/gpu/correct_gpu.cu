@@ -1034,9 +1034,9 @@ namespace gpu{
 
         //for each anchor, get candidates
 
+        Batch* batchptr = &batch;
 
-
-        auto maketasks = [](Batch* batchptr, int begin, int end){
+        auto maketasks = [batchptr](int begin, int end){
 
             const auto& transFuncData = *(batchptr->transFuncData);
 
@@ -1110,7 +1110,7 @@ namespace gpu{
             batchptr->findcandidateidsDataFrame.initialNumberOfCandidates += initialNumberOfCandidates;
         };
 
-        auto allChunksFinished = [](Batch* batchptr){
+        auto allChunksFinished = [batchptr](){
 
             std::unique_lock<std::mutex> l(batchptr->findcandidateidsDataFrame.m);
 
@@ -1205,46 +1205,11 @@ namespace gpu{
             }
         };
 
-
-        const int chunks = threadpool.getConcurrency();
-        const int chunksize = batch.initialNumberOfAnchorIds / chunks;
-        const int leftover = batch.initialNumberOfAnchorIds % chunks;
-
-        Batch* batchptr = &batch;
-
-        int begin = 0;
-        int end = chunksize;
-
-        for(int c = 0; c < chunks; c++){
-            if(c < leftover){
-                end++;
-            }
-            if(end - begin > 0){
-                batch.findcandidateidsDataFrame.chunksToWaitFor++;
-                //std::cerr << "maketasks " << begin << " - " << end << "\n";
-                threadpool.enqueue([=](){
-                    nvtx::ScopedRange sr("maketasks",7);
-                    maketasks(batchptr, begin, end);
-
-                    {
-                        std::unique_lock<std::mutex> l(batchptr->findcandidateidsDataFrame.m);
-                        batchptr->findcandidateidsDataFrame.finishedChunks++;
-                    }
-
-                    batchptr->findcandidateidsDataFrame.cv.notify_one();
-                });
-
-                begin = end;
-                end = end + chunksize;
-            }else{
-                break;
-            }
-        }
-
-        threadpool.enqueue([=](){
-            nvtx::ScopedRange sr("allchunksfinishedmaketasks",6);
-            allChunksFinished(batchptr);
+        threadpool.parallelFor(0, batch.initialNumberOfAnchorIds, [=](auto begin, auto end, auto /*threadId*/){
+            maketasks(begin, end);
         });
+
+        allChunksFinished();
     }
 
 
