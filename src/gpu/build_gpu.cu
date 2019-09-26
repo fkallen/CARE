@@ -59,6 +59,8 @@ namespace gpu{
 
             std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
 
+            readStorage.constructionIsComplete();
+
             return result;
         }else{
             //int nThreads = std::max(1, std::min(runtimeOptions.threads, 2));
@@ -427,6 +429,7 @@ namespace gpu{
         TIMERSTOPCPU(build_readstorage);
 
         const auto& readStorage = result.builtReadStorage.data.readStorage;
+        std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
 
         if(fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
@@ -434,11 +437,13 @@ namespace gpu{
     		std::cout << "Saved reads" << std::endl;
     	}
 
-        //if(result.builtReadStorage.builtType == BuiltType::Loaded) {
+        if(result.builtReadStorage.builtType == BuiltType::Loaded) {
             sequenceFileProperties.nReads = readStorage.getNumberOfReads();
             sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
             sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
-        //}
+
+            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
+        }
 
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);

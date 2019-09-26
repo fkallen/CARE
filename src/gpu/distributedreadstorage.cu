@@ -44,8 +44,6 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     if(numberOfReads > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
         lengthStorage = std::move(LengthStore(sequenceLengthLowerBound, sequenceLengthUpperBound, numberOfReads));
 
-        std::cout << "Using " << lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
-
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
         std::vector<size_t> maximumUsableBytesPerGpu(numGpus, 0);
@@ -568,14 +566,16 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
     std::ofstream stream(filename, std::ios::binary);
 
     //int ser_id = serialization_id;
-    std::size_t lengthsize = sizeof(Length_t);
-    stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
+    //std::size_t lengthsize = sizeof(Length_t);
+    //stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
 
     stream.write(reinterpret_cast<const char*>(&numberOfReads), sizeof(read_number));
     stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
     stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
     stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
     stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
+
+    gpulengthStorage.writeCpuLengthStoreToStream(stream);
 
     constexpr read_number batchsize = 10000000;
     int numBatches = SDIV(numberOfReads, batchsize);
@@ -611,35 +611,35 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
         }
     }
 
-    {
-        auto lengthhandle = makeGatherHandleLengths();
-        size_t outputpitch = sizeof(Length_t);
+    // {
+    //     auto lengthhandle = makeGatherHandleLengths();
+    //     size_t outputpitch = sizeof(Length_t);
 
-        size_t totalLengthMemory = outputpitch * numberOfReads;
-        stream.write(reinterpret_cast<const char*>(&totalLengthMemory), sizeof(size_t));
+    //     size_t totalLengthMemory = outputpitch * numberOfReads;
+    //     stream.write(reinterpret_cast<const char*>(&totalLengthMemory), sizeof(size_t));
 
-        for(int batch = 0; batch < numBatches; batch++){
-            read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
+    //     for(int batch = 0; batch < numBatches; batch++){
+    //         read_number begin = batch * batchsize;
+    //         read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
 
-            std::vector<read_number> indices(end-begin);
-            std::iota(indices.begin(), indices.end(), begin);
+    //         std::vector<read_number> indices(end-begin);
+    //         std::iota(indices.begin(), indices.end(), begin);
 
-            size_t databytes = outputpitch * indices.size();
-            std::vector<Length_t> data(indices.size(), 0);
+    //         size_t databytes = outputpitch * indices.size();
+    //         std::vector<Length_t> data(indices.size(), 0);
 
-            auto future = gatherSequenceLengthsToHostBufferAsync(
-                                        lengthhandle,
-                                        data.data(),
-                                        indices.data(),
-                                        indices.size(),
-                                        1);
+    //         auto future = gatherSequenceLengthsToHostBufferAsync(
+    //                                     lengthhandle,
+    //                                     data.data(),
+    //                                     indices.data(),
+    //                                     indices.size(),
+    //                                     1);
 
-            future.wait();
+    //         future.wait();
 
-            stream.write(reinterpret_cast<const char*>(&data[0]), databytes);
-        }
-    }
+    //         stream.write(reinterpret_cast<const char*>(&data[0]), databytes);
+    //     }
+    // }
 
     if(useQualityScores){
         auto qualityhandle = makeGatherHandleQualities();
@@ -689,12 +689,12 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
     destroy();
 
-    std::size_t lengthsize = sizeof(Length_t);
-    std::size_t loaded_lengthsize;
-    stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
+    // std::size_t lengthsize = sizeof(Length_t);
+    // std::size_t loaded_lengthsize;
+    // stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
 
-    if(loaded_lengthsize != lengthsize)
-        throw std::runtime_error("Wrong size of length type!");
+    // if(loaded_lengthsize != lengthsize)
+    //     throw std::runtime_error("Wrong size of length type!");
 
 
     read_number loaded_numberOfReads;
@@ -711,6 +711,8 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
         loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
 
     stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
+
+    lengthStorage.readFromStream(stream);
 
     constexpr read_number batchsize = 10000000;
     int numBatches = SDIV(numberOfReads, batchsize);
@@ -741,38 +743,38 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
         assert(totalMemoryRead == totalSequenceMemory);
     }
 
-    {
-        size_t lengthpitch = sizeof(Length_t);
+    // {
+    //     size_t lengthpitch = sizeof(Length_t);
 
-        size_t totalLengthMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalLengthMemory), sizeof(size_t));
+    //     size_t totalLengthMemory = 1;
+    //     stream.read(reinterpret_cast<char*>(&totalLengthMemory), sizeof(size_t));
 
-        size_t totalMemoryRead = 0;
+    //     size_t totalMemoryRead = 0;
 
-        for(int batch = 0; batch < numBatches; batch++){
-            read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
+    //     for(int batch = 0; batch < numBatches; batch++){
+    //         read_number begin = batch * batchsize;
+    //         read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
 
-            std::vector<Length_t> data((end-begin), 0);
+    //         std::vector<Length_t> data((end-begin), 0);
 
-            size_t databytes = lengthpitch * (end-begin);
-            stream.read(reinterpret_cast<char*>(&data[0]), databytes);
-            totalMemoryRead += stream.gcount();
+    //         size_t databytes = lengthpitch * (end-begin);
+    //         stream.read(reinterpret_cast<char*>(&data[0]), databytes);
+    //         totalMemoryRead += stream.gcount();
 
-            assert(totalMemoryRead <= totalLengthMemory);
+    //         assert(totalMemoryRead <= totalLengthMemory);
 
-            setSequenceLengths(begin, end, data.data());
+    //         setSequenceLengths(begin, end, data.data());
 
-            auto minmax = std::minmax_element(data.begin(), data.end(), [](const auto& l1, const auto& l2){
-                return l1 < l2;
-            });
+    //         // auto minmax = std::minmax_element(data.begin(), data.end(), [](const auto& l1, const auto& l2){
+    //         //     return l1 < l2;
+    //         // });
 
-            statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(*minmax.first));
-            statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(*minmax.second));
-        }
+    //         // statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, int(*minmax.first));
+    //         // statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, int(*minmax.second));
+    //     }
 
-        assert(totalMemoryRead == totalLengthMemory);
-    }
+    //     assert(totalMemoryRead == totalLengthMemory);
+    // }
 
     if(useQualityScores){
         size_t qualitypitch = sequenceLengthUpperBound;

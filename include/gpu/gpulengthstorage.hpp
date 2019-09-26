@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <vector>
 
 namespace care{
@@ -21,9 +22,29 @@ struct GPULengthStore{
 
     GPULengthStore() = default;
 
-    GPULengthStore(LengthStore&& lStore, std::vector<int> deviceIds_) 
-            : deviceIds(deviceIds_), 
-            lengthStore(std::move(lStore)){
+    GPULengthStore(LengthStore&& lStore, const std::vector<int>& deviceIds_){
+        init(std::move(lStore), deviceIds_);
+    }
+
+    ~GPULengthStore(){
+        destroyGpuData();
+    }
+
+    void destroyGpuData(){
+        int oldDevice = 0;
+        cudaGetDevice(&oldDevice); CUERR;
+        for(int i = 0; i < int(deviceIds.size()); i++){
+            cudaSetDevice(deviceIds[i]); CUERR;
+            cudaFree(deviceDataPointers[i]); CUERR;
+        }
+        cudaSetDevice(oldDevice); CUERR;
+    }
+
+    void init(LengthStore&& lStore, const std::vector<int>& deviceIds_){
+        destroyGpuData();
+
+        deviceIds = deviceIds_;
+        lengthStore = std::move(lStore);
 
         deviceDataPointers.resize(deviceIds.size());
         int oldDevice = 0;
@@ -37,16 +58,7 @@ struct GPULengthStore{
         cudaSetDevice(oldDevice); CUERR;
     }
 
-    ~GPULengthStore(){
-        int oldDevice = 0;
-        cudaGetDevice(&oldDevice); CUERR;
-        for(int i = 0; i < int(deviceIds.size()); i++){
-            cudaSetDevice(deviceIds[i]); CUERR;
-            cudaFree(deviceDataPointers[i]); CUERR;
-        }
-        cudaSetDevice(oldDevice); CUERR;
-    }
-
+    
     GPULengthStore(const GPULengthStore&) = delete;
     GPULengthStore(GPULengthStore&&) = default;
     GPULengthStore& operator=(const GPULengthStore&) = delete;
@@ -162,6 +174,20 @@ struct GPULengthStore{
     //After extractCpuLengthStorage, consider this GPULengthStore instance to be in a moved-from state
     void extractCpuLengthStorage(LengthStore& target){
         target = std::move(lengthStore);
+    }
+
+    void readCpuLengthStoreFromStream(std::ifstream& stream){
+        readCpuLengthStoreFromStream(stream, deviceIds);
+    }
+
+    void readCpuLengthStoreFromStream(std::ifstream& stream, const std::vector<int>& deviceIds_){
+        LengthStore tmpstore;
+        tmpstore.readFromStream(stream);
+        init(std::move(tmpstore), deviceIds_);
+    }
+
+    void writeCpuLengthStoreToStream(std::ofstream& stream) const{
+        lengthStore.writeToStream(stream);
     }
 
 private:

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <limits>
 #include <vector>
+#include <fstream>
 
 namespace care{
 
@@ -124,6 +125,42 @@ struct LengthStore{
         auto& second = firstuintindex == data.size() - 1 ? data[firstuintindex] : data[firstuintindex + 1];
 
         setBits(first, second, begin, endExcl, Data_t(diff));
+    }
+
+    void readFromStream(std::ifstream& stream){
+        stream.read(reinterpret_cast<char*>(&DataTBits), sizeof(int));
+
+        assert(DataTBits == sizeof(Data_t) * 8);
+
+        stream.read(reinterpret_cast<char*>(&bitsPerLength), sizeof(int));
+        stream.read(reinterpret_cast<char*>(&minLength), sizeof(int));
+        stream.read(reinterpret_cast<char*>(&maxLength), sizeof(int));
+        stream.read(reinterpret_cast<char*>(&bitsMask), sizeof(Data_t));
+        stream.read(reinterpret_cast<char*>(&numElements), sizeof(std::int64_t));
+
+        std::size_t rawSizeElements = 0;
+        std::size_t rawSizeBytes = 0;
+        stream.read(reinterpret_cast<char*>(&rawSizeElements), sizeof(std::size_t));
+        stream.read(reinterpret_cast<char*>(&rawSizeBytes), sizeof(std::size_t));
+
+        data.resize(rawSizeElements);        
+        stream.read(reinterpret_cast<char*>(data.data()), rawSizeBytes);
+    }
+
+    void writeToStream(std::ofstream& stream) const{
+
+        stream.write(reinterpret_cast<const char*>(&DataTBits), sizeof(int));
+        stream.write(reinterpret_cast<const char*>(&bitsPerLength), sizeof(int));
+        stream.write(reinterpret_cast<const char*>(&minLength), sizeof(int));
+        stream.write(reinterpret_cast<const char*>(&maxLength), sizeof(int));
+        stream.write(reinterpret_cast<const char*>(&bitsMask), sizeof(Data_t));
+        stream.write(reinterpret_cast<const char*>(&numElements), sizeof(std::int64_t));
+
+        std::size_t rawSizeElements = getRawSizeInElements();
+        std::size_t rawSizeBytes = getRawSizeInBytes();
+        stream.write(reinterpret_cast<const char*>(&rawSizeElements), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(&rawSizeBytes), sizeof(std::size_t));
+        stream.write(reinterpret_cast<const char*>(data.data()), rawSizeBytes);
     }
 
 private:   
