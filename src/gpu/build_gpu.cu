@@ -513,11 +513,14 @@ namespace gpu{
 
         const auto& readStorage = result.builtReadStorage.data.readStorage;
 
-        //if(result.builtReadStorage.builtType == BuiltType::Loaded) {
-            sequenceFileProperties.nReads = readStorage.getNumberOfReads();
-            sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-            sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
-        //}
+        sequenceFileProperties.nReads = readStorage.getNumberOfReads();
+        sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+
+        std::cout << "After construction of read storage, the following file properties are known "
+                    << "which may be different from supplied parameters" << std::endl;      
+
+        detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
 
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);
@@ -559,13 +562,14 @@ namespace gpu{
     		std::cout << "Saved reads" << std::endl;
     	}
 
-        if(result.builtReadStorage.builtType == BuiltType::Loaded) {
-            sequenceFileProperties.nReads = readStorage.getNumberOfReads();
-            sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-            sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
+        sequenceFileProperties.nReads = readStorage.getNumberOfReads();
+        sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
+        sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
 
-            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
-        }
+        std::cout << "After construction of read storage, the following file properties are known "
+                    << "which may be different from supplied parameters" << std::endl;      
+
+        detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
 
         TIMERSTARTCPU(build_minhasher);
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);

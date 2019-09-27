@@ -9,7 +9,7 @@
 #include <config.hpp>
 #include <sequencefileio.hpp>
 
-
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -39,7 +39,8 @@ public:
 
     bool isReadOnly;
     std::vector<int> deviceIds;
-    read_number numberOfReads;
+    std::atomic<read_number> numberOfInsertedReads;
+    read_number maximumNumberOfReads;
     int sequenceLengthLowerBound;
     int sequenceLengthUpperBound;
     bool useQualityScores;
@@ -77,6 +78,7 @@ public:
 	void destroy();
 
     read_number getNumberOfReads() const;
+    read_number getMaximumNumberOfReads() const;
     bool canUseQualityScores() const;
     int getSequenceLengthLowerBound() const;
     int getSequenceLengthUpperBound() const;
