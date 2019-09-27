@@ -80,25 +80,15 @@ namespace gpu{
             result.builtType = BuiltType::Constructed;
 
 #if 0
-            auto flushBuffers = [&](std::vector<read_number>* indicesBuffer, std::vector<Read>* readsBuffer){
-                if(indicesBuffer->size() > 0){
-                    //TIMERSTARTCPU(setReads);
-                    readstorage.setReads(*indicesBuffer, *readsBuffer);
-                    //TIMERSTOPCPU(setReads);
-
-                    //std::cerr << "clearing " << indicesBuffer->size() << " indices\n";
-                    //TIMERSTARTCPU(fbclearindices);
-                    indicesBuffer->clear();
-                    //TIMERSTOPCPU(fbclearindices);
-
-                    //std::cerr << "clearing " << readsBuffer->size() << " reads\n";
-                    TIMERSTARTCPU(fbclearreads);
-                    readsBuffer->clear();
-                    TIMERSTOPCPU(fbclearreads);
+            auto flushBuffers = [&](std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
+                if(indicesBuffer.size() > 0){
+                    readstorage.setReads(indicesBuffer, readsBuffer);
+                    indicesBuffer.clear();
+                    readsBuffer.clear();
                 }
             };
 
-            auto handle_read = [&](std::uint64_t readIndex, Read& read, std::vector<read_number>* indicesBuffer, std::vector<Read>* readsBuffer){
+            auto handle_read = [&](std::uint64_t readIndex, Read& read, std::vector<read_number>& indicesBuffer, std::vector<Read>& readsBuffer){
                 const int readLength = int(read.sequence.size());
 
                 if(readIndex >= expectedNumberOfReads){
@@ -120,121 +110,76 @@ namespace gpu{
                 };
 
                 const int undeterminedBasesInRead = std::count_if(read.sequence.begin(), read.sequence.end(), [&](char c){
-                    //return c == 'N' || c == 'n';
-                    // return c != 'A' && c != 'C' && c != 'G' && c != 'T'
-                    //         && c != 'a' && c != 'c' && c != 'g' && c != 't';
                     return !isValidBase(c);
                 });
-
-                //nmap[undeterminedBasesInRead]++;
 
                 if(undeterminedBasesInRead > 0){
                     readstorage.setReadContainsN(readIndex, true);
                 }
 
-                //if(undeterminedBasesInRead > 10){
-                //    validFlags[readIndex] = false;
-                //}else{
-                    for(auto& c : read.sequence){
-                        if(c == 'a') c = 'A';
-                        else if(c == 'c') c = 'C';
-                        else if(c == 'g') c = 'G';
-                        else if(c == 't') c = 'T';
-                        else if(!isValidBase(c)){
-                            c = bases[Ncount];
-                            Ncount = (Ncount + 1) % 4;
-                        }
-                        
-                        // if(c == 'N' || c == 'n'){
-                        //     c = bases[Ncount];
-                        //     Ncount = (Ncount + 1) % 4;
-                        // }
+                for(auto& c : read.sequence){
+                    if(c == 'a') c = 'A';
+                    else if(c == 'c') c = 'C';
+                    else if(c == 'g') c = 'G';
+                    else if(c == 't') c = 'T';
+                    else if(!isValidBase(c)){
+                        c = bases[Ncount];
+                        Ncount = (Ncount + 1) % 4;
                     }
+                }
 
-                    indicesBuffer->emplace_back(readIndex);
-                    readsBuffer->emplace_back(read);
-
-                    //validFlags[readIndex] = true;
-                //}
-
+                indicesBuffer.emplace_back(readIndex);
+                readsBuffer.emplace_back(read);
             };
 
             constexpr size_t maxbuffersize = 1000000;
-            constexpr int numBuffers = 2;
 
-            std::array<std::vector<read_number>, numBuffers> indicesBuffers;
-            std::array<std::vector<Read>, numBuffers> readsBuffers;
-            std::array<bool, numBuffers> canBeUsed;
-            std::array<std::mutex, numBuffers> mutex;
-            std::array<std::condition_variable, numBuffers> cv;
+            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+            std::chrono::duration<double> duration;
+            std::uint64_t countlimit = 1000000;
+		    std::uint64_t count = 0;
+		    std::uint64_t totalCount = 0;
 
-            for(int i = 0; i < numBuffers; i++){
-                indicesBuffers[i].reserve(maxbuffersize);
-                readsBuffers[i].reserve(maxbuffersize);
-                canBeUsed[i] = true;
-            }
+            std::vector<read_number> indicesBuffer;
+            std::vector<Read> readsBuffer;
 
-            int bufferindex = 0;
+            indicesBuffer.reserve(maxbuffersize);
+            readsBuffer.reserve(maxbuffersize);
+
+            tpa = std::chrono::system_clock::now();
 
             forEachReadInFile(fileOptions.inputfile,
                             fileOptions.format,
                             [&](auto readnum, auto& read){
 
-                    if(!canBeUsed[bufferindex]){
-                        std::unique_lock<std::mutex> ul(mutex[bufferindex]);
-                        if(!canBeUsed[bufferindex]){
-                            //std::cerr << "waiting for other buffer\n";
-                            cv[bufferindex].wait(ul, [&](){ return canBeUsed[bufferindex]; });
-                        }
+                    handle_read(readnum, read, indicesBuffer, readsBuffer);
+
+                    ++count;
+                    ++totalCount;
+
+                    if(count == countlimit){
+                        tpb = std::chrono::system_clock::now();
+                        duration = tpb - tpa;
+                        std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                << duration.count() << " seconds." << std::endl;
+                        countlimit *= 2;
                     }
 
-                    auto indicesBufferPtr = &indicesBuffers[bufferindex];
-                    auto readsBufferPtr = &readsBuffers[bufferindex];
-
-                    handle_read(readnum, read, indicesBufferPtr, readsBufferPtr);
-
-                    if(indicesBufferPtr->size() > maxbuffersize){
-                        //TIMERSTARTCPU(flushBuffers);
-                        //flushBuffers(indicesBufferPtr, readsBufferPtr);
-                        //TIMERSTOPCPU(flushBuffers);
-
-                        canBeUsed[bufferindex] = false;
-
-                        //std::cerr << "launch other thread\n";
-                        //threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                            //TIMERSTARTCPU(flushBufferswithcv);
-
-                            TIMERSTARTCPU(flushBuffers);
-
-                            flushBuffers(indicesBufferPtr, readsBufferPtr);
-
-                            TIMERSTOPCPU(flushBuffers);
-
-                            std::lock_guard<std::mutex> l(mutex[bufferindex]);
-                            canBeUsed[bufferindex] = true;
-                            cv[bufferindex].notify_one();
-
-                            //TIMERSTOPCPU(flushBufferswithcv);
-
-                            //std::cerr << "other thread done\n";
-                        //});
-
-                        //bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
-                        //std::cerr << "bufferindex is now " << bufferindex << "\n";
-
-
-
+                    if(indicesBuffer.size() >= maxbuffersize){
+                        flushBuffers(indicesBuffer, readsBuffer);
                     }
                 }
             );
 
-            auto indicesBufferPtr = &indicesBuffers[bufferindex];
-            auto readsBufferPtr = &readsBuffers[bufferindex];
+            if(indicesBuffer.size() > 0){
+                flushBuffers(indicesBuffer, readsBuffer);
+            }
 
-            if(indicesBufferPtr->size() > 0){
-                //TIMERSTARTCPU(flushBuffers);
-                flushBuffers(indicesBufferPtr, readsBufferPtr);
-                //TIMERSTOPCPU(flushBuffers);
+            if(count > 0){
+                tpb = std::chrono::system_clock::now();
+                duration = tpb - tpa;
+                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                        << duration.count() << " seconds." << std::endl;
             }
 
 #else 
@@ -286,6 +231,12 @@ namespace gpu{
             constexpr size_t maxbuffersize = 1000000;
             constexpr int numBuffers = 2;
 
+            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+            std::chrono::duration<double> duration;
+            std::uint64_t countlimit = 1000000;
+		    std::uint64_t count = 0;
+		    std::uint64_t totalCount = 0;
+
             std::array<std::vector<read_number>, numBuffers> indicesBuffers;
             std::array<std::vector<Read>, numBuffers> readsBuffers;
             std::array<bool, numBuffers> canBeUsed;
@@ -299,6 +250,8 @@ namespace gpu{
             }
 
             int bufferindex = 0;
+
+            tpa = std::chrono::system_clock::now();
 
             forEachReadInFile(fileOptions.inputfile,
                             fileOptions.format,
@@ -317,12 +270,24 @@ namespace gpu{
                     indicesBufferPtr->emplace_back(readnum);
                     readsBufferPtr->emplace_back(read);
 
+                    ++count;
+                    ++totalCount;
+
+                    if(count == countlimit){
+                        tpb = std::chrono::system_clock::now();
+                        duration = tpb - tpa;
+                        std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                << duration.count() << " seconds." << std::endl;
+                        countlimit *= 2;
+                    }
+            
+
                     if(indicesBufferPtr->size() >= maxbuffersize){
                         canBeUsed[bufferindex] = false;
 
                         //std::cerr << "launch other thread\n";
                         threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
-                            std::cerr << "buffer " << bufferindex << " running\n";
+                            //std::cerr << "buffer " << bufferindex << " running\n";
                             int nmodcounter = 0;
 
                             for(int i = 0; i < int(readsBufferPtr->size()); i++){
@@ -333,16 +298,16 @@ namespace gpu{
 
                             readstorage.setReads(*indicesBufferPtr, *readsBufferPtr);
 
-                            TIMERSTARTCPU(clear);
+                            //TIMERSTARTCPU(clear);
                             indicesBufferPtr->clear();
                             readsBufferPtr->clear();
-                            TIMERSTOPCPU(clear);
+                            //TIMERSTOPCPU(clear);
                             
                             std::lock_guard<std::mutex> l(mutex[bufferindex]);
                             canBeUsed[bufferindex] = true;
                             cv[bufferindex].notify_one();
 
-                            std::cerr << "buffer " << bufferindex << " finished\n";
+                            //std::cerr << "buffer " << bufferindex << " finished\n";
                         });
 
                         bufferindex = (bufferindex + 1) % numBuffers; //swap buffers
@@ -379,9 +344,16 @@ namespace gpu{
             for(int i = 0; i < numBuffers; i++){
                 std::unique_lock<std::mutex> ul(mutex[i]);
                 if(!canBeUsed[i]){
-                    std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
+                    //std::cerr << "Reading file completed. Waiting for buffer " << i << "\n";
                     cv[i].wait(ul, [&](){ return canBeUsed[i]; });
                 }
+            }
+
+            if(count > 0){
+                tpb = std::chrono::system_clock::now();
+                duration = tpb - tpa;
+                std::cout << "Processed " << totalCount << " reads in file. Elapsed time: " 
+                                << duration.count() << " seconds." << std::endl;
             }
 
 #endif
