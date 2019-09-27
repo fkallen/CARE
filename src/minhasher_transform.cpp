@@ -15,9 +15,11 @@ namespace care{
 
         if(map.size == 0) return;
 
-        cpu_transformation(map.keys, map.values, map.countsPrefixSum, maxValuesPerKey);
+        cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
+                            map.keysWithoutValues, maxValuesPerKey);
 
         map.nKeys = map.keys.size();
+        map.nValues = map.values.size();
         map.noMoreWrites = true;
 
         using Key_t = typename KeyValueMap::Key_t;

@@ -28,6 +28,7 @@ namespace care{
     void cpu_transformation(std::vector<Key_t>& keys,
                             std::vector<Value_t>& values,
                             std::vector<Index_t>& countsPrefixSum,
+                            std::vector<Key_t>& /*keysWithoutValues*/,
                             int /*maxValuesPerKey*/){
 
         assert(keys.size() == values.size());
