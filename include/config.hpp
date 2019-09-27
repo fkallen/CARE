@@ -17,7 +17,7 @@ namespace care{
     static_assert(std::is_unsigned<read_number>::value, "read_number must be unsigned.");
 
     //unsigned integral type of a kmer in the hash map.
-    using kmer_type = std::uint32_t;
+    using kmer_type = std::uint64_t;
 
     static_assert(std::is_integral<kmer_type>::value, "kmer_type must be integral.");
     static_assert(std::is_unsigned<kmer_type>::value, "kmer_type must be unsigned.");
