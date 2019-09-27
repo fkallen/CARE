@@ -161,6 +161,7 @@ namespace care{
 			std::vector<Key_t> keys;
 			std::vector<Value_t> values;
 			std::vector<Index_t> countsPrefixSum;
+            std::vector<Key_t> keysWithoutValues;
             std::vector<int> deviceIds;
 
 			double load = 0.8;
@@ -191,6 +192,7 @@ namespace care{
                 keys = other.keys;
                 values = other.values;
                 countsPrefixSum = other.countsPrefixSum;
+                keysWithoutValues = other.keysWithoutValues;
                 keyIndexMap = other.keyIndexMap;
                 return *this;
             }
@@ -203,6 +205,7 @@ namespace care{
                 keys = std::move(other.keys);
                 values = std::move(other.values);
                 countsPrefixSum = std::move(other.countsPrefixSum);
+                keysWithoutValues = std::move(other.keysWithoutValues);
                 keyIndexMap = std::move(other.keyIndexMap);
                 return *this;
             }
@@ -222,6 +225,9 @@ namespace care{
                     return false;
                 if(countsPrefixSum != rhs.countsPrefixSum)
                     return false;
+                if(keysWithoutValues != rhs.keysWithoutValues){
+                    return false;
+                }
                 return true;
             }
 
@@ -241,19 +247,16 @@ namespace care{
                 assert(nKeys == keys.size() || nKeys <= keyIndexMap.keyToIndexMap.size());
                 assert(nValues == values.size());
 
-                //for(const auto& key : keys)
-                //    outstream.write(reinterpret_cast<const char*>(&key), sizeof(Key_t));
-                //for(const auto& val : values)
-                //    outstream.write(reinterpret_cast<const char*>(&val), sizeof(Value_t));
-
                 //outstream.write(reinterpret_cast<const char*>(keys.data()), sizeof(Key_t) * nKeys);
                 outstream.write(reinterpret_cast<const char*>(values.data()), sizeof(Value_t) * nValues);
 
                 std::size_t nCounts = countsPrefixSum.size();
                 outstream.write(reinterpret_cast<const char*>(&nCounts), sizeof(std::size_t));
-                //for(const auto& count : countsPrefixSum)
-                //    outstream.write(reinterpret_cast<const char*>(&count), sizeof(Index_t));
                 outstream.write(reinterpret_cast<const char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
+
+                std::size_t emptyKeys = keysWithoutValues.size();
+                outstream.write(reinterpret_cast<const char*>(&emptyKeys), sizeof(std::size_t));
+                outstream.write(reinterpret_cast<const char*>(keysWithoutValues.data()), sizeof(Key_t) * emptyKeys);
 
                 keyIndexMap.writeToStream(outstream);
             }
@@ -272,32 +275,28 @@ namespace care{
 
                 keys.resize(nKeys);
                 values.resize(nValues);
-                countsPrefixSum.resize(nKeys+1);
-
-                //for(auto& key : keys)
-                //    instream.read(reinterpret_cast<char*>(&key), sizeof(Key_t));
-                //for(auto& val : values)
-                //    instream.read(reinterpret_cast<char*>(&val), sizeof(Value_t));
 
                 //instream.read(reinterpret_cast<char*>(keys.data()), sizeof(Key_t) * nKeys);
                 instream.read(reinterpret_cast<char*>(values.data()), sizeof(Value_t) * nValues);
 
-                std::size_t nCounts = countsPrefixSum.size();
-                instream.read(reinterpret_cast<char*>(&nCounts), sizeof(std::size_t));
-                countsPrefixSum.resize(nCounts);
-                //for(auto& count : countsPrefixSum)
-                //    instream.read(reinterpret_cast<char*>(&count), sizeof(Index_t));
+                std::size_t nCountsPrefixSum = 0;
+                instream.read(reinterpret_cast<char*>(&nCountsPrefixSum), sizeof(std::size_t));
+                countsPrefixSum.resize(nCountsPrefixSum);
+                instream.read(reinterpret_cast<char*>(countsPrefixSum.data()), sizeof(Index_t) * nCountsPrefixSum);
 
-                instream.read(reinterpret_cast<char*>(countsPrefixSum.data()), sizeof(Index_t) * nCounts);
+                std::size_t emptyKeys = 0;
+                instream.read(reinterpret_cast<char*>(&emptyKeys), sizeof(std::size_t));
+                keysWithoutValues.resize(emptyKeys);
+                instream.read(reinterpret_cast<char*>(keysWithoutValues.data()), sizeof(Key_t) * emptyKeys);
 
                 keyIndexMap.readFromStream(instream);
             }
 
             std::size_t numBytes() const{
                 return keys.size() * sizeof(Key_t)
-                    + keys.size() * sizeof(Key_t)
                     + values.size() * sizeof(Value_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
+                    + keysWithoutValues.size() * sizeof(Key_t)
                     + keyIndexMap.numBytes();
             }
 
@@ -320,6 +319,7 @@ namespace care{
 				keys.clear();
 				values.clear();
 				countsPrefixSum.clear();
+                keysWithoutValues.clear();
 				keyIndexMap.clear();
 			}
 
@@ -328,6 +328,7 @@ namespace care{
 				keys.shrink_to_fit();
 				values.shrink_to_fit();
 				countsPrefixSum.shrink_to_fit();
+                keysWithoutValues.shrink_to_fit();
 				keyIndexMap.shrink_to_fit();
 			}
 
@@ -361,9 +362,15 @@ namespace care{
                 // }
                 // const Index_t index = std::distance(keys.begin(), lb);
 
-                const Index_t index = keyIndexMap.get(key);
+                auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
+                if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
+                    const Index_t index = keyIndexMap.get(key);
 
-				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+				    return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+                }else{
+                    return {}; //key has no values
+                }
+                
 			}
 
             Index_t prepare_get_ranged(Key_t key) const noexcept{
@@ -394,9 +401,14 @@ namespace care{
                 // }
                 // const Index_t index = std::distance(keys.begin(), lb);
 
-                const Index_t index = keyIndexMap.get(key);
+                auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
+                if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
+                    const Index_t index = keyIndexMap.get(key);
 
-				return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+				    return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+                }else{
+                    return {}; //key has no values
+                }
 			}
 
 		};
