@@ -88,6 +88,7 @@ inputfile=${array[0]}${array[1]}
 num_reads=${array[2]}
 coverage=${array[3]}
 max_readlength=${array[4]}
+min_readlength=0
 #candidates=${array[5]}
 candidates=$(echo "($maps * 2.5 * $coverage)/1" | bc)
 #candidates=$(($maps * 2.5 * $coverage))
@@ -95,7 +96,7 @@ candidates=$(echo "($maps * 2.5 * $coverage)/1" | bc)
 bin_reads=${array[8]}${array[9]}
 bin_tables=${array[8]}${array[10]}
 
-errorrate=0.03
+errorrate=0.07
 m=0.6
 
 inputfilename=$(basename -- "$inputfile")
@@ -110,9 +111,9 @@ echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdi
                  --useQualityScores=$useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m --candidateCorrection=$candidateCorrection\
                  --candidateCorrectionNewColumns=$candidateCorrectionNewColumns\
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
-                 --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
+                 --nReads=$num_reads --min_length=$min_readlength --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
 		 --nnmodel=$nnmodel\
-                 --load-binary-reads-from=$bin_reads # --load-hashtables-from=$bin_tables
+                 #--load-binary-reads-from=$bin_reads # --load-hashtables-from=$bin_tables
 
 $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --outfile=$outputfilename --threads=$threads\
                  --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize \
@@ -122,4 +123,4 @@ $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir --o
                  --extractFeatures=$extractFeatures $deviceIds --correctionType=$correctionType --maxCandidates=$candidates --progress=$showProgress\
                  --nReads=$num_reads --max_length=$max_readlength --hits_per_candidate=$num_hits --forest=$forest\
 		 --nnmodel=$nnmodel\
-                 --load-binary-reads-from=$bin_reads # --load-hashtables-from=$bin_tables
+                 #--load-binary-reads-from=$bin_reads # --load-hashtables-from=$bin_tables
