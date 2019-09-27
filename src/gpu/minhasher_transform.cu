@@ -172,6 +172,19 @@ namespace care{
 
                 //keys.erase(newKeysEnd, keys.end());
 
+                int howOften = 0;
+                int discardElements = 0;
+
+                for(std::size_t i = 0; i < nUniqueKeys; i++){
+                    int numElements = countsPrefixSum[i+1] - countsPrefixSum[i];
+                    if(numElements > 75){
+                        howOften++;
+                        discardElements += numElements;
+                    }
+                }
+
+                std::cout << "Could remove " << howOften << " keys, " << discardElements << " values." << std::endl;
+
                 success = true;
 
             }catch(const thrust::system_error& ex){
