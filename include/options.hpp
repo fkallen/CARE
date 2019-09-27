@@ -18,10 +18,10 @@ namespace care{
     struct MinhashOptions {
         int maps = 2;
         int k = 16;
-        float min_hits_per_candidate = 0.0f;
-        float padding = 0;
+        int numResultsPerMapQueryThreshold = 100;
         bool operator==(const MinhashOptions& other) const{
-            return maps == other.maps && k == other.k && min_hits_per_candidate == other.min_hits_per_candidate;
+            return maps == other.maps && k == other.k 
+                    && numResultsPerMapQueryThreshold == other.numResultsPerMapQueryThreshold;
         };
         bool operator!=(const MinhashOptions& other) const{
             return !(*this == other);

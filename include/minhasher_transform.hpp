@@ -27,7 +27,8 @@ namespace care{
     template<class Key_t, class Value_t, class Index_t>
     void cpu_transformation(std::vector<Key_t>& keys,
                             std::vector<Value_t>& values,
-                            std::vector<Index_t>& countsPrefixSum){
+                            std::vector<Index_t>& countsPrefixSum,
+                            int /*maxValuesPerKey*/){
 
         assert(keys.size() == values.size());
         assert(std::numeric_limits<Index_t>::max() >= keys.size());

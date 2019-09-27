@@ -464,38 +464,32 @@ struct Minhasher {
 
 
     std::pair<const Value_t*, const Value_t*> queryMap(int mapid,
-                                                        Map_t::Key_t key,
-                                                        size_t numResultsPerMapQueryThreshold) const noexcept;
+                                                        Map_t::Key_t key) const noexcept;
 
 
     std::vector<Result_t> getCandidates(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates,
-                                        size_t numResultsPerMapQueryThreshold) const noexcept;
+                                        std::uint64_t max_number_candidates) const noexcept;
 
     std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
-                                        std::uint64_t max_number_candidates,
-                                        size_t numResultsPerMapQueryThreshold) const noexcept;
+                                        std::uint64_t max_number_candidates) const noexcept;
 
     /*
         This version of getCandidates returns only read ids which are found in at least num_hits maps
     */
     std::vector<Result_t> getCandidates_some_maps2(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates,
-                                        size_t numResultsPerMapQueryThreshold) const noexcept;
+                                        std::uint64_t max_number_candidates) const noexcept;
 
     std::vector<Result_t> getCandidates_some_maps(const std::string& sequence,
                                         int num_hits,
-                                        std::uint64_t max_number_candidates,
-                                        size_t numResultsPerMapQueryThreshold) const noexcept;
+                                        std::uint64_t max_number_candidates) const noexcept;
 
     /*
         This version of getCandidates returns only read ids which are found in all maps
     */
     std::vector<Result_t> getCandidates_all_maps(const std::string& sequence,
-                                        std::uint64_t max_number_candidates,
-                                        size_t numResultsPerMapQueryThreshold) const noexcept;
+                                        std::uint64_t max_number_candidates) const noexcept;
 
 // #############################
 
@@ -510,6 +504,8 @@ struct Minhasher {
 
 //###################################################
 
+    int getResultsPerMapThreshold() const;
+
 	void resize(std::uint64_t nReads_);
 
 
@@ -523,7 +519,7 @@ private:
 
 
 
-
+int calculateResultsPerMapThreshold(int coverage);
 
 
 

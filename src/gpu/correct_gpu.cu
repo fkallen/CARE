@@ -1046,8 +1046,6 @@ namespace gpu{
 
             const auto& minhasher = transFuncData.minhasher;
 
-            const size_t maxNumResultsPerMapQuery = transFuncData.correctionOptions.estimatedCoverage * 2.5;
-
             const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
 
             int initialNumberOfCandidates = 0;
@@ -1078,8 +1076,7 @@ namespace gpu{
                     //TIMERSTARTCPU(getCandidates);
                     task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
                                                                         hits_per_candidate,
-                                                                        transFuncData.runtimeOptions.max_candidates,
-                                                                        maxNumResultsPerMapQuery);
+                                                                        transFuncData.runtimeOptions.max_candidates);
                     //TIMERSTOPCPU(getCandidates);
 
                     //TIMERSTARTCPU(lower_bound);

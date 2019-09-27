@@ -3,7 +3,7 @@
 #include <util.hpp>
 #include <config.hpp>
 #include <sequencefileio.hpp>
-
+#include <minhasher.hpp>
 
 #include <iostream>
 #include <thread>
@@ -37,9 +37,10 @@ namespace args{
 
 	template<>
 	MinhashOptions to<MinhashOptions>(const cxxopts::ParseResult& pr){
+        const int coverage = pr["coverage"].as<float>();
         MinhashOptions result{pr["hashmaps"].as<int>(),
     					      pr["kmerlength"].as<int>(),
-                              0.0f};
+                              calculateResultsPerMapThreshold(coverage)};
 
         return result;
 	}

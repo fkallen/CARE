@@ -10,12 +10,12 @@
 namespace care{
 
     template<class KeyValueMap>
-    void transform_keyvaluemap(KeyValueMap& map){
+    void transform_keyvaluemap(KeyValueMap& map, int maxValuesPerKey){
         if(map.noMoreWrites) return;
 
         if(map.size == 0) return;
 
-        cpu_transformation(map.keys, map.values, map.countsPrefixSum);
+        cpu_transformation(map.keys, map.values, map.countsPrefixSum, maxValuesPerKey);
 
         map.nKeys = map.keys.size();
         map.noMoreWrites = true;
@@ -46,9 +46,10 @@ namespace care{
         assert(map < int(minhasher.minhashTables.size()));
 
         auto& tableptr = minhasher.minhashTables[map];
+        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();
         if(!tableptr->noMoreWrites){
             std::cout << "Transforming table " << map << ". ";
-            transform_keyvaluemap(*tableptr);
+            transform_keyvaluemap(*tableptr, maxValuesPerKey);
         }
     }
 

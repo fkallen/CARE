@@ -164,13 +164,11 @@ namespace cpu{
         void getCandidates(CorrectionTask& task,
                             const Minhasher& minhasher,
                             int maxNumberOfCandidates,
-                            int requiredHitsPerCandidate,
-                            size_t maxNumResultsPerMapQuery){
+                            int requiredHitsPerCandidate){
 
             task.candidate_read_ids = minhasher.getCandidates(task.original_subject_string,
                                                                requiredHitsPerCandidate,
-                                                               maxNumberOfCandidates,
-                                                               maxNumResultsPerMapQuery);
+                                                               maxNumberOfCandidates);
 
             //remove our own read id from candidate list. candidate_read_ids is sorted.
             auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(),
@@ -924,8 +922,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     std::vector<TaskData> dataPerTask(correctionOptions.batchsize);
 
-    const size_t maxNumResultsPerMapQuery = correctionOptions.estimatedCoverage * 2.5;
-
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
     while(!(readIdGenerator.empty())){
@@ -980,8 +976,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             getCandidates(task,
                 minhasher,
                 maxCandidatesPerRead,
-                correctionOptions.hits_per_candidate,
-                maxNumResultsPerMapQuery);
+                correctionOptions.hits_per_candidate);
 
             #ifdef ENABLE_TIMING
             getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;

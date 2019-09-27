@@ -26,7 +26,12 @@ namespace care{
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
 
         template<class Key_t, class Value_t, class Index_t>
-        static bool execute(std::vector<Key_t>& keys, std::vector<Value_t>& values, std::vector<Index_t>& countsPrefixSum, const std::vector<int>& deviceIds){
+        static bool execute(std::vector<Key_t>& keys, 
+                            std::vector<Value_t>& values, 
+                            std::vector<Index_t>& countsPrefixSum, 
+                            const std::vector<int>& deviceIds,
+                            int maxValuesPerKey){
+
             assert(keys.size() == values.size());
             assert(std::numeric_limits<Index_t>::max() >= keys.size());
             assert(deviceIds.size() > 0);
@@ -177,7 +182,7 @@ namespace care{
 
                 for(std::size_t i = 0; i < nUniqueKeys; i++){
                     int numElements = countsPrefixSum[i+1] - countsPrefixSum[i];
-                    if(numElements > 75){
+                    if(numElements > maxValuesPerKey){
                         howOften++;
                         discardElements += numElements;
                     }
@@ -212,26 +217,26 @@ namespace care{
     };
 
     template<class KeyValueMap>
-    void transform_keyvaluemap(KeyValueMap& map, const std::vector<int>& deviceIds){
+    void transform_keyvaluemap(KeyValueMap& map, const std::vector<int>& deviceIds, int maxValuesPerKey){
         if(map.noMoreWrites) return;
 
         if(map.size == 0) return;
 
         if(deviceIds.size() == 0){
 
-            cpu_transformation(map.keys, map.values, map.countsPrefixSum);
+            cpu_transformation(map.keys, map.values, map.countsPrefixSum, maxValuesPerKey);
 
         }else{
-            bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, deviceIds);
+            bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, deviceIds, maxValuesPerKey);
 
             if(!success){
                 std::cout << "\nFallback to managed memory transformation" << std::endl;
-                success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, deviceIds);
+                success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, deviceIds, maxValuesPerKey);
             }
 
             if(!success){
                 std::cout << "\nFallback to cpu transformation" << std::endl;
-                cpu_transformation(map.keys, map.values, map.countsPrefixSum);
+                cpu_transformation(map.keys, map.values, map.countsPrefixSum, maxValuesPerKey);
             }
         }
 
@@ -260,9 +265,10 @@ namespace care{
         assert(map < int(minhasher.minhashTables.size()));
 
         auto& tableptr = minhasher.minhashTables[map];
+        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();
         if(!tableptr->noMoreWrites){
             std::cerr << "Transforming table " << map << ". ";
-            transform_keyvaluemap(*tableptr, deviceIds);
+            transform_keyvaluemap(*tableptr, deviceIds, maxValuesPerKey);
         }
     }
 
