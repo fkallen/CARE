@@ -729,12 +729,14 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     init(deviceIds_, loaded_numberOfReads, loaded_useQualityScores, 
         loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
 
+    numberOfInsertedReads = loaded_numberOfReads;
+
     stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
 
     lengthStorage.readFromStream(stream);
 
     constexpr read_number batchsize = 10000000;
-    int numBatches = SDIV(getNumberOfReads(), batchsize);
+    int numBatches = SDIV(loaded_numberOfReads, batchsize);
 
     {
         size_t seqpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
@@ -746,7 +748,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
         for(int batch = 0; batch < numBatches; batch++){
             read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
+            read_number end = std::min((batch+1) * batchsize, loaded_numberOfReads);
 
             size_t databytes = seqpitch * (end-begin);
             std::vector<char> data(databytes, 0);
@@ -772,7 +774,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
     //     for(int batch = 0; batch < numBatches; batch++){
     //         read_number begin = batch * batchsize;
-    //         read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
+    //         read_number end = std::min((batch+1) * batchsize, loaded_numberOfReads);
 
     //         std::vector<Length_t> data((end-begin), 0);
 
@@ -805,7 +807,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
         for(int batch = 0; batch < numBatches; batch++){
             read_number begin = batch * batchsize;
-            read_number end = std::min((batch+1) * batchsize, getNumberOfReads());
+            read_number end = std::min((batch+1) * batchsize, loaded_numberOfReads);
 
             size_t databytes = qualitypitch * (end-begin);
             std::vector<char> data(databytes, 0);
