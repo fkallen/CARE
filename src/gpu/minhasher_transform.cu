@@ -197,20 +197,8 @@ namespace care{
                 thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(keys.size());
                 thrust::copy(keys.begin(), keys.end(), d_keys.begin());
 
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(keys.size() - numKeysToRemove);
-                thrust::copy_if(d_keys.begin(),
-                                d_keys.end(),
-                                d_removeflags.begin(),
-                                d_keys_tmp.begin(),
-                                [] __device__ (auto flag){
-                                    return !flag;
-                                });
-
-                deallocVector(keys);
-                keys.resize(d_keys_tmp.size());
-                thrust::copy(d_keys_tmp.begin(), d_keys_tmp.end(), keys.begin());
-
-                d_keys_tmp.resize(numKeysToRemove);
+                //thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(keys.size() - numKeysToRemove);
+                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(numKeysToRemove);
                 thrust::copy_if(d_keys.begin(),
                                 d_keys.end(),
                                 d_removeflags.begin(),
@@ -222,6 +210,20 @@ namespace care{
                 deallocVector(keysWithoutValues);
                 keysWithoutValues.resize(numKeysToRemove);
                 thrust::copy(d_keys_tmp.begin(), d_keys_tmp.end(), keysWithoutValues.begin());
+
+
+                d_keys_tmp.resize(keys.size() - numKeysToRemove);
+                thrust::copy_if(d_keys.begin(),
+                                d_keys.end(),
+                                d_removeflags.begin(),
+                                d_keys_tmp.begin(),
+                                [] __device__ (auto flag){
+                                    return !flag;
+                                });
+
+                deallocVector(keys);
+                keys.resize(d_keys_tmp.size());
+                thrust::copy(d_keys_tmp.begin(), d_keys_tmp.end(), keys.begin()); 
             }
 
             std::cout << "Removed high frequency keys: " << numKeysToRemove << ". "; 
@@ -411,6 +413,8 @@ namespace care{
         for(Index_t i = 0; i < map.nKeys; i++){
             map.keyIndexMap.insert(map.keys[i], i);
         }
+
+        //std::cerr << "maxProbes = " << map.keyIndexMap.maxProbes << "\n";
 
         {
             std::vector<Key_t> tmp;
