@@ -893,23 +893,23 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
 
 
-    std::ifstream interestingstream("interestingIds.txt");
-    if(interestingstream){
-        std::string line;
-        while(std::getline(interestingstream, line)){
-            auto tokens = split(line, ' ');
-            if(!tokens.empty()){
-                read_number n = std::stoull(tokens[0]);
-                interestingReadIds.emplace_back(n);
-            }
-        }
-        auto it = std::unique(interestingReadIds.begin(), interestingReadIds.end());
-        interestingReadIds.erase(it, interestingReadIds.end());
+    // std::ifstream interestingstream("interestingIds.txt");
+    // if(interestingstream){
+    //     std::string line;
+    //     while(std::getline(interestingstream, line)){
+    //         auto tokens = split(line, ' ');
+    //         if(!tokens.empty()){
+    //             read_number n = std::stoull(tokens[0]);
+    //             interestingReadIds.emplace_back(n);
+    //         }
+    //     }
+    //     auto it = std::unique(interestingReadIds.begin(), interestingReadIds.end());
+    //     interestingReadIds.erase(it, interestingReadIds.end());
 
-        std::cerr << "Looking for " << interestingReadIds.size() << " interesting read ids\n";
-    }else{
-        std::cerr << "Looking for no interesting read id\n";
-    }
+    //     std::cerr << "Looking for " << interestingReadIds.size() << " interesting read ids\n";
+    // }else{
+    //     std::cerr << "Looking for no interesting read id\n";
+    // }
 
 
 
