@@ -72,8 +72,9 @@ namespace care{
 				return x;
 			}
 
-			std::vector<Pair_t> keyToIndexMap;
-			std::uint64_t size;
+            std::uint64_t maxProbes{0};
+            std::uint64_t size;
+			std::vector<Pair_t> keyToIndexMap;           
 
             std::size_t numBytes() const{
                 return keyToIndexMap.size() * sizeof(Pair_t);
@@ -100,7 +101,7 @@ namespace care{
             }
 
 			void insert(Key_t key, Index_t value) noexcept{
-				std::uint64_t probes = 1;
+				std::uint64_t probes = 0;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
                 //std::uint32_t probes = 1;
                 //std::uint32_t pos = murmur_integer_finalizer_hash_uint32_t(key) % size;
@@ -111,14 +112,19 @@ namespace care{
 				keyToIndexMap[pos].first = key;
 				keyToIndexMap[pos].second = value;
                 //std::cerr << "probes insert: " << probes << "\n";
+
+                maxProbes = std::max(maxProbes, probes);
 			}
 
 			Index_t get(Key_t key) const noexcept{
-                std::uint64_t probes = 1;
+                std::uint64_t probes = 0;
 				std::uint64_t pos = murmur_hash_3_uint64_t(key) % size;
 				while(keyToIndexMap[pos].first != key){
 					pos = (pos + 1) % size;
 					probes++;
+                    if(maxProbes < probes){
+                        return std::numeric_limits<Index_t>::max();
+                    }
 				}
                 //std::cerr << "probes get: " << probes << "\n";
 				return keyToIndexMap[pos].second;
@@ -126,6 +132,7 @@ namespace care{
 
 			void clear() noexcept{
 				keyToIndexMap.clear();
+                maxProbes = 0;
 			}
 
 			void destroy() noexcept{
@@ -134,11 +141,15 @@ namespace care{
 			}
 
             void writeToStream(std::ofstream& outstream) const{
+                outstream.write(reinterpret_cast<const char*>(&maxProbes), sizeof(std::uint64_t));
                 outstream.write(reinterpret_cast<const char*>(&size), sizeof(std::uint64_t));
                 outstream.write(reinterpret_cast<const char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
             }
 
             void readFromStream(std::ifstream& instream){
+                std::uint64_t maxProbes = 0;
+                instream.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::uint64_t));
+
                 instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
                 keyToIndexMap.resize(size);
                 instream.read(reinterpret_cast<char*>(keyToIndexMap.data()), keyToIndexMap.size() * sizeof(Pair_t));
@@ -366,7 +377,11 @@ namespace care{
                 if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
                     const Index_t index = keyIndexMap.get(key);
 
-				    return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+				    //if(index != std::numeric_limits<Index_t>::max()){
+				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+                    //}else{
+                    //    return {};
+                    //}
                 }else{
                     return {}; //key has no values
                 }
@@ -405,7 +420,11 @@ namespace care{
                 if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
                     const Index_t index = keyIndexMap.get(key);
 
-				    return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+				    //if(index != std::numeric_limits<Index_t>::max()){
+				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+                    //}else{
+                    //    return {};
+                    //}
                 }else{
                     return {}; //key has no values
                 }
