@@ -541,11 +541,13 @@ struct Minhasher {
 
 
 private:
-	void minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept;
+	std::array<std::uint64_t, maximum_number_of_maps>
+    minhashfunc(const std::string& sequence) const noexcept;
 
-    void minhashfunc_other(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept;
+    std::array<std::uint64_t, maximum_number_of_maps>
+    minhashfunc_other(const std::string& sequence) const noexcept;
 
-    void insertTupleIntoMap(int map, const std::uint64_t* hashValues, read_number readNumber);
+    void insertTupleIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
 };
 
 

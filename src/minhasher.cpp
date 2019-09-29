@@ -182,10 +182,10 @@ namespace care{
 		minhashTables.shrink_to_fit();
 	}
 
-    void Minhasher::insertTupleIntoMap(int map, const std::uint64_t* hashValues, read_number readnum){
+    void Minhasher::insertTupleIntoMap(int map, std::uint64_t hashValue, read_number readnum){
         assert(map < minparams.maps);
 
-        kmer_type key = hashValues[map] & key_mask;
+        kmer_type key = hashValue & key_mask;
         Value_t value(readnum);
 
         if (!minhashTables[map]->add(key, value, readnum)) {
@@ -205,19 +205,15 @@ namespace care{
 		if(sequence.size() < unsigned(minparams.k))
 			return;
 
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-
 		//get hash values
         //TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
+		auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
 		// insert
         //TIMERSTARTCPU(insertTupleIntoMap);
 		for (int map = 0; map < minparams.maps; ++map) {
-            insertTupleIntoMap(map, &hashValues[0], readnum);
+            insertTupleIntoMap(map, hashValues[map], readnum);
 		}
         //TIMERSTOPCPU(insertTupleIntoMap);
 	}
@@ -233,20 +229,16 @@ namespace care{
 		if(sequence.size() < unsigned(minparams.k))
 			return;
 
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
-
 		//get hash values
         //TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
+		auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
 		// insert
         //TIMERSTARTCPU(insertTupleIntoMap);
         for(auto mapId : mapIds){
             assert(mapId < minparams.maps);
-            insertTupleIntoMap(mapId, &hashValues[0], readnum);
+            insertTupleIntoMap(mapId, hashValues[mapId], readnum);
 
         }
         //TIMERSTOPCPU(insertTupleIntoMap);
@@ -292,11 +284,8 @@ namespace care{
         if(sequence.size() < unsigned(minparams.k))
             return {};
 
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
         //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
+        auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
         using Range_t = std::pair<const Value_t*, const Value_t*>;
@@ -397,11 +386,8 @@ namespace care{
         if(num_hits > minparams.maps || num_hits < 1)
             return {};
 
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
         //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
+        auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
         std::size_t total_num_ids = 0;
@@ -451,11 +437,8 @@ namespace care{
 
         const int numResultsPerMapQueryThreshold = getResultsPerMapThreshold();
 
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
         //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
+        auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
         const size_t maximumResultSize = std::min(std::uint64_t(numResultsPerMapQueryThreshold) * minparams.maps, max_number_candidates);
@@ -521,11 +504,8 @@ namespace care{
 
         const int numResultsPerMapQueryThreshold = getResultsPerMapThreshold();
 
-        std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-        bool isForwardStrand[maximum_number_of_maps]{0};
         //TIMERSTARTCPU(minhashfunc);
-        minhashfunc(sequence, hashValues, isForwardStrand);
+        auto hashValues = minhashfunc(sequence);
         //TIMERSTOPCPU(minhashfunc);
 
         const size_t maximumResultSize = std::min(std::uint64_t(numResultsPerMapQueryThreshold) * minparams.maps, max_number_candidates);
@@ -592,11 +572,8 @@ namespace care{
 		if(sequence.size() < unsigned(minparams.k))
 			return 0;
 
-		std::uint64_t hashValues[maximum_number_of_maps]{0};
-
-		bool isForwardStrand[maximum_number_of_maps]{0};
 		//TIMERSTARTCPU(minhashfunc);
-		minhashfunc(sequence, hashValues, isForwardStrand);
+		auto hashValues = minhashfunc(sequence);
 		//TIMERSTOPCPU(minhashfunc);
 
         std::size_t result = 0;
@@ -634,34 +611,37 @@ namespace care{
 	}
 
 
-	void Minhasher::minhashfunc(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept{
-        std::uint64_t kmerHashValues[maximum_number_of_maps]{0};
+	std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+        std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
+        std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
 		std::uint64_t fhVal = 0;
         std::uint64_t rhVal = 0;
 		bool isForward = false;
 		// calc hash values of first canonical kmer
-		NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature, fhVal, rhVal, isForward);
-
-		for (int j = 0; j < minparams.maps; ++j) {
-			isForwardStrand[j] = isForward;
-		}
+		NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature.data(), fhVal, rhVal, isForward);
 
 		//calc hash values of remaining canonical kmers
 		for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
-			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, kmerHashValues, isForward);
+			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, 
+                    kmerHashValues.data(), isForward);
 
 			for (int j = 0; j < minparams.maps; ++j) {
 				if (minhashSignature[j] > kmerHashValues[j]){
 					minhashSignature[j] = kmerHashValues[j];
-					isForwardStrand[j] = isForward;
 				}
 			}
 		}
+
+        return minhashSignature;
 	}
 
-    void Minhasher::minhashfunc_other(const std::string& sequence, std::uint64_t* minhashSignature, bool* isForwardStrand) const noexcept{
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
         assert(minparams.k <= maximum_kmer_length);
+
+        std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
         auto make_kmer_encoded = [](const std::string& sequence, int k){
 
@@ -773,19 +753,15 @@ namespace care{
             std::uint32_t hashrc = hashfunc(revcompl,0);
 
             std::uint32_t hash = hashfwd;
-            bool isForward = true;
             if(hashrc < hashfwd){
                 hash = hashrc;
-                isForward = false;
             }
 
             if(first){
                 minhashSignature[0] = hash;
-                isForwardStrand[0] = isForward;
             }else{
                 if (minhashSignature[0] > hash){
                     minhashSignature[0] = hash;
-                    isForwardStrand[0] = isForward;
                 }
             }
 
@@ -793,19 +769,15 @@ namespace care{
                 hashfwd = hashfunc(hashfwd,j);
                 hashrc = hashfunc(hashrc,j);
                 hash = hashfwd;
-                bool isForward = true;
                 if(hashrc < hashfwd){
                     hash = hashrc;
-                    isForward = false;
                 }
 
                 if(first){
                     minhashSignature[j] = hash;
-                    isForwardStrand[j] = isForward;
                 }else{
                     if (minhashSignature[j] > hash){
                         minhashSignature[j] = hash;
-                        isForwardStrand[j] = isForward;
                     }
                 }
             }
@@ -820,6 +792,8 @@ namespace care{
 
             updatehashes((false));
 		}
+
+        return minhashSignature;
 
 	}
 
