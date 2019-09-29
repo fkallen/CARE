@@ -388,14 +388,14 @@ namespace care{
             bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, 
                                                             map.keysWithoutValues, deviceIds, maxValuesPerKey);
 
-            if(!success){
-                std::cout << "\nFallback to managed memory transformation" << std::endl;
-                success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, 
-                                                            map.keysWithoutValues, deviceIds, maxValuesPerKey);
-            }
+            //if(!success){
+            //    std::cout << "\nFallback to managed memory transformation. ";
+            //    success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, 
+            //                                                map.keysWithoutValues, deviceIds, maxValuesPerKey);
+            //}
 
             if(!success){
-                std::cout << "\nFallback to cpu transformation" << std::endl;
+                std::cout << "\nFallback to cpu transformation. ";
                 cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
                                     map.keysWithoutValues, maxValuesPerKey);
             }
