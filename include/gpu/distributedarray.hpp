@@ -212,11 +212,13 @@ public:
     // }
 
     const Value_t* offsetPtr(const Value_t* valuetBasePointer, Index_t rowIndex) const {
-        return (const Value_t*)(((const char*)(valuetBasePointer)) + sizeOfElement * rowIndex);
+        const size_t row = rowIndex;
+        return (const Value_t*)(((const char*)(valuetBasePointer)) + sizeOfElement * row);
     }
 
     Value_t* offsetPtr(Value_t* valuetBasePointer, Index_t rowIndex) const {
-        return (Value_t*)(((char*)(valuetBasePointer)) + sizeOfElement * rowIndex);
+        const size_t row = rowIndex;
+        return (Value_t*)(((char*)(valuetBasePointer)) + sizeOfElement * row);
     }
 
     int getLocation(Index_t index) const{
@@ -396,7 +398,7 @@ public:
                     const Value_t* srcPtr = data + srcOffset;
                     Value_t* destPtr = offsetPtr(dataPtrPerLocation[location], localIndices[psOffset+from]);
                     if(location == hostLocation){
-                        std::copy_n(srcPtr, numColumns * (to-from), destPtr);
+                        std::copy_n(srcPtr, size_t(numColumns) * (to-from), destPtr);
                     }else{
                         cudaSetDevice(deviceIds[location]); CUERR;
                         cudaMemcpy(destPtr, srcPtr, sizeOfElement * (to-from), H2D); CUERR;
@@ -923,7 +925,7 @@ public:
                     const Index_t outputrow = i / numCols;
                     const Index_t inputrow = indices[outputrow];
                     const Index_t col = i % numCols;
-                    dest[outputrow * resultPitchValueTs + col] = src[inputrow * numCols + col];
+                    dest[size_t(outputrow) * resultPitchValueTs + col] = src[size_t(inputrow) * numCols + col];
                 }
             }); CUERR;
 
@@ -982,7 +984,8 @@ public:
                 const Index_t outputrow = i / numCols;
                 const Index_t inputrow = d_indices[outputrow] + indexOffset;
                 const Index_t col = i % numCols;
-                d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
+                d_result[size_t(outputrow) * resultPitchValueTs + col] 
+                        = gpuData[size_t(inputrow) * numCols + col];
             }
         }); CUERR;
 
@@ -1017,7 +1020,8 @@ public:
                 const Index_t outputrow = i / numCols;
                 const Index_t inputrow = d_indices[outputrow] + indexOffset;
                 const Index_t col = i % numCols;
-                d_result[outputrow * resultPitchValueTs + col] = gpuData[inputrow * numCols + col];
+                d_result[size_t(outputrow) * resultPitchValueTs + col] 
+                        = gpuData[size_t(inputrow) * numCols + col];
             }
         }); CUERR;
 
@@ -1051,16 +1055,6 @@ private:
 
         cudaSetDevice(oldDevice); CUERR;
     }
-
-    template<class Func>
-    void maybeAsync(Func&& f){
-        #if 0
-            f();
-        #else
-            care::threadpool.enqueue(std::forward<Func>(f));
-        #endif
-    }
-
 };
 
 
