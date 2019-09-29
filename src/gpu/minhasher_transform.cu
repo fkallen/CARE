@@ -147,7 +147,7 @@ namespace care{
                             std::vector<Value_t>& values, 
                             std::vector<Index_t>& countsPrefixSum,
                             std::vector<Key_t>& keysWithoutValues,
-                            int maxValuesPerKey,
+                            int maxValuesPerKey_,
                             const std::vector<int>& /*deviceIds*/){
 
             auto deallocVector = [](auto& vec){
@@ -156,13 +156,13 @@ namespace care{
                 vec.swap(tmp);
             };
 
+            const Index_t maxValuesPerKey = maxValuesPerKey_;
+
             ThrustAlloc<char> allocator;
             auto allocatorPolicy = thrust::cuda::par(allocator);
 
-            std::size_t oldSizeKeys = keys.size();
-            std::size_t oldSizeValues = values.size();
-            std::size_t oldSizeCountsPrefixSum = countsPrefixSum.size();
-            std::size_t oldSizeKeysWithoutValues = keysWithoutValues.size();
+            const std::size_t oldSizeKeys = keys.size();
+            const std::size_t oldSizeValues = values.size();
 
             thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_countsPrefixSum(countsPrefixSum.size());
 
@@ -340,7 +340,7 @@ namespace care{
 
             bool success = false;
 
-            try{
+            try{           
                 MinhasherTransformGPUCompactKeys<allowFallback>
                         ::execute(keys, values, countsPrefixSum, deviceIds);
 

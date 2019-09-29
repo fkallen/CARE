@@ -122,7 +122,7 @@ namespace care{
     }
 
     template<class Key_t, class Value_t, class Index_t>
-    void minhasherTransformGPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
+    void minhasherTransformCPURemoveKeysWithToManyValues(std::vector<Key_t>& keys, 
                                                         std::vector<Value_t>& values, 
                                                         std::vector<Index_t>& countsPrefixSum,
                                                         std::vector<Key_t>& keysWithoutValues,
@@ -141,10 +141,16 @@ namespace care{
         std::size_t oldSizeValues = values.size();
 
         std::vector<Index_t> counts(countsPrefixSum.size()-1);
-        thrust::adjacent_difference(policy,
-                                    countsPrefixSum.begin()+1,
-                                    countsPrefixSum.end(),
-                                    counts.begin());
+        {
+            auto psPtr = thrust::raw_pointer_cast(countsPrefixSum.data());
+            auto countsPtr = thrust::raw_pointer_cast(counts.data());
+        
+            thrust::adjacent_difference(policy,
+                                        psPtr+1,
+                                        psPtr + countsPrefixSum.size(),
+                                        countsPtr);
+
+        }
         
         //handle keys
         int numKeysToRemove = 0;
@@ -263,7 +269,7 @@ namespace care{
 
         minhasherTransformCPUCompactKeys(keys, values, countsPrefixSum);
 
-        minhasherTransformGPURemoveKeysWithToManyValues(keys, values, countsPrefixSum, keysWithoutValues, maxValuesPerKey);
+        minhasherTransformCPURemoveKeysWithToManyValues(keys, values, countsPrefixSum, keysWithoutValues, maxValuesPerKey);
 
         std::cout << "Transformation done." << std::endl;
     };
