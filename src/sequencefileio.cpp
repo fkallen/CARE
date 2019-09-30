@@ -974,10 +974,12 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
                                                     1, 
                                                     4);
 
+                //filesort::binKeySort<read_number>(filesToMerge[0], tempfile);
+
              TIMERSTOPCPU(sort_during_merge);
-            if(r1 != 0){
-                throw std::runtime_error("Sort of result files failed! sort returned " + std::to_string(r1));
-            }
+            //if(r1 != 0){
+            //    throw std::runtime_error("Sort of result files failed! sort returned " + std::to_string(r1));
+            //}
         }
     }
 
@@ -1343,20 +1345,29 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
     bool firstiter = true;
 
-    while(std::getline(correctionsstream, correctionline)){
-        std::stringstream ss(correctionline);
+    // while(std::getline(correctionsstream, correctionline)){
+    //     std::stringstream ss(correctionline);
+    //     TempCorrectedSequence tcs;
+    //     ss >> tcs;
+    while(bool(correctionsstream)){
         TempCorrectedSequence tcs;
-        ss >> tcs;
-
+        if(!(correctionsstream >> tcs)){
+            break;
+        }
         if(firstiter || tcs.readId == currentReadId){
             currentReadId = tcs.readId ;
             correctionVector.emplace_back(std::move(tcs));
 
-            while(std::getline(correctionsstream, correctionline)){
-                std::stringstream ss2(correctionline);
-                TempCorrectedSequence tcs2;
-                ss2 >> tcs2;
+            // while(std::getline(correctionsstream, correctionline)){
+            //     std::stringstream ss2(correctionline);
+            //     TempCorrectedSequence tcs2;
+            //     ss2 >> tcs2;
 
+            while(bool(correctionsstream)){
+                TempCorrectedSequence tcs2;
+                if(!(correctionsstream >> tcs2)){
+                    break;
+                }
                 if(tcs2.readId == currentReadId){
                     correctionVector.emplace_back(std::move(tcs2));
                 }else{
@@ -1495,6 +1506,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
     os << tmp.readId << ' ';
+    //os.write(reinterpret_cast<const char*>(&tmp.readId), sizeof(read_number));
 
     os << tmp.hq << ' ';
     os << tmp.useEdits << ' ';
@@ -1525,6 +1537,8 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
 
 std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
     is >> tmp.readId;
+    //is.read(reinterpret_cast<char*>(&tmp.readId), sizeof(read_number));
+
     is >> tmp.hq;
     is >> tmp.useEdits;
     int type;
@@ -1534,6 +1548,9 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
     if(tmp.useEdits){
         size_t size;
         is >> size;
+        if(!is){
+            return is; //make sure size could be read correctly to avoid bad_alloc
+        }
         tmp.edits.resize(size);
         for(size_t i = 0; i < size; i++){
             is >> tmp.edits[i].pos;
@@ -1546,6 +1563,9 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
     if(tmp.type == TempCorrectedSequence::Type::Anchor){
         size_t vecsize;
         is >> vecsize;
+        if(!is){
+            return is; //make sure vecsize could be read correctly to avoid bad_alloc
+        }
         if(vecsize > 0){
             auto& vec = tmp.uncorrectedPositionsNoConsensus;
             vec.resize(vecsize);
