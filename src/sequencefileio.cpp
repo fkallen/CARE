@@ -3,6 +3,7 @@
 #include <config.hpp>
 #include <threadsafe_buffer.hpp>
 #include <sequence.hpp>
+#include <filesort.hpp>
 
 #include <iterator>
 #include <iostream>
@@ -935,38 +936,47 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         tempfile = filesToMerge[0];
     }else{
         if(isSorted){
-            std::stringstream commandbuilder;
-            commandbuilder << "sort --parallel=4 -k1,1 -n -m ";
-            for(const auto& filename : filesToMerge){
-                commandbuilder << "\"" << filename << "\" ";
-            }
-            commandbuilder << " > " << tempfile;
+            // std::stringstream commandbuilder;
+            // commandbuilder << "sort --parallel=4 -k1,1 -n -m ";
+            // for(const auto& filename : filesToMerge){
+            //     commandbuilder << "\"" << filename << "\" ";
+            // }
+            // commandbuilder << " > " << tempfile;
 
-            std::string command = commandbuilder.str();
-            std::cerr << "Running shell command: " << command << "\n";
+            // std::string command = commandbuilder.str();
+            // std::cerr << "Running shell command: " << command << "\n";
             TIMERSTARTCPU(sort_during_merge);
-            int r1 = std::system(command.c_str());
+            //int r1 = std::system(command.c_str());
+            int r1 = filesort::gnuTxtNumericMerge(filesToMerge, 
+                                                    tempfile, 
+                                                    1, 
+                                                    4);
 
             TIMERSTOPCPU(sort_during_merge);
             if(r1 != 0){
                 throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
             }
         }else{
-            std::stringstream commandbuilder;
-            commandbuilder << "sort --parallel=4 -k1,1 -n ";
-            for(const auto& filename : filesToMerge){
-                commandbuilder << "\"" << filename << "\" ";
-            }
-            commandbuilder << " > " << tempfile;
+            // std::stringstream commandbuilder;
+            // commandbuilder << "sort --parallel=4 -k1,1 -n ";
+            // for(const auto& filename : filesToMerge){
+            //     commandbuilder << "\"" << filename << "\" ";
+            // }
+            // commandbuilder << " > " << tempfile;
 
-            std::string command = commandbuilder.str();
-            std::cerr << "Running shell command: " << command << "\n";
-            TIMERSTARTCPU(sort_during_merge);
-            int r1 = std::system(command.c_str());
+            // std::string command = commandbuilder.str();
+            // std::cerr << "Running shell command: " << command << "\n";
+             TIMERSTARTCPU(sort_during_merge);
+            // int r1 = std::system(command.c_str());
 
-            TIMERSTOPCPU(sort_during_merge);
+                int r1 = filesort::gnuTxtNumericSort(filesToMerge, 
+                                                    tempfile, 
+                                                    1, 
+                                                    4);
+
+             TIMERSTOPCPU(sort_during_merge);
             if(r1 != 0){
-                throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+                throw std::runtime_error("Sort of result files failed! sort returned " + std::to_string(r1));
             }
         }
     }
