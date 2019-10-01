@@ -538,7 +538,7 @@ namespace gpu{
 
                 const int remainingTables = minhashOptions.maps - numConstructedTables;
 
-                for(int i = numConstructedTables; i < minhashOptions.maps+2; i++){
+                for(int i = numConstructedTables; i < minhashOptions.maps+3; i++){
                     try{
                         Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
                         minhashTables.emplace_back(std::move(table));
@@ -555,17 +555,17 @@ namespace gpu{
 
                 if(minhashTables.size() > 1){
                     minhashTables.pop_back();
-                    std::cout << "pop" << std::endl;
+                    //std::cout << "pop" << std::endl;
                 }
 
                 if(minhashTables.size() > 1){
                     minhashTables.pop_back();
-                    std::cout << "pop" << std::endl;
+                    //std::cout << "pop" << std::endl;
                 }
 
                 if(minhashTables.size() > 1){
                     minhashTables.pop_back();
-                    std::cout << "pop" << std::endl;
+                    //std::cout << "pop" << std::endl;
                 }
                 
 
@@ -639,6 +639,8 @@ namespace gpu{
 
                     //TIMERSTOPCPU(insert);
                 }
+                std::ofstream rstempostream("rstemp", std::ios::binary);
+                readStorage.writeGpuDataToStreamAndFreeGpuMem(rstempostream);
 
                 for(int i = 0; i < int(minhashTables.size()); i++){
                     int globalTableId = globalTableIds[i];
@@ -646,6 +648,8 @@ namespace gpu{
                     std::cerr << "Transforming table " << globalTableId << ". ";
                     transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);                    
                 }
+                std::ifstream rstempistream("rstemp", std::ios::binary);
+                readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
 
                 numConstructedTables += minhashTables.size();
 

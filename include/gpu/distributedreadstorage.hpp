@@ -49,9 +49,9 @@ public:
     std::mutex mutexUndeterminedBaseReads;
     LengthStore lengthStorage;
     GPULengthStore gpulengthStorage;
-    DistributedArray<unsigned int, read_number> distributedSequenceData2;
-    DistributedArray<Length_t, read_number> distributedSequenceLengths2;
-    DistributedArray<char, read_number> distributedQualities2;
+    mutable DistributedArray<unsigned int, read_number> distributedSequenceData2;
+    mutable DistributedArray<Length_t, read_number> distributedSequenceLengths2;
+    mutable DistributedArray<char, read_number> distributedQualities2;
 
 
 
@@ -87,6 +87,8 @@ public:
     void saveToFile(const std::string& filename) const;
     void loadFromFile(const std::string& filename);
     void loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_);
+    void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
+    void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
 
     void setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
     void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);

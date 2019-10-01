@@ -20,7 +20,7 @@
 #include <future>
 #include <cassert>
 #include <omp.h>
-
+#include <fstream>
 #include <mutex>
 #include <condition_variable>
 
@@ -1035,6 +1035,72 @@ public:
 
     std::vector<Index_t> getPartitions() const{
         return elementsPerLocation;
+    }
+
+    void writeGpuPartitionsToStream(std::ofstream& stream) const{
+        constexpr Index_t batchsize = 1000000;
+
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            cudaSetDevice(deviceIds[gpu]); CUERR;
+
+            const Index_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
+            for(Index_t batch = 0; batch < numBatches; batch++){
+                Index_t begin = batch * batchsize;
+                Index_t end = std::min(elementsPerLocation[gpu], (batch + 1) * batchsize);
+                const Index_t numElements = end-begin;
+                std::vector<Value_t> vec(numElements * sizeOfElement);
+                const Value_t* src = offsetPtr(dataPtrPerLocation[gpu], begin);
+                cudaMemcpy(vec.data(), src, sizeOfElement * numElements, D2H); CUERR;
+                stream.write(reinterpret_cast<const char*>(vec.data()), sizeOfElement * numElements);
+            }
+
+        }
+        cudaSetDevice(currentId); CUERR;
+    }
+
+    void readGpuPartitionsFromStream(std::ifstream& stream){
+        constexpr Index_t batchsize = 1000000;
+        
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            cudaSetDevice(deviceIds[gpu]); CUERR;
+
+            const Index_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
+            for(Index_t batch = 0; batch < numBatches; batch++){
+                Index_t begin = batch * batchsize;
+                Index_t end = std::min(elementsPerLocation[gpu], (batch + 1) * batchsize);
+                const Index_t numElements = end-begin;
+                std::vector<Value_t> vec(numElements * sizeOfElement);
+                stream.read(reinterpret_cast<char*>(vec.data()), sizeOfElement * numElements);
+                Value_t* dest = offsetPtr(dataPtrPerLocation[gpu], begin);
+                cudaMemcpy(dest, vec.data(), sizeOfElement * numElements, H2D); CUERR;                
+            }
+
+        }
+        cudaSetDevice(currentId); CUERR;
+    }
+
+    void deallocateGpuPartitions(){
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            cudaSetDevice(deviceIds[gpu]); CUERR;
+            cudaFree(dataPtrPerLocation[gpu]); CUERR;
+        }
+        cudaSetDevice(currentId); CUERR;
+    }
+
+    void allocateGpuPartitions(){
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            cudaSetDevice(deviceIds[gpu]); CUERR;
+            cudaMalloc(&dataPtrPerLocation[gpu], sizeOfElement * elementsPerLocation[gpu]); CUERR;
+        }
+        cudaSetDevice(currentId); CUERR;
     }
 
 private:

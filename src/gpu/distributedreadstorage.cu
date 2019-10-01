@@ -832,7 +832,19 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 }
 
 
+void DistributedReadStorage::writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const{
+    distributedSequenceData2.writeGpuPartitionsToStream(stream);
+    distributedQualities2.writeGpuPartitionsToStream(stream);
+    distributedSequenceData2.deallocateGpuPartitions();
+    distributedQualities2.deallocateGpuPartitions();  
+}
 
+void DistributedReadStorage::allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const{
+    distributedSequenceData2.allocateGpuPartitions();
+    distributedQualities2.allocateGpuPartitions();
+    distributedSequenceData2.readGpuPartitionsFromStream(stream);
+    distributedQualities2.readGpuPartitionsFromStream(stream);  
+}
 
 
 
