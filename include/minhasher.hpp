@@ -490,10 +490,17 @@ struct Minhasher {
 
 	void init(std::uint64_t nReads);
     void initMap(int map);
+    void moveassignMap(int mapId, Map_t&& newMap);
 
 	void clear();
 
 	void destroy();
+
+    void insertSequenceIntoExternalTables(const std::string& sequence, 
+                                            read_number readnum,                                                     
+                                            const std::vector<int>& tableIds,
+                                            std::vector<Map_t>& tables,
+                                            const std::vector<int>& hashIds) const;
 
     void insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds);
 
@@ -553,7 +560,8 @@ private:
     std::array<std::uint64_t, maximum_number_of_maps>
     minhashfunc_other(const std::string& sequence) const noexcept;
 
-    void insertTupleIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
+    void insertIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
+    void insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const;
 };
 
 

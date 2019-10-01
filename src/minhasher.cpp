@@ -170,10 +170,15 @@ namespace care{
 		}
 	}
 
-    void Minhasher::initMap(int map){
-        assert(map < minparams.maps);
-        minhashTables[map].reset();
-        minhashTables[map].reset(new Map_t(nReads, deviceIds));
+    void Minhasher::initMap(int mapId){
+        assert(mapId < minparams.maps);
+        minhashTables[mapId].reset();
+        minhashTables[mapId].reset(new Map_t(nReads, deviceIds));
+    }
+
+    void Minhasher::moveassignMap(int mapId, Minhasher::Map_t&& newMap){
+        assert(mapId < minparams.maps);
+        minhashTables[mapId].reset(new Map_t(std::move(newMap)));
     }
 
 	void Minhasher::clear(){
@@ -186,7 +191,21 @@ namespace care{
 		minhashTables.shrink_to_fit();
 	}
 
-    void Minhasher::insertTupleIntoMap(int map, std::uint64_t hashValue, read_number readnum){
+
+    void Minhasher::insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const{
+
+        kmer_type key = hashValue & key_mask;
+        Value_t value(readnum);
+
+        if (!table.add(key, value, readnum)) {
+            throw std::runtime_error(("error adding key to map. key "
+                                        + std::to_string(key) + " "
+                                        + std::to_string(value) + " "
+                                        + std::to_string(readnum)));
+        }
+    }
+
+    void Minhasher::insertIntoMap(int map, std::uint64_t hashValue, read_number readnum){
         assert(map < minparams.maps);
 
         kmer_type key = hashValue & key_mask;
@@ -217,9 +236,36 @@ namespace care{
 		// insert
         //TIMERSTARTCPU(insertTupleIntoMap);
 		for (int map = 0; map < minparams.maps; ++map) {
-            insertTupleIntoMap(map, hashValues[map], readnum);
+            insertIntoMap(map, hashValues[map], readnum);
 		}
         //TIMERSTOPCPU(insertTupleIntoMap);
+	}
+
+    //Calculate hash values of sequence. Insert hashvalue[hashIds[i]] into tables[tableIds[i]]
+    void Minhasher::insertSequenceIntoExternalTables(const std::string& sequence, 
+                                                    read_number readnum,                                                     
+                                                    const std::vector<int>& tableIds,
+                                                    std::vector<Minhasher::Map_t>& tables,
+                                                    const std::vector<int>& hashIds) const{
+		if(readnum >= nReads)
+			throw std::runtime_error("Minhasher::insertSequence: read number too large. "
+                                    + std::to_string(readnum) + " > " + std::to_string(nReads));
+        assert(tableIds.size() == hashIds.size());
+        assert(std::all_of(tableIds.begin(), tableIds.end(), [&](auto id){return id < int(tables.size());}));
+        assert(std::all_of(hashIds.begin(), hashIds.end(), [&](auto id){return id < minparams.maps;}));
+
+		// we do not consider reads which are shorter than k
+		if(sequence.size() < unsigned(minparams.k))
+			return; //TODO this breaks querying
+
+		auto hashValues = minhashfunc(sequence);
+
+        for(int i = 0; i < int(hashIds.size()); i++){
+            auto hashValue = hashValues[hashIds[i]];
+            auto tableId = tableIds[i];
+            auto& table = tables[tableId];
+            insertIntoExternalTable(table, hashValue, readnum);
+        }
 	}
 
     void Minhasher::insertSequence(const std::string& sequence, read_number readnum, std::vector<int> mapIds){
@@ -242,7 +288,7 @@ namespace care{
         //TIMERSTARTCPU(insertTupleIntoMap);
         for(auto mapId : mapIds){
             assert(mapId < minparams.maps);
-            insertTupleIntoMap(mapId, hashValues[mapId], readnum);
+            insertIntoMap(mapId, hashValues[mapId], readnum);
 
         }
         //TIMERSTOPCPU(insertTupleIntoMap);

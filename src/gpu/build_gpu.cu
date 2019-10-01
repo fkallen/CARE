@@ -370,7 +370,7 @@ namespace gpu{
 
     }
 
-
+#if 0
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
                                 			   const RuntimeOptions& runtimeOptions,
                                 			   std::uint64_t nReads,
@@ -484,6 +484,154 @@ namespace gpu{
 
         return result;
     }
+
+#else 
+    BuiltDataStructure<Minhasher> build_minhasher(const FileOptions &fileOptions,
+                                                const RuntimeOptions &runtimeOptions,
+                                                std::uint64_t nReads,
+                                                const MinhashOptions &minhashOptions,
+                                                const GpuReadStorageWithFlags &readStoragewFlags)
+    {
+
+        BuiltDataStructure<Minhasher> result;
+        auto &minhasher = result.data;
+
+        auto identity = [](auto i) { return i; };
+
+        minhasher = std::move(Minhasher{minhashOptions});
+
+        minhasher.init(nReads);
+
+        if (fileOptions.load_hashtables_from != "")
+        {
+            minhasher.loadFromFile(fileOptions.load_hashtables_from);
+            result.builtType = BuiltType::Loaded;
+
+            std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
+        }
+        else
+        {
+            result.builtType = BuiltType::Constructed;
+
+            const auto &readStorage = readStoragewFlags.readStorage;
+            //const auto& validFlags = readStoragewFlags.readIsValidFlags;
+
+            constexpr read_number parallelReads = 10000000;
+            read_number numReads = readStorage.getNumberOfReads();
+            int numIters = SDIV(numReads, parallelReads);
+
+            auto sequencehandle = readStorage.makeGatherHandleSequences();
+            //auto lengthhandle = readStorage.makeGatherHandleLengths();
+            size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
+
+            int numConstructedTables = 0;
+            while(numConstructedTables < minhashOptions.maps){
+                std::vector<Minhasher::Map_t> minhashTables;
+                minhashTables.reserve(minhashOptions.maps+1);
+
+                for(int i = numConstructedTables; i < minhashOptions.maps+1; i++){
+                    try{
+                        Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
+                        minhashTables.emplace_back(std::move(table));
+                    }catch(...){
+                        std::cerr << "Could not construct table i in current pass\n";
+                        break;
+                    }                        
+                }
+
+                minhashTables.pop_back();
+                if(minhashTables.size() == 0){
+                    throw std::runtime_error("Error: Could not create minhash tables!");
+                }
+
+                std::vector<int> tableIds(minhashTables.size());                
+                std::vector<int> hashIds(minhashTables.size());
+                std::vector<int> globalTableIds(minhashTables.size());
+                
+                std::iota(tableIds.begin(), tableIds.end(), 0);
+                std::iota(hashIds.begin(), hashIds.end(), numConstructedTables);
+                std::iota(globalTableIds.begin(), globalTableIds.end(), numConstructedTables);
+
+                std::cout << "Constructing maps: ";
+                std::copy(globalTableIds.begin(), globalTableIds.end(), std::ostream_iterator<int>(std::cout, " "));
+                std::cout << "\n";
+
+                for (int iter = 0; iter < numIters; iter++){
+                    read_number readIdBegin = iter * parallelReads;
+                    read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+                    std::vector<read_number> indices(readIdEnd - readIdBegin);
+                    std::iota(indices.begin(), indices.end(), readIdBegin);
+
+                    std::vector<char> sequenceData(indices.size() * sequencepitch);
+                    std::vector<DistributedReadStorage::Length_t> lengths(indices.size());
+
+                    //TIMERSTARTCPU(gather);
+
+                    auto future1 = readStorage.gatherSequenceDataToHostBufferAsync(
+                        sequencehandle,
+                        sequenceData.data(),
+                        sequencepitch,
+                        indices.data(),
+                        indices.size(),
+                        1);
+                    // auto future2 = readStorage.gatherSequenceLengthsToHostBufferAsync(
+                    //                             lengthhandle,
+                    //                             lengths.data(),
+                    //                             indices.data(),
+                    //                             indices.size(),
+                    //                             1);
+
+                    readStorage.gatherSequenceLengthsToHostBufferNew(
+                        lengths.data(),
+                        indices.data(),
+                        int(indices.size()));
+
+                    future1.wait();
+                    //future2.wait();
+
+                    //TIMERSTOPCPU(gather);
+
+                    //TIMERSTARTCPU(insert);
+
+                    auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                        for (read_number readId = begin; readId < end; readId++){
+                            read_number localId = readId - readIdBegin;
+                            const char *encodedsequence = (const char *)&sequenceData[localId * sequencepitch];
+                            const int sequencelength = lengths[localId];
+                            std::string sequencestring = get2BitHiLoString((const unsigned int *)encodedsequence, sequencelength);
+                            minhasher.insertSequenceIntoExternalTables(sequencestring, 
+                                                                        readId, 
+                                                                        tableIds,
+                                                                        minhashTables,
+                                                                        hashIds);
+                        }
+                    };
+
+                    threadpool.parallelFor(readIdBegin,
+                                        readIdEnd,
+                                        std::move(lambda));
+
+                    //TIMERSTOPCPU(insert);
+                }
+
+                for(int i = 0; i < int(minhashTables.size()); i++){
+                    int globalTableId = globalTableIds[i];
+                    minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
+                    transform_minhasher_gpu(minhasher, globalTableId, runtimeOptions.deviceIds);
+                }
+
+                numConstructedTables += minhashTables.size();
+            }
+        }
+
+        return result;
+    }
+
+
+
+
+#endif
 
 
 
