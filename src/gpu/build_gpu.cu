@@ -190,7 +190,7 @@ namespace gpu{
                 if(readIndex >= expectedNumberOfReads){
                     throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
                                             + " reads, but file contains at least "
-                                            + std::to_string(readIndex) + " reads.");
+                                            + std::to_string(readIndex+1) + " reads.");
                 }
 
                 if(readLength > expectedMaximumReadLength){
@@ -524,25 +524,50 @@ namespace gpu{
             //auto lengthhandle = readStorage.makeGatherHandleLengths();
             size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
 
+            const std::string tmpmapsFilename = "tmpmaps";
+            std::ofstream outstream(tmpmapsFilename, std::ios::binary);
+            if(!outstream){
+                throw std::runtime_error("Could not open temp file " + tmpmapsFilename + "!");
+            }
+            int numSavedTables = 0;
+
             int numConstructedTables = 0;
             while(numConstructedTables < minhashOptions.maps){
                 std::vector<Minhasher::Map_t> minhashTables;
                 minhashTables.reserve(minhashOptions.maps+1);
 
-                for(int i = numConstructedTables; i < minhashOptions.maps+1; i++){
+                const int remainingTables = minhashOptions.maps - numConstructedTables;
+
+                for(int i = numConstructedTables; i < minhashOptions.maps+2; i++){
                     try{
                         Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
                         minhashTables.emplace_back(std::move(table));
                     }catch(...){
-                        std::cerr << "Could not construct table i in current pass\n";
+                        //std::cerr << "Could not construct table "<< i << " in current pass\n";
                         break;
                     }                        
                 }
-
-                minhashTables.pop_back();
                 if(minhashTables.size() == 0){
                     throw std::runtime_error("Error: Could not create minhash tables!");
                 }
+
+                //std::cout << "remainingTables = " << remainingTables << ", minhashTables.size() = " << minhashTables.size() << std::endl;
+
+                if(minhashTables.size() > 1){
+                    minhashTables.pop_back();
+                    std::cout << "pop" << std::endl;
+                }
+
+                if(minhashTables.size() > 1){
+                    minhashTables.pop_back();
+                    std::cout << "pop" << std::endl;
+                }
+
+                if(minhashTables.size() > 1){
+                    minhashTables.pop_back();
+                    std::cout << "pop" << std::endl;
+                }
+                
 
                 std::vector<int> tableIds(minhashTables.size());                
                 std::vector<int> hashIds(minhashTables.size());
@@ -617,11 +642,30 @@ namespace gpu{
 
                 for(int i = 0; i < int(minhashTables.size()); i++){
                     int globalTableId = globalTableIds[i];
-                    minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
-                    transform_minhasher_gpu(minhasher, globalTableId, runtimeOptions.deviceIds);
+                    int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                    std::cerr << "Transforming table " << globalTableId << ". ";
+                    transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);                    
                 }
 
                 numConstructedTables += minhashTables.size();
+
+                if(numConstructedTables < minhashOptions.maps){
+                    for(const auto& table : minhashTables){
+                        table.writeToStream(outstream);
+                        numSavedTables++;
+                    }
+                }else{
+                    std::ifstream instream(tmpmapsFilename, std::ios::binary);
+                    for(int i = 0; i < numSavedTables; i++){
+                        Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
+                        table.readFromStream(instream);
+                        minhasher.moveassignMap(i, std::move(table));
+                    }
+                    for(int i = 0; i < int(minhashTables.size()); i++){
+                        int globalTableId = globalTableIds[i];
+                        minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));                        
+                    }
+                }      
             }
         }
 
