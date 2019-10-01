@@ -89,6 +89,9 @@ namespace care{
 			}
 
             bool operator==(const KeyIndexMap& rhs) const{
+                if(maxProbes != rhs.maxProbes){
+                    return false;
+                }
                 if(size != rhs.size)
                     return false;
                 if(keyToIndexMap != rhs.keyToIndexMap)
@@ -147,7 +150,6 @@ namespace care{
             }
 
             void readFromStream(std::ifstream& instream){
-                std::uint64_t maxProbes = 0;
                 instream.read(reinterpret_cast<char*>(&maxProbes), sizeof(std::uint64_t));
 
                 instream.read(reinterpret_cast<char*>(&size), sizeof(std::uint64_t));
@@ -239,6 +241,9 @@ namespace care{
                 if(keysWithoutValues != rhs.keysWithoutValues){
                     return false;
                 }
+                if(keyIndexMap != rhs.keyIndexMap){
+                    return false;
+                }
                 return true;
             }
 
@@ -284,7 +289,8 @@ namespace care{
                 instream.read(reinterpret_cast<char*>(&noMoreWrites), sizeof(bool));
                 instream.read(reinterpret_cast<char*>(&canUseGpu_loaded), sizeof(bool));
 
-                keys.resize(nKeys);
+                keys = std::vector<Key_t>();
+                //keys.resize(nKeys);
                 values.resize(nValues);
 
                 //instream.read(reinterpret_cast<char*>(keys.data()), sizeof(Key_t) * nKeys);

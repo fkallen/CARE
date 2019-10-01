@@ -136,8 +136,12 @@ namespace care{
         instream.read(reinterpret_cast<char*>(&nReads_loaded), sizeof(read_number));
         instream.read(reinterpret_cast<char*>(&canUseGpu_loaded), sizeof(bool));
 
-        assert(minparams == minparams_loaded);
-        assert(nReads == nReads_loaded);
+        // assert(minparams == minparams_loaded);
+        // assert(nReads == nReads_loaded);
+
+        minparams = minparams_loaded;
+        nReads = nReads_loaded;
+
 
         minhashTables.resize(minparams.maps);
 
