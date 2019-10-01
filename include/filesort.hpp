@@ -89,6 +89,12 @@ namespace detail{
 
                         int res1 = std::remove(tempfilenames[i].c_str());
                         int res2 = std::remove(tempfilenames[i+1].c_str());
+                        if(res1 != 0){
+                            std::perror("remove");
+                        }
+                        if(res2 != 0){
+                            std::perror("remove");
+                        }
                         assert(res1 == 0);
                         assert(res2 == 0);
                     }
@@ -107,6 +113,9 @@ namespace detail{
         if(tempfilenames.size() == 1){
             std::cerr << "Rename " << tempfilenames[0] << " to " << outfilename << "\n";
             int res = std::rename(tempfilenames[0].c_str(), outfilename.c_str());
+            if(res != 0){
+                std::perror("rename");
+            }
             assert(res == 0);
         }else{
             std::cerr << "merge " << tempfilenames[0] << " + " << tempfilenames[1] << " into " <<  outfilename << "\n";
@@ -118,6 +127,12 @@ namespace detail{
 
                 int res1 = std::remove(tempfilenames[0].c_str());
                 int res2 = std::remove(tempfilenames[1].c_str());
+                if(res1 != 0){
+                    std::perror("remove");
+                }
+                if(res2 != 0){
+                    std::perror("remove");
+                }
                 assert(res1 == 0);
                 assert(res2 == 0);
             }
@@ -138,7 +153,7 @@ int gnuTxtNumericSort(const std::vector<std::string>& filenames,
     assert(std::all_of(filenames.begin(), filenames.end(), [&](const auto& s){return s != outfilename;}));
 
     std::stringstream commandbuilder;
-    commandbuilder << "sort --parallel=" << keyIndex <<" -k" << keyIndex << "," << keyIndex << " -n ";
+    commandbuilder << "sort --parallel=" << numThreads <<" -k" << keyIndex << "," << keyIndex << " -n ";
     for(const auto& filename : filenames){
         commandbuilder << "\"" << filename << "\" ";
     }
@@ -461,9 +476,22 @@ binKeyMergeSortedChunksAndDeleteChunks(const std::vector<std::string>& infilenam
 
 template<class Index_t, class Comp>
 void
+binKeyMergeSortedChunksAndDeleteChunks(const std::vector<std::string>& infilenames, const std::string& outfilename){
+    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(infilenames, outfilename, std::less<Index_t>{});
+}
+
+template<class Index_t, class Comp>
+void
 binKeyMergeSortedChunks(const std::vector<std::string>& infilenames, const std::string& outfilename, Comp&& comparator){
     detail::binKeyMergeSortedChunksImpl<Index_t>(false, infilenames, outfilename, comparator);
 }
+
+template<class Index_t, class Comp>
+void
+binKeyMergeSortedChunks(const std::vector<std::string>& infilenames, const std::string& outfilename){
+    binKeyMergeSortedChunks<Index_t>(infilenames, outfilename, std::less<Index_t>{});
+}
+
 
 //sort infile to outfile
 //each line in infile must begin with a number of type Index_t which was written in binary mode.
@@ -478,8 +506,8 @@ void binKeySort(const std::vector<std::string>& infilenames, const std::string& 
 }
 
 template<class Index_t>
-void binKeySort(const std::string& infilename, const std::string& outfilename, const std::string& tmpprefix){
-    binKeySort<Index_t>(infilename, outfilename, tmpprefix, std::less<Index_t>{});
+void binKeySort(const std::vector<std::string>& infilenames, const std::string& outfilename, const std::string& tmpprefix){
+    binKeySort<Index_t>(infilenames, outfilename, tmpprefix, std::less<Index_t>{});
 }
 
 

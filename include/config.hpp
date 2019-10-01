@@ -35,6 +35,13 @@ namespace care{
     //smaller number means slower construction time and less memory usage during construction.
     constexpr int minhasherConstructionNumMaps = 16;
 
+
+    //Controls file size of temporary results.
+    //tmpresultfileformat = 0 -> use a plain text file. use gnu sort for sorting
+    //tmpresultfileformat = 1 -> use space efficient format. use custom sort function
+    constexpr int tmpresultfileformat = 1;
+    static_assert(0 <= tmpresultfileformat && tmpresultfileformat <= 1);
+
 //##################################################
 
 }

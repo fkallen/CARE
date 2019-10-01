@@ -936,50 +936,49 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
         tempfile = filesToMerge[0];
     }else{
         if(isSorted){
-            // std::stringstream commandbuilder;
-            // commandbuilder << "sort --parallel=4 -k1,1 -n -m ";
-            // for(const auto& filename : filesToMerge){
-            //     commandbuilder << "\"" << filename << "\" ";
-            // }
-            // commandbuilder << " > " << tempfile;
+            if(tmpresultfileformat == 0){
 
-            // std::string command = commandbuilder.str();
-            // std::cerr << "Running shell command: " << command << "\n";
-            TIMERSTARTCPU(sort_during_merge);
-            //int r1 = std::system(command.c_str());
-            int r1 = filesort::gnuTxtNumericMerge(filesToMerge, 
+                TIMERSTARTCPU(sort_during_merge);
+                int r1 = filesort::gnuTxtNumericMerge(filesToMerge, 
                                                     tempfile, 
                                                     1, 
                                                     4);
+                TIMERSTOPCPU(sort_during_merge);
 
-            TIMERSTOPCPU(sort_during_merge);
-            if(r1 != 0){
-                throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+                if(r1 != 0){
+                    throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
+                }
+
+            }else if(tmpresultfileformat == 1){
+
+                TIMERSTARTCPU(sort_during_merge);
+                filesort::binKeyMergeSortedChunks<read_number>(filesToMerge, tempfile, std::less<read_number>{});
+                TIMERSTOPCPU(sort_during_merge);
+
             }
+
         }else{
-            // std::stringstream commandbuilder;
-            // commandbuilder << "sort --parallel=4 -k1,1 -n ";
-            // for(const auto& filename : filesToMerge){
-            //     commandbuilder << "\"" << filename << "\" ";
-            // }
-            // commandbuilder << " > " << tempfile;
 
-            // std::string command = commandbuilder.str();
-            // std::cerr << "Running shell command: " << command << "\n";
-             TIMERSTARTCPU(sort_during_merge);
-            // int r1 = std::system(command.c_str());
+            if(tmpresultfileformat == 0){
 
+                TIMERSTARTCPU(sort_during_merge);
                 int r1 = filesort::gnuTxtNumericSort(filesToMerge, 
                                                     tempfile, 
                                                     1, 
                                                     4);
+                TIMERSTOPCPU(sort_during_merge);
 
-                //filesort::binKeySort<read_number>(filesToMerge[0], tempfile);
+                if(r1 != 0){
+                    throw std::runtime_error("Sort of result files failed! sort returned " + std::to_string(r1));
+                }
 
-             TIMERSTOPCPU(sort_during_merge);
-            //if(r1 != 0){
-            //    throw std::runtime_error("Sort of result files failed! sort returned " + std::to_string(r1));
-            //}
+            }else if(tmpresultfileformat == 1){
+
+                TIMERSTARTCPU(sort_during_merge);
+                filesort::binKeySort<read_number>(filesToMerge, tempfile, tempfile+"-abc-");
+                TIMERSTOPCPU(sort_during_merge);
+
+            }
         }
     }
 
@@ -1505,12 +1504,21 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
 
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
-    os << tmp.readId << ' ';
-    //os.write(reinterpret_cast<const char*>(&tmp.readId), sizeof(read_number));
-
-    os << tmp.hq << ' ';
-    os << tmp.useEdits << ' ';
-    os << int(tmp.type) << ' ';
+    if(tmpresultfileformat == 0){
+        os << tmp.readId << ' ';
+    }else if(tmpresultfileformat == 1){
+        os.write(reinterpret_cast<const char*>(&tmp.readId), sizeof(read_number));
+    }
+    
+    std::uint8_t data = bool(tmp.hq);
+    data = (data << 1) | bool(tmp.useEdits);
+    data = (data << 6) | std::uint8_t(int(tmp.type));
+    
+    if(tmpresultfileformat == 0){
+        os << data << ' ';
+    }else if(tmpresultfileformat == 1){
+        os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
+    }
 
     if(tmp.useEdits){
         os << tmp.edits.size() << ' ';
@@ -1536,47 +1544,57 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
 }
 
 std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
-    is >> tmp.readId;
-    //is.read(reinterpret_cast<char*>(&tmp.readId), sizeof(read_number));
+    std::uint8_t data = 0;
 
-    is >> tmp.hq;
-    is >> tmp.useEdits;
-    int type;
-    is >> type;
-    tmp.type = TempCorrectedSequence::Type(type);
-
-    if(tmp.useEdits){
-        size_t size;
-        is >> size;
-        if(!is){
-            return is; //make sure size could be read correctly to avoid bad_alloc
-        }
-        tmp.edits.resize(size);
-        for(size_t i = 0; i < size; i++){
-            is >> tmp.edits[i].pos;
-            is >> tmp.edits[i].base;
-        }
-    }else{
-        is >> tmp.sequence;
+    if(tmpresultfileformat == 0){
+        is >> tmp.readId;
+    }else if(tmpresultfileformat == 1){
+        is.read(reinterpret_cast<char*>(&tmp.readId), sizeof(read_number));
+        is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
     }
 
-    if(tmp.type == TempCorrectedSequence::Type::Anchor){
-        size_t vecsize;
-        is >> vecsize;
-        if(!is){
-            return is; //make sure vecsize could be read correctly to avoid bad_alloc
+    std::string line;
+    if(std::getline(is, line)){
+        std::stringstream sstream(line);
+        auto& stream = sstream;
+
+        if(tmpresultfileformat == 0){
+            stream >> data; 
         }
-        if(vecsize > 0){
-            auto& vec = tmp.uncorrectedPositionsNoConsensus;
-            vec.resize(vecsize);
-            for(size_t i = 0; i < vecsize; i++){
-                is >> vec[i];
+        
+        tmp.hq = (data >> 7) & 1;
+        tmp.useEdits = (data >> 6) & 1;
+        tmp.type = TempCorrectedSequence::Type(int(data & 0x3F));
+
+        if(tmp.useEdits){
+            size_t size;
+            stream >> size;
+            tmp.edits.resize(size);
+            for(size_t i = 0; i < size; i++){
+                stream >> tmp.edits[i].pos;
+                stream >> tmp.edits[i].base;
             }
+        }else{
+            stream >> tmp.sequence;
         }
-    }else{
-        is >> tmp.shift;
-        tmp.shift = std::abs(tmp.shift);
+
+        if(tmp.type == TempCorrectedSequence::Type::Anchor){
+            size_t vecsize;
+            stream >> vecsize;
+            if(vecsize > 0){
+                auto& vec = tmp.uncorrectedPositionsNoConsensus;
+                vec.resize(vecsize);
+                for(size_t i = 0; i < vecsize; i++){
+                    stream >> vec[i];
+                }
+            }
+        }else{
+            stream >> tmp.shift;
+            tmp.shift = std::abs(tmp.shift);
+        }
     }
+
+    
 
     return is;
 }
