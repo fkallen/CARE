@@ -9,11 +9,14 @@
 #include <limits>
 #include <vector>
 #include <fstream>
+#include <type_traits>
 
 namespace care{
 
+template<class Data_t = std::uint32_t>
 struct LengthStore{
-    using Data_t = std::uint32_t;
+    //using Data_t = std::uint32_t;
+    static_assert(std::is_unsigned<Data_t>::value == true, "");
 
     LengthStore() = default;
 

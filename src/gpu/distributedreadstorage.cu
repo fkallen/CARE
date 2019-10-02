@@ -44,7 +44,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
     //constexpr size_t headRoom = (size_t(1) << 30) * 11; 
 
     if(getMaximumNumberOfReads() > 0 && sequenceLengthUpperBound > 0 && sequenceLengthLowerBound >= 0){
-        lengthStorage = std::move(LengthStore(sequenceLengthLowerBound, sequenceLengthUpperBound, getMaximumNumberOfReads()));
+        lengthStorage = std::move(LengthStore_t(sequenceLengthLowerBound, sequenceLengthUpperBound, getMaximumNumberOfReads()));
 
         std::vector<size_t> freeMemPerGpu(numGpus, 0);
         std::vector<size_t> totalMemPerGpu(numGpus, 0);
@@ -158,8 +158,8 @@ void DistributedReadStorage::destroy(){
     maximumNumberOfReads = 0;
     sequenceLengthUpperBound = 0;
     std::vector<size_t> fractions(deviceIds.size(), 0);
-    lengthStorage = std::move(LengthStore{});
-    gpulengthStorage = std::move(GPULengthStore{});
+    lengthStorage = std::move(LengthStore_t{});
+    gpulengthStorage = std::move(GPULengthStore_t{});
     distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, 0, 0));
     distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, 0, 0));
     distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, fractions, 0, 0));
@@ -319,14 +319,14 @@ bool DistributedReadStorage::readContainsN(read_number readId) const{
 }
 
 void DistributedReadStorage::constructionIsComplete(){
-    gpulengthStorage = std::move(GPULengthStore{std::move(lengthStorage), deviceIds});
+    gpulengthStorage = std::move(GPULengthStore_t{std::move(lengthStorage), deviceIds});
     isReadOnly = true;
 }
 
 void DistributedReadStorage::allowModifications(){
     isReadOnly = false;
     gpulengthStorage.extractCpuLengthStorage(lengthStorage);
-    gpulengthStorage = std::move(GPULengthStore{});
+    gpulengthStorage = std::move(GPULengthStore_t{});
 }
 
 void DistributedReadStorage::setSequences(read_number firstIndex, read_number lastIndex_excl, const char* data){

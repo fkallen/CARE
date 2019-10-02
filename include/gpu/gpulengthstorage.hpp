@@ -17,12 +17,15 @@ namespace care{
 
 #ifdef __NVCC__    
 
+template<class Data_t = std::uint32_t>
 struct GPULengthStore{
-    using Data_t = LengthStore::Data_t;
+    static_assert(std::is_unsigned<Data_t>::value == true, "");
+
+    using LengthStore_t = LengthStore<Data_t>;
 
     GPULengthStore() = default;
 
-    GPULengthStore(LengthStore&& lStore, const std::vector<int>& deviceIds_){
+    GPULengthStore(LengthStore_t&& lStore, const std::vector<int>& deviceIds_){
         init(std::move(lStore), deviceIds_);
     }
 
@@ -40,7 +43,7 @@ struct GPULengthStore{
         cudaSetDevice(oldDevice); CUERR;
     }
 
-    void init(LengthStore&& lStore, const std::vector<int>& deviceIds_){
+    void init(LengthStore_t&& lStore, const std::vector<int>& deviceIds_){
         destroyGpuData();
 
         deviceIds = deviceIds_;
@@ -172,7 +175,7 @@ struct GPULengthStore{
     }
 
     //After extractCpuLengthStorage, consider this GPULengthStore instance to be in a moved-from state
-    void extractCpuLengthStorage(LengthStore& target){
+    void extractCpuLengthStorage(LengthStore_t& target){
         target = std::move(lengthStore);
     }
 
@@ -181,7 +184,7 @@ struct GPULengthStore{
     }
 
     void readCpuLengthStoreFromStream(std::ifstream& stream, const std::vector<int>& deviceIds_){
-        LengthStore tmpstore;
+        LengthStore_t tmpstore;
         tmpstore.readFromStream(stream);
         init(std::move(tmpstore), deviceIds_);
     }
@@ -194,7 +197,7 @@ private:
     int DataTBits = 8 * sizeof(Data_t);
     std::vector<Data_t*> deviceDataPointers;
     std::vector<int> deviceIds;
-    LengthStore lengthStore;    
+    LengthStore_t lengthStore;    
 };
 
 }

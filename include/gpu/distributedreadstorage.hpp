@@ -37,6 +37,9 @@ public:
     using GatherHandleLengths = DistributedArray<Length_t, read_number>::GatherHandle;
     using GatherHandleQualities = DistributedArray<char, read_number>::GatherHandle;
 
+    using LengthStore_t = LengthStore<std::uint32_t>;
+    using GPULengthStore_t = GPULengthStore<std::uint32_t>;
+
     bool isReadOnly;
     std::vector<int> deviceIds;
     std::atomic<read_number> numberOfInsertedReads;
@@ -47,8 +50,8 @@ public:
 
     std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
     std::mutex mutexUndeterminedBaseReads;
-    LengthStore lengthStorage;
-    GPULengthStore gpulengthStorage;
+    LengthStore_t lengthStorage;
+    GPULengthStore_t gpulengthStorage;
     mutable DistributedArray<unsigned int, read_number> distributedSequenceData2;
     mutable DistributedArray<Length_t, read_number> distributedSequenceLengths2;
     mutable DistributedArray<char, read_number> distributedQualities2;
