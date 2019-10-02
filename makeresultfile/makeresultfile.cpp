@@ -45,6 +45,7 @@ int main(int argc, char** argv){
     std::string fileformat = parseresults["fileformat"].as<std::string>();
     std::string outdir = parseresults["outdir"].as<std::string>();
     std::string outfile = parseresults["outfile"].as<std::string>();
+    std::string tempdir = outdir;
     //int threads = parseresults["threads"].as<int>();
     //bool progress = parseresults["progress"].as<bool>();
 
@@ -66,7 +67,7 @@ int main(int argc, char** argv){
         originalFormat = care::getFileFormat(inputfile);
     }
 
-    care::mergeResultFiles(0, inputfile, originalFormat, filesToMerge, outdir + "/" + outfile, true);
+    care::mergeResultFiles(tempdir, 0, inputfile, originalFormat, filesToMerge, outdir + "/" + outfile, true);
 }
 
 #endif
