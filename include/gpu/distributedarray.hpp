@@ -1038,7 +1038,7 @@ public:
     }
 
     void writeGpuPartitionsToStream(std::ofstream& stream) const{
-        constexpr Index_t batchsize = 1000000;
+        constexpr Index_t batchsize = 5000000;
 
         int currentId;
         cudaGetDevice(&currentId); CUERR;
@@ -1061,7 +1061,7 @@ public:
     }
 
     void readGpuPartitionsFromStream(std::ifstream& stream){
-        constexpr Index_t batchsize = 1000000;
+        constexpr Index_t batchsize = 5000000;
         
         int currentId;
         cudaGetDevice(&currentId); CUERR;
