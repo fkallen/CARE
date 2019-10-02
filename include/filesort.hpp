@@ -1,6 +1,9 @@
 #ifndef CARE_FILESORT_HPP
 #define CARE_FILESORT_HPP
 
+#include <filehelpers.hpp>
+#include <util.hpp>
+
 #include <algorithm>
 #include <string>
 #include <sstream>
@@ -64,77 +67,55 @@ namespace detail{
 
     template<class Index_t, class Comp>
     void
-    binKeyMergeSortedChunksImpl(bool remove, const std::vector<std::string>& infilenames, const std::string& outfilename, Comp&& comparator){
+    binKeyMergeSortedChunksImpl(bool remove, 
+                                const std::string& tempdir, 
+                                const std::vector<std::string>& infilenames, 
+                                const std::string& outfilename, 
+                                Comp&& comparator){
         //merge the temp files
-        std::vector<std::string> tempfilenames = infilenames;
-        std::vector<std::string> newtempfilenames;
+        std::vector<std::string> filenames = infilenames;
+        std::vector<std::string> newfilenames;
 
         int step = 0;
-        while(tempfilenames.size() > 2){
-            const int numtempfiles = tempfilenames.size();
+        while(filenames.size() > 2){
+            const int numtempfiles = filenames.size();
             for(int i = 0; i < numtempfiles ; i += 2){
                 //merge tempfile i with i+1
                 if(i+1 < numtempfiles){
-                    std::string outtmpname(tempfilenames[i]+"-"+std::to_string(step));
 
-                    std::cerr << "merge " << tempfilenames[i] << " + " << tempfilenames[i+1] << " into " <<  outtmpname << "\n";
+                    std::string outtmpname(tempdir+"/"+std::to_string(i) + "-" + std::to_string(step));
 
-                    binKeyMergeTwoFiles<Index_t>(tempfilenames[i], tempfilenames[i+1], outtmpname, comparator);
+                    std::cerr << "merge " << filenames[i] << " + " << filenames[i+1] << " into " <<  outtmpname << "\n";
 
-                    newtempfilenames.emplace_back(std::move(outtmpname));
+                    binKeyMergeTwoFiles<Index_t>(filenames[i], filenames[i+1], outtmpname, comparator);
+
+                    newfilenames.emplace_back(std::move(outtmpname));
 
                     if(step > 0 || remove){
-                        std::cerr << "delete " << tempfilenames[i] << "\n";
-                        std::cerr << "delete " << tempfilenames[i+1] << "\n";
-
-                        int res1 = std::remove(tempfilenames[i].c_str());
-                        int res2 = std::remove(tempfilenames[i+1].c_str());
-                        if(res1 != 0){
-                            std::perror("remove");
-                        }
-                        if(res2 != 0){
-                            std::perror("remove");
-                        }
-                        assert(res1 == 0);
-                        assert(res2 == 0);
+                        removeFile(filenames[i]);
+                        removeFile(filenames[i+1]);
                     }
                     
                 }else{
-                    newtempfilenames.emplace_back(tempfilenames[i]);
+                    newfilenames.emplace_back(filenames[i]);
                 }
             }
 
-            tempfilenames = std::move(newtempfilenames);
+            filenames = std::move(newfilenames);
             step++;
         }
 
-        assert(tempfilenames.size() > 0);
+        assert(filenames.size() > 0);
 
-        if(tempfilenames.size() == 1){
-            std::cerr << "Rename " << tempfilenames[0] << " to " << outfilename << "\n";
-            int res = std::rename(tempfilenames[0].c_str(), outfilename.c_str());
-            if(res != 0){
-                std::perror("rename");
-            }
-            assert(res == 0);
+        if(filenames.size() == 1){
+            renameFileSameMount(filenames[0], outfilename);
         }else{
-            std::cerr << "merge " << tempfilenames[0] << " + " << tempfilenames[1] << " into " <<  outfilename << "\n";
-            binKeyMergeTwoFiles<Index_t>(tempfilenames[0], tempfilenames[1], outfilename, comparator);
+            std::cerr << "merge " << filenames[0] << " + " << filenames[1] << " into " <<  outfilename << "\n";
+            binKeyMergeTwoFiles<Index_t>(filenames[0], filenames[1], outfilename, comparator);
 
             if(step > 0 || remove){
-                std::cerr << "delete " << tempfilenames[0] << "\n";
-                std::cerr << "delete " << tempfilenames[1] << "\n";
-
-                int res1 = std::remove(tempfilenames[0].c_str());
-                int res2 = std::remove(tempfilenames[1].c_str());
-                if(res1 != 0){
-                    std::perror("remove");
-                }
-                if(res2 != 0){
-                    std::perror("remove");
-                }
-                assert(res1 == 0);
-                assert(res2 == 0);
+                removeFile(filenames[0]);
+                removeFile(filenames[1]);
             }
         }
     }
@@ -145,15 +126,22 @@ namespace detail{
 //sort is numeric, ascending, using the number represented by the keyIndex-th token in each line
 //keyIndex is 1-based.
 __inline__
-int gnuTxtNumericSort(const std::vector<std::string>& filenames, 
+int gnuTxtNumericSort(
+                    const std::string& tempdir, 
+                    const std::vector<std::string>& filenames, 
                     const std::string& outfilename, 
                     int keyIndex = 1, 
                     int numThreads = 1){
 
     assert(std::all_of(filenames.begin(), filenames.end(), [&](const auto& s){return s != outfilename;}));
+    assert(tempdir != "/tmp");
 
     std::stringstream commandbuilder;
-    commandbuilder << "sort --parallel=" << numThreads <<" -k" << keyIndex << "," << keyIndex << " -n ";
+    commandbuilder << "sort --parallel=" << numThreads 
+                    << " -k" << keyIndex << "," << keyIndex 
+                    << " -n"
+                    << " -T " << tempdir
+                    << " ";
     for(const auto& filename : filenames){
         commandbuilder << "\"" << filename << "\" ";
     }
@@ -170,15 +158,23 @@ int gnuTxtNumericSort(const std::vector<std::string>& filenames,
 //sort is numeric, ascending, using the number represented by the keyIndex-th token in each line
 //keyIndex is 1-based.
 __inline__
-int gnuTxtNumericMerge(const std::vector<std::string>& filenames, 
+int gnuTxtNumericMerge(
+                    const std::string& tempdir,
+                    const std::vector<std::string>& filenames, 
                     const std::string& outfilename, 
                     int keyIndex = 1, 
                     int numThreads = 1){
 
     assert(std::all_of(filenames.begin(), filenames.end(), [&](const auto& s){return s != outfilename;}));
+    assert(tempdir != "/tmp");
 
     std::stringstream commandbuilder;
-    commandbuilder << "sort --parallel=" << keyIndex <<" -k" << keyIndex << "," << keyIndex << " -n -m";
+    commandbuilder << "sort --parallel=" << numThreads 
+                    << " -k" << keyIndex << "," << keyIndex 
+                    << " -n"
+                    << " -m"
+                    << " -T " << tempdir
+                    << " ";
     for(const auto& filename : filenames){
         commandbuilder << "\"" << filename << "\" ";
     }
@@ -197,7 +193,11 @@ int gnuTxtNumericMerge(const std::vector<std::string>& filenames,
 //each line in input files must begin with a number of type Index_t which was written in binary mode.
 //input files must be sorted in ascending order by this number
 template<class Index_t, class Comp>
-void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2, const std::string& outfile, Comp&& comparator){
+void binKeyMergeTwoFiles(
+                        const std::string& infile1, 
+                        const std::string& infile2, 
+                        const std::string& outfile, 
+                        Comp&& comparator){
     std::ifstream in1(infile1);
     std::ifstream in2(infile2);
     std::ofstream out(outfile);
@@ -287,29 +287,13 @@ void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2,
 //split input files into sorted chunks. returns filenames of sorted chunks
 //each line in infile must begin with a number of type Index_t which was written in binary mode.
 //infile is sorted by this number using comparator Comp
-//sorted chunks will be named prefix_temp_i where i is the chunk number
+//sorted chunks will be named tempdir/temp_i where i is the chunk number
 template<class Index_t, class Comp>
 std::vector<std::string>
-binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, const std::string& prefix, Comp&& comparator){
+binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, 
+                            const std::string& tempdir, 
+                            Comp&& comparator){
 
-    auto getAvailableMemoryInKB = []() -> std::size_t {
-        //https://stackoverflow.com/questions/349889/how-do-you-determine-the-amount-of-linux-system-ram-in-c
-        std::string token;
-        std::ifstream file("/proc/meminfo");
-        assert(bool(file));
-        while(file >> token) {
-            if(token == "MemAvailable:") {
-                std::size_t mem;
-                if(file >> mem) {
-                    return mem;
-                } else {
-                    return 0;       
-                }
-            }
-            file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-        }
-        return 0;
-    };
 
     std::size_t availableMemoryInKB = getAvailableMemoryInKB();
     std::size_t availableMemory = availableMemoryInKB << 10;
@@ -418,7 +402,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, const s
                 stringBuffer.emplace_back(std::move(item.second));
             }
 
-            std::string tempfilename(prefix+"_tmp_"+std::to_string(numtempfiles));
+            std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
             std::ofstream sortedtempfile(tempfilename);
 
             std::vector<int> indices(numberBuffer.size());
@@ -470,44 +454,59 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, const s
 
 template<class Index_t, class Comp>
 void
-binKeyMergeSortedChunksAndDeleteChunks(const std::vector<std::string>& infilenames, const std::string& outfilename, Comp&& comparator){
-    detail::binKeyMergeSortedChunksImpl<Index_t>(true, infilenames, outfilename, comparator);
+binKeyMergeSortedChunksAndDeleteChunks(const std::string& tempdir,
+                                        const std::vector<std::string>& infilenames, 
+                                        const std::string& outfilename, 
+                                        Comp&& comparator){
+    detail::binKeyMergeSortedChunksImpl<Index_t>(true, tempdir, infilenames, outfilename, comparator);
 }
 
 template<class Index_t, class Comp>
 void
-binKeyMergeSortedChunksAndDeleteChunks(const std::vector<std::string>& infilenames, const std::string& outfilename){
-    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(infilenames, outfilename, std::less<Index_t>{});
+binKeyMergeSortedChunksAndDeleteChunks(const std::string& tempdir,
+                                        const std::vector<std::string>& infilenames, 
+                                        const std::string& outfilename){
+    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(tempdir, infilenames, outfilename, std::less<Index_t>{});
 }
 
 template<class Index_t, class Comp>
 void
-binKeyMergeSortedChunks(const std::vector<std::string>& infilenames, const std::string& outfilename, Comp&& comparator){
-    detail::binKeyMergeSortedChunksImpl<Index_t>(false, infilenames, outfilename, comparator);
+binKeyMergeSortedChunks(const std::string& tempdir,
+                        const std::vector<std::string>& infilenames, 
+                        const std::string& outfilename, 
+                        Comp&& comparator){
+    detail::binKeyMergeSortedChunksImpl<Index_t>(false, tempdir, infilenames, outfilename, comparator);
 }
 
 template<class Index_t, class Comp>
 void
-binKeyMergeSortedChunks(const std::vector<std::string>& infilenames, const std::string& outfilename){
-    binKeyMergeSortedChunks<Index_t>(infilenames, outfilename, std::less<Index_t>{});
+binKeyMergeSortedChunks(const std::string& tempdir,
+                        const std::vector<std::string>& infilenames, 
+                        const std::string& outfilename){
+    binKeyMergeSortedChunks<Index_t>(infilenames, tempdir, outfilename, std::less<Index_t>{});
 }
 
 
 //sort infile to outfile
 //each line in infile must begin with a number of type Index_t which was written in binary mode.
 //infile is sorted by this number using comparator Comp
-//the absolute filepath of each temporary file will begin with tmpprefix
 template<class Index_t, class Comp>
-void binKeySort(const std::vector<std::string>& infilenames, const std::string& outfilename, const std::string& tmpprefix, Comp&& comparator){
+void binKeySort(const std::string& tempdir,
+                const std::vector<std::string>& infilenames, 
+                const std::string& outfilename,
+                Comp&& comparator){
 
-    auto tempfilenames = binKeySplitIntoSortedChunks<Index_t>(infilenames, tmpprefix, comparator);
+    auto tempfilenames = binKeySplitIntoSortedChunks<Index_t>(infilenames, tempdir, comparator);
 
-    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(tempfilenames, outfilename, comparator);
+    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(tempdir, tempfilenames, outfilename, comparator);
 }
 
 template<class Index_t>
-void binKeySort(const std::vector<std::string>& infilenames, const std::string& outfilename, const std::string& tmpprefix){
-    binKeySort<Index_t>(infilenames, outfilename, tmpprefix, std::less<Index_t>{});
+void binKeySort(const std::string& tempdir,
+                const std::vector<std::string>& infilenames, 
+                const std::string& outfilename){
+
+    binKeySort<Index_t>(tempdir, infilenames, outfilename, std::less<Index_t>{});
 }
 
 

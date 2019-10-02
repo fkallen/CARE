@@ -816,7 +816,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     omp_set_num_threads(runtimeOptions.nCorrectorThreads);
 
-    std::vector<std::string> tmpfiles{fileOptions.outputfile + "_tmp"};
+    std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
 
     std::ofstream outputstream;
 
@@ -827,7 +827,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     std::ofstream featurestream;
     //if(correctionOptions.extractFeatures){
-        featurestream = std::move(std::ofstream(tmpfiles[0] + "_features"));
+        featurestream = std::move(std::ofstream(fileOptions.outputfile + "_features"));
         if(!featurestream && correctionOptions.extractFeatures){
             throw std::runtime_error("Could not open output feature file");
         }
@@ -1443,7 +1443,13 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
         TIMERSTARTCPU(merge);
 
-        mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, false);
+        mergeResultFiles(fileOptions.tempdirectory,
+                        sequenceFileProperties.nReads, 
+                        fileOptions.inputfile, 
+                        fileOptions.format, 
+                        tmpfiles, 
+                        fileOptions.outputfile, 
+                        false);
 
         TIMERSTOPCPU(merge);
 

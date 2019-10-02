@@ -4,6 +4,7 @@
 #include <config.hpp>
 #include <sequencefileio.hpp>
 #include <minhasher.hpp>
+#include <filehelpers.hpp>
 
 #include <iostream>
 #include <thread>
@@ -167,6 +168,12 @@ namespace args{
         result.forestfilename = pr["forest"].as<std::string>();
         result.nnmodelfilename = pr["nnmodel"].as<std::string>();
 
+        if(pr.count("tempdir") > 0){
+            result.tempdirectory = pr["tempdir"].as<std::string>();
+        }else{
+            result.tempdirectory = result.outputdirectory;
+        }
+
         return result;
 	}
 
@@ -272,12 +279,48 @@ namespace args{
     bool isValid<FileOptions>(const FileOptions& opt){
         bool valid = true;
 
-        std::ifstream is(opt.inputfile);
-        if(!(bool)is){
-            valid = false;
-            std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
+        {
+            std::ifstream is(opt.inputfile);
+            if(!(bool)is){
+                valid = false;
+                std::cout << "Error: cannot find input file " << opt.inputfile << std::endl;
+            }
         }
 
+        if(!filesys::exists(opt.tempdirectory)){
+            bool created = filesys::create_directories(opt.tempdirectory);
+            if(!created){
+                valid = false;
+                std::cout << "Error: Could not create temp directory" << opt.tempdirectory << std::endl;
+            }
+        }
+
+        if(!filesys::exists(opt.outputdirectory)){
+            bool created = filesys::create_directories(opt.outputdirectory);
+            if(!created){
+                valid = false;
+                std::cout << "Error: Could not create output directory" << opt.outputdirectory << std::endl;
+            }
+        }
+
+        {
+            std::ofstream os(opt.outputfile);
+            if(!(bool)os){
+                valid = false;
+                std::cout << "Error: cannot open output file " << opt.outputfile << std::endl;
+            }
+        }
+
+        {
+            std::ofstream os(opt.tempdirectory+"/tmptest");
+            if(!(bool)os){
+                valid = false;
+                std::cout << "Error: cannot open temporary test file " << opt.tempdirectory+"/tmptest" << std::endl;
+            }else{
+                removeFile(opt.tempdirectory+"/tmptest");
+            }
+        }
+        
         return valid;
     }
 

@@ -256,24 +256,14 @@ void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
 */
 void deleteFiles(std::vector<std::string> filenames);
 
-/*
-    Merges temporary results with unordered reads into single file outputfile with ordered reads.
-    Temporary result files are expected to be in format:
-
-    readnumber
-    sequence
-    readnumber
-    sequence
-    ...
-*/
-void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
-                      FileFormat originalFormat,
-                      const std::vector<std::string>& filesToMerge, const std::string& outputfile, bool isSorted);
-
-void mergeResultFiles2(std::uint32_t expectedNumReads, const std::string& originalReadFile,
+void mergeResultFiles(
+                    const std::string& tempdir,
+                    std::uint32_t expectedNumReads, 
+                    const std::string& originalReadFile,
                     FileFormat originalFormat,
-                    const std::vector<std::string>& filesToMerge, const std::string& outputfile,
-                    size_t tempbytes);
+                    const std::vector<std::string>& filesToMerge, 
+                    const std::string& outputfile,
+                    bool isSorted);
 
 
 

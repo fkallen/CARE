@@ -3616,7 +3616,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       const auto& deviceIds = runtimeOptions.deviceIds;
 
-      std::vector<std::string> tmpfiles{fileOptions.outputfile + "_tmp"};
+      std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+      std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
       std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(fileOptions.inputfile, fileOptions.format);
 
@@ -3653,7 +3654,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::ofstream featurestream;
       //if(correctionOptions.extractFeatures){
-          featurestream = std::move(std::ofstream(tmpfiles[0] + "_features"));
+          featurestream = std::move(std::ofstream(featureTmpFiles[0]));
           if(!featurestream && correctionOptions.extractFeatures){
               throw std::runtime_error("Could not open output feature file");
           }
@@ -3864,10 +3865,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             #ifndef DO_PROFILE
             if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
                 printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
-                int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                int(runtime.count()) % 60);
+                    readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                    int(runtime.count()) % 60);
                 //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
             }
             #endif
@@ -3947,12 +3948,14 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
               TIMERSTARTCPU(merge);
 
-              mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, false);
-              //mergeResultFiles(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, usedOutputfileNames, fileOptions.outputfile, true);
-
-
-
-              //mergeResultFiles2(sequenceFileProperties.nReads, fileOptions.inputfile, fileOptions.format, tmpfiles, fileOptions.outputfile, occupiedMemory);
+              mergeResultFiles(
+                                fileOptions.tempdirectory,
+                                sequenceFileProperties.nReads, 
+                                fileOptions.inputfile, 
+                                fileOptions.format, 
+                                tmpfiles, 
+                                fileOptions.outputfile, 
+                                false);
 
               TIMERSTOPCPU(merge);
 
@@ -3963,10 +3966,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           deleteFiles(tmpfiles);
       }
 
-      std::vector<std::string> featureFiles(tmpfiles);
-      for(auto& s : featureFiles)
-          s = s + "_features";
-
       //concatenate feature files of each thread into one file
 
       if(correctionOptions.extractFeatures){
@@ -3976,7 +3975,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
           commandbuilder << "cat";
 
-          for(const auto& featureFile : featureFiles){
+          for(const auto& featureFile : featureTmpFiles){
               commandbuilder << " \"" << featureFile << "\"";
           }
 
@@ -3992,15 +3991,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
               std::cerr << "This command returned a non-zero error value: \n";
               std::cerr << command +  '\n';
               std::cerr << "Please concatenate the following files manually\n";
-              for(const auto& s : featureFiles)
+              for(const auto& s : featureTmpFiles)
                   std::cerr << s << '\n';
           }else{
-              deleteFiles(featureFiles);
+              deleteFiles(featureTmpFiles);
           }
 
           std::cout << "end merging features" << std::endl;
       }else{
-          deleteFiles(featureFiles);
+          deleteFiles(featureTmpFiles);
       }
 
       std::cout << "end merge" << std::endl;

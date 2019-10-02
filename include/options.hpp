@@ -85,6 +85,7 @@ namespace care{
         std::string load_hashtables_from;
         std::string forestfilename;
         std::string nnmodelfilename;
+        std::string tempdirectory;
 	};
 
     struct AllOptions{

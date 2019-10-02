@@ -11,7 +11,34 @@
 #include <vector>
 #include <cassert>
 #include <sstream>
+#include <fstream>
 
+
+__inline__
+std::size_t getAvailableMemoryInKB_linux(){
+    //https://stackoverflow.com/questions/349889/how-do-you-determine-the-amount-of-linux-system-ram-in-c
+    std::string token;
+    std::ifstream file("/proc/meminfo");
+    assert(bool(file));
+    while(file >> token) {
+        if(token == "MemAvailable:") {
+            std::size_t mem;
+            if(file >> mem) {
+                return mem;
+            } else {
+                return 0;       
+            }
+        }
+        file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    }
+    return 0;
+};
+
+
+__inline__
+std::size_t getAvailableMemoryInKB(){
+    return getAvailableMemoryInKB_linux();
+};
 
 template<class T>
 class View{

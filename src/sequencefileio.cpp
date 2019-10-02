@@ -25,6 +25,8 @@
 
 #include <klib/kseq.h>
 
+namespace filesys = std::experimental::filesystem;
+
 namespace care{
 
 //###### BEGIN READER IMPLEMENTATION
@@ -818,61 +820,6 @@ std::uint64_t linecount(const std::string& filename){
 	return count;
 }
 
-void sortResultFileUsingDisk(const std::string& filename, std::uint32_t chunksize){
-    const std::uint64_t resultsInFile = linecount(filename) / 2;
-
-    for(std::uint64_t i = 0; i < SDIV(resultsInFile, chunksize); ++i){
-        const std::uint64_t readNumBegin = i * chunksize;
-        const std::uint64_t readNumEnd = std::min((i+1) * chunksize, resultsInFile);
-
-        std::ofstream os("resultsortedtmp" + std::to_string(i));
-
-        std::vector<std::pair<std::uint64_t, std::string>> tmpvec(readNumEnd - readNumBegin);
-
-        std::ifstream is(filename);
-        if(!is)
-            throw std::runtime_error("could not open tmp file: " + filename);
-
-        std::string num;
-        std::string seq;
-
-        while(true){
-            std::getline(is, num);
-            if (!is.good())
-                break;
-            std::getline(is, seq);
-            if (!is.good())
-                break;
-
-            auto readnum = std::stoull(num);
-            if(readNumBegin <= readnum && readnum < readNumEnd){
-                tmpvec[readnum - readNumBegin] = {readnum, std::move(seq)};
-                //std::cout << i << " " << readnum << std::endl;
-            }
-        }
-
-        std::sort(tmpvec.begin(), tmpvec.end(), [](const auto& l, const auto& r){return l.first < r.first;});
-
-        for(const auto& p : tmpvec){
-            os << p.first << '\n';
-            os << p.second << '\n';
-        }
-    }
-
-    // now merge all the sorted file chunks into one file
-
-}
-
-
-
-
-
-
-
-
-
-
-
 
 
 struct SequenceWriterThread{
@@ -915,15 +862,21 @@ struct SequenceWriterThread{
 };
 
 
-void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& originalReadFile,
-                      FileFormat originalFormat,
-                      const std::vector<std::string>& filesToMerge, const std::string& outputfile,
-                        bool isSorted){
+void mergeResultFiles(
+                    const std::string& tempdir,
+                    std::uint32_t expectedNumReads, 
+                    const std::string& originalReadFile,
+                    FileFormat originalFormat,
+                    const std::vector<std::string>& filesToMerge, 
+                    const std::string& outputfile,
+                    bool isSorted){
 
 
     bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
 
-    std::string tempfile = outputfile + "mergetempfile";
+    const std::string outputfileFilename = filesys::path(outputfile).filename();
+
+    std::string tempfile = tempdir + "/" + outputfileFilename + "_mergetempfile";
     std::stringstream commandbuilder;
 
     //sort the result files and save sorted result file in tempfile.
@@ -939,7 +892,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             if(tmpresultfileformat == 0){
 
                 TIMERSTARTCPU(sort_during_merge);
-                int r1 = filesort::gnuTxtNumericMerge(filesToMerge, 
+                int r1 = filesort::gnuTxtNumericMerge(
+                                                    tempdir,
+                                                    filesToMerge, 
                                                     tempfile, 
                                                     1, 
                                                     4);
@@ -952,7 +907,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             }else if(tmpresultfileformat == 1){
 
                 TIMERSTARTCPU(sort_during_merge);
-                filesort::binKeyMergeSortedChunks<read_number>(filesToMerge, tempfile, std::less<read_number>{});
+                filesort::binKeyMergeSortedChunks<read_number>(tempdir, filesToMerge, tempfile, std::less<read_number>{});
                 TIMERSTOPCPU(sort_during_merge);
 
             }
@@ -962,7 +917,9 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             if(tmpresultfileformat == 0){
 
                 TIMERSTARTCPU(sort_during_merge);
-                int r1 = filesort::gnuTxtNumericSort(filesToMerge, 
+                int r1 = filesort::gnuTxtNumericSort(
+                                                    tempdir,
+                                                    filesToMerge, 
                                                     tempfile, 
                                                     1, 
                                                     4);
@@ -975,7 +932,7 @@ void mergeResultFiles(std::uint32_t expectedNumReads, const std::string& origina
             }else if(tmpresultfileformat == 1){
 
                 TIMERSTARTCPU(sort_during_merge);
-                filesort::binKeySort<read_number>(filesToMerge, tempfile, tempfile+"-abc-");
+                filesort::binKeySort<read_number>(tempdir, filesToMerge, tempfile);
                 TIMERSTOPCPU(sort_during_merge);
 
             }

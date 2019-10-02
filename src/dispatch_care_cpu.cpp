@@ -82,9 +82,6 @@ namespace care{
 
         std::cout << "Running CARE CPU" << std::endl;
 
-    	//create output directory
-    	filesys::create_directories(fileOptions.outputdirectory);
-
     	auto thread_id = std::this_thread::get_id();
     	std::string thread_id_string;
     	{
@@ -93,10 +90,6 @@ namespace care{
     		thread_id_string = ss.str();
     	}
 
-    	FileOptions iterFileOptions = fileOptions;
-
-    	iterFileOptions.outputfile = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-
         std::cout << "loading file and building data structures..." << std::endl;
 
         TIMERSTARTCPU(load_and_build);
@@ -104,7 +97,7 @@ namespace care{
         BuiltDataStructures dataStructures = buildAndSaveDataStructures(minhashOptions,
                                                                 correctionOptions,
                                                                 runtimeOptions,
-                                                                iterFileOptions);
+                                                                fileOptions);
 
         TIMERSTOPCPU(load_and_build);
 
@@ -151,14 +144,14 @@ namespace care{
     	bool keepIntermediateResults = false;
 
         TIMERSTARTCPU(finalizing_files);
-        std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    	std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
+        // std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
+    	// std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
 
         if(correctionOptions.extractFeatures){
-            std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
-            std::string outputfeaturename = fileOptions.outputfile + "_features";
+            // std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
+            // std::string outputfeaturename = fileOptions.outputfile + "_features";
 
-            std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
+            // std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
         }
 
         TIMERSTOPCPU(finalizing_files);

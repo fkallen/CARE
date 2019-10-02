@@ -15,6 +15,10 @@
 #include <string>
 #include <omp.h>
 
+#include <experimental/filesystem>
+
+namespace filesys = std::experimental::filesystem;
+
 using namespace care;
 
 int main(int argc, char** argv){
@@ -28,6 +32,7 @@ int main(int argc, char** argv){
 		("inputfile", "The fastq file to correct", cxxopts::value<std::string>())
 		("outdir", "The output directory", cxxopts::value<std::string>()->default_value("."))
 		("outfile", "The output file", cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+		("tempdir", "Directory to store temporary files. Default is output directory", cxxopts::value<std::string>()->default_value(".")->implicit_value("."))
 		("hashmaps", "The number of hash maps. Must be greater than 0.", cxxopts::value<int>()->default_value("2")->implicit_value("2"))
 		("kmerlength", "The kmer length for minhashing. Must be greater than 0.", cxxopts::value<int>()->default_value("16")->implicit_value("16"))
 		("threads", "Maximum number of thread to use. Must be greater than 0", cxxopts::value<int>()->default_value("1"))
@@ -145,6 +150,8 @@ int main(int argc, char** argv){
             throw std::runtime_error("Must specify convnet model if convnet correction is selected.");
         }
     }
+
+	std::cout << "Tempdir = " << fileOptions.tempdirectory << std::endl;
 
     runtimeOptions.deviceIds = getUsableDeviceIds(runtimeOptions.deviceIds);
     runtimeOptions.canUseGpu = runtimeOptions.deviceIds.size() > 0;

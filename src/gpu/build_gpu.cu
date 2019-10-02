@@ -3,15 +3,15 @@
 #include <config.hpp>
 
 #include <options.hpp>
-
+#include <util.hpp>
 #include <hpc_helpers.cuh>
-
+#include <filehelpers.hpp>
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
-#include "readstorage.hpp"
-#include "sequencefileio.hpp"
-#include "sequence.hpp"
-#include "threadsafe_buffer.hpp"
+#include <readstorage.hpp>
+#include <sequencefileio.hpp>
+#include <sequence.hpp>
+#include <threadsafe_buffer.hpp>
 
 #include <threadpool.hpp>
 
@@ -524,7 +524,7 @@ namespace gpu{
             //auto lengthhandle = readStorage.makeGatherHandleLengths();
             size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
 
-            const std::string tmpmapsFilename = "tmpmaps";
+            const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
             std::ofstream outstream(tmpmapsFilename, std::ios::binary);
             if(!outstream){
                 throw std::runtime_error("Could not open temp file " + tmpmapsFilename + "!");
@@ -534,8 +534,9 @@ namespace gpu{
             int numConstructedTables = 0;
             while(numConstructedTables < minhashOptions.maps){
                 std::vector<Minhasher::Map_t> minhashTables;
-                minhashTables.reserve(minhashOptions.maps+1);
-
+                
+#if 0
+                minhashTables.reserve(minhashOptions.maps+3);
                 const int remainingTables = minhashOptions.maps - numConstructedTables;
 
                 for(int i = numConstructedTables; i < minhashOptions.maps+3; i++){
@@ -567,7 +568,28 @@ namespace gpu{
                     minhashTables.pop_back();
                     //std::cout << "pop" << std::endl;
                 }
-                
+#else 
+                int maxNumTables = 0;
+
+                {
+                    constexpr std::size_t MB128 = std::size_t(1) << 27;
+                    std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
+                    Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
+                    std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
+                    std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB128;
+                    maxNumTables = 1 + (getAvailableMemoryInKB() * 1024) / tableMemApprox;
+                    maxNumTables -= 1; // need free memory of 1 table to perform transformation
+                }
+
+                assert(maxNumTables > 0);
+                int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
+                minhashTables.resize(currentIterNumTables);
+                for(auto& table : minhashTables){
+                    Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
+                    table = std::move(tmp);
+                }
+
+#endif
 
                 std::vector<int> tableIds(minhashTables.size());                
                 std::vector<int> hashIds(minhashTables.size());
@@ -639,7 +661,8 @@ namespace gpu{
 
                     //TIMERSTOPCPU(insert);
                 }
-                std::ofstream rstempostream("rstemp", std::ios::binary);
+                const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
+                std::ofstream rstempostream(rstempfile, std::ios::binary);
                 readStorage.writeGpuDataToStreamAndFreeGpuMem(rstempostream);
 
                 for(int i = 0; i < int(minhashTables.size()); i++){
@@ -648,7 +671,7 @@ namespace gpu{
                     std::cerr << "Transforming table " << globalTableId << ". ";
                     transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);                    
                 }
-                std::ifstream rstempistream("rstemp", std::ios::binary);
+                std::ifstream rstempistream(rstempfile, std::ios::binary);
                 readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
 
                 numConstructedTables += minhashTables.size();
@@ -669,6 +692,9 @@ namespace gpu{
                         int globalTableId = globalTableIds[i];
                         minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));                        
                     }
+
+                    removeFile(tmpmapsFilename);
+                    removeFile(rstempfile);
                 }      
             }
         }
