@@ -1480,7 +1480,13 @@ std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
     if(tmp.useEdits){
         os << tmp.edits.size() << ' ';
         for(const auto& edit : tmp.edits){
-            os << edit.pos << ' ' << edit.base << ' ';
+            os << edit.pos << ' ';
+        }
+        for(const auto& edit : tmp.edits){
+            os << edit.base;
+        }
+        if(tmp.edits.size() > 0){
+            os << ' ';
         }
     }else{
         os << tmp.sequence << ' ';
@@ -1526,9 +1532,12 @@ std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
         if(tmp.useEdits){
             size_t size;
             stream >> size;
+            int numEdits = size;
             tmp.edits.resize(size);
-            for(size_t i = 0; i < size; i++){
+            for(int i = 0; i < numEdits; i++){
                 stream >> tmp.edits[i].pos;
+            }
+            for(int i = 0; i < numEdits; i++){
                 stream >> tmp.edits[i].base;
             }
         }else{
