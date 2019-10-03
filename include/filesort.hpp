@@ -447,10 +447,20 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                 TIMERSTOPCPU(writingsortedbatch);
             #endif       
 
+            TIMERSTARTCPU(clear);
+            indices.clear();
             buffer.clear();
+            numberBuffer.clear();
+            stringBuffer.clear();
             stringmem = 0;
             tempfilenames.emplace_back(std::move(tempfilename));
             numtempfiles++;
+            TIMERSTOPCPU(clear);
+            
+            TIMERSTARTCPU(flushclose);
+            sortedtempfile.flush();
+            sortedtempfile.close();
+            TIMERSTOPCPU(flushclose);
         }
     }
     return tempfilenames;
