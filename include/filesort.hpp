@@ -392,6 +392,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             numberBuffer.emplace_back(item.first);
             stringBuffer.emplace_back(std::move(item.second));
 
+            TIMERSTARTCPU(readingbatch);
             while(couldAddElementToBuffer()
                     && detail::dataFromStream(istream, item)){
 
@@ -401,6 +402,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                 numberBuffer.emplace_back(item.first);
                 stringBuffer.emplace_back(std::move(item.second));
             }
+            TIMERSTOPCPU(readingbatch);
 
             std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
             std::ofstream sortedtempfile(tempfilename);
@@ -429,6 +431,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                     detail::dataToStream(sortedtempfile, numberBuffer[position], stringBuffer[position]);
                 }
             #else     
+                TIMERSTARTCPU(actualsort);
                 std::cerr << "sort " << indices.size() << " elements into " <<  tempfilename << "\n";
 
                 std::iota(indices.begin(), indices.end(), 0);
@@ -436,9 +439,12 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                 std::sort(indices.begin(), indices.end(), [&](auto l, auto r){
                     return numberBuffer[l] < numberBuffer[r];
                 });
+                TIMERSTOPCPU(actualsort);
+                TIMERSTARTCPU(writingsortedbatch);
                 for(auto i : indices){
                     detail::dataToStream(sortedtempfile, numberBuffer[i], stringBuffer[i]);
                 }
+                TIMERSTOPCPU(writingsortedbatch);
             #endif       
 
             buffer.clear();
@@ -495,10 +501,12 @@ void binKeySort(const std::string& tempdir,
                 const std::vector<std::string>& infilenames, 
                 const std::string& outfilename,
                 Comp&& comparator){
-
+    TIMERSTARTCPU(split);
     auto tempfilenames = binKeySplitIntoSortedChunks<Index_t>(infilenames, tempdir, comparator);
-
+    TIMERSTOPCPU(split);
+    TIMERSTARTCPU(merge);
     binKeyMergeSortedChunksAndDeleteChunks<Index_t>(tempdir, tempfilenames, outfilename, comparator);
+    TIMERSTOPCPU(merge);
 }
 
 template<class Index_t>
