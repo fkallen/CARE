@@ -529,10 +529,15 @@ namespace gpu{
             if(!outstream){
                 throw std::runtime_error("Could not open temp file " + tmpmapsFilename + "!");
             }
+            std::size_t writtenTableBytes = 0;
+
+            constexpr std::size_t GB1 = std::size_t(1) << 30;
+            const std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
+
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
-            while(numConstructedTables < minhashOptions.maps){
+            while(numConstructedTables < minhashOptions.maps && maxMemoryForTransformedTables > writtenTableBytes){
                 std::vector<Minhasher::Map_t> minhashTables;
                 
 #if 0
@@ -669,32 +674,49 @@ namespace gpu{
                     int globalTableId = globalTableIds[i];
                     int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
                     std::cerr << "Transforming table " << globalTableId << ". ";
-                    transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);                    
+                    transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+                    numConstructedTables++;
+                    
+                    minhashTables[i].writeToStream(outstream);
+                    numSavedTables++;
+                    writtenTableBytes = outstream.tellp();
+
+                    std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
+                    std::cerr << "written total of " << writtenTableBytes << "\n";
+
+                    if(maxMemoryForTransformedTables < writtenTableBytes){
+                        break;
+                    }
                 }
+                minhashTables.clear();
+
                 std::ifstream rstempistream(rstempfile, std::ios::binary);
                 readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
 
-                numConstructedTables += minhashTables.size();
+                if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
+                    outstream.flush();
+                    
+                    int usableNumMaps = 0;
 
-                if(numConstructedTables < minhashOptions.maps){
-                    for(const auto& table : minhashTables){
-                        table.writeToStream(outstream);
-                        numSavedTables++;
-                    }
-                }else{
+                    //load as many transformed tables from file as possible and move them to minhasher
                     std::ifstream instream(tmpmapsFilename, std::ios::binary);
                     for(int i = 0; i < numSavedTables; i++){
-                        Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
-                        table.readFromStream(instream);
-                        minhasher.moveassignMap(i, std::move(table));
-                    }
-                    for(int i = 0; i < int(minhashTables.size()); i++){
-                        int globalTableId = globalTableIds[i];
-                        minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));                        
+                        try{
+                            Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
+                            table.readFromStream(instream);
+                            minhasher.moveassignMap(i, std::move(table));
+                            usableNumMaps++;
+                        }catch(...){
+                            break;
+                        }                        
                     }
 
                     removeFile(tmpmapsFilename);
                     removeFile(rstempfile);
+
+                    minhasher.minhashTables.resize(usableNumMaps);
+                    std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
+                    minhasher.minparams.maps = usableNumMaps;
                 }      
             }
         }
