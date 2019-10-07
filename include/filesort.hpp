@@ -371,7 +371,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
         return result;
     };
 
-    int numtempfiles = 0;
+    std::int64_t numtempfiles = 0;
     std::vector<std::string> tempfilenames;
 
     //split input files into sorted temp files
@@ -407,15 +407,15 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
             std::ofstream sortedtempfile(tempfilename);
 
-            std::vector<int> indices(numberBuffer.size());
+            std::vector<std::size_t> indices(numberBuffer.size());
 
             #ifdef USE_THRUST
                 std::cerr << "gpu sort " << buffer.size() << " elements into " <<  tempfilename << "\n";
 
-                thrust::device_vector<int> d_indices = indices;
+                thrust::device_vector<std::size_t> d_indices = indices;
                 thrust::device_vector<Index_t> d_numbers = numberBuffer;
                 auto dnumbersPtr = thrust::raw_pointer_cast(d_numbers.data());
-                thrust::sequence(d_indices.begin(), d_indices.end(), 0);
+                thrust::sequence(d_indices.begin(), d_indices.end(), std::size_t(0));
                 thrust::sort(d_indices.begin(), d_indices.end(), [=] __device__ (auto l, auto r){
                     return dnumbersPtr[l] < dnumbersPtr[r];
                 });
@@ -426,15 +426,15 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
                 thrust::copy(d_indices.begin(), d_indices.end(), indices.begin());
                 //thrust::copy(d_sortednumbers.begin(), d_sortednumbers.end(), numberBuffer.begin());
 
-                for(int i = 0; i < int(indices.size()); i++){
-                    int position = indices[i];
+                for(std::size_t i = 0; i < indices.size(); i++){
+                    const std::size_t position = indices[i];
                     detail::dataToStream(sortedtempfile, numberBuffer[position], stringBuffer[position]);
                 }
             #else     
                 TIMERSTARTCPU(actualsort);
                 std::cerr << "sort " << indices.size() << " elements into " <<  tempfilename << "\n";
 
-                std::iota(indices.begin(), indices.end(), 0);
+                std::iota(indices.begin(), indices.end(), std::size_t(0));
                 ///std::sort(buffer.begin(), buffer.end());
                 std::sort(indices.begin(), indices.end(), [&](auto l, auto r){
                     return numberBuffer[l] < numberBuffer[r];
