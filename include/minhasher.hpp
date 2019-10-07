@@ -291,7 +291,9 @@ namespace care{
 
                 keys = std::vector<Key_t>();
                 //keys.resize(nKeys);
-                values.resize(nValues);
+                //values.resize(nValues);
+		values = std::vector<Value_t>();
+		values.resize(nValues);
 
                 //instream.read(reinterpret_cast<char*>(keys.data()), sizeof(Key_t) * nKeys);
                 instream.read(reinterpret_cast<char*>(values.data()), sizeof(Value_t) * nValues);
