@@ -664,14 +664,15 @@ template<bool allowFallback>
             bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, 
                                                             map.keysWithoutValues, deviceIds, maxValuesPerKey);
 
-            //if(!success){
-            //    std::cout << "\nFallback to managed memory transformation. ";
-            //    success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, 
-            //                                                map.keysWithoutValues, deviceIds, maxValuesPerKey);
-            //}
+            if(!success){
+                std::cout << "\nFallback to managed memory transformation. ";
+                success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, 
+                                                            map.keysWithoutValues, deviceIds, maxValuesPerKey);
+            }
 
             if(!success){
                 std::cout << "\nFallback to cpu transformation. ";
+		std::cout.flush();
                 cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
                                     map.keysWithoutValues, maxValuesPerKey);
             }
