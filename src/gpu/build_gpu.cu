@@ -534,6 +534,8 @@ namespace gpu{
             constexpr std::size_t GB1 = std::size_t(1) << 30;
             const std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
 
+	    std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
@@ -583,7 +585,7 @@ namespace gpu{
                     std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
                     std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB128;
                     maxNumTables = 1 + (getAvailableMemoryInKB() * 1024) / tableMemApprox;
-                    maxNumTables -= 1; // need free memory of 1 table to perform transformation
+                    maxNumTables -= 2; // need free memory of 2 table to perform transformation
                 }
 
                 assert(maxNumTables > 0);
@@ -682,9 +684,10 @@ namespace gpu{
                     writtenTableBytes = outstream.tellp();
 
                     std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
-                    std::cerr << "written total of " << writtenTableBytes << "\n";
+                    std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTransformedTables << "\n";
+		    std::cerr << "numSavedTables = " << numSavedTables << "\n";
 
-                    if(maxMemoryForTransformedTables < writtenTableBytes){
+                    if(maxMemoryForTransformedTables <= writtenTableBytes){
                         break;
                     }
                 }
@@ -695,6 +698,8 @@ namespace gpu{
 
                 if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
                     outstream.flush();
+
+		    std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
                     
                     int usableNumMaps = 0;
 
@@ -702,11 +707,15 @@ namespace gpu{
                     std::ifstream instream(tmpmapsFilename, std::ios::binary);
                     for(int i = 0; i < numSavedTables; i++){
                         try{
+			    std::cerr << "try loading table " << i << "\n";
                             Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
                             table.readFromStream(instream);
                             minhasher.moveassignMap(i, std::move(table));
+			    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
                             usableNumMaps++;
+			    std::cerr << "usable num maps = " << usableNumMaps << "\n";
                         }catch(...){
+			    std::cerr << "Loading table " << i << " failed\n";
                             break;
                         }                        
                     }
