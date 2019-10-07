@@ -672,61 +672,76 @@ namespace gpu{
                 std::ofstream rstempostream(rstempfile, std::ios::binary);
                 readStorage.writeGpuDataToStreamAndFreeGpuMem(rstempostream);
 
-                for(int i = 0; i < int(minhashTables.size()); i++){
-                    int globalTableId = globalTableIds[i];
-                    int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                    std::cerr << "Transforming table " << globalTableId << ". ";
-                    transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
-                    numConstructedTables++;
-                    
-                    minhashTables[i].writeToStream(outstream);
-                    numSavedTables++;
-                    writtenTableBytes = outstream.tellp();
-
-                    std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
-                    std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTransformedTables << "\n";
-		    std::cerr << "numSavedTables = " << numSavedTables << "\n";
-
-                    if(maxMemoryForTransformedTables <= writtenTableBytes){
-                        break;
+                //if all tables could be constructed at once, no need to save them to temporary file
+                if(minhashOptions.maps == int(minhashTables.size())){
+                    for(int i = 0; i < int(minhashTables.size()); i++){
+                        int globalTableId = globalTableIds[i];
+                        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                        std::cerr << "Transforming table " << globalTableId << ". ";
+                        transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+                        numConstructedTables++;
+                        minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
                     }
-                }
-                minhashTables.clear();
 
-                std::ifstream rstempistream(rstempfile, std::ios::binary);
-                readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
-
-                if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
-                    outstream.flush();
-
-		    std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
-                    
-                    int usableNumMaps = 0;
-
-                    //load as many transformed tables from file as possible and move them to minhasher
-                    std::ifstream instream(tmpmapsFilename, std::ios::binary);
-                    for(int i = 0; i < numSavedTables; i++){
-                        try{
-			    std::cerr << "try loading table " << i << "\n";
-                            Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
-                            table.readFromStream(instream);
-                            minhasher.moveassignMap(i, std::move(table));
-			    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
-                            usableNumMaps++;
-			    std::cerr << "usable num maps = " << usableNumMaps << "\n";
-                        }catch(...){
-			    std::cerr << "Loading table " << i << " failed\n";
+                    std::ifstream rstempistream(rstempfile, std::ios::binary);
+                    readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
+                }else{
+                    for(int i = 0; i < int(minhashTables.size()); i++){
+                        int globalTableId = globalTableIds[i];
+                        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                        std::cerr << "Transforming table " << globalTableId << ". ";
+                        transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+                        numConstructedTables++;
+                        
+                        minhashTables[i].writeToStream(outstream);
+                        numSavedTables++;
+                        writtenTableBytes = outstream.tellp();
+    
+                        std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
+                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTransformedTables << "\n";
+                        std::cerr << "numSavedTables = " << numSavedTables << "\n";
+    
+                        if(maxMemoryForTransformedTables <= writtenTableBytes){
                             break;
-                        }                        
+                        }
                     }
+                    minhashTables.clear();
 
-                    removeFile(tmpmapsFilename);
-                    removeFile(rstempfile);
+                    std::ifstream rstempistream(rstempfile, std::ios::binary);
+                    readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
 
-                    minhasher.minhashTables.resize(usableNumMaps);
-                    std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
-                    minhasher.minparams.maps = usableNumMaps;
-                }      
+                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
+                        outstream.flush();
+    
+                        std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
+                        
+                        int usableNumMaps = 0;
+    
+                        //load as many transformed tables from file as possible and move them to minhasher
+                        std::ifstream instream(tmpmapsFilename, std::ios::binary);
+                        for(int i = 0; i < numSavedTables; i++){
+                            try{
+                                std::cerr << "try loading table " << i << "\n";
+                                Minhasher::Map_t table{};
+                                table.readFromStream(instream);
+                                minhasher.moveassignMap(i, std::move(table));
+                                std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                                usableNumMaps++;
+                                std::cerr << "usable num maps = " << usableNumMaps << "\n";
+                            }catch(...){
+                                std::cerr << "Loading table " << i << " failed\n";
+                                break;
+                            }                        
+                        }
+    
+                        removeFile(tmpmapsFilename);
+                        removeFile(rstempfile);
+    
+                        minhasher.minhashTables.resize(usableNumMaps);
+                        std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
+                        minhasher.minparams.maps = usableNumMaps;
+                    }   
+                } 
             }
         }
 
