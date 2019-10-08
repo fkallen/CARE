@@ -340,6 +340,7 @@ namespace gpu{
         //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
         TransitionFunctionData* transFuncData;
+        BackgroundThread* executor;
         BackgroundThread* gpuExecutor;
         BackgroundThread* cpugpuExecutor;
         BackgroundThread* outputThread;
@@ -576,9 +577,7 @@ namespace gpu{
 
     void CUDART_CB nextStep(void* b){
         Batch* const batch = (Batch*)b;
-
-        auto gpuExecutorPtr = batch->gpuExecutor;
-        auto outputThreadPtr = batch->outputThread;
+        auto executorPtr = batch->executor;
 
         auto call = [=](auto f){
             // if(batch->statesInProgress > 0){
@@ -597,97 +596,87 @@ namespace gpu{
 
         switch(BatchState(batch->state)) {
         case BatchState::Unprepared:
-            //gpuExecutorPtr->enqueue([=](){
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_unprepared_func);
             });
             break;
         case BatchState::FindCandidateIds:
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_findcandidateids_func);
             });
             break;
         case BatchState::CopyReads:
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_copyreads_func);
             });
             break;
         case BatchState::StartAlignment:
-            gpuExecutorPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_startalignment_func);
             });
             break;
         case BatchState::RearrangeIndices:
-            gpuExecutorPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_rearrangeindices_func);
             });
             break;
         case BatchState::CopyQualities:
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_copyqualities_func);
             });
             break;
         case BatchState::BuildMSA:
-            gpuExecutorPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_buildmsa_func);
             });
             break;
         case BatchState::ImproveMSA:
-            gpuExecutorPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_improvemsa_func);
             });
             break;
         case BatchState::StartClassicCorrection:
-            gpuExecutorPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_startclassiccorrection_func);
             });
             break;
         case BatchState::StartForestCorrection:
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_startforestcorrection_func);
             });
             break;
         case BatchState::StartConvnetCorrection:
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_startconvnetcorrection_func);
             });
             break;
         case BatchState::StartClassicCandidateCorrection:
-            gpuExecutorPtr->enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_startclassiccandidatecorrection_func);
             });
             break;
         case BatchState::CombineStreams:
-            gpuExecutorPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_combinestreams_func);
             });
             break;
         case BatchState::UnpackClassicResults:
-            //outputThreadPtr->enqueue([=](){
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_unpackclassicresults_func);
             });
             break;
         case BatchState::WriteResults:
-            //outputThreadPtr->enqueue([=](){
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_writeresults_func);
             });
             break;
         case BatchState::WriteFeatures:
-            outputThreadPtr->enqueue([=](){
-            //threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_writefeatures_func);
             });
             break;
         case BatchState::Finished:
-            threadpool.enqueue([=](){
+            executorPtr->enqueue([=](){
                 call(state_finished_func);
             });
             break;
@@ -3654,6 +3643,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::array<Batch, nParallelBatches> batches;
       std::array<Batch*, nParallelBatches> batchPointers;
+      std::array<BackgroundThread, nParallelBatches> batchExecutors;
 
       std::vector<BackgroundThread> gpuExecutorPerGpu(deviceIds.size());
       std::vector<BackgroundThread> cpugpuExecutorPerGpu(deviceIds.size());
@@ -3695,6 +3685,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].gpuExecutor = &gpuExecutorPerGpu[deviceIdIndex];
           batches[i].cpugpuExecutor = &cpugpuExecutorPerGpu[deviceIdIndex];
           batches[i].outputThread = &outputThread;
+          batches[i].executor = &batchExecutors[i];
           batchPointers[i] = &batches[i];
 
           deviceIdIndex = (deviceIdIndex + 1) % deviceIds.size();
@@ -3823,6 +3814,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       for(auto& gpuExecutor : gpuExecutorPerGpu){
           gpuExecutor.start();
       }
+
+    for(auto& executor : batchExecutors){
+        executor.start();
+    }
       //
       // for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
       //     cpugpuExecutor.start();
@@ -3867,6 +3862,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
         for(auto& gpuExecutor : gpuExecutorPerGpu){
             gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
+        }
+        for(auto& executor : batchExecutors){
+            executor.stopThread(BackgroundThread::StopType::FinishAndStop);
         }
         //
         // for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
