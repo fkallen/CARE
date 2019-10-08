@@ -124,7 +124,7 @@ namespace gpu{
                             auto func = std::move(tasks.front());
                             tasks.erase(tasks.begin());
                             mylock.unlock();
-			    producer_cv.notify_one();
+			                producer_cv.notify_one();
 
                             func();
                         }
@@ -141,33 +141,19 @@ namespace gpu{
         }
 
         template<class Func>
-        void emplace(Func&& func){
+        void enqueue(Func&& func){
             auto wrapper = [f = std::move(func)]() -> void {
                 f();
             };
 
             {
                 std::unique_lock<std::mutex> mylock(m);
-		producer_cv.wait(mylock, [&](){return tasks.size() < 16;});
+		        producer_cv.wait(mylock, [&](){return tasks.size() < 16;});
                 tasks.emplace_back(std::move(wrapper));
             }
 
             consumer_cv.notify_one();
         }
-
-        // template<class Func, class... Params>
-        // void emplace(Func&& func, Params... params){
-        //     auto wrapper = [f = std::move(func)]() -> void {
-        //         f(params...);
-        //     };
-        //
-        //     {
-        //         std::lock_guard<std::mutex> mylock(m);
-        //         tasks.emplace_back(std::move(wrapper));
-        //     }
-        //
-        //     condvar.notify_one();
-        // }
 
         void stopThread(StopType type){
             if(type == StopType::FinishAndStop){
@@ -611,7 +597,7 @@ namespace gpu{
 
         switch(BatchState(batch->state)) {
         case BatchState::Unprepared:
-            //gpuExecutorPtr->emplace([=](){
+            //gpuExecutorPtr->enqueue([=](){
             threadpool.enqueue([=](){
                 call(state_unprepared_func);
             });
@@ -627,13 +613,13 @@ namespace gpu{
             });
             break;
         case BatchState::StartAlignment:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_startalignment_func);
             });
             break;
         case BatchState::RearrangeIndices:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_rearrangeindices_func);
             });
@@ -644,19 +630,19 @@ namespace gpu{
             });
             break;
         case BatchState::BuildMSA:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_buildmsa_func);
             });
             break;
         case BatchState::ImproveMSA:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_improvemsa_func);
             });
             break;
         case BatchState::StartClassicCorrection:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_startclassiccorrection_func);
             });
@@ -672,30 +658,30 @@ namespace gpu{
             });
             break;
         case BatchState::StartClassicCandidateCorrection:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
                 call(state_startclassiccandidatecorrection_func);
             });
             break;
         case BatchState::CombineStreams:
-            gpuExecutorPtr->emplace([=](){
+            gpuExecutorPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_combinestreams_func);
             });
             break;
         case BatchState::UnpackClassicResults:
-            //outputThreadPtr->emplace([=](){
+            //outputThreadPtr->enqueue([=](){
             threadpool.enqueue([=](){
                 call(state_unpackclassicresults_func);
             });
             break;
         case BatchState::WriteResults:
-            //outputThreadPtr->emplace([=](){
+            //outputThreadPtr->enqueue([=](){
             threadpool.enqueue([=](){
                 call(state_writeresults_func);
             });
             break;
         case BatchState::WriteFeatures:
-            outputThreadPtr->emplace([=](){
+            outputThreadPtr->enqueue([=](){
             //threadpool.enqueue([=](){
                 call(state_writefeatures_func);
             });
@@ -3459,7 +3445,7 @@ void state_unpackclassicresults_func(Batch& batch){
 
 		//function();
 
-        batch.outputThread->emplace(std::move(function));
+        batch.outputThread->enqueue(std::move(function));
 
         batch.setState(BatchState::Finished, expectedState);
         cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;

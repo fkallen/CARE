@@ -71,6 +71,10 @@ struct ThreadPool{
 
 private:
 
+    /*
+        for(auto i = firstIndex; i < lastIndex; i++)
+            loop(i)
+    */
     template<bool waitForCompletion, class Index_t, class Func>
     void parallelFor_impl(Index_t firstIndex, Index_t lastIndex, Func&& loop, std::size_t numThreads){
         std::mutex m;
