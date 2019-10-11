@@ -72,6 +72,13 @@ namespace detail{
                                 const std::vector<std::string>& infilenames, 
                                 const std::string& outfilename, 
                                 Comp&& comparator){
+                                    
+        //if no input file specified create empty outputfile and return
+        if(infilenames.empty()){            
+            std::ofstream outfile(outfilename);
+            outfile.close();
+            return;
+        }
         //merge the temp files
         std::vector<std::string> filenames = infilenames;
         std::vector<std::string> newfilenames;
