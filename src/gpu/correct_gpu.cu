@@ -341,8 +341,6 @@ namespace gpu{
 
         TransitionFunctionData* transFuncData;
         BackgroundThread* executor;
-        BackgroundThread* gpuExecutor;
-        BackgroundThread* cpugpuExecutor;
         BackgroundThread* outputThread;
 
         int id = -1;
@@ -409,6 +407,18 @@ namespace gpu{
 
 	};
 
+    struct SerializedFeature{
+        char consensus;
+        int position;
+        read_number readId;
+        std::string featureString;
+
+        SerializedFeature(){}
+        SerializedFeature(read_number r, int p, char c, const std::string& s)
+            : readId(r), position(p), consensus(c), featureString(s){}
+        SerializedFeature(read_number r, int p, char c, std::string&& s)
+        : readId(r), position(p), consensus(c), featureString(std::move(s)){}
+    };
 
 
     struct TransitionFunctionData {
@@ -430,6 +440,8 @@ namespace gpu{
 
         std::condition_variable isFinishedCV;
         std::mutex isFinishedMutex;
+
+        std::function<void(const SerializedFeature&)> saveFeature;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         NN_Correction_Classifier nnClassifier;
@@ -475,106 +487,7 @@ namespace gpu{
 	void state_writefeatures_func(Batch& batch);
 	void state_finished_func(Batch& batch);
 
-#if 0
-    void CUDART_CB nextStep(void* b){
-        Batch* const batch = (Batch*)b;
-        auto gpuExecutorPtr = batch->gpuExecutor;
-        auto cpugpuExecutorPtr = batch->cpugpuExecutor;
-        auto outputThreadPtr = batch->outputThread;
-
-        auto call = [=](auto f){
-            //std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
-            nvtx::push_range("batch "+std::to_string(batch->id)+nameOf(batch->state), int(batch->state));
-            f(*batch);
-            nvtx::pop_range();
-        };
-
-        switch(batch->state) {
-		case BatchState::Unprepared:
-            gpuExecutorPtr->emplace([=](){
-                call(state_unprepared_func);
-            });
-            break;
-        case BatchState::FindCandidateIds:
-            cpugpuExecutorPtr->emplace([=](){
-                call(state_findcandidateids_func);
-            });
-            break;
-		case BatchState::CopyReads:
-            cpugpuExecutorPtr->emplace([=](){
-                call(state_copyreads_func);
-            });
-            break;
-		case BatchState::StartAlignment:
-            gpuExecutorPtr->emplace([=](){
-                call(state_startalignment_func);
-            });
-            break;
-        case BatchState::RearrangeIndices:
-            gpuExecutorPtr->emplace([=](){
-                call(state_rearrangeindices_func);
-            });
-            break;
-		case BatchState::CopyQualities:
-            cpugpuExecutorPtr->emplace([=](){
-                call(state_copyqualities_func);
-            });
-            break;
-		case BatchState::BuildMSA:
-            gpuExecutorPtr->emplace([=](){
-                call(state_buildmsa_func);
-            });
-            break;
-        case BatchState::ImproveMSA:
-            gpuExecutorPtr->emplace([=](){
-                call(state_improvemsa_func);
-            });
-            break;
-		case BatchState::StartClassicCorrection:
-            gpuExecutorPtr->emplace([=](){
-                call(state_startclassiccorrection_func);
-            });
-            break;
-		case BatchState::StartForestCorrection:
-            cpugpuExecutorPtr->emplace([=](){
-                call(state_startforestcorrection_func);
-            });
-            break;
-        case BatchState::StartConvnetCorrection:
-            cpugpuExecutorPtr->emplace([=](){
-                call(state_startconvnetcorrection_func);
-            });
-            break;
-        case BatchState::CombineStreams:
-            gpuExecutorPtr->emplace([=](){
-                call(state_combinestreams_func);
-            });
-            break;
-		case BatchState::UnpackClassicResults:
-            outputThreadPtr->emplace([=](){
-                call(state_unpackclassicresults_func);
-            });
-            break;
-		case BatchState::WriteResults:
-            outputThreadPtr->emplace([=](){
-                call(state_writeresults_func);
-            });
-            break;
-		case BatchState::WriteFeatures:
-            outputThreadPtr->emplace([=](){
-                call(state_writefeatures_func);
-            });
-            break;
-		case BatchState::Finished:
-            cpugpuExecutorPtr->emplace([=](){
-                call(state_finished_func);
-            });
-            break;
-		default: assert(false);;
-        }
-    }
-#else
-
+    //void* b is a pointer to Batch
     void CUDART_CB nextStep(void* b){
         Batch* const batch = (Batch*)b;
         auto executorPtr = batch->executor;
@@ -684,7 +597,6 @@ namespace gpu{
         }
     }
 
-#endif
 
     /*for each active read pair in tasks, if at least one read has more than threshold candidates:
         1. find out candidates whose paired candidate is a candidate of the paired read
@@ -2845,7 +2757,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
         constexpr float maxgini = 0.05f;
         constexpr float forest_correction_fraction = 0.5f;
 
-        #pragma omp parallel for schedule(dynamic,2)
+        //#pragma omp parallel for schedule(dynamic,2)
         for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
             auto& task = batch.tasks[subject_index];
             task.corrected_subject = task.subject_string;
@@ -2856,6 +2768,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
             const char* const consensus = &dataArrays.h_consensus[subject_index * dataArrays.msa_pitch];
             const auto& columnProperties = dataArrays.h_msa_column_properties[subject_index];
 
+            
             for(int index = offset; index < end_index; index++){
                 const auto& msafeature = MSAFeatures[index];
 
@@ -2878,8 +2791,52 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 					task.corrected = true;
 
 					const int globalIndex = columnProperties.subjectColumnsBegin_incl + msafeature.position;
-					task.corrected_subject[msafeature.position] = consensus[globalIndex];
-				}
+                    task.corrected_subject[msafeature.position] = consensus[globalIndex];
+                }
+            }
+
+            if(task.corrected){
+                    
+                const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
+
+                task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
+
+                auto isValidSequence = [](const std::string& s){
+                    return std::all_of(s.begin(), s.end(), [](char c){
+                        return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                    });
+                };
+
+                if(!isValidSequence(task.corrected_subject)){
+                    std::cout << task.corrected_subject << std::endl;
+                }
+
+                if(task.highQualityAlignment){
+                    transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+                }
+                //transFuncData->unlock(task.readId);
+
+                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
+
+                if(!originalReadContainsN){
+                    const int maxEdits = subject_length / 7;
+                    int edits = 0;
+                    for(int i = 0; i < subject_length && edits <= maxEdits; i++){
+                        if(task.corrected_subject[i] != task.subject_string[i]){
+                            task.anchoroutput.edits.emplace_back(i, task.corrected_subject[i]);
+                            edits++;
+                        }
+                    }
+                    task.anchoroutput.useEdits = edits <= maxEdits;
+                }else{
+                    task.anchoroutput.useEdits = false;
+                }
+
+                task.anchoroutput.hq = task.highQualityAlignment;                    
+                task.anchoroutput.type = TempCorrectedSequence::Type::Anchor;
+                task.anchoroutput.readId = task.readId;
+                task.anchoroutput.sequence = std::move(task.corrected_subject);
+                task.anchoroutput.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
             }
         }
 
@@ -3464,9 +3421,12 @@ void state_unpackclassicresults_func(Batch& batch){
             return;
         }
 
-		DataArrays& dataArrays = batch.dataArrays;
+        DataArrays& dataArrays = batch.dataArrays;
+        
+        std::vector<SerializedFeature> featuresToSave;
 
-		auto& featurestream = *transFuncData.featurestream;
+#if 1
+		//auto& featurestream = *transFuncData.featurestream;
 
 		for(std::size_t subject_index = 0; subject_index < batch.tasks.size(); ++subject_index) {
 
@@ -3478,15 +3438,15 @@ void state_unpackclassicresults_func(Batch& batch){
 			const std::size_t msa_weights_pitch_floats = dataArrays.msa_weights_pitch / sizeof(float);
 #if 1
 			std::vector<MSAFeature> MSAFeatures = extractFeatures(dataArrays.h_consensus + subject_index * dataArrays.msa_pitch,
-						dataArrays.h_support + subject_index * msa_weights_pitch_floats,
-						dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
-						dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
-						columnProperties.lastColumn_excl,
-						columnProperties.subjectColumnsBegin_incl,
-						columnProperties.subjectColumnsEnd_excl,
-						task.subject_string,
-						transFuncData.correctionOptions.kmerlength, 0.0f,
-						transFuncData.correctionOptions.estimatedCoverage);
+                                                                    dataArrays.h_support + subject_index * msa_weights_pitch_floats,
+                                                                    dataArrays.h_coverage + subject_index * msa_weights_pitch_floats,
+                                                                    dataArrays.h_origCoverages + subject_index * msa_weights_pitch_floats,
+                                                                    columnProperties.lastColumn_excl,
+                                                                    columnProperties.subjectColumnsBegin_incl,
+                                                                    columnProperties.subjectColumnsEnd_excl,
+                                                                    task.subject_string,
+                                                                    transFuncData.correctionOptions.kmerlength, 0.0f,
+                                                                    transFuncData.correctionOptions.estimatedCoverage);
 #else
             //const size_t msa_weights_pitch_floats = dataarrays.msa_weights_pitch / sizeof(float);
             //const unsigned offset1 = dataArrays.msa_pitch * (subject_index +  dataArrays.h_indices_per_subject_prefixsum[subject_index]);
@@ -3528,11 +3488,27 @@ void state_unpackclassicresults_func(Batch& batch){
                                         transFuncData.correctionOptions.estimatedCoverage);
 
 #endif
+            
+            
 			for(const auto& msafeature : MSAFeatures) {
-				featurestream << task.readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
-				featurestream << msafeature << '\n';
+                std::stringstream ss;
+                ss << msafeature;
+                featuresToSave.emplace_back(task.readId, msafeature.position, msafeature.consensus, ss.str());
+				//featurestream << task.readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
+				//featurestream << msafeature << '\n';
 			}
 		}
+#endif
+
+        auto func = [featuresToSave = std::move(featuresToSave), t = batch.transFuncData](){
+            auto& featurestream = *(t->featurestream);
+            for(const auto& f : featuresToSave){
+                featurestream << f.readId << '\t' << f.position << '\t' << f.consensus << '\n';
+				featurestream << f.featureString << '\n';
+            }
+        };
+
+        batch.outputThread->enqueue(std::move(func));
 
         batch.setState(BatchState::Finished, expectedState);
         cudaLaunchHostFunc(batch.streams[primary_stream_index], nextStep, &batch); CUERR;
@@ -3645,9 +3621,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::array<Batch*, nParallelBatches> batchPointers;
       std::array<BackgroundThread, nParallelBatches> batchExecutors;
 
-      std::vector<BackgroundThread> gpuExecutorPerGpu(deviceIds.size());
-      std::vector<BackgroundThread> cpugpuExecutorPerGpu(deviceIds.size());
-
       BackgroundThread outputThread;
 
       int deviceIdIndex = 0;
@@ -3682,8 +3655,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].transFuncData = &transFuncData;
-          batches[i].gpuExecutor = &gpuExecutorPerGpu[deviceIdIndex];
-          batches[i].cpugpuExecutor = &cpugpuExecutorPerGpu[deviceIdIndex];
           batches[i].outputThread = &outputThread;
           batches[i].executor = &batchExecutors[i];
           batchPointers[i] = &batches[i];
@@ -3811,18 +3782,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       // BEGIN CORRECTION
 
-      for(auto& gpuExecutor : gpuExecutorPerGpu){
-          gpuExecutor.start();
-      }
-
     for(auto& executor : batchExecutors){
         executor.start();
     }
-      //
-      // for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
-      //     cpugpuExecutor.start();
-      // }
-      //
+
       outputThread.start();
 
 
@@ -3859,18 +3822,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
         threadpool.wait();
 
-
-        for(auto& gpuExecutor : gpuExecutorPerGpu){
-            gpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
-        }
         for(auto& executor : batchExecutors){
             executor.stopThread(BackgroundThread::StopType::FinishAndStop);
         }
-        //
-        // for(auto& cpugpuExecutor : cpugpuExecutorPerGpu){
-        //     cpugpuExecutor.stopThread(BackgroundThread::StopType::FinishAndStop);
-        // }
-        //
+
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
 
