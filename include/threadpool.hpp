@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <cassert>
 
 namespace care{
 
@@ -44,14 +45,15 @@ struct ThreadPool{
 
     template<class Index_t, class Func>
     void parallelForNoWait(Index_t begin, Index_t end, Func&& loop){
-        parallelForNoWait(begin, end, std::forward<Func>(loop), getConcurrency());
+        //parallelForNoWait(begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
     void parallelForNoWait(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = false;
+        assert(false);
 
-        parallelFor_impl<waitForCompletion>(begin, end, std::forward<Func>(loop), numThreads);
+        //parallelFor_impl<waitForCompletion>(begin, end, std::forward<Func>(loop), numThreads);
     }
 
     void wait(){
@@ -81,16 +83,7 @@ private:
         std::condition_variable cv;
         std::size_t finishedWork = 0;
         std::size_t startedWork = 0;
-
-        auto work = [&, func = std::forward<Func>(loop)](Index_t begin, Index_t end, int threadId){
-            func(begin, end, threadId);
-
-            if(waitForCompletion){
-                std::lock_guard<std::mutex> lg(m);
-                finishedWork++;
-                cv.notify_one();
-            }            
-        };
+        std::size_t enqueuedWork = 0;
 
         Index_t totalIterations = lastIndex - firstIndex;
         if(totalIterations > 0){
@@ -106,11 +99,28 @@ private:
                 }
 
                 if(end-begin > 0){
-                    startedWork++;
+                    if(waitForCompletion){
+                        enqueuedWork++;
 
-                    enqueue([begin, end, c, work](){
-                        work(begin, end, c);
-                    });
+                        enqueue([&, begin, end, c](){
+                            {
+                                std::lock_guard<std::mutex> lg(m);
+                                startedWork++;
+                            }
+
+                            loop(begin, end, c);
+
+                            if(waitForCompletion){
+                                std::lock_guard<std::mutex> lg(m);
+                                finishedWork++;
+                                cv.notify_one();
+                            }
+                        });
+                    }else{
+                        enqueue([&, begin, end, c](){
+                            loop(begin, end, c);
+                        });
+                    }
 
                     begin = end;
                     end += chunksize;
@@ -118,16 +128,21 @@ private:
             }
 
             if(end-begin > 0){
-                startedWork++;
-                work(begin, end, chunks-1);                
+                loop(begin, end, chunks-1);                
             }
 
             if(waitForCompletion){
-                //std::cerr << "Wait for completion " << finishedWork << " / " << startedWork << "\n";
+                //std::cerr << "Wait for completion " << startedWork << " / " << finishedWork << " / " << enqueuedWork << "\n";
                 std::unique_lock<std::mutex> ul(m);
-                if(finishedWork != startedWork){
+                if(finishedWork != enqueuedWork){
                     //std::cerr << "Waiting\n";
-                    cv.wait(ul, [&](){return finishedWork == startedWork;});
+                    int waitIter = 0;
+                    cv.wait(ul, [&](){
+                        if(waitIter > 100){
+                            std::cerr << "Wait for completion " << startedWork << " / " << finishedWork << " / " << enqueuedWork << "\n";
+                        }
+                        return finishedWork == enqueuedWork;
+                    });
                     //std::cerr << "No longer waiting\n";
                 }
             }
