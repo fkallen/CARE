@@ -6,6 +6,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <cassert>
+#include <iostream>
 
 namespace care{
 
@@ -79,6 +80,14 @@ private:
     */
     template<bool waitForCompletion, class Index_t, class Func>
     void parallelFor_impl(Index_t firstIndex, Index_t lastIndex, Func&& loop, std::size_t numThreads){
+        //2 debug variables
+        volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
+        volatile int initialNumUnfinishedParallelForChunks = numUnfinishedParallelForChunks;
+
+        if(waitForCompletion){
+            ++numRunningParallelForWithWaiting;
+        }
+
         std::mutex m;
         std::condition_variable cv;
         std::size_t finishedWork = 0;
@@ -101,6 +110,7 @@ private:
                 if(end-begin > 0){
                     if(waitForCompletion){
                         enqueuedWork++;
+                        ++numUnfinishedParallelForChunks;
 
                         enqueue([&, begin, end, c](){
                             {
@@ -110,6 +120,8 @@ private:
 
                             loop(begin, end, c);
 
+                            --numUnfinishedParallelForChunks;
+
                             if(waitForCompletion){
                                 std::lock_guard<std::mutex> lg(m);
                                 finishedWork++;
@@ -117,8 +129,12 @@ private:
                             }
                         });
                     }else{
+                        ++numUnfinishedParallelForChunks;
+
                         enqueue([&, begin, end, c](){
                             loop(begin, end, c);
+
+                            --numUnfinishedParallelForChunks;
                         });
                     }
 
@@ -138,18 +154,36 @@ private:
                     //std::cerr << "Waiting\n";
                     int waitIter = 0;
                     cv.wait(ul, [&](){
-                        if(waitIter > 100){
-                            std::cerr << "Wait for completion " << startedWork << " / " << finishedWork << " / " << enqueuedWork << "\n";
+                        constexpr int warningThreshold = 50;
+                        constexpr int userinputThreshold = 1000;
+                        waitIter++;
+
+                        if(waitIter > warningThreshold){
+                            std::cerr << "Iter " << waitIter << ", wait for completion " << startedWork << " / " 
+                                                << finishedWork << " / " << enqueuedWork << "\n";
                         }
+
+                        if(waitIter > userinputThreshold){
+                            int x;
+                            std::cerr << "Iter " << waitIter << ", enter number to continue\n";
+                            std::cin >> x;
+                        }
+                        
                         return finishedWork == enqueuedWork;
                     });
                     //std::cerr << "No longer waiting\n";
                 }
             }
-        }   
+        }
+
+        if(waitForCompletion){
+            --numRunningParallelForWithWaiting;
+        }
     }
 
     std::unique_ptr<am::parallel_queue> pq;
+    std::atomic_int numRunningParallelForWithWaiting{0};
+    std::atomic_int numUnfinishedParallelForChunks{0};
 };
 
 
