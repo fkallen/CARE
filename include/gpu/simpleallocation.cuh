@@ -43,7 +43,14 @@ namespace detail{
 	struct SimpleAllocator<DataLocation::PinnedHost, T>{
 		T* allocate(size_t elements){
 			T* ptr{};
-			cudaMallocHost(&ptr, elements * sizeof(T)); CUERR;
+			cudaError_t err = cudaMallocHost(&ptr, elements * sizeof(T)); 
+            if(err != cudaSuccess){
+                std::cerr << "Failed to allocate " << (elements) << " * " << sizeof(T) 
+                            << " = " << (elements * sizeof(T))  
+                            << " bytes using cudaMallocHost!\n";
+            }
+            
+            CUERR;
 			return ptr;
 		}
 
@@ -56,7 +63,13 @@ namespace detail{
 	struct SimpleAllocator<DataLocation::Device, T>{
 		T* allocate(size_t elements){
 			T* ptr;
-			cudaMalloc(&ptr, elements * sizeof(T)); CUERR;
+			cudaError_t err = cudaMalloc(&ptr, elements * sizeof(T));
+            if(err != cudaSuccess){
+                std::cerr << "Failed to allocate " << (elements) << " * " << sizeof(T) 
+                            << " = " << (elements * sizeof(T))  
+                            << " bytes using cudaMalloc!\n";
+            }
+            CUERR;
 			return ptr;
 		}
 
