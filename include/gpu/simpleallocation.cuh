@@ -45,7 +45,7 @@ namespace detail{
 			T* ptr{};
 			cudaError_t err = cudaMallocHost(&ptr, elements * sizeof(T)); 
             if(err != cudaSuccess){
-                std::cerr << "Failed to allocate " << (elements) << " * " << sizeof(T) 
+                std::cerr << "SimpleAllocator: Failed to allocate " << (elements) << " * " << sizeof(T) 
                             << " = " << (elements * sizeof(T))  
                             << " bytes using cudaMallocHost!\n";
             }
@@ -65,7 +65,7 @@ namespace detail{
 			T* ptr;
 			cudaError_t err = cudaMalloc(&ptr, elements * sizeof(T));
             if(err != cudaSuccess){
-                std::cerr << "Failed to allocate " << (elements) << " * " << sizeof(T) 
+                std::cerr << "SimpleAllocator: Failed to allocate " << (elements) << " * " << sizeof(T) 
                             << " = " << (elements * sizeof(T))  
                             << " bytes using cudaMalloc!\n";
             }

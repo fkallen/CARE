@@ -43,8 +43,15 @@ struct ThrustFallbackDeviceAllocator<T, true> : thrust::device_malloc_allocator<
 		}else{
 			cudaGetLastError(); //reset the error of failed allocation
 
+			std::cerr << "ThrustFallbackDeviceAllocator<true>: Failed to allocate " << (n) << " * " << sizeof(T) 
+                            << " = " << (n * sizeof(T))  
+                            << " bytes using cudaMalloc!\n";
+
 	    	status = cudaMallocManaged(&ptr, n * sizeof(T));
     		if(status != cudaSuccess){
+				std::cerr << "ThrustFallbackDeviceAllocator<true>: Failed to allocate " << (n) << " * " << sizeof(T) 
+                            << " = " << (n * sizeof(T))  
+                            << " bytes using cudaMallocManaged!\n";
     			throw std::bad_alloc();
     		}
     		int deviceId = 0;
@@ -91,6 +98,10 @@ struct ThrustFallbackDeviceAllocator<T, false> : thrust::device_malloc_allocator
 			//std::cerr << "cudaMalloc\n";
 		}else{
 			cudaGetLastError(); //reset the error of failed allocation
+
+			std::cerr << "ThrustFallbackDeviceAllocator<false>: Failed to allocate " << (n) << " * " << sizeof(T) 
+                            << " = " << (n * sizeof(T))  
+                            << " bytes using cudaMalloc!\n";
 
     		throw std::bad_alloc();
 		}
