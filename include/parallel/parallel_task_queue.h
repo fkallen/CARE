@@ -54,6 +54,8 @@ private:
 
         void operator () () {
             task_();
+
+            std::unique_lock<std::mutex> lock{queue_->busyMtx_};
             --queue_->running_;
             queue_->notify_task_complete();
         }
@@ -268,21 +270,23 @@ private:
     /// @brief this will run in a separate, dedicated thread
     void schedule()
     {
-         while(active_.load()) {
-             if(busy()) {
-                 std::unique_lock<std::mutex> lock{busyMtx_};
-                 isBusy_.wait(lock, [this]{ return !busy(); });
-             }
-             else if(!empty()) {
-                 try_assign_tasks();
-             }            
-             else if(running() < 1) {
-                 std::lock_guard<std::recursive_mutex> lock{enqueueMtx_};
-                 if(empty() && (running() < 1)) {
-                     isDone_.notify_all();
-                 }
-             }
-         }
+        while(active_.load()) {
+            if(busy()) {
+                std::unique_lock<std::mutex> lock{busyMtx_};
+                if(busy()){
+                    isBusy_.wait(lock, [this]{ return !busy(); });
+                }
+            }
+            else if(!empty()) {
+                try_assign_tasks();
+            }            
+            else if(running() < 1) {
+                std::lock_guard<std::recursive_mutex> lock{enqueueMtx_};
+                if(empty() && (running() < 1)) {
+                    isDone_.notify_all();
+                }
+            }
+        }
     }
 
 
