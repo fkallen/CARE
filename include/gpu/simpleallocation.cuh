@@ -31,6 +31,8 @@ namespace detail{
 		T* allocate(size_t elements){
 			T* ptr{};
 			ptr = new T[elements];
+
+            assert(ptr != nullptr);
 			return ptr;
 		}
 
@@ -48,9 +50,12 @@ namespace detail{
                 std::cerr << "SimpleAllocator: Failed to allocate " << (elements) << " * " << sizeof(T) 
                             << " = " << (elements * sizeof(T))  
                             << " bytes using cudaMallocHost!\n";
+
+                throw std::bad_alloc();
             }
+
+            assert(ptr != nullptr);
             
-            CUERR;
 			return ptr;
 		}
 
@@ -68,8 +73,12 @@ namespace detail{
                 std::cerr << "SimpleAllocator: Failed to allocate " << (elements) << " * " << sizeof(T) 
                             << " = " << (elements * sizeof(T))  
                             << " bytes using cudaMalloc!\n";
+
+                throw std::bad_alloc();
             }
-            CUERR;
+
+            assert(ptr != nullptr);
+            
 			return ptr;
 		}
 
