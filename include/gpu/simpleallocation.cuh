@@ -5,7 +5,7 @@
 
 #include <iostream>
 #include <stdexcept>
-
+#include <cassert>
 #ifndef CUERR
 
 #define CUERR {                                                            \
