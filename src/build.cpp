@@ -374,7 +374,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                 }
 
                 #pragma omp parallel for
-                for(std::size_t readId = 0; readId < readStorage.getNumberOfSequences(); readId++){
+                for(read_number readId = 0; readId < readStorage.getNumberOfReads(); readId++){
 
     				const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(readId);
     				const int sequencelength = readStorage.fetchSequenceLength(readId);

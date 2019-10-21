@@ -55,7 +55,7 @@ namespace cpu{
         int maximum_allowed_sequence_length = 0;
         int maximum_allowed_sequence_bytes = 0;
         bool useQualityScores = false;
-        read_number num_sequences = 0;
+        read_number maximumNumberOfSequences = 0;
         std::size_t sequence_data_bytes = 0;
         std::size_t sequence_lengths_bytes = 0;
         std::size_t quality_data_bytes = 0;
@@ -75,22 +75,22 @@ namespace cpu{
             : maximum_allowed_sequence_length(maximum_sequence_length),
                 maximum_allowed_sequence_bytes(getEncodedNumInts2BitHiLo(maximum_sequence_length) * sizeof(unsigned int)),
                 useQualityScores(b),
-                num_sequences(nSequences){
+                maximumNumberOfSequences(nSequences){
 
 
-            h_sequence_data.reset(new char[std::size_t(num_sequences) * maximum_allowed_sequence_bytes]);
-            sequence_data_bytes = sizeof(char) * std::size_t(num_sequences) * maximum_allowed_sequence_bytes;
+            h_sequence_data.reset(new char[std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes]);
+            sequence_data_bytes = sizeof(char) * std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes;
 
-            h_sequence_lengths.reset(new Length_t[std::size_t(num_sequences)]);
-            sequence_lengths_bytes = sizeof(Length_t) * std::size_t(num_sequences);
+            h_sequence_lengths.reset(new Length_t[std::size_t(maximumNumberOfSequences)]);
+            sequence_lengths_bytes = sizeof(Length_t) * std::size_t(maximumNumberOfSequences);
 
             if(useQualityScores){
-                h_quality_data.reset(new char[std::size_t(num_sequences) * maximum_allowed_sequence_length]);
-                quality_data_bytes = sizeof(char) * std::size_t(num_sequences) * maximum_allowed_sequence_length;
+                h_quality_data.reset(new char[std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_length]);
+                quality_data_bytes = sizeof(char) * std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_length;
             }
 
             std::fill(&h_sequence_data[0], &h_sequence_data[sequence_data_bytes], 0);
-            std::fill(&h_sequence_lengths[0], &h_sequence_lengths[num_sequences], 0);
+            std::fill(&h_sequence_lengths[0], &h_sequence_lengths[maximumNumberOfSequences], 0);
             std::fill(&h_quality_data[0], &h_quality_data[quality_data_bytes], 0);
         }
 
@@ -104,7 +104,7 @@ namespace cpu{
               maximum_allowed_sequence_length(other.maximum_allowed_sequence_length),
               maximum_allowed_sequence_bytes(other.maximum_allowed_sequence_bytes),
               useQualityScores(other.useQualityScores),
-              num_sequences(other.num_sequences),
+              maximumNumberOfSequences(other.maximumNumberOfSequences),
               sequence_data_bytes(other.sequence_data_bytes),
               sequence_lengths_bytes(other.sequence_lengths_bytes),
               quality_data_bytes(other.quality_data_bytes),
@@ -124,7 +124,7 @@ namespace cpu{
             maximum_allowed_sequence_length = other.maximum_allowed_sequence_length;
             maximum_allowed_sequence_bytes = other.maximum_allowed_sequence_bytes;
             useQualityScores = other.useQualityScores;
-            num_sequences = other.num_sequences;
+            maximumNumberOfSequences = other.maximumNumberOfSequences;
             sequence_data_bytes = other.sequence_data_bytes;
             sequence_lengths_bytes = other.sequence_lengths_bytes;
             quality_data_bytes = other.quality_data_bytes;
@@ -145,7 +145,7 @@ namespace cpu{
                 return false;
             if(useQualityScores != other.useQualityScores)
                 return false;
-            if(num_sequences != other.num_sequences)
+            if(maximumNumberOfSequences != other.maximumNumberOfSequences)
                 return false;
             if(useQualityScores != other.useQualityScores)
                 return false;
@@ -177,15 +177,15 @@ namespace cpu{
         }
 
         std::size_t size() const{
-            //assert(std::size_t(num_sequences) * maximum_allowed_sequence_bytes == sequence_data_bytes);
-            //assert(std::size_t(num_sequences) * sizeof(Length_t) == sequence_lengths_bytes);
+            //assert(std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_bytes == sequence_data_bytes);
+            //assert(std::size_t(maximumNumberOfSequences) * sizeof(Length_t) == sequence_lengths_bytes);
 
             std::size_t result = 0;
             result += sequence_data_bytes;
             result += sequence_lengths_bytes;
 
             if(useQualityScores){
-                //assert(std::size_t(num_sequences) * maximum_allowed_sequence_length * sizeof(char) == quality_data_bytes);
+                //assert(std::size_t(maximumNumberOfSequences) * maximum_allowed_sequence_length * sizeof(char) == quality_data_bytes);
                 result += quality_data_bytes;
             }
 
@@ -193,9 +193,9 @@ namespace cpu{
         }
 
     	void resize(read_number nReads){
-    		assert(getNumberOfSequences() >= nReads);
+    		assert(getMaximumNumberOfSequences() >= nReads);
 
-            num_sequences = nReads;
+            maximumNumberOfSequences = nReads;
     	}
 
     	void destroy(){
@@ -270,7 +270,7 @@ private:
         }
 public:
         void insertRead(read_number readNumber, const std::string& sequence){
-            assert(readNumber < getNumberOfSequences());
+            assert(readNumber < getMaximumNumberOfSequences());
             assert(int(sequence.length()) <= maximum_allowed_sequence_length);
 
     		if(useQualityScores){
@@ -281,7 +281,7 @@ public:
     	}
 
         void insertRead(read_number readNumber, const std::string& sequence, const std::string& quality){
-            assert(readNumber < getNumberOfSequences());
+            assert(readNumber < getMaximumNumberOfSequences());
             assert(int(sequence.length()) <= maximum_allowed_sequence_length);
             assert(int(quality.length()) <= maximum_allowed_sequence_length);
             assert(sequence.length() == quality.length());
@@ -315,8 +315,8 @@ public:
             return useQualityScores;
         }
 
-    	std::uint64_t getNumberOfSequences() const{
-    		return num_sequences;
+    	std::uint64_t getMaximumNumberOfSequences() const{
+    		return maximumNumberOfSequences;
     	}
 
         int getMaximumAllowedSequenceBytes() const{
@@ -335,7 +335,7 @@ public:
             stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_length), sizeof(int));
             stream.write(reinterpret_cast<const char*>(&maximum_allowed_sequence_bytes), sizeof(int));
             stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-            stream.write(reinterpret_cast<const char*>(&num_sequences), sizeof(read_number));
+            stream.write(reinterpret_cast<const char*>(&maximumNumberOfSequences), sizeof(read_number));
             stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&sequence_lengths_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
@@ -367,7 +367,7 @@ public:
             int loaded_maximum_allowed_sequence_length = 0;
             int loaded_maximum_allowed_sequence_bytes = 0;
             bool loaded_useQualityScores = false;
-            read_number loaded_num_sequences = 0;
+            read_number loaded_maximumNumberOfSequences = 0;
             std::size_t loaded_sequence_data_bytes = 0;
             std::size_t loaded_sequence_lengths_bytes = 0;
             std::size_t loaded_quality_data_bytes = 0;
@@ -378,7 +378,7 @@ public:
             stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_length), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_maximum_allowed_sequence_bytes), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
-            stream.read(reinterpret_cast<char*>(&loaded_num_sequences), sizeof(read_number));
+            stream.read(reinterpret_cast<char*>(&loaded_maximumNumberOfSequences), sizeof(read_number));
             stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));
@@ -408,7 +408,7 @@ public:
 
             maximum_allowed_sequence_length = loaded_maximum_allowed_sequence_length;
             maximum_allowed_sequence_bytes = loaded_maximum_allowed_sequence_bytes;
-            num_sequences = loaded_num_sequences;
+            maximumNumberOfSequences = loaded_maximumNumberOfSequences;
             useQualityScores = loaded_useQualityScores;
             sequence_data_bytes = loaded_sequence_data_bytes;
             sequence_lengths_bytes = loaded_sequence_lengths_bytes;
