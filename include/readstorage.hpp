@@ -15,6 +15,7 @@
 #include <fstream>
 #include <memory>
 #include <cstring>
+#include <mutex>
 
 namespace care{
 
@@ -48,6 +49,8 @@ namespace cpu{
         std::size_t sequence_data_bytes = 0;
         std::size_t sequence_lengths_bytes = 0;
         std::size_t quality_data_bytes = 0;
+        std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
+        std::mutex mutexUndeterminedBaseReads;
 
         ContiguousReadStorage() : ContiguousReadStorage(0,false,0){}
 
@@ -92,7 +95,8 @@ namespace cpu{
               num_sequences(other.num_sequences),
               sequence_data_bytes(other.sequence_data_bytes),
               sequence_lengths_bytes(other.sequence_lengths_bytes),
-              quality_data_bytes(other.quality_data_bytes){
+              quality_data_bytes(other.quality_data_bytes),
+              readIdsOfReadsWithUndeterminedBase(std::move(other.readIdsOfReadsWithUndeterminedBase)){
 
         }
 
@@ -107,6 +111,7 @@ namespace cpu{
             sequence_data_bytes = other.sequence_data_bytes;
             sequence_lengths_bytes = other.sequence_lengths_bytes;
             quality_data_bytes = other.quality_data_bytes;
+            readIdsOfReadsWithUndeterminedBase = std::move(other.readIdsOfReadsWithUndeterminedBase);
 
             return *this;
         }
@@ -128,6 +133,9 @@ namespace cpu{
                 return false;
             if(quality_data_bytes != other.quality_data_bytes)
                 return false;
+            if(readIdsOfReadsWithUndeterminedBase != other.readIdsOfReadsWithUndeterminedBase){
+                return false;
+            }
 
             if(0 != std::memcmp(h_sequence_data.get(), other.h_sequence_data.get(), sequence_data_bytes))
                 return false;
@@ -170,6 +178,40 @@ namespace cpu{
             h_sequence_lengths.reset();
             h_quality_data.reset();
     	}
+
+        void setReadContainsN(read_number readId, bool contains){
+
+            auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
+                                                readIdsOfReadsWithUndeterminedBase.end(),
+                                                readId);
+
+            if(contains){
+                if(pos != readIdsOfReadsWithUndeterminedBase.end()){
+                    ; //already marked
+                }else{
+                    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+                    readIdsOfReadsWithUndeterminedBase.insert(pos, readId);
+                }
+            }else{
+                if(pos != readIdsOfReadsWithUndeterminedBase.end()){
+                    //remove mark
+                    std::lock_guard<std::mutex> l(mutexUndeterminedBaseReads);
+                    readIdsOfReadsWithUndeterminedBase.erase(pos);
+                }else{
+                    ; //already unmarked
+                }
+            }
+        }
+
+        bool readContainsN(read_number readId) const{
+
+            auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
+                                                readIdsOfReadsWithUndeterminedBase.end(),
+                                                readId);
+            bool b2 = readIdsOfReadsWithUndeterminedBase.end() != pos && *pos == readId;
+
+            return b2;
+        }
 
 private:
         void insertSequence(read_number readNumber, const std::string& sequence){
@@ -256,6 +298,11 @@ public:
             stream.write(reinterpret_cast<const char*>(&h_sequence_lengths[0]), sequence_lengths_bytes);
             stream.write(reinterpret_cast<const char*>(&h_quality_data[0]), quality_data_bytes);
 
+            //read ids with N
+            std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
+            stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
+            stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
+
         }
 
         void loadFromFile(const std::string& filename){
@@ -312,6 +359,12 @@ public:
             sequence_data_bytes = loaded_sequence_data_bytes;
             sequence_lengths_bytes = loaded_sequence_lengths_bytes;
             quality_data_bytes = loaded_quality_data_bytes;
+
+                //read ids with N
+            std::size_t numUndeterminedReads = 0;
+            stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));
+            readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
+            stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
         }
 
         SequenceStatistics getSequenceStatistics() const{
