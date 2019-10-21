@@ -9,16 +9,18 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-
+#include <iostream>
 
 int main(int argc, char** argv){
 
     bool help = false;
+    bool isSorted = false;
 
     cxxopts::Options options(argv[0], "Construct result file from corrected sequences.");
 
     options.add_options("Group")
         ("h", "Show this help message", cxxopts::value<bool>(help))
+        ("s", "Corrected sequences are sorted", cxxopts::value<bool>(isSorted))
         ("inputfile", "The fastq file to correct", cxxopts::value<std::string>())
         ("fileformat", "Format of input file. Overrides automatic detection. Allowed values: {fasta, fastq, fastagz, fastqgz}",
             cxxopts::value<std::string>()->default_value("")->implicit_value(""))
@@ -67,7 +69,7 @@ int main(int argc, char** argv){
         originalFormat = care::getFileFormat(inputfile);
     }
 
-    care::mergeResultFiles(tempdir, 0, inputfile, originalFormat, filesToMerge, outdir + "/" + outfile, true);
+    care::mergeResultFiles(tempdir, 0, inputfile, originalFormat, filesToMerge, outdir + "/" + outfile, isSorted);
 }
 
 #endif
