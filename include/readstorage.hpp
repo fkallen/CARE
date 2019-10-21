@@ -16,15 +16,12 @@
 #include <memory>
 #include <cstring>
 #include <mutex>
+#include <atomic>
+
 
 namespace care{
 
 namespace cpu{
-
-    struct SequenceStatistics{
-        int maxSequenceLength = 0;
-        int minSequenceLength = 0;
-    };
 
     /*
         Data structure to store sequences and their quality scores
@@ -33,6 +30,19 @@ namespace cpu{
    //TODO store read ids of reads which contain a base other than A,C,G,T
 
     struct ContiguousReadStorage{
+
+        struct Statistics{
+            int maximumSequenceLength = 0;
+            int minimumSequenceLength = std::numeric_limits<int>::max();
+
+            bool operator==(const Statistics& rhs) const noexcept {
+                return maximumSequenceLength == rhs.maximumSequenceLength
+                    && minimumSequenceLength == rhs.minimumSequenceLength;
+            }
+            bool operator!=(const Statistics& rhs) const noexcept{
+                return !(operator==(rhs));
+            }
+        };
 
         static constexpr bool has_reverse_complement = false;
         static constexpr int serialization_id = 1;
@@ -51,6 +61,8 @@ namespace cpu{
         std::size_t quality_data_bytes = 0;
         std::vector<read_number> readIdsOfReadsWithUndeterminedBase; //sorted in ascending order
         std::mutex mutexUndeterminedBaseReads;
+        Statistics statistics;
+        std::atomic<read_number> numberOfInsertedReads{0};
 
         ContiguousReadStorage() : ContiguousReadStorage(0,false,0){}
 
@@ -96,7 +108,12 @@ namespace cpu{
               sequence_data_bytes(other.sequence_data_bytes),
               sequence_lengths_bytes(other.sequence_lengths_bytes),
               quality_data_bytes(other.quality_data_bytes),
-              readIdsOfReadsWithUndeterminedBase(std::move(other.readIdsOfReadsWithUndeterminedBase)){
+              readIdsOfReadsWithUndeterminedBase(std::move(other.readIdsOfReadsWithUndeterminedBase)),
+              statistics(std::move(other.statistics)),
+              numberOfInsertedReads(other.numberOfInsertedReads.load()){
+
+            other.numberOfInsertedReads = 0;
+            other.statistics = Statistics{};
 
         }
 
@@ -112,6 +129,11 @@ namespace cpu{
             sequence_lengths_bytes = other.sequence_lengths_bytes;
             quality_data_bytes = other.quality_data_bytes;
             readIdsOfReadsWithUndeterminedBase = std::move(other.readIdsOfReadsWithUndeterminedBase);
+            statistics = std::move(other.statistics);
+            numberOfInsertedReads = other.numberOfInsertedReads.load();
+
+            other.numberOfInsertedReads = 0;
+            other.statistics = Statistics{};
 
             return *this;
         }
@@ -134,6 +156,9 @@ namespace cpu{
             if(quality_data_bytes != other.quality_data_bytes)
                 return false;
             if(readIdsOfReadsWithUndeterminedBase != other.readIdsOfReadsWithUndeterminedBase){
+                return false;
+            }
+            if(statistics != other.statistics){
                 return false;
             }
 
@@ -179,6 +204,14 @@ namespace cpu{
             h_quality_data.reset();
     	}
 
+        Statistics getStatistics() const{
+            return statistics;
+        }
+
+        read_number getNumberOfReads() const{
+            return numberOfInsertedReads;
+        }
+
         void setReadContainsN(read_number readId, bool contains){
 
             auto pos = std::lower_bound(readIdsOfReadsWithUndeterminedBase.begin(),
@@ -217,13 +250,23 @@ private:
         void insertSequence(read_number readNumber, const std::string& sequence){
             auto identity = [](auto i){return i;};
 
+            const int sequencelength = sequence.length();
+
             unsigned int* dest = (unsigned int*)&h_sequence_data[std::size_t(readNumber) * std::size_t(maximum_allowed_sequence_bytes)];
             encodeSequence2BitHiLo(dest,
                                     sequence.c_str(),
                                     sequence.length(),
                                     identity);
 
+            statistics.minimumSequenceLength = std::min(statistics.minimumSequenceLength, sequencelength);
+            statistics.maximumSequenceLength = std::max(statistics.maximumSequenceLength, sequencelength);
+
             h_sequence_lengths[readNumber] = Length_t(sequence.length());
+
+            read_number prev_value = numberOfInsertedReads;
+            while(prev_value < readNumber+1 && !numberOfInsertedReads.compare_exchange_weak(prev_value, readNumber+1)){
+                ;
+            }
         }
 public:
         void insertRead(read_number readNumber, const std::string& sequence){
@@ -283,6 +326,8 @@ public:
         void saveToFile(const std::string& filename) const{
             std::ofstream stream(filename, std::ios::binary);
 
+            read_number inserted = getNumberOfReads();
+
             //int ser_id = serialization_id;
             std::size_t lengthsize = sizeof(Length_t);
             //stream.write(reinterpret_cast<const char*>(&ser_id), sizeof(int));
@@ -294,6 +339,10 @@ public:
             stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&sequence_lengths_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
+            stream.write(reinterpret_cast<const char*>(&inserted), sizeof(read_number));
+
+
             stream.write(reinterpret_cast<const char*>(&h_sequence_data[0]), sequence_data_bytes);
             stream.write(reinterpret_cast<const char*>(&h_sequence_lengths[0]), sequence_lengths_bytes);
             stream.write(reinterpret_cast<const char*>(&h_quality_data[0]), quality_data_bytes);
@@ -322,6 +371,7 @@ public:
             std::size_t loaded_sequence_data_bytes = 0;
             std::size_t loaded_sequence_lengths_bytes = 0;
             std::size_t loaded_quality_data_bytes = 0;
+            read_number inserted = 0;
 
             //stream.read(reinterpret_cast<char*>(&loaded_serialization_id), sizeof(int));
             stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
@@ -332,6 +382,10 @@ public:
             stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));
+            stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
+            stream.read(reinterpret_cast<char*>(&inserted), sizeof(read_number));
+
+            numberOfInsertedReads = inserted;
 
             //if(loaded_serialization_id != ser_id)
             //    throw std::runtime_error("Wrong serialization id!");
@@ -366,37 +420,6 @@ public:
             readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
             stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
         }
-
-        SequenceStatistics getSequenceStatistics() const{
-            return getSequenceStatistics(1);
-        }
-
-        SequenceStatistics getSequenceStatistics(int numThreads) const{
-            int maxSequenceLength = 0;
-            int minSequenceLength = std::numeric_limits<int>::max();
-
-            const int oldnumthreads = omp_get_thread_num();
-
-            omp_set_num_threads(numThreads);
-
-            #pragma omp parallel for reduction(max:maxSequenceLength) reduction(min:minSequenceLength)
-            for(std::size_t readId = 0; readId < getNumberOfSequences(); readId++){
-                const int len = fetchSequenceLength(readId);
-                if(len > maxSequenceLength)
-                    maxSequenceLength = len;
-                if(len < minSequenceLength)
-                    minSequenceLength = len;
-            }
-
-            omp_set_num_threads(oldnumthreads);
-
-            SequenceStatistics stats;
-            stats.minSequenceLength = minSequenceLength;
-            stats.maxSequenceLength = maxSequenceLength;
-
-            return stats;
-        }
-
     };
 
 }
