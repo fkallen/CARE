@@ -86,6 +86,7 @@ struct MSAProperties{
 
 struct CorrectionResult{
     bool isCorrected;
+    bool isHQ;
     std::string correctedSequence;
     std::vector<int> uncorrectedPositionsNoConsensus;
     std::vector<float> bestAlignmentWeightOfConsensusBase;
@@ -160,6 +161,26 @@ CorrectionResult getCorrectedSubject(const char* consensus,
                                     float estimatedCoverage,
                                     float m_coverage,
                                     int neighborRegionSize);
+
+
+CorrectionResult getCorrectedSubjectNew(const char* consensus,
+                                    const float* support,
+                                    const int* coverage,
+                                    const int* originalCoverage,
+                                    int nColumns,
+                                    const char* subject,
+                                    int subjectColumnsBegin_incl,
+                                    const char* candidates,
+                                    int nCandidates,
+                                    const float* candidateAlignmentWeights,
+                                    const int* candidateLengths,
+                                    const int* candidateShifts,
+                                    size_t candidatesPitch,
+                                    MSAProperties msaProperties,
+                                    float estimatedErrorrate,
+                                    float estimatedCoverage,
+                                    float m_coverage,
+                                    int neighborRegionSize);                                    
 
 std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
                                     const float* support,
