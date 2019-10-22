@@ -534,7 +534,16 @@ namespace gpu{
             constexpr std::size_t GB1 = std::size_t(1) << 30;
             const std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
 
-	    std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+            std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+            
+            std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
+            std::mutex progressMutex;
+		    std::uint64_t totalCount = 0;
+
+            auto updateProgress = [&](auto totalCount, auto seconds){
+                std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                            << seconds << " seconds." << std::endl;
+            };
 
             int numSavedTables = 0;
 
@@ -649,6 +658,10 @@ namespace gpu{
                     //TIMERSTARTCPU(insert);
 
                     auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                        std::uint64_t countlimit = 1000000;
+                        std::uint64_t count = 0;
+                        std::uint64_t oldcount = 0;
+
                         for (read_number readId = begin; readId < end; readId++){
                             read_number localId = readId - readIdBegin;
                             const char *encodedsequence = (const char *)&sequenceData[localId * sequencepitch];
@@ -659,6 +672,25 @@ namespace gpu{
                                                                         tableIds,
                                                                         minhashTables,
                                                                         hashIds);
+
+                            count++;
+                            if(count == countlimit){
+                                const auto tpb = std::chrono::system_clock::now();
+                                const std::chrono::duration<double> duration = tpb - tpa;
+                                countlimit *= 2;
+    
+                                std::lock_guard<std::mutex> lg(progressMutex);
+                                totalCount += count - oldcount;                            
+                                updateProgress(totalCount, duration.count());
+                                oldcount = count;                            
+                            }
+                        }
+                        if(count > 0){
+                            const auto tpb = std::chrono::system_clock::now();
+                            const std::chrono::duration<double> duration = tpb - tpa;
+                            std::lock_guard<std::mutex> lg(progressMutex);
+                            totalCount += count - oldcount;                            
+                            updateProgress(totalCount, duration.count());
                         }
                     };
 
