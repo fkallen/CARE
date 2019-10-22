@@ -817,6 +817,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     omp_set_num_threads(runtimeOptions.nCorrectorThreads);
 
     std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+    std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
     std::ofstream outputstream;
 
@@ -826,12 +827,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     }
 
     std::ofstream featurestream;
-    //if(correctionOptions.extractFeatures){
-        featurestream = std::move(std::ofstream(fileOptions.outputfile + "_features"));
-        if(!featurestream && correctionOptions.extractFeatures){
-            throw std::runtime_error("Could not open output feature file");
-        }
-    //}
+      //if(correctionOptions.extractFeatures){
+          featurestream = std::move(std::ofstream(featureTmpFiles[0]));
+          if(!featurestream && correctionOptions.extractFeatures){
+              throw std::runtime_error("Could not open output feature file");
+          }
+      //}
 
     #ifndef DO_PROFILE
             cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
@@ -1463,41 +1464,41 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     for(auto& s : featureFiles)
         s = s + "_features";
 
-    //concatenate feature files of each thread into one file
+      //concatenate feature files one file
 
-    if(correctionOptions.extractFeatures){
-        std::cout << "begin merging features" << std::endl;
+      if(correctionOptions.extractFeatures){
+          std::cout << "begin merging features" << std::endl;
 
-        std::stringstream commandbuilder;
+          std::stringstream commandbuilder;
 
-        commandbuilder << "cat";
+          commandbuilder << "cat";
 
-        for(const auto& featureFile : featureFiles){
-            commandbuilder << " \"" << featureFile << "\"";
-        }
+          for(const auto& featureFile : featureTmpFiles){
+              commandbuilder << " \"" << featureFile << "\"";
+          }
 
-        commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
+          commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
 
-        const std::string command = commandbuilder.str();
-        TIMERSTARTCPU(concat_feature_files);
-        int r1 = std::system(command.c_str());
-        TIMERSTOPCPU(concat_feature_files);
+          const std::string command = commandbuilder.str();
+          TIMERSTARTCPU(concat_feature_files);
+          int r1 = std::system(command.c_str());
+          TIMERSTOPCPU(concat_feature_files);
 
-        if(r1 != 0){
-            std::cerr << "Warning. Feature files could not be concatenated!\n";
-            std::cerr << "This command returned a non-zero error value: \n";
-            std::cerr << command +  '\n';
-            std::cerr << "Please concatenate the following files manually\n";
-            for(const auto& s : featureFiles)
-                std::cerr << s << '\n';
-        }else{
-            deleteFiles(featureFiles);
-        }
+          if(r1 != 0){
+              std::cerr << "Warning. Feature files could not be concatenated!\n";
+              std::cerr << "This command returned a non-zero error value: \n";
+              std::cerr << command +  '\n';
+              std::cerr << "Please concatenate the following files manually\n";
+              for(const auto& s : featureTmpFiles)
+                  std::cerr << s << '\n';
+          }else{
+              deleteFiles(featureTmpFiles);
+          }
 
-        std::cout << "end merging features" << std::endl;
-    }else{
-        deleteFiles(featureFiles);
-    }
+          std::cout << "end merging features" << std::endl;
+      }else{
+          deleteFiles(featureTmpFiles);
+      }
 
     std::cout << "end merge" << std::endl;
 
