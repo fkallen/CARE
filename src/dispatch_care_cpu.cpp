@@ -50,28 +50,6 @@ namespace care{
     	std::cout << "----------------------------------------" << std::endl;
     }
 
-    // template<class readStorage_t>
-    // void saveReadStorageToFile(const readStorage_t& readStorage, const FileOptions& fileOptions){
-    // 	if(fileOptions.save_binary_reads_to != "") {
-    // 		readStorage.saveToFile(fileOptions.save_binary_reads_to);
-    // 		std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
-    // 	}
-    // }
-    //
-    // template<class minhasher_t>
-    // void saveMinhasherToFile(const minhasher_t& minhasher, const FileOptions& fileOptions){
-    // 	if(fileOptions.save_hashtables_to != "") {
-    // 		minhasher.saveToFile(fileOptions.save_hashtables_to);
-    // 		std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
-    // 	}
-    // }
-    //
-    // template<class minhasher_t,
-    //          class readStorage_t>
-    // void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t& readStorage, const FileOptions& fileOptions){
-    // 	saveReadStorageToFile(readStorage, fileOptions);
-    // 	saveMinhasherToFile(minhasher, fileOptions);
-    // }
 
     void performCorrection(MinhashOptions minhashOptions,
                             AlignmentOptions alignmentOptions,
@@ -81,14 +59,6 @@ namespace care{
                             GoodAlignmentProperties goodAlignmentProperties){
 
         std::cout << "Running CARE CPU" << std::endl;
-
-    	auto thread_id = std::this_thread::get_id();
-    	std::string thread_id_string;
-    	{
-    		std::stringstream ss;
-    		ss << thread_id;
-    		thread_id_string = ss.str();
-    	}
 
         std::cout << "loading file and building data structures..." << std::endl;
 
@@ -104,9 +74,6 @@ namespace care{
         auto& readStorage = dataStructures.builtReadStorage.data;
         auto& minhasher = dataStructures.builtMinhasher.data;
         auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
-
-        // saveReadStorageToFile(readStorage, iterFileOptions);
-        // saveMinhasherToFile(minhasher, iterFileOptions);
 
         printFileProperties(fileOptions.inputfile, sequenceFileProperties);
 
@@ -139,20 +106,7 @@ namespace care{
                     minhasher, readStorage,
                     maxCandidatesPerRead);
 
-
-    	//rename final result to requested output file name and delete intermediate files
-    	bool keepIntermediateResults = false;
-
         TIMERSTARTCPU(finalizing_files);
-        // std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    	// std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
-
-        if(correctionOptions.extractFeatures){
-            // std::string tmpfeaturename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
-            // std::string outputfeaturename = fileOptions.outputfile + "_features";
-
-            // std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
-        }
 
         TIMERSTOPCPU(finalizing_files);
     }

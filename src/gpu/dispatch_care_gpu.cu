@@ -49,30 +49,6 @@ namespace care{
     	std::cout << "----------------------------------------" << std::endl;
     }
 
-    // template<class readStorage_t>
-    // void saveReadStorageToFile(const readStorage_t& readStorage, const FileOptions& fileOptions){
-    // 	if(fileOptions.save_binary_reads_to != "") {
-    // 		readStorage.saveToFile(fileOptions.save_binary_reads_to);
-    // 		std::cout << "Saved binary reads to file " << fileOptions.save_binary_reads_to << std::endl;
-    // 	}
-    // }
-    //
-    // template<class minhasher_t>
-    // void saveMinhasherToFile(const minhasher_t& minhasher, const FileOptions& fileOptions){
-    // 	if(fileOptions.save_hashtables_to != "") {
-    // 		minhasher.saveToFile(fileOptions.save_hashtables_to);
-    // 		std::cout << "Saved hash tables to file " << fileOptions.save_hashtables_to << std::endl;
-    // 	}
-    // }
-    //
-    // template<class minhasher_t,
-    //          class readStorage_t>
-    // void saveDataStructuresToFile(const minhasher_t& minhasher, const readStorage_t& readStorage, const FileOptions& fileOptions){
-    // 	saveReadStorageToFile(readStorage, fileOptions);
-    // 	saveMinhasherToFile(minhasher, fileOptions);
-    // }
-
-
     void performCorrection(MinhashOptions minhashOptions,
                             AlignmentOptions alignmentOptions,
                             CorrectionOptions correctionOptions,
@@ -130,17 +106,6 @@ namespace care{
                             maxCandidatesPerRead);
 
         TIMERSTARTCPU(finalizing_files);
-
-    	// std::string toRename = fileOptions.outputdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even";
-    	// std::rename(toRename.c_str(), fileOptions.outputfile.c_str());
-
-        //rename feature file
-        if(correctionOptions.extractFeatures){
-            // std::string tmpfeaturename = fileOptions.tempdirectory + "/" + thread_id_string + "_" + fileOptions.outputfilename + "_iter_even_features";
-            // std::string outputfeaturename = fileOptions.outputfile + "_features";
-
-    		// std::rename(tmpfeaturename.c_str(), outputfeaturename.c_str());
-        }
 
         TIMERSTOPCPU(finalizing_files);
     }
