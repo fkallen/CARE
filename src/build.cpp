@@ -28,94 +28,6 @@
 
 namespace care{
 
-
-#if 0
-    BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
-                                                const RuntimeOptions& runtimeOptions,
-                                                bool useQualityScores,
-                                                read_number expectedNumberOfReads,
-                                                int expectedMinimumReadLength,
-                                                int expectedMaximumReadLength){
-
-
-
-        if(fileOptions.load_binary_reads_from != ""){
-            BuiltDataStructure<cpu::ContiguousReadStorage> result;
-            auto& readStorage = result.data;
-
-            readStorage.loadFromFile(fileOptions.load_binary_reads_from);
-            result.builtType = BuiltType::Loaded;
-
-            if(useQualityScores && !readStorage.hasQualityScores())
-                throw std::runtime_error("Quality scores are required but not present in compressed sequence file!");
-            if(!useQualityScores && readStorage.hasQualityScores())
-                std::cerr << "Warning. The loaded compressed read file contains quality scores, but program does not use them!\n";
-
-            std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
-
-            return result;
-        }else{
-            //int nThreads = std::max(1, std::min(runtimeOptions.threads, 4));
-
-            constexpr std::array<char, 4> bases = {'A', 'C', 'G', 'T'};
-            int Ncount = 0;
-
-            BuiltDataStructure<cpu::ContiguousReadStorage> result;
-
-            result.data = std::move(cpu::ContiguousReadStorage{expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
-            result.builtType = BuiltType::Constructed;
-
-            auto handle_read = [&](std::uint64_t readIndex, Read& read){
-                const int readLength = int(read.sequence.size());
-
-                if(readIndex >= expectedNumberOfReads){
-                    throw std::runtime_error("Error! Expected " + std::to_string(expectedNumberOfReads)
-                                            + " reads, but file contains at least "
-                                            + std::to_string(readIndex) + " reads.");
-                }
-
-                if(readLength > expectedMaximumReadLength){
-                    throw std::runtime_error("Error! Expected maximum read length = "
-                                            + std::to_string(expectedMaximumReadLength)
-                                            + ", but read " + std::to_string(readIndex)
-                                            + "has length " + std::to_string(readLength));
-                }
-
-                for(auto& c : read.sequence){
-                    if(c == 'a') c = 'A';
-                    if(c == 'c') c = 'C';
-                    if(c == 'g') c = 'G';
-                    if(c == 't') c = 'T';
-                    if(c == 'N' || c == 'n'){
-                        c = bases[Ncount];
-                        Ncount = (Ncount + 1) % 4;
-                    }
-                }
-
-                result.data.insertRead(readIndex, read.sequence, read.quality);
-#if 0
-                const char* ptr = result.data.fetchSequenceData_ptr(readIndex);
-                int length = result.data.fetchSequenceLength(readIndex);
-
-                std::string s = get2BitHiLoString((const unsigned int*)ptr, length, [](auto i){return i;});
-                assert(s == read.sequence);
-#endif
-            };
-
-            forEachReadInFile(fileOptions.inputfile,
-                            fileOptions.format,
-                            [&](auto readnum, auto& read){
-                                handle_read(readnum, read);
-                            }
-            );
-
-            return result;
-        }
-
-    }
-
-#else 
-
 BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptions& fileOptions,
                                                 const RuntimeOptions& runtimeOptions,
                                                 bool useQualityScores,
@@ -332,10 +244,6 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
         }
 
     }
-
-
-
-#endif
 
 
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
