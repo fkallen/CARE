@@ -3,7 +3,7 @@
 #include <config.hpp>
 
 #include <options.hpp>
-
+#include <filehelpers.hpp>
 #include <minhasher.hpp>
 #include <minhasher_transform.hpp>
 #include "readstorage.hpp"
@@ -246,6 +246,8 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
     }
 
 
+#if 0
+
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
                                 			   const RuntimeOptions& runtimeOptions,
                                 			   std::uint64_t nReads,
@@ -266,6 +268,31 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
         }else{
             result.builtType = BuiltType::Constructed;
+
+
+
+            std::chrono::time_point<std::chrono::system_clock> tpa, tpb;
+            std::chrono::duration<double> duration;
+            std::uint64_t countlimit = 1000000;
+		    std::uint64_t count = 0;
+		    std::uint64_t totalCount = 0;
+
+            tpa = std::chrono::system_clock::now();
+
+            auto updateProgress = [](auto totalCount, auto seconds){
+                std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                            << seconds << " seconds." << std::endl;
+            };
+
+            ++count;
+            ++totalCount;
+
+            if(count == countlimit){
+                tpb = std::chrono::system_clock::now();
+                duration = tpb - tpa;
+                updateProgress(totalCount, duration.count());
+                countlimit *= 2;
+            }
 
             const int oldnumthreads = omp_get_thread_num();
 
@@ -309,6 +336,225 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
         return result;
     }
+
+#else 
+
+
+
+    BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
+                                			   const RuntimeOptions& runtimeOptions,
+                                			   std::uint64_t nReads,
+                                               const MinhashOptions& minhashOptions,
+                                			   cpu::ContiguousReadStorage& readStorage){
+
+        BuiltDataStructure<Minhasher> result;
+        auto& minhasher = result.data;
+
+        minhasher = std::move(Minhasher{minhashOptions});
+
+        minhasher.init(nReads);
+
+        if(fileOptions.load_hashtables_from != ""){
+            minhasher.loadFromFile(fileOptions.load_hashtables_from);
+            result.builtType = BuiltType::Loaded;
+
+            std::cout << "Loaded hash tables from " << fileOptions.load_hashtables_from << std::endl;
+        }else{
+            result.builtType = BuiltType::Constructed;
+
+            const int oldnumthreads = omp_get_thread_num();
+
+            omp_set_num_threads(runtimeOptions.threads);
+
+            const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
+            std::ofstream outstream(tmpmapsFilename, std::ios::binary);
+            if(!outstream){
+                throw std::runtime_error("Could not open temp file " + tmpmapsFilename + "!");
+            }
+            std::size_t writtenTableBytes = 0;
+
+            constexpr std::size_t GB1 = std::size_t(1) << 30;
+            const std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
+
+	        std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+
+
+
+            std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
+            std::mutex progressMutex;
+		    std::uint64_t totalCount = 0;
+
+            auto updateProgress = [&](auto totalCount, auto seconds){
+                std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                            << seconds << " seconds." << std::endl;
+            };
+
+            int numSavedTables = 0;
+            int numConstructedTables = 0;
+
+            while(numConstructedTables < minhashOptions.maps && maxMemoryForTransformedTables > writtenTableBytes){
+                std::vector<Minhasher::Map_t> minhashTables;
+
+                int maxNumTables = 0;
+
+                {
+                    constexpr std::size_t MB128 = std::size_t(1) << 27;
+                    std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
+                    Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
+                    std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
+                    std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB128;
+                    maxNumTables = 1 + (getAvailableMemoryInKB() * 1024) / tableMemApprox;
+                    maxNumTables -= 2; // need free memory of 2 table to perform transformation
+                }
+
+                assert(maxNumTables > 0);
+                int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
+                minhashTables.resize(currentIterNumTables);
+                for(auto& table : minhashTables){
+                    Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
+                    table = std::move(tmp);
+                }
+
+                std::vector<int> tableIds(minhashTables.size());                
+                std::vector<int> hashIds(minhashTables.size());
+                std::vector<int> globalTableIds(minhashTables.size());
+                
+                std::iota(tableIds.begin(), tableIds.end(), 0);
+                std::iota(hashIds.begin(), hashIds.end(), numConstructedTables);
+                std::iota(globalTableIds.begin(), globalTableIds.end(), numConstructedTables);
+
+                std::cout << "Constructing maps: ";
+                std::copy(globalTableIds.begin(), globalTableIds.end(), std::ostream_iterator<int>(std::cout, " "));
+                std::cout << "\n";
+
+                const read_number readIdBegin = 0;
+                const read_number readIdEnd = readStorage.getNumberOfReads();
+
+                auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                    std::uint64_t countlimit = 1000000;
+                    std::uint64_t count = 0;
+                    std::uint64_t oldcount = 0;
+
+                    for (read_number readId = begin; readId < end; readId++){
+                        const read_number localId = readId - readIdBegin;
+
+                        const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
+    				    const int sequencelength = readStorage.fetchSequenceLength(readId);
+    				    std::string sequencestring = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+
+                        minhasher.insertSequenceIntoExternalTables(sequencestring, 
+                                                                    readId, 
+                                                                    tableIds,
+                                                                    minhashTables,
+                                                                    hashIds);
+                        count++;
+                        if(count == countlimit){
+                            const auto tpb = std::chrono::system_clock::now();
+                            const std::chrono::duration<double> duration = tpb - tpa;
+                            countlimit *= 2;
+
+                            std::lock_guard<std::mutex> lg(progressMutex);
+                            totalCount += count - oldcount;                            
+                            updateProgress(totalCount, duration.count());
+                            oldcount = count;                            
+                        }
+                    }
+                    if(count > 0){
+                        const auto tpb = std::chrono::system_clock::now();
+                        const std::chrono::duration<double> duration = tpb - tpa;
+                        std::lock_guard<std::mutex> lg(progressMutex);
+                        totalCount += count - oldcount;                            
+                        updateProgress(totalCount, duration.count());
+                    }
+                };
+
+                threadpool.parallelFor(readIdBegin,
+                                    readIdEnd,
+                                    std::move(lambda));
+
+                //if all tables could be constructed at once, no need to save them to temporary file
+                if(minhashOptions.maps == int(minhashTables.size())){
+                    for(int i = 0; i < int(minhashTables.size()); i++){
+                        int globalTableId = globalTableIds[i];
+                        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                        std::cerr << "Transforming table " << globalTableId << ". ";
+                        transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+                        numConstructedTables++;
+                        minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
+                    }
+                }else{
+                    for(int i = 0; i < int(minhashTables.size()); i++){
+                        int globalTableId = globalTableIds[i];
+                        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                        std::cerr << "Transforming table " << globalTableId << ". ";
+                        transform_keyvaluemap(minhashTables[i], maxValuesPerKey);
+                        numConstructedTables++;
+                        
+                        minhashTables[i].writeToStream(outstream);
+                        numSavedTables++;
+                        writtenTableBytes = outstream.tellp();
+    
+                        std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
+                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTransformedTables << "\n";
+                        std::cerr << "numSavedTables = " << numSavedTables << "\n";
+    
+                        if(maxMemoryForTransformedTables <= writtenTableBytes){
+                            break;
+                        }
+                    }
+                    minhashTables.clear();
+
+                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
+                        outstream.flush();
+    
+                        std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
+                        
+                        int usableNumMaps = 0;
+    
+                        //load as many transformed tables from file as possible and move them to minhasher
+                        std::ifstream instream(tmpmapsFilename, std::ios::binary);
+                        for(int i = 0; i < numSavedTables; i++){
+                            try{
+                                std::cerr << "try loading table " << i << "\n";
+                                Minhasher::Map_t table{};
+                                table.readFromStream(instream);
+                                minhasher.moveassignMap(i, std::move(table));
+                                std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                                usableNumMaps++;
+                                std::cerr << "usable num maps = " << usableNumMaps << "\n";
+                            }catch(...){
+                                std::cerr << "Loading table " << i << " failed\n";
+                                break;
+                            }                        
+                        }
+    
+                        removeFile(tmpmapsFilename);
+    
+                        minhasher.minhashTables.resize(usableNumMaps);
+                        std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
+                        minhasher.minparams.maps = usableNumMaps;
+                    }   
+                }
+            }
+
+
+
+            omp_set_num_threads(oldnumthreads);
+        }
+
+        
+
+        //TIMERSTARTCPU(finalize_hashtables);
+        //minhasher.transform();
+        //TIMERSTOPCPU(finalize_hashtables);
+
+        return result;
+    }
+
+
+
+
+#endif
 
     BuiltDataStructures buildDataStructuresImpl(const MinhashOptions& minhashOptions,
                                             const CorrectionOptions& correctionOptions,

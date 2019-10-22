@@ -294,6 +294,41 @@ namespace care{
         //omp_set_num_threads(oldNumOmpThreads);
     };
 
+    template<class KeyValueMap>
+    void transform_keyvaluemap(KeyValueMap& map, int maxValuesPerKey){
+        if(map.noMoreWrites) return;
+
+        if(map.size == 0) return;
+
+        cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
+                            map.keysWithoutValues, maxValuesPerKey);
+
+        map.nKeys = map.keys.size();
+        map.nValues = map.values.size();
+        map.noMoreWrites = true;
+
+        using Key_t = typename KeyValueMap::Key_t;
+        using Index_t = typename KeyValueMap::Index_t;
+
+        map.keyIndexMap = minhasherdetail::KeyIndexMap<Key_t, Index_t>(map.nKeys / map.load);
+        for(Index_t i = 0; i < map.nKeys; i++){
+            map.keyIndexMap.insert(map.keys[i], i);
+        }
+
+        {
+            std::vector<Key_t> tmp;
+            map.keys.swap(tmp);
+        }
+
+        /*keyIndexMap = KeyIndexMap(nKeys / load);
+        for(Index_t i = 0; i < nKeys; i++){
+            keyIndexMap.insert(keys[i], i);
+        }
+        for(Index_t i = 0; i < nKeys; i++){
+            assert(keyIndexMap.get(keys[i]) == i);
+        }*/
+    }
+
 #ifdef __NVCC__
 
 template<bool allowFallback>
