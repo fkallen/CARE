@@ -753,54 +753,11 @@ namespace gpu{
 
 #endif
 
-
-
-    BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
-                                			const CorrectionOptions& correctionOptions,
-                                			const RuntimeOptions& runtimeOptions,
-                                			const FileOptions& fileOptions){
-
-        BuiltGpuDataStructures result;
-
-        auto& sequenceFileProperties = result.sequenceFileProperties;
-
-        if(fileOptions.load_binary_reads_from == "") {
-            sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
-
-            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
-        }
-
-        TIMERSTARTCPU(build_readstorage);
-        result.builtReadStorage = buildGpuReadStorage(fileOptions,
-                                                    runtimeOptions,
-                                                    correctionOptions.useQualityScores,
-                                                    sequenceFileProperties.nReads,
-                                                    sequenceFileProperties.minSequenceLength,
-                                                    sequenceFileProperties.maxSequenceLength);
-        TIMERSTOPCPU(build_readstorage);
-
-        const auto& readStorage = result.builtReadStorage.data.readStorage;
-
-        sequenceFileProperties.nReads = readStorage.getNumberOfReads();
-        sequenceFileProperties.maxSequenceLength = readStorage.getStatistics().maximumSequenceLength;
-        sequenceFileProperties.minSequenceLength = readStorage.getStatistics().minimumSequenceLength;
-
-        std::cout << "After construction of read storage, the following file properties are known "
-                    << "which may be different from supplied parameters" << std::endl;      
-
-        detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
-
-        TIMERSTARTCPU(build_minhasher);
-        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);
-        TIMERSTOPCPU(build_minhasher);
-
-        return result;
-    }
-
-    BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
+    BuiltGpuDataStructures buildGpuDataStructuresImpl(const MinhashOptions& minhashOptions,
                                                         const CorrectionOptions& correctionOptions,
                                                         const RuntimeOptions& runtimeOptions,
-                                                        const FileOptions& fileOptions){                                                     
+                                                        const FileOptions& fileOptions,
+                                                        bool saveDataStructuresToFile){                                                     
 
         BuiltGpuDataStructures result;
 
@@ -824,7 +781,7 @@ namespace gpu{
         const auto& readStorage = result.builtReadStorage.data.readStorage;
         std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
 
-        if(fileOptions.save_binary_reads_to != "") {
+        if(saveDataStructuresToFile && fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
     		readStorage.saveToFile(fileOptions.save_binary_reads_to);
     		std::cout << "Saved reads" << std::endl;
@@ -843,13 +800,38 @@ namespace gpu{
         result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);
 
-        if(fileOptions.save_hashtables_to != "") {
+        if(saveDataStructuresToFile && fileOptions.save_hashtables_to != "") {
             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
     		result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
     		std::cout << "Saved minhasher" << std::endl;
     	}
 
         return result;
+    }
+
+
+    BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
+                                			const CorrectionOptions& correctionOptions,
+                                			const RuntimeOptions& runtimeOptions,
+                                			const FileOptions& fileOptions){
+
+        return buildGpuDataStructuresImpl(minhashOptions,
+                                        correctionOptions,
+                                        runtimeOptions,
+                                        fileOptions,
+                                        false);
+    }
+
+    BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
+                                                        const CorrectionOptions& correctionOptions,
+                                                        const RuntimeOptions& runtimeOptions,
+                                                        const FileOptions& fileOptions){                                                     
+
+        return buildGpuDataStructuresImpl(minhashOptions,
+                                        correctionOptions,
+                                        runtimeOptions,
+                                        fileOptions,
+                                        true);
     }
 
 }
