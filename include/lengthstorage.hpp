@@ -58,6 +58,21 @@ struct LengthStore{
     LengthStore& operator=(const LengthStore&) = default;
     LengthStore& operator=(LengthStore&&) = default;
 
+
+    bool operator==(const LengthStore& rhs) const noexcept{
+        return DataTBits == rhs.DataTBits
+            && bitsPerLength == rhs.bitsPerLength
+            && minLength == rhs.minLength
+            && maxLength == rhs.maxLength
+            && bitsMask == rhs.bitsMask
+            && numElements == rhs.numElements
+            && data == rhs.data;
+    }
+
+    bool operator!=(const LengthStore& rhs) const noexcept{
+        return !(operator==(rhs));
+    }
+
     int getMinLength() const{
         return minLength;
     }

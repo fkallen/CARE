@@ -149,7 +149,10 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             BuiltDataStructure<cpu::ContiguousReadStorage> result;
             auto& readStorage = result.data;
 
-            readStorage= std::move(cpu::ContiguousReadStorage{expectedNumberOfReads, useQualityScores, expectedMaximumReadLength});
+            readStorage= std::move(cpu::ContiguousReadStorage{expectedNumberOfReads, 
+                                                                useQualityScores, 
+                                                                expectedMinimumReadLength, 
+                                                                expectedMaximumReadLength});
             result.builtType = BuiltType::Constructed;
 
             auto checkRead = [&](read_number readIndex, Read& read, int& Ncount){
