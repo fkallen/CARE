@@ -12,6 +12,9 @@
 #include <cassert>
 #include <sstream>
 #include <fstream>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 
 __inline__
@@ -39,6 +42,88 @@ __inline__
 std::size_t getAvailableMemoryInKB(){
     return getAvailableMemoryInKB_linux();
 };
+
+
+template<class T>
+struct ProgressThread{
+
+    template<class ProgressFunc>
+    ProgressThread(T maxProgress_, ProgressFunc&& pfunc)
+            : ProgressThread(maxProgress_, std::move(pfunc), [](auto seconds){return seconds;}){
+
+    }
+
+    template<class ProgressFunc, class SleepUpdateFunc>
+    ProgressThread(T maxProgress_, ProgressFunc&& pfunc, SleepUpdateFunc&& sfunc)
+            : starttime{std::chrono::system_clock::now()},
+            sleepPeriod{std::chrono::seconds{1}},
+            currentProgress{0},
+            maxProgress{maxProgress_},
+            showProgress{std::move(pfunc)},
+            updateSleepPeriod{std::move(sfunc)},
+            thread{[&](){threadFunc();}}{
+
+        showProgress(0,0);
+    }
+
+    ~ProgressThread(){
+        doCancel = true;
+        thread.join();
+    }
+
+    ProgressThread(const ProgressThread&) = delete;
+    ProgressThread(ProgressThread&&) = delete;
+    ProgressThread operator=(const ProgressThread&) = delete;
+    ProgressThread operator=(ProgressThread&&) = delete;
+
+    void threadFunc(){
+        std::this_thread::sleep_for(sleepPeriod);
+        
+        while(!doCancel && currentProgress < maxProgress){
+            auto now = std::chrono::system_clock::now();
+            const std::chrono::duration<double> duration = now - starttime;
+            showProgress(currentProgress, duration.count());
+
+            std::this_thread::sleep_for(sleepPeriod);
+            sleepPeriod = updateSleepPeriod(sleepPeriod);
+        }
+    }
+
+    void cancel(){
+        doCancel = true;
+    }
+
+    void finished(){
+        doCancel = true;
+        auto now = std::chrono::system_clock::now();
+        const std::chrono::duration<double> duration = now - starttime;
+        showProgress(currentProgress, duration.count());
+    }
+
+    void setProgress(T newProgress){
+        assert(newProgress >= currentProgress);
+        currentProgress = newProgress;
+    }
+
+    void addProgress(T add){
+        assert(add >= 0);
+        currentProgress += add;
+    }
+
+    //std::atomic<bool> doCancel = false;
+    bool doCancel = false;
+    std::chrono::time_point<std::chrono::system_clock> starttime;
+    std::chrono::seconds sleepPeriod{1};
+    std::atomic<T> currentProgress;
+    std::atomic<T> maxProgress;
+    std::function<void(T, double)> showProgress;
+    std::function<std::chrono::seconds(std::chrono::seconds)> updateSleepPeriod;
+    std::thread thread;
+};
+
+
+
+
 
 template<class T>
 class View{

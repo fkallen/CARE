@@ -2,6 +2,7 @@
 
 #include <config.hpp>
 
+#include <util.hpp>
 #include <options.hpp>
 #include <filehelpers.hpp>
 #include <minhasher.hpp>
@@ -378,16 +379,16 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
 	        std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
 
-
+            
 
             std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
             std::mutex progressMutex;
 		    std::uint64_t totalCount = 0;
 
-            auto updateProgress = [&](auto totalCount, auto seconds){
-                std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
-                            << seconds << " seconds." << std::endl;
-            };
+            // auto updateProgress = [&](auto totalCount, auto seconds){
+            //     std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+            //                 << seconds << " seconds." << std::endl;
+            // };
 
             int numSavedTables = 0;
             int numConstructedTables = 0;
@@ -415,6 +416,8 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                     table = std::move(tmp);
                 }
 
+                
+
                 std::vector<int> tableIds(minhashTables.size());                
                 std::vector<int> hashIds(minhashTables.size());
                 std::vector<int> globalTableIds(minhashTables.size());
@@ -429,6 +432,13 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
                 const read_number readIdBegin = 0;
                 const read_number readIdEnd = readStorage.getNumberOfReads();
+
+                ProgressThread<std::uint64_t> progressThread(nReads, 
+                        [&](auto totalCount, auto seconds){
+                            std::cout << "progress: Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                                        << seconds << " seconds." << std::endl;
+                        },
+                        [](auto seconds){return seconds * 2;});
 
                 auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
                     std::uint64_t countlimit = 1000000;
@@ -447,30 +457,34 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                                                                     tableIds,
                                                                     minhashTables,
                                                                     hashIds);
-                        count++;
-                        if(count == countlimit){
-                            const auto tpb = std::chrono::system_clock::now();
-                            const std::chrono::duration<double> duration = tpb - tpa;
-                            countlimit *= 2;
+                        // count++;
+                        // if(count == countlimit){
+                        //     const auto tpb = std::chrono::system_clock::now();
+                        //     const std::chrono::duration<double> duration = tpb - tpa;
+                        //     countlimit *= 2;
 
-                            std::lock_guard<std::mutex> lg(progressMutex);
-                            totalCount += count - oldcount;                            
-                            updateProgress(totalCount, duration.count());
-                            oldcount = count;                            
-                        }
+                        //     std::lock_guard<std::mutex> lg(progressMutex);
+                        //     totalCount += count - oldcount;                            
+                        //     updateProgress(totalCount, duration.count());
+                        //     oldcount = count;                            
+                        // }
+
+                        progressThread.addProgress(1);
                     }
-                    if(count > 0){
-                        const auto tpb = std::chrono::system_clock::now();
-                        const std::chrono::duration<double> duration = tpb - tpa;
-                        std::lock_guard<std::mutex> lg(progressMutex);
-                        totalCount += count - oldcount;                            
-                        updateProgress(totalCount, duration.count());
-                    }
+                    // if(count > 0){
+                    //     const auto tpb = std::chrono::system_clock::now();
+                    //     const std::chrono::duration<double> duration = tpb - tpa;
+                    //     std::lock_guard<std::mutex> lg(progressMutex);
+                    //     totalCount += count - oldcount;                            
+                    //     updateProgress(totalCount, duration.count());
+                    // }
                 };
 
                 threadpool.parallelFor(readIdBegin,
                                     readIdEnd,
                                     std::move(lambda));
+
+                progressThread.finished();
 
                 //if all tables could be constructed at once, no need to save them to temporary file
                 if(minhashOptions.maps == int(minhashTables.size())){
