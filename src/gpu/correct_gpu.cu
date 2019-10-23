@@ -67,7 +67,7 @@
 namespace care{
 namespace gpu{
 
-    constexpr int nParallelBatches = 4;
+    constexpr int nParallelBatches = 1;
     //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
     //read status bitmask
@@ -1408,7 +1408,8 @@ namespace gpu{
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.correctionOptions.estimatedErrorrate,
                     streams[primary_stream_index],
-					batch.kernelLaunchHandle);
+                    batch.kernelLaunchHandle,
+                    dataArrays.h_subject_read_ids[0]);
 
 		//choose the most appropriate subset of alignments from the good alignments.
 		//This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments
@@ -3039,6 +3040,8 @@ void state_unpackclassicresults_func(Batch& batch){
 
         Batch* batchptr = &batch;
 
+        //batch.dataArrays.copyEverythingToHostForDebugging();
+
         auto unpackAnchors = [batchptr](int begin, int end){
             Batch& batch = *batchptr;
             DataArrays& dataArrays = batch.dataArrays;
@@ -3052,11 +3055,15 @@ void state_unpackclassicresults_func(Batch& batch){
                 task.corrected = dataArrays.h_subject_is_corrected[subject_index];
                 task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
 
+                if(task.readId == 3795){
+                    dataArrays.printActiveDataOfSubject(subject_index, std::cerr);
+                }
+
                 if(task.corrected) {
                     const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
                     task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
 
-                    task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
+                    //task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
 
                     const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
                     if(numUncorrectedPositions > 0){
