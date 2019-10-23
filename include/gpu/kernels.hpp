@@ -161,7 +161,8 @@ void call_cuda_find_best_alignment_kernel_async_exp(
             int min_overlap,
             float estimatedErrorrate,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            KernelLaunchHandle& handle,
+            read_number debugsubjectreadid = read_number(-1));
 
 
 

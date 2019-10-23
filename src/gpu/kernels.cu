@@ -322,7 +322,8 @@ namespace gpu{
                 int n_queries,
                 float min_overlap_ratio,
                 int min_overlap,
-                float estimatedErrorrate){
+                float estimatedErrorrate,
+                read_number debugsubjectreadid){
 
         auto getSubjectLength = [&] (int subjectIndex){
             const int length = d_sequencePointers.subjectSequencesLength[subjectIndex];
@@ -2322,7 +2323,7 @@ namespace gpu{
             bool result = newColMinSupport >= min_support_threshold
                             && newColMinCov >= min_coverage_threshold;
 
-            return true;
+            return result;
         }else{
             return false;
         }
@@ -3452,7 +3453,8 @@ namespace gpu{
     			int min_overlap,
                 float estimatedErrorrate,
     			cudaStream_t stream,
-    			KernelLaunchHandle& handle){
+                KernelLaunchHandle& handle,
+                read_number debugsubjectreadid){
 
     	const int blocksize = 128;
     	const std::size_t smem = 0;
@@ -3511,7 +3513,8 @@ namespace gpu{
             		n_queries,
             		min_overlap_ratio,
             		min_overlap,
-                    estimatedErrorrate); CUERR;
+                    estimatedErrorrate,
+                    debugsubjectreadid); CUERR;
 
     }
 
