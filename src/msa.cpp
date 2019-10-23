@@ -365,9 +365,9 @@ MSAProperties getMSAProperties2(const float* support,
         return mincoverage >= min_coverage_threshold;
     };
 
-    msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
-                        && isGoodMinSupport(msaProperties.min_support)
-                        && isGoodMinCoverage(msaProperties.min_coverage);
+    // msaProperties.isHQ = isGoodAvgSupport(msaProperties.avg_support)
+    //                     && isGoodMinSupport(msaProperties.min_support)
+    //                     && isGoodMinCoverage(msaProperties.min_coverage);
 
     msaProperties.failedAvgSupport = !isGoodAvgSupport(msaProperties.avg_support);
     msaProperties.failedMinSupport = !isGoodMinSupport(msaProperties.min_support);
@@ -449,7 +449,7 @@ CorrectionResult getCorrectedSubject(const char* consensus,
     return result;
 }
 
-
+#if 0
 CorrectionResult getCorrectedSubject(const char* consensus,
                                     const float* support,
                                     const int* coverage,
@@ -614,6 +614,107 @@ CorrectionResult getCorrectedSubject(const char* consensus,
 
 
 
+#else 
+
+CorrectionResult getCorrectedSubjectNew(const char* consensus,
+                                    const float* support,
+                                    const int* coverage,
+                                    const int* originalCoverage,
+                                    int nColumns,
+                                    const char* subject,
+                                    int subjectColumnsBegin_incl,
+                                    const char* candidates,
+                                    int nCandidates,
+                                    const float* candidateAlignmentWeights,
+                                    const int* candidateLengths,
+                                    const int* candidateShifts,
+                                    size_t candidatesPitch,
+                                    MSAProperties msaProperties,
+                                    float estimatedErrorrate,
+                                    float estimatedCoverage,
+                                    float m_coverage,
+                                    int neighborRegionSize){
+
+
+    const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+
+    auto isGoodAvgSupport = [=](float avgsupport){
+        return avgsupport >= avg_support_threshold;
+    };
+    auto isGoodMinSupport = [=](float minsupport){
+        return minsupport >= min_support_threshold;
+    };
+    auto isGoodMinCoverage = [=](float mincoverage){
+        return mincoverage >= min_coverage_threshold;
+    };
+
+    const float avg_support = msaProperties.avg_support;
+    const float min_support = msaProperties.min_support;
+    const float min_coverage = msaProperties.min_coverage;
+
+    CorrectionResult result;
+    result.isCorrected = false;
+    result.correctedSequence.resize(nColumns);
+    result.uncorrectedPositionsNoConsensus.reserve(nColumns);
+    result.bestAlignmentWeightOfConsensusBase.resize(nColumns);
+    result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
+
+    result.isCorrected = true;
+
+    const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) 
+                                        && isGoodMinSupport(min_support) 
+                                        && isGoodMinCoverage(min_coverage);
+    int flag = 0;
+
+    if(canBeCorrectedByConsensus){
+        int smallestErrorrateThatWouldMakeHQ = 100;
+
+        const int estimatedErrorratePercent = ceil(estimatedErrorrate * 100.0f);
+        for(int percent = estimatedErrorratePercent; percent >= 0; percent--){
+            float factor = percent / 100.0f;
+            if(avg_support >= 1.0f - 1.0f * factor && min_support >= 1.0f - 3.0f * factor){
+                smallestErrorrateThatWouldMakeHQ = percent;
+            }
+        }
+
+        const bool isHQ = isGoodMinCoverage(min_coverage)
+                            && smallestErrorrateThatWouldMakeHQ <= estimatedErrorratePercent * 0.5f;
+
+        //broadcastbuffer = isHQ;
+        result.isHQ = isHQ;
+
+        flag = isHQ ? 2 : 1;
+    }
+
+    if(flag > 0){
+        std::copy(consensus,
+                  consensus + nColumns,
+                  result.correctedSequence.begin());
+    }else{
+        //correct only positions with high support to consensus, else leave position unchanged.
+        for(int i = 0; i < nColumns; i += 1){
+            //assert(consensus[i] == 'A' || consensus[i] == 'C' || consensus[i] == 'G' || consensus[i] == 'T');
+            if(support[i] > 0.90f && originalCoverage[i] <= 2){
+                result.correctedSequence[i] = consensus[i];
+            }else{
+                result.correctedSequence[i] = subject[i];
+            }
+        }
+    }
+
+    return result;
+}
+
+
+
+
+
+
+#endif
+
+
 
 std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
                                     const float* support,
@@ -688,6 +789,89 @@ std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
 
 
 
+std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
+                                    const float* support,
+                                    const int* coverage,
+                                    int nColumns,
+                                    int subjectColumnsBegin_incl,
+                                    int subjectColumnsEnd_excl,
+                                    const int* candidateShifts,
+                                    const int* candidateLengths,
+                                    int nCandidates,
+                                    float estimatedErrorrate,
+                                    float estimatedCoverage,
+                                    float m_coverage,
+                                    int new_columns_to_correct){
+
+    //const float avg_support_threshold = 1.0f-1.0f*estimatedErrorrate;
+    const float min_support_threshold = 1.0f-3.0f*estimatedErrorrate;
+    const float min_coverage_threshold = m_coverage / 6.0f * estimatedCoverage;
+
+    std::vector<CorrectedCandidate> result;
+    result.reserve(nCandidates);
+
+    for(int candidate_index = 0; candidate_index < nCandidates; ++candidate_index){
+
+        const int queryColumnsBegin_incl = subjectColumnsBegin_incl + candidateShifts[candidate_index];
+        const int candidateLength = candidateLengths[candidate_index];
+        const int queryColumnsEnd_excl = queryColumnsBegin_incl + candidateLength;
+
+        bool candidateShouldBeCorrected = false;
+
+        //check range condition and length condition
+        if(subjectColumnsBegin_incl - new_columns_to_correct <= queryColumnsBegin_incl
+            && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
+            && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
+
+            float newColMinSupport = 1.0f;
+            int newColMinCov = std::numeric_limits<int>::max();
+
+            //check new columns left of subject
+            for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
+                columnindex < subjectColumnsBegin_incl;
+                columnindex++){
+
+                assert(columnindex < nColumns);
+
+                if(queryColumnsBegin_incl <= columnindex){
+                    newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
+                    newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+                }
+            }
+            //check new columns right of subject
+            for(int columnindex = subjectColumnsEnd_excl;
+                columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+                && columnindex < nColumns;
+                columnindex++){
+
+                newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
+                newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+            }
+
+            candidateShouldBeCorrected = newColMinSupport >= min_support_threshold
+                            && newColMinCov >= min_coverage_threshold;
+
+            // if(newColMinSupport >= min_support_threshold
+            //     && newColMinCov >= min_coverage_threshold){
+
+            //     std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
+
+            //     result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
+            // }
+        }
+
+        if(candidateShouldBeCorrected){
+            std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
+            result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
+        }
+    }
+
+    return result;
+}
+
+
+
+
 
 //remove all candidate reads from alignment which are assumed to originate from a different genomic region
 //the indices of remaining candidates are returned in MinimizationResult::remaining_candidates
@@ -708,6 +892,8 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                                                     const float* weightsC,
                                                     const float* weightsG,
                                                     const float* weightsT,
+                                                    const int* alignments_nOps,
+                                                    const int* alignments_overlaps,
                                                     int subjectColumnsBegin_incl,
                                                     int subjectColumnsEnd_excl,
                                                     const int* candidateShifts,
@@ -860,6 +1046,37 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
             assert(seenCounts[1] == countsC[col]);
             assert(seenCounts[2] == countsG[col]);
             assert(seenCounts[3] == countsT[col]);
+
+            auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
+                constexpr float maxErrorPercentInOverlap = 0.2f;
+
+                return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
+            };
+
+#if 1
+            //check that no candidate which should be removed has very good alignment.
+            //if there is such a candidate, none of the candidates will be removed.
+            bool veryGoodAlignment = false;
+            for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
+                if(!result.differentRegionCandidate[candidateIndex]){
+                    const int nOps = alignments_nOps[candidateIndex];
+                    const int overlapsize = alignments_overlaps[candidateIndex];
+                    const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
+                    assert(overlapweight <= 1.0f);
+                    assert(overlapweight >= 0.0f);
+
+                    if(overlapweight >= 0.90f){
+                        veryGoodAlignment = true;
+                    }
+                }
+            }
+
+            if(veryGoodAlignment){
+                for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
+                    result.differentRegionCandidate[candidateIndex] = false;
+                }
+            }
+#endif
         };
 
 

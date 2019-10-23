@@ -76,7 +76,7 @@ namespace care{
                                         int querylength,
                                         float min_overlap_ratio,
                                         int min_overlap,
-                                        float maxErrorRate){
+                                        float estimatedErrorrate){
 
         return choose_best_alignment(fwdAlignment.get_overlap(),
         			revcmplAlignment.get_overlap(),
@@ -88,7 +88,7 @@ namespace care{
         			querylength,
         			min_overlap_ratio,
         			min_overlap,
-        			maxErrorRate);
+        			estimatedErrorrate * 4.0f);
     }
 
 }

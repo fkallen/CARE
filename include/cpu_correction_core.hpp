@@ -67,7 +67,7 @@ std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDRes
                                     const int subjectLength,
                                     const std::vector<int>& candidateLengths,
                                     const int min_overlap,
-                                    const float maxErrorRate,
+                                    const float estimatedErrorrate,
                                     const float min_overlap_ratio){
 
     assert(forwardAlignments.size() == revcAlignments.size());
@@ -87,7 +87,7 @@ std::vector<BestAlignment_t> findBestAlignmentDirection(const std::vector<SHDRes
                                                                           candidateLength,
                                                                           min_overlap_ratio,
                                                                           min_overlap,
-                                                                          maxErrorRate);
+                                                                          estimatedErrorrate);
 
         result.emplace_back(bestAlignmentFlag);
     }

@@ -196,6 +196,22 @@ std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
                                     float m_coverage,
                                     int new_columns_to_correct);
 
+
+
+std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
+                                    const float* support,
+                                    const int* coverage,
+                                    int nColumns,
+                                    int subjectColumnsBegin_incl,
+                                    int subjectColumnsEnd_excl,
+                                    const int* candidateShifts,
+                                    const int* candidateLengths,
+                                    int nCandidates,
+                                    float estimatedErrorrate,
+                                    float estimatedCoverage,
+                                    float m_coverage,
+                                    int new_columns_to_correct);
+
 RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                                                     int subjectLength,
                                                     const char* candidates,
@@ -211,6 +227,8 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
                                                     const float* weightsC,
                                                     const float* weightsG,
                                                     const float* weightsT,
+                                                    const int* alignments_nOps,
+                                                    const int* alignments_overlaps,
                                                     int subjectColumnsBegin_incl,
                                                     int subjectColumnsEnd_excl,
                                                     const int* candidateShifts,
