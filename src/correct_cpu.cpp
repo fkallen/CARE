@@ -616,7 +616,7 @@ namespace cpu{
 
                 num_minimizations++;
 
-                while(num_minimizations <= max_num_minimizations
+                while(num_minimizations < max_num_minimizations
                         && minimizationResult.performedMinimization){
 
                     nOps.resize(data.bestAlignments.size());
@@ -1149,7 +1149,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             std::cout << '\n';
 
             /*printSequencesInMSA(std::cout,
-                                correctionTasks[0].original_subject_string.c_str(),
+                                correctionTasks[0].original_subject_string.c_str(), 
                                 subjectLength,
                                 bestCandidateStrings.data(),
                                 bestCandidateLengths.data(),
