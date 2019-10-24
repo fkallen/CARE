@@ -67,7 +67,7 @@
 namespace care{
 namespace gpu{
 
-    constexpr int nParallelBatches = 1;
+    constexpr int nParallelBatches = 4;
     //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
     //read status bitmask
@@ -1717,6 +1717,8 @@ namespace gpu{
 
         //std::cout << "msa_init" << std::endl;
 
+        
+
         build_msa_async(dataArrays.getDeviceMSAPointers(),
                         dataArrays.getDeviceAlignmentResultPointers(),
                         dataArrays.getDeviceSequencePointers(),
@@ -1740,6 +1742,8 @@ namespace gpu{
                         dataArrays.msa_weights_pitch,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
+
+        //batch.dataArrays.copyEverythingToHostForDebugging();
 
         //At this point the msa is built
         cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
@@ -2097,6 +2101,8 @@ namespace gpu{
                                 dataArrays.msa_weights_pitch,
                                 streams[primary_stream_index],
                                 batch.kernelLaunchHandle);
+
+                //batch.dataArrays.copyEverythingToHostForDebugging();
 
                 cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
 
@@ -3055,9 +3061,9 @@ void state_unpackclassicresults_func(Batch& batch){
                 task.corrected = dataArrays.h_subject_is_corrected[subject_index];
                 task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
 
-                if(task.readId == 3795){
-                    dataArrays.printActiveDataOfSubject(subject_index, std::cerr);
-                }
+                // if(task.readId == 5383){
+                //     dataArrays.printActiveDataOfSubject(subject_index, std::cerr);
+                // }
 
                 if(task.corrected) {
                     const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
