@@ -352,8 +352,8 @@ MSAProperties getMSAProperties2(const float* support,
 
     auto minmax = std::minmax_element(coverage + firstCol, coverage + lastCol);
 
-    msaProperties.min_coverage = *minmax.second;
-    msaProperties.max_coverage = *minmax.first;
+    msaProperties.min_coverage = *minmax.first;
+    msaProperties.max_coverage = *minmax.second;
 
     auto isGoodAvgSupport = [=](float avgsupport){
         return avgsupport >= avg_support_threshold;
@@ -1058,7 +1058,7 @@ RegionSelectionResult findCandidatesOfDifferentRegion(const char* subject,
             //if there is such a candidate, none of the candidates will be removed.
             bool veryGoodAlignment = false;
             for(int candidateIndex = 0; candidateIndex < nCandidates; candidateIndex++){
-                if(!result.differentRegionCandidate[candidateIndex]){
+                if(result.differentRegionCandidate[candidateIndex]){
                     const int nOps = alignments_nOps[candidateIndex];
                     const int overlapsize = alignments_overlaps[candidateIndex];
                     const float overlapweight = calculateOverlapWeight(subjectLength, nOps, overlapsize);
