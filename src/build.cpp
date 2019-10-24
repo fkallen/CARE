@@ -582,8 +582,6 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
         if(fileOptions.load_binary_reads_from == "") {
             sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
-
-            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
         }
 
         TIMERSTARTCPU(build_readstorage);

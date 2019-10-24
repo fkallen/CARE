@@ -75,8 +75,6 @@ namespace care{
         auto& minhasher = dataStructures.builtMinhasher.data;
         auto& sequenceFileProperties = dataStructures.sequenceFileProperties;
 
-        printFileProperties(fileOptions.inputfile, sequenceFileProperties);
-
         TIMERSTARTCPU(candidateestimation);
         std::uint64_t maxCandidatesPerRead = runtimeOptions.max_candidates;
 

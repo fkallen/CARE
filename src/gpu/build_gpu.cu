@@ -797,8 +797,6 @@ namespace gpu{
 
         if(fileOptions.load_binary_reads_from == "") {
             sequenceFileProperties = detail::getSequenceFilePropertiesFromFileOptions(fileOptions);
-
-            detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
         }
 
         TIMERSTARTCPU(build_readstorage);
