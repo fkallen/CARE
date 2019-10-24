@@ -65,6 +65,7 @@ struct DataArrays {
         const float* weightsG = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 2*msa_weights_pitch_floats];
         const float* weightsT = &h_weights[4* msa_weights_pitch_floats * subjectIndex + 3*msa_weights_pitch_floats];
 
+        const int* coverage = &h_coverage[msa_weights_pitch_floats * subjectIndex];
         const float* support = &h_support[msa_weights_pitch_floats * subjectIndex];
         const float* origWeights = &h_origWeights[msa_weights_pitch_floats * subjectIndex];
         const int* origCoverages = &h_origCoverages[msa_weights_pitch_floats * subjectIndex];
@@ -79,6 +80,41 @@ struct DataArrays {
         for(int i = 0; i < numCandidates; i++){
 
         }
+
+        // handlearray(subject_sequences_data);
+        // handlearray(candidate_sequences_data);
+        // handlearray(subject_sequences_lengths);
+        // handlearray(candidate_sequences_lengths);
+        // handlearray(candidates_per_subject);
+        // handlearray(candidates_per_subject_prefixsum);
+        // handlearray(subject_read_ids);
+        // handlearray(candidate_read_ids);
+        // handlearray(indices);
+        // handlearray(indices_per_subject);
+        // handlearray(indices_per_subject_prefixsum);
+        // handlearray(num_indices);
+
+        // handlearray(subject_qualities);
+        // handlearray(candidate_qualities);
+
+        // handlearray(corrected_subjects);
+        // handlearray(corrected_candidates);
+        // handlearray(num_corrected_candidates);
+        // handlearray(subject_is_corrected);
+        // handlearray(indices_of_corrected_candidates);
+        // handlearray(num_uncorrected_positions_per_subject);
+        // handlearray(uncorrected_positions_per_subject);
+
+        // handlearray(is_high_quality_subject);
+        // handlearray(high_quality_subject_indices);
+        // handlearray(num_high_quality_subject_indices);
+
+        // handlearray(alignment_scores);
+        // handlearray(alignment_overlaps);
+        // handlearray(alignment_shifts);
+        // handlearray(alignment_nOps);
+        // handlearray(alignment_isValid);
+        // handlearray(alignment_best_alignment_flags);
 
         out << "numIndices: " << numIndices << '\n';
         out << "indices:\n";
@@ -113,6 +149,10 @@ struct DataArrays {
 
         out << "countsT:\n";
         std::copy(countsT, countsT + columnsToCheck, std::ostream_iterator<int>(out, " "));
+        out << '\n';
+
+        out << "Coverage:\n";
+        std::copy(coverage, coverage + columnsToCheck, std::ostream_iterator<int>(out, " "));
         out << '\n';
 
         out << "weightsA:\n";
