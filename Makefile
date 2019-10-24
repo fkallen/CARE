@@ -8,7 +8,7 @@ THRUST_INCLUDE = -I/usr/local/cuda/include/
 
 CXXFLAGS = -std=c++14
 CFLAGS = -Wall -fopenmp -g -Iinclude -O3 -march=native $(THRUST_INCLUDE)
-CFLAGS_DEBUG = -Wall -fopenmp -g -Iinclude $(THRUST_INCLUDE)
+CFLAGS_DEBUG = -Wall -fopenmp -g -O0 -Iinclude $(THRUST_INCLUDE)
 
 
 NVCCFLAGS = -x cu -lineinfo -rdc=true --expt-extended-lambda --expt-relaxed-constexpr -ccbin $(CXX) $(CUB_INCLUDE)
