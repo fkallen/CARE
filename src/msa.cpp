@@ -662,11 +662,12 @@ CorrectionResult getCorrectedSubjectNew(const char* consensus,
     result.bestAlignmentWeightOfAnchorBase.resize(nColumns);
 
     result.isCorrected = true;
+    result.isHQ = false;
 
     const bool canBeCorrectedByConsensus = isGoodAvgSupport(avg_support) 
                                         && isGoodMinSupport(min_support) 
                                         && isGoodMinCoverage(min_coverage);
-    int flag = 0;
+    int flag = 0;    
 
     if(canBeCorrectedByConsensus){
         int smallestErrorrateThatWouldMakeHQ = 100;
