@@ -16,6 +16,7 @@
 #include "nn_classifier.hpp"
 #include <sequencefileio.hpp>
 #include "cpu_correction_core.hpp"
+#include <threadpool.hpp>
 
 #include <array>
 #include <chrono>
@@ -66,7 +67,9 @@ namespace cpu{
                 correctedCandidates(other.correctedCandidates),
                 candidate_read_ids(other.candidate_read_ids),
                 corrected_candidates_shifts(other.corrected_candidates_shifts),
-                uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus){
+                uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus),
+                anchoroutput(other.anchoroutput),
+                candidatesoutput(other.candidatesoutput){
 
             }
 
@@ -100,6 +103,8 @@ namespace cpu{
                 swap(l.candidate_read_ids, r.candidate_read_ids);
                 swap(l.corrected_candidates_shifts, r.corrected_candidates_shifts);
                 swap(l.uncorrectedPositionsNoConsensus, r.uncorrectedPositionsNoConsensus);
+                swap(l.anchoroutput, r.anchoroutput);
+                swap(l.candidatesoutput, r.candidatesoutput);
             }
 
             bool active;
@@ -114,6 +119,8 @@ namespace cpu{
             std::vector<read_number> candidate_read_ids;
             std::vector<int> corrected_candidates_shifts;
             std::vector<int> uncorrectedPositionsNoConsensus;
+            TempCorrectedSequence anchoroutput;
+            std::vector<TempCorrectedSequence> candidatesoutput;
         };
 
         struct TaskData{
@@ -846,6 +853,116 @@ namespace cpu{
                 }*/
         }
 
+        void setCorrectionStatusFlags(const TaskData& taskdata, 
+                                        CorrectionTask& task,
+                                        std::uint8_t* correctionStatusFlagsPerRead){
+            if(task.active){
+                if(task.corrected){
+                    if(taskdata.msaProperties.isHQ){
+                        correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+                    }
+                }else{
+                    correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+                }
+            }
+        }
+
+        void createTemporaryResultsForOutput(const TaskData& taskdata, 
+                                             CorrectionTask& task,
+                                             const ContiguousReadStorage& readStorage,
+                                             const std::uint8_t* correctionStatusFlagsPerRead,
+                                             const SequenceFileProperties& sequenceFileProperties){
+            if(task.active){
+                if(task.corrected){
+                    const int correctedlength = task.corrected_subject.length();
+
+                    const bool originalReadContainsN = readStorage.readContainsN(task.readId);
+
+                    auto& tmp = task.anchoroutput;
+                    tmp = TempCorrectedSequence{};
+
+                    if(!originalReadContainsN){
+                        const int maxEdits = correctedlength / 7;
+                        int edits = 0;
+                        for(int i = 0; i < correctedlength && edits <= maxEdits; i++){
+                            if(task.corrected_subject[i] != task.original_subject_string[i]){
+                                tmp.edits.emplace_back(i, task.corrected_subject[i]);
+                                edits++;
+                            }
+                        }
+                        tmp.useEdits = edits <= maxEdits;
+                    }else{
+                        tmp.useEdits = false;
+                    }
+
+                    tmp.hq = taskdata.msaProperties.isHQ;
+                    tmp.type = TempCorrectedSequence::Type::Anchor;
+                    tmp.readId = task.readId;
+                    tmp.sequence = std::move(task.corrected_subject);
+                    tmp.uncorrectedPositionsNoConsensus = task.uncorrectedPositionsNoConsensus;
+                }
+
+                task.candidatesoutput.reserve(task.correctedCandidates.size());
+
+                for(const auto& correctedCandidate : task.correctedCandidates){
+                    const read_number candidateId = taskdata.bestCandidateReadIds[correctedCandidate.index];
+
+                    bool savingIsOk = false;
+
+                    const std::uint8_t mask = correctionStatusFlagsPerRead[candidateId];
+                    if(!(mask & readCorrectedAsHQAnchor)) {
+                        savingIsOk = true;
+                    }
+
+                    if (savingIsOk) {                            
+
+                        TempCorrectedSequence tmp;
+
+                        tmp.type = TempCorrectedSequence::Type::Candidate;
+                        tmp.readId = candidateId;
+                        tmp.shift = correctedCandidate.shift;
+                        if(taskdata.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                            //write_candidate(candidateId, correctedCandidate.sequence);
+                            tmp.sequence = std::move(correctedCandidate.sequence);
+                        }else{
+                                std::string fwd;
+                                fwd.resize(correctedCandidate.sequence.length());
+                                reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
+                                //write_candidate(candidateId, fwd);
+                                tmp.sequence = std::move(fwd);
+                        }
+
+                        const bool originalCandidateReadContainsN = readStorage.readContainsN(candidateId);
+
+                        if(!originalCandidateReadContainsN){
+                            const std::size_t offset = correctedCandidate.index * sequenceFileProperties.maxSequenceLength;
+                            const char* const uncorrectedCandidate = &taskdata.bestCandidateStrings[offset];
+                            const int uncorrectedCandidateLength = taskdata.bestCandidateLengths[correctedCandidate.index];
+                            const int correctedCandidateLength = tmp.sequence.length();
+
+                            assert(uncorrectedCandidateLength == correctedCandidateLength);
+
+
+                            const int maxEdits = correctedCandidateLength / 7;
+                            int edits = 0;
+                            for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
+                                if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
+                                    tmp.edits.emplace_back(pos, tmp.sequence[pos]);
+                                    edits++;
+                                }
+                            }
+
+                            tmp.useEdits = edits <= maxEdits;
+                        }else{
+                            tmp.useEdits = false;
+                        }
+
+                        task.candidatesoutput.emplace_back(std::move(tmp));
+                    }
+                }
+            }
+        }
+
 
 void correct_cpu(const MinhashOptions& minhashOptions,
                   const AlignmentOptions& alignmentOptions,
@@ -945,6 +1062,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
     std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
     std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
+
+    BackgroundThread outputThread(true);
 
 
     // std::ifstream interestingstream("interestingIds.txt");
@@ -1278,7 +1397,21 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                     #endif
                 }
             }
-        }
+
+            //create outputdata for temporary results
+            setCorrectionStatusFlags(taskdata, 
+                                    task,
+                                    correctionStatusFlagsPerRead.data());
+
+            createTemporaryResultsForOutput(taskdata, 
+                                            task,
+                                            readStorage,
+                                            correctionStatusFlagsPerRead.data(),
+                                            sequenceFileProperties);
+
+        } // parallel loop end
+
+
 
         if(correctionOptions.extractFeatures){
             for(size_t i = 0; i < correctionTasks.size(); i++){
@@ -1293,116 +1426,41 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 }
             }
         }else{
+            //collect results of batch into a single buffer, then write results to file in another thread
+            std::vector<TempCorrectedSequence> anchorcorrections;
+            anchorcorrections.reserve(correctionTasks.size());
+
+            std::vector<std::vector<TempCorrectedSequence>> candidatecorrectionsPerTask;
+            candidatecorrectionsPerTask.reserve(correctionTasks.size());
+
             for(size_t i = 0; i < correctionTasks.size(); i++){
                 auto& task = correctionTasks[i];
                 auto& taskdata = *task.taskDataPtr;
 
                 if(task.active){
-                    if(task.corrected){
-                        const int correctedlength = task.corrected_subject.length();
-
-                        if(taskdata.msaProperties.isHQ){
-                            correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
-                        }
-
-                        const bool originalReadContainsN = readStorage.readContainsN(task.readId);
-
-                        TempCorrectedSequence tmp;
-
-                        if(!originalReadContainsN){
-                            const int maxEdits = correctedlength / 7;
-                            int edits = 0;
-                            for(int i = 0; i < correctedlength && edits <= maxEdits; i++){
-                                if(task.corrected_subject[i] != task.original_subject_string[i]){
-                                    tmp.edits.emplace_back(i, task.corrected_subject[i]);
-                                    edits++;
-                                }
-                            }
-                            tmp.useEdits = edits <= maxEdits;
-                        }else{
-                            tmp.useEdits = false;
-                        }
-
-                        tmp.hq = taskdata.msaProperties.isHQ;
-                        tmp.type = TempCorrectedSequence::Type::Anchor;
-                        tmp.readId = task.readId;
-                        tmp.sequence = std::move(task.corrected_subject);
-                        tmp.uncorrectedPositionsNoConsensus = task.uncorrectedPositionsNoConsensus;
-                        saveCorrectedSequence(tmp);
-
-
-                    }else{
-                        correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+                    if(task.corrected){                        
+                        anchorcorrections.emplace_back(std::move(task.anchoroutput));
                     }
-
-                    for(const auto& correctedCandidate : task.correctedCandidates){
-                        const read_number candidateId = taskdata.bestCandidateReadIds[correctedCandidate.index];
-
-                        bool savingIsOk = false;
-
-                        const std::uint8_t mask = correctionStatusFlagsPerRead[candidateId];
-        				if(!(mask & readCorrectedAsHQAnchor)) {
-                            savingIsOk = true;
-                        }
-
-                        if (savingIsOk) {                            
-
-                            TempCorrectedSequence tmp;
-
-                            tmp.type = TempCorrectedSequence::Type::Candidate;
-                            tmp.readId = candidateId;
-                            tmp.shift = correctedCandidate.shift;
-                            if(taskdata.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
-                                //write_candidate(candidateId, correctedCandidate.sequence);
-                                tmp.sequence = std::move(correctedCandidate.sequence);
-                            }else{
-                                 std::string fwd;
-                                 fwd.resize(correctedCandidate.sequence.length());
-                                 reverseComplementString(&fwd[0], correctedCandidate.sequence.c_str(), correctedCandidate.sequence.length());
-                                 //write_candidate(candidateId, fwd);
-                                 tmp.sequence = std::move(fwd);
-                            }
-
-                            const bool originalCandidateReadContainsN = readStorage.readContainsN(candidateId);
-
-                            if(!originalCandidateReadContainsN){
-                                const std::size_t offset = correctedCandidate.index * sequenceFileProperties.maxSequenceLength;
-                                const char* const uncorrectedCandidate = &taskdata.bestCandidateStrings[offset];
-                                const int uncorrectedCandidateLength = taskdata.bestCandidateLengths[correctedCandidate.index];
-                                const int correctedCandidateLength = tmp.sequence.length();
-
-                                assert(uncorrectedCandidateLength == correctedCandidateLength);
-
-
-                                const int maxEdits = correctedCandidateLength / 7;
-                                int edits = 0;
-                                for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
-                                    if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
-                                        tmp.edits.emplace_back(pos, tmp.sequence[pos]);
-                                        edits++;
-                                    }
-                                }
-
-                                tmp.useEdits = edits <= maxEdits;
-                            }else{
-                                tmp.useEdits = false;
-                            }
-
-                            saveCorrectedSequence(tmp);
-                        }
-                    }
-                }else{
-                    //task is inactive, make subject available for correction as a candidate
-
-                    // if(readIsCorrectedVector[task.readId] == 1){
-                    //     lock(task.readId);
-                    //     if(readIsCorrectedVector[task.readId] == 1){
-                    //         readIsCorrectedVector[task.readId] = 0;
-                    //     }
-                    //     unlock(task.readId);
-                    // }
+                    if(task.candidatesoutput.size() > 0){
+                        candidatecorrectionsPerTask.emplace_back(std::move(task.candidatesoutput));
+                    } 
                 }
             }
+
+            auto outputfunction = [&,
+                                   anchorcorrections = std::move(anchorcorrections),
+                                   candidatecorrectionsPerTask = std::move(candidatecorrectionsPerTask)](){
+                for(const auto& seq : anchorcorrections){
+                    saveCorrectedSequence(seq);
+                }
+                for(const auto& candidateCorrections : candidatecorrectionsPerTask){
+                    for(const auto& seq : candidateCorrections){
+                        saveCorrectedSequence(seq);
+                    }
+                }
+            };
+
+            outputThread.enqueue(std::move(outputfunction));
         }
 
 
@@ -1439,6 +1497,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 int(runtime.count()) % 60);
         //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
     }
+
+    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
     featurestream.flush();
     outputstream.flush();
@@ -1511,7 +1571,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     }
 
-    //deleteFiles(tmpfiles);
+    deleteFiles(tmpfiles);
 
     std::vector<std::string> featureFiles(tmpfiles);
     for(auto& s : featureFiles)
