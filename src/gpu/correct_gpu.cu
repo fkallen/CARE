@@ -3769,8 +3769,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           // }
           //std::cout << tmp << '\n';
           //std::unique_lock<std::mutex> l(outputstreammutex);
-          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty()))
+          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
             outputstream << tmp << '\n';
+          }
       };
 
       transFuncData.lock = [&](read_number readId){
