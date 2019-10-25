@@ -728,11 +728,12 @@ namespace cpu{
                 }
             }
 
+            data.msaProperties.isHQ = correctionResult.isHQ;
+
             if(correctionResult.isCorrected){
                 task.corrected_subject = std::move(correctionResult.correctedSequence);
                 task.uncorrectedPositionsNoConsensus = std::move(correctionResult.uncorrectedPositionsNoConsensus);
-                task.corrected = true;
-                data.msaProperties.isHQ = correctionResult.isHQ;
+                task.corrected = true;                
             }
         }
 
@@ -903,7 +904,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     }
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
-        outputstream << tmp << '\n';
+        if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+            outputstream << tmp << '\n';
+        }
     };
 
     std::vector<std::uint8_t> correctionStatusFlagsPerRead;
@@ -1508,7 +1511,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     }
 
-    deleteFiles(tmpfiles);
+    //deleteFiles(tmpfiles);
 
     std::vector<std::string> featureFiles(tmpfiles);
     for(auto& s : featureFiles)
