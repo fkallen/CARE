@@ -7,8 +7,106 @@
 #include <condition_variable>
 #include <cassert>
 #include <iostream>
+#include <vector>
+#include <thread>
+#include <atomic>
 
 namespace care{
+
+
+
+
+struct BackgroundThread{
+    enum class StopType{FinishAndStop, Stop};
+
+    std::vector<std::function<void()>> tasks{};
+    std::mutex m{};
+    std::condition_variable consumer_cv{};
+    std::condition_variable producer_cv{};
+    std::thread thread{};
+    std::atomic<bool> stop{false};
+    std::atomic<bool> finishRemainingTasks{true};
+
+    BackgroundThread() : stop(false){
+    }
+
+    BackgroundThread(bool doStart) : stop(false){
+        if(doStart){
+            start();
+        }
+    }
+
+    void start(){
+        stop = false;
+
+        thread = std::move(std::thread{
+            [&](){
+                threadfunc();
+            }
+        });
+    }
+
+    template<class Func>
+    void enqueue(Func&& func){
+        auto wrapper = [f = std::move(func)]() -> void {
+            f();
+        };
+
+        {
+            std::unique_lock<std::mutex> mylock(m);
+            producer_cv.wait(mylock, [&](){return tasks.size() < 16;});
+            tasks.emplace_back(std::move(wrapper));
+            consumer_cv.notify_one();
+        }        
+    }
+
+    void threadfunc(){
+        while(!stop){
+            std::unique_lock<std::mutex> mylock(m);
+            consumer_cv.wait(mylock, [&](){return !tasks.empty() || stop;});
+
+            if(!tasks.empty()){
+                auto func = std::move(tasks.front());
+                tasks.erase(tasks.begin());
+                mylock.unlock();
+                producer_cv.notify_one();
+
+                func();
+            }
+        }
+
+        if(stop && finishRemainingTasks){
+            for(const auto& func : tasks){
+                func();
+            }
+            tasks.clear();
+        }
+    }
+
+    void stopThread(StopType type){
+        {
+            std::unique_lock<std::mutex> mylock(m);
+
+            if(type == StopType::FinishAndStop){
+                finishRemainingTasks = true;
+            }else{
+                finishRemainingTasks = false;
+            }
+            stop = true;
+
+            consumer_cv.notify_one();
+        }
+
+        thread.join();
+    }
+};
+
+
+
+
+
+
+
 
 struct ThreadPool{
     using task_type = am::parallel_queue::task_type;
