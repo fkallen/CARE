@@ -498,6 +498,10 @@ struct Minhasher {
 
 	void destroy();
 
+    std::map<int, std::int64_t> getBinSizeHistogramOfMap(const Minhasher::Map_t& table) const;
+    std::map<int, std::int64_t> getBinSizeHistogramOfMap(int tableId) const;
+    std::vector<std::map<int, std::int64_t>> getBinSizeHistogramsOfMaps() const;
+
     void insertSequenceIntoExternalTables(const std::string& sequence, 
                                             read_number readnum,                                                     
                                             const std::vector<int>& tableIds,

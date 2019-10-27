@@ -834,7 +834,19 @@ namespace gpu{
             std::cout << "Saving minhasher to file " << fileOptions.save_hashtables_to << std::endl;
     		result.builtMinhasher.data.saveToFile(fileOptions.save_hashtables_to);
     		std::cout << "Saved minhasher" << std::endl;
-    	}
+        }
+        
+        const auto& minhasher = result.builtMinhasher.data;
+        const auto histograms = minhasher.getBinSizeHistogramsOfMaps();
+
+        std::ofstream outhist("histograms.txt");
+        for(int i = 0; i < int(histograms.size()); i++){
+            outhist << "table " << i << '\n';
+            for(auto pair : histograms[i]){
+                outhist << pair.first << ' '  << pair.second << '\n';
+            }
+            outhist << '\n';
+        }
 
         return result;
     }

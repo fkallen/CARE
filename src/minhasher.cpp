@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <numeric>
 
 #include <gpu/nvtxtimelinemarkers.hpp>
 
@@ -191,6 +192,32 @@ namespace care{
 		minhashTables.shrink_to_fit();
 	}
 
+    std::map<int, std::int64_t> Minhasher::getBinSizeHistogramOfMap(const Minhasher::Map_t& table) const{
+        std::map<int, std::int64_t> histogram;
+        if(table.countsPrefixSum.size() > 0){
+            for(size_t i = 0; i < table.countsPrefixSum.size() - 1; i++){
+                const auto count = table.countsPrefixSum[i+1] - table.countsPrefixSum[i];
+                histogram[count]++;
+            }
+        }
+        return histogram;
+    }
+
+    std::map<int, std::int64_t> Minhasher::getBinSizeHistogramOfMap(int tableId) const{
+        assert(tableId < minparams.maps);
+        return getBinSizeHistogramOfMap(*minhashTables[tableId]);
+    }
+
+    std::vector<std::map<int, std::int64_t>> Minhasher::getBinSizeHistogramsOfMaps() const{
+        std::vector<std::map<int, std::int64_t>> result;
+        result.reserve(minparams.maps);
+
+        for(int i = 0; i < minparams.maps; i++){
+            result.emplace_back(getBinSizeHistogramOfMap(i));
+        }
+
+        return result;
+    }
 
     void Minhasher::insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const{
 
