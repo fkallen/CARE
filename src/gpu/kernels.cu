@@ -504,6 +504,10 @@ namespace gpu{
                             bestScore = score;
                             bestShift = shift;
                         }
+
+                        return true;
+                    }else{
+                        return false;
                     }
                 };
 
@@ -518,10 +522,13 @@ namespace gpu{
                 for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
                     const int overlapsize = min(subjectbases - shift, querybases);
 
-                    handle_shift(shift, overlapsize,
+                    bool b = handle_shift(shift, overlapsize,
                                     mySequence_hi, mySequence_lo, no_bank_conflict_index,
                                     subjectints,
                                     queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
+                    if(!b){
+                        break;
+                    }
                 }
 
                 //initialize threadlocal smem array with query
@@ -535,10 +542,13 @@ namespace gpu{
                 for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
                     const int overlapsize = min(subjectbases, querybases + shift);
 
-                    handle_shift(shift, overlapsize,
+                    bool b = handle_shift(shift, overlapsize,
                                     mySequence_hi, mySequence_lo, no_bank_conflict_index,
                                     queryints,
                                     subjectBackup_hi, subjectBackup_lo, identity);
+                    if(!b){
+                        break;
+                    }
                 }
 
                 const int queryoverlapbegin_incl = max(-bestShift, 0);

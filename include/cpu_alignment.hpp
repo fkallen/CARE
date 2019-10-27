@@ -339,6 +339,10 @@ namespace shd{
                         bestScore = score;
                         bestShift = shift;
                     }
+
+                    return true;
+                }else{
+                    return false;
                 }
             };
 
@@ -349,10 +353,13 @@ namespace shd{
 
             for(int shift = 0; shift < subjectLength - minoverlap + 1; ++shift){
                 const int overlapsize = std::min(subjectLength - shift, queryLength);
-                handle_shift(shift, overlapsize,
-                                shiftbuffer_hi, shiftbuffer_lo, identity,
-                                subjectints,
-                                queryBackup_hi, queryBackup_lo, identity);
+                bool b = handle_shift(shift, overlapsize,
+                                    shiftbuffer_hi, shiftbuffer_lo, identity,
+                                    subjectints,
+                                    queryBackup_hi, queryBackup_lo, identity);
+                if(!b){
+                    break;
+                }
             }
 
             std::copy(query, query + queryints, shiftbuffer.begin());
@@ -362,10 +369,14 @@ namespace shd{
             for(int shift = -1; shift >= -queryLength + minoverlap; --shift){
                 const int overlapsize = std::min(subjectLength, queryLength + shift);
 
-                handle_shift(shift, overlapsize,
-                                shiftbuffer_hi, shiftbuffer_lo, identity,
-                                queryints,
-                                subjectBackup_hi, subjectBackup_lo, identity);
+                bool b = handle_shift(shift, overlapsize,
+                                    shiftbuffer_hi, shiftbuffer_lo, identity,
+                                    queryints,
+                                    subjectBackup_hi, subjectBackup_lo, identity);
+
+                if(!b){
+                    break;
+                }
             }
 
             AlignmentResult& alignmentresult = *destination;
