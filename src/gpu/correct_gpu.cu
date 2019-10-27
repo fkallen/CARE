@@ -3783,6 +3783,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                   int(runtime.count()) % 60);
       }
 
+      for(const auto& batch : batches){
+          std::cout << "size elements: " << batch.dataArrays.h_candidate_read_ids.size() << ", capacity elements " << batch.dataArrays.h_candidate_read_ids.capacity() << std::endl;
+      }
+
       for(auto& batch : batches){
           cudaSetDevice(batch.deviceId); CUERR;
 
