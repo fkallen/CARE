@@ -261,7 +261,7 @@ namespace cpu{
             data.forwardAlignments.resize(numCandidates);
             data.revcAlignments.resize(numCandidates);
 
-            shd::cpu_multi_shifted_hamming_distance_popcount(data.forwardAlignments.begin(),
+            shd::cpu_multi_shifted_hamming_distance_popcount_new(data.forwardAlignments.begin(),
                                                             (const char*)task.encodedSubjectPtr,
                                                             task.original_subject_string.size(),
                                                             data.candidateData,
@@ -271,7 +271,7 @@ namespace cpu{
                                                             alignmentProps.maxErrorRate,
                                                             alignmentProps.min_overlap_ratio);
 
-            shd::cpu_multi_shifted_hamming_distance_popcount(data.revcAlignments.begin(),
+            shd::cpu_multi_shifted_hamming_distance_popcount_new(data.revcAlignments.begin(),
                                                             (const char*)task.encodedSubjectPtr,
                                                             task.original_subject_string.size(),
                                                             data.candidateRevcData,
@@ -280,6 +280,67 @@ namespace cpu{
                                                             alignmentProps.min_overlap,
                                                             alignmentProps.maxErrorRate,
                                                             alignmentProps.min_overlap_ratio);
+
+            // std::vector<SHDResult> newforwardalignments(numCandidates);
+            // std::vector<SHDResult> newrevcalignments(numCandidates);
+
+            // shd::cpu_multi_shifted_hamming_distance_popcount_new(newforwardalignments.begin(),
+            //                                                 (const char*)task.encodedSubjectPtr,
+            //                                                 task.original_subject_string.size(),
+            //                                                 data.candidateData,
+            //                                                 data.candidateLengths,
+            //                                                 encodedSequencePitch,
+            //                                                 alignmentProps.min_overlap,
+            //                                                 alignmentProps.maxErrorRate,
+            //                                                 alignmentProps.min_overlap_ratio);
+
+            // shd::cpu_multi_shifted_hamming_distance_popcount_new(newrevcalignments.begin(),
+            //                                                 (const char*)task.encodedSubjectPtr,
+            //                                                 task.original_subject_string.size(),
+            //                                                 data.candidateRevcData,
+            //                                                 data.candidateLengths,
+            //                                                 encodedSequencePitch,
+            //                                                 alignmentProps.min_overlap,
+            //                                                 alignmentProps.maxErrorRate,
+            //                                                 alignmentProps.min_overlap_ratio);
+
+            // for(int i = 0; i < numCandidates; i++){
+            //     if(data.forwardAlignments[i] != newforwardalignments[i]){
+            //         std::cerr << "error task " << task.readId << " forward candidate " << i << '\n';
+            //         std::cerr << "old\n";
+            //         std::cerr << data.forwardAlignments[i].score << "\n";
+            //         std::cerr << data.forwardAlignments[i].overlap << "\n";
+            //         std::cerr << data.forwardAlignments[i].shift << "\n";
+            //         std::cerr << data.forwardAlignments[i].nOps << "\n";
+            //         std::cerr << data.forwardAlignments[i].isValid << "\n";
+            //         std::cerr << "new\n";
+            //         std::cerr << newforwardalignments[i].score << "\n";
+            //         std::cerr << newforwardalignments[i].overlap << "\n";
+            //         std::cerr << newforwardalignments[i].shift << "\n";
+            //         std::cerr << newforwardalignments[i].nOps << "\n";
+            //         std::cerr << newforwardalignments[i].isValid << "\n";
+            //         std::exit(0);
+            //     }
+            // }
+
+            // for(int i = 0; i < numCandidates; i++){
+            //     if(data.revcAlignments[i] != newrevcalignments[i]){
+            //         std::cerr << "error task " << task.readId << " revc candidate " << i << '\n';
+            //         std::cerr << "old\n";
+            //         std::cerr << data.revcAlignments[i].score << "\n";
+            //         std::cerr << data.revcAlignments[i].overlap << "\n";
+            //         std::cerr << data.revcAlignments[i].shift << "\n";
+            //         std::cerr << data.revcAlignments[i].nOps << "\n";
+            //         std::cerr << data.revcAlignments[i].isValid << "\n";
+            //         std::cerr << "new\n";
+            //         std::cerr << newrevcalignments[i].score << "\n";
+            //         std::cerr << newrevcalignments[i].overlap << "\n";
+            //         std::cerr << newrevcalignments[i].shift << "\n";
+            //         std::cerr << newrevcalignments[i].nOps << "\n";
+            //         std::cerr << newrevcalignments[i].isValid << "\n";
+            //         std::exit(0);
+            //     }
+            // }
 
             //decide whether to keep forward or reverse complement
             data.alignmentFlags = findBestAlignmentDirection(data.forwardAlignments,
