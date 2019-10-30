@@ -3785,7 +3785,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       for(const auto& batch : batches){
           std::cout << "size elements: " << batch.dataArrays.h_candidate_read_ids.size() << ", capacity elements " << batch.dataArrays.h_candidate_read_ids.capacity() << std::endl;
-      }
+      
+        }
+
+        for(const auto& batch : batches){
+            std::cerr << "Memory usage: \n";
+            batch.dataArrays.printMemoryUsage();
+            std::cerr << "Total: " << batch.dataArrays.getMemoryUsageInBytes() << " bytes\n";
+            std::cerr << '\n';
+        }
 
       for(auto& batch : batches){
           cudaSetDevice(batch.deviceId); CUERR;
