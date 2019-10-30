@@ -15,7 +15,8 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
-
+#include <type_traits>
+#include <iostream>
 
 __inline__
 std::size_t getAvailableMemoryInKB_linux(){
@@ -106,7 +107,10 @@ struct ProgressThread{
     }
 
     void addProgress(T add){
-        assert(add >= 0);
+        if(std::is_signed<T>::value){
+            assert(add >= 0);
+        }
+        
         currentProgress += add;
     }
 

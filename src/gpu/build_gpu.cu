@@ -540,9 +540,16 @@ namespace gpu{
             std::mutex progressMutex;
 		    std::uint64_t totalCount = 0;
 
-            auto updateProgress = [&](auto totalCount, auto seconds){
-                std::cout << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
-                            << seconds << " seconds." << std::endl;
+            auto showProgress = [&](auto totalCount, auto seconds){
+                std::cerr << "Hashed " << totalCount << " / " << nReads << " reads. Elapsed time: " 
+                            << seconds << " seconds." << '\r';
+                if(totalCount == nReads){
+                    std::cerr << '\n';
+                }
+            };
+
+            auto updateShowProgressInterval = [](auto duration){
+                return duration;
             };
 
             int numSavedTables = 0;
@@ -619,6 +626,8 @@ namespace gpu{
                 std::copy(globalTableIds.begin(), globalTableIds.end(), std::ostream_iterator<int>(std::cout, " "));
                 std::cout << "\n";
 
+                ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
                 for (int iter = 0; iter < numIters; iter++){
                     read_number readIdBegin = iter * parallelReads;
                     read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
@@ -643,7 +652,7 @@ namespace gpu{
                     //                             lengths.data(),
                     //                             indices.data(),
                     //                             indices.size(),
-                    //                             1);
+                    //                             1); 
 
                     readStorage.gatherSequenceLengthsToHostBufferNew(
                         lengths.data(),
@@ -658,7 +667,7 @@ namespace gpu{
                     //TIMERSTARTCPU(insert);
 
                     auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
-                        std::uint64_t countlimit = 1000000;
+                        std::uint64_t countlimit = 10000;
                         std::uint64_t count = 0;
                         std::uint64_t oldcount = 0;
 
@@ -675,22 +684,12 @@ namespace gpu{
 
                             count++;
                             if(count == countlimit){
-                                const auto tpb = std::chrono::system_clock::now();
-                                const std::chrono::duration<double> duration = tpb - tpa;
-                                countlimit *= 2;
-    
-                                std::lock_guard<std::mutex> lg(progressMutex);
-                                totalCount += count - oldcount;                            
-                                updateProgress(totalCount, duration.count());
-                                oldcount = count;                            
+                                progressThread.addProgress(count);
+                                count = 0;                                                         
                             }
                         }
                         if(count > 0){
-                            const auto tpb = std::chrono::system_clock::now();
-                            const std::chrono::duration<double> duration = tpb - tpa;
-                            std::lock_guard<std::mutex> lg(progressMutex);
-                            totalCount += count - oldcount;                            
-                            updateProgress(totalCount, duration.count());
+                            progressThread.addProgress(count);
                         }
                     };
 
@@ -700,6 +699,9 @@ namespace gpu{
 
                     //TIMERSTOPCPU(insert);
                 }
+
+                progressThread.finished();
+                
                 const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
                 std::ofstream rstempostream(rstempfile, std::ios::binary);
                 readStorage.writeGpuDataToStreamAndFreeGpuMem(rstempostream);
