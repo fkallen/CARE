@@ -1044,6 +1044,135 @@ struct DataArrays {
         #undef handlearray
     }
 
+
+    void printMemoryUsage() const{
+        // auto handleArray = [](auto& host, const auto& device){
+        //     assert(host.sizeInBytes() == device.sizeInBytes());
+        //     cudaMemcpy(host,
+        //                 device,
+        //                 device.sizeInBytes(),
+        //                 D2H); CUERR;
+        // };
+
+        #define handlearray(x){auto& host = h_##x; const auto& device = d_##x; \
+            assert(host.sizeInBytes() == device.sizeInBytes());\
+            assert(host.capacityInBytes() == device.capacityInBytes());\
+            std::cerr << #x << " capacity in bytes: " << host.capacityInBytes() << '\n';\
+        }
+
+        handlearray(subject_sequences_data);
+        handlearray(candidate_sequences_data);
+        handlearray(subject_sequences_lengths);
+        handlearray(candidate_sequences_lengths);
+        handlearray(candidates_per_subject);
+        handlearray(candidates_per_subject_prefixsum);
+        handlearray(subject_read_ids);
+        handlearray(candidate_read_ids);
+        handlearray(indices);
+        handlearray(indices_per_subject);
+        handlearray(indices_per_subject_prefixsum);
+        handlearray(num_indices);
+
+        handlearray(subject_qualities);
+        handlearray(candidate_qualities);
+
+        handlearray(corrected_subjects);
+        handlearray(corrected_candidates);
+        handlearray(num_corrected_candidates);
+        handlearray(subject_is_corrected);
+        handlearray(indices_of_corrected_candidates);
+        handlearray(num_uncorrected_positions_per_subject);
+        handlearray(uncorrected_positions_per_subject);
+
+        handlearray(is_high_quality_subject);
+        handlearray(high_quality_subject_indices);
+        handlearray(num_high_quality_subject_indices);
+
+        handlearray(alignment_scores);
+        handlearray(alignment_overlaps);
+        handlearray(alignment_shifts);
+        handlearray(alignment_nOps);
+        handlearray(alignment_isValid);
+        handlearray(alignment_best_alignment_flags);
+
+        handlearray(consensus);
+        handlearray(support);
+        handlearray(coverage);
+        handlearray(origWeights);
+        handlearray(origCoverages);
+        handlearray(msa_column_properties);
+        handlearray(counts);
+        handlearray(weights);
+
+        #undef handlearray
+    }
+
+    std::size_t getMemoryUsageInBytes() const{
+        // auto handleArray = [](auto& host, const auto& device){
+        //     assert(host.sizeInBytes() == device.sizeInBytes());
+        //     cudaMemcpy(host,
+        //                 device,
+        //                 device.sizeInBytes(),
+        //                 D2H); CUERR;
+        // };
+
+        std::size_t bytes = 0;
+
+        #define handlearray(x){auto& host = h_##x; const auto& device = d_##x; \
+            assert(host.sizeInBytes() == device.sizeInBytes());\
+            assert(host.capacityInBytes() == device.capacityInBytes());\
+            bytes += host.capacityInBytes();\
+        }
+
+        handlearray(subject_sequences_data);
+        handlearray(candidate_sequences_data);
+        handlearray(subject_sequences_lengths);
+        handlearray(candidate_sequences_lengths);
+        handlearray(candidates_per_subject);
+        handlearray(candidates_per_subject_prefixsum);
+        handlearray(subject_read_ids);
+        handlearray(candidate_read_ids);
+        handlearray(indices);
+        handlearray(indices_per_subject);
+        handlearray(indices_per_subject_prefixsum);
+        handlearray(num_indices);
+
+        handlearray(subject_qualities);
+        handlearray(candidate_qualities);
+
+        handlearray(corrected_subjects);
+        handlearray(corrected_candidates);
+        handlearray(num_corrected_candidates);
+        handlearray(subject_is_corrected);
+        handlearray(indices_of_corrected_candidates);
+        handlearray(num_uncorrected_positions_per_subject);
+        handlearray(uncorrected_positions_per_subject);
+
+        handlearray(is_high_quality_subject);
+        handlearray(high_quality_subject_indices);
+        handlearray(num_high_quality_subject_indices);
+
+        handlearray(alignment_scores);
+        handlearray(alignment_overlaps);
+        handlearray(alignment_shifts);
+        handlearray(alignment_nOps);
+        handlearray(alignment_isValid);
+        handlearray(alignment_best_alignment_flags);
+
+        handlearray(consensus);
+        handlearray(support);
+        handlearray(coverage);
+        handlearray(origWeights);
+        handlearray(origCoverages);
+        handlearray(msa_column_properties);
+        handlearray(counts);
+        handlearray(weights);
+
+        #undef handlearray
+
+        return bytes;
+    }
+
 };
 
     #endif
