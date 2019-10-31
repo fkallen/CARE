@@ -88,6 +88,25 @@ namespace care{
 				keyToIndexMap.resize(size, KeyIndexMap::EmptySlot);
 			}
 
+            KeyIndexMap(const KeyIndexMap&) = default;
+            KeyIndexMap(KeyIndexMap&&) = default;
+
+            KeyIndexMap& operator=(const KeyIndexMap& rhs){
+                maxProbes = rhs.maxProbes;
+                size = rhs.size;
+                keyToIndexMap = rhs.keyToIndexMap;
+                
+                return *this;
+            }
+
+            KeyIndexMap& operator=(KeyIndexMap&& rhs) noexcept{
+                maxProbes = std::move(rhs.maxProbes);
+                size = std::move(rhs.size);
+                keyToIndexMap = std::move(rhs.keyToIndexMap);
+
+                return *this;
+            }
+
             bool operator==(const KeyIndexMap& rhs) const{
                 if(maxProbes != rhs.maxProbes){
                     return false;
@@ -193,7 +212,7 @@ namespace care{
                 *this = other;
             }
 
-            KeyValueMapFixedSize(KeyValueMapFixedSize&& other){
+            KeyValueMapFixedSize(KeyValueMapFixedSize&& other) noexcept{
                 *this = std::move(other);
             }
 
