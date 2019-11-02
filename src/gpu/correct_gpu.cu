@@ -1998,6 +1998,10 @@ namespace gpu{
                     }); CUERR;*/
                 }
 
+                cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
+
+                cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
+
                 const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
                 //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
@@ -2027,9 +2031,7 @@ namespace gpu{
 
                 //batch.dataArrays.copyEverythingToHostForDebugging();
 
-                cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
-
-                cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
+                
 
                 cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
                 cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
