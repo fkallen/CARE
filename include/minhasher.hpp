@@ -76,10 +76,6 @@ namespace care{
             std::uint64_t size;
 			std::vector<Pair_t> keyToIndexMap;           
 
-            std::size_t numBytes() const{
-                return keyToIndexMap.size() * sizeof(Pair_t);
-            }
-
 			KeyIndexMap() : KeyIndexMap(0){}
 			KeyIndexMap(std::uint64_t size) : size(size){
 				if(size == std::numeric_limits<Index_t>::max())
@@ -151,6 +147,18 @@ namespace care{
                 //std::cerr << "probes get: " << probes << "\n";
 				return keyToIndexMap[pos].second;
 			}
+
+            std::size_t numBytes() const{
+                return keyToIndexMap.size() * sizeof(Pair_t);
+            }
+
+            std::size_t allocationSizeInBytes() const{
+                return keyToIndexMap.capacity() * sizeof(Pair_t);
+            }
+
+            static std::size_t getRequiredSizeInBytes(std::uint64_t elements){
+                return elements * sizeof(Pair_t);
+            }
 
 			void clear() noexcept{
 				keyToIndexMap.clear();
@@ -335,10 +343,24 @@ namespace care{
                     + values.size() * sizeof(Value_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
                     + keysWithoutValues.size() * sizeof(Key_t)
-                    + keyIndexMap.numBytes();
+                    + keyIndexMap.numBytes()
+                    + deviceIds.size();
             }
 
+            std::size_t allocationSizeInBytes() const{
+                return keys.capacity() * sizeof(Key_t)
+                    + values.capacity() * sizeof(Value_t)
+                    + countsPrefixSum.capacity() * sizeof(Index_t)
+                    + keysWithoutValues.capacity() * sizeof(Key_t)
+                    + keyIndexMap.allocationSizeInBytes()
+                    + deviceIds.capacity();
+            }
 
+            static std::size_t getRequiredSizeInBytesBeforeCompaction(std::uint64_t elements){
+                return elements * sizeof(Key_t)
+                    + elements * sizeof(Value_t)
+                    + 4 * 1024;
+            }
 
 			void resize(Index_t size_){
 				assert(!noMoreWrites);
