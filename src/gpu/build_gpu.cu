@@ -594,22 +594,58 @@ namespace gpu{
 #else 
                 int maxNumTables = 0;
 
+                // {
+                //     constexpr std::size_t MB50 = 50 * (std::size_t(1) << 20);
+                //     constexpr std::size_t MB128 = std::size_t(1) << 27;
+                //     constexpr std::size_t GB1 = std::size_t(1) << 30;
+                //     std::this_thread::sleep_for(std::chrono::seconds{2});
+                //     std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
+                //     Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
+                //     std::cerr << "table.allocationSizeInBytes() = " << table.allocationSizeInBytes() << "\n";
+                //     std::this_thread::sleep_for(std::chrono::seconds{2});
+                //     std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
+                //     std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB50;
+                //     //leave a headroom of 1 gigabyte
+                //     maxNumTables = (getAvailableMemoryInKB() * 1024 - GB1) / tableMemApprox;
+                //     maxNumTables -= 2; // need free memory of 2 table to perform transformation
+                //     std::cerr << "availableMemBefore = " << availableMemBefore << "\n";
+                //     std::cerr << "availableMemAfter = " << availableMemAfter << "\n";
+                //     std::cerr << "tableMemApprox = " << tableMemApprox << "\n";
+                //     std::cerr << "maxNumTables = " << maxNumTables << "\n";
+                // }
+
                 {
-                    constexpr std::size_t MB128 = std::size_t(1) << 27;
-                    std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
-                    Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
-                    std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
-                    std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB128;
-                    maxNumTables = 1 + (getAvailableMemoryInKB() * 1024) / tableMemApprox;
+                    constexpr std::size_t GB1 = std::size_t(1) << 30;
+                    std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                    std::size_t availableMem = getAvailableMemoryInKB() * 1024;
+                    maxNumTables = (availableMem - GB1) / requiredMemPerTable;
                     maxNumTables -= 2; // need free memory of 2 table to perform transformation
+                    std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
+                    std::cerr << "maxNumTables = " << maxNumTables << "\n";
                 }
 
-                assert(maxNumTables > 0);
+                if(maxNumTables <= 0){
+                    throw std::runtime_error("Not enough memory to construct 1 table");
+                }
+
+                std::this_thread::sleep_for(std::chrono::seconds{2});
+                std::cerr << "free mem = " << getAvailableMemoryInKB() * 1024 << "\n";
+
                 int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
                 minhashTables.resize(currentIterNumTables);
-                for(auto& table : minhashTables){
-                    Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
-                    table = std::move(tmp);
+                {int iter = 0;
+                    for(auto& table : minhashTables){
+                        //std::this_thread::sleep_for(std::chrono::seconds{2});
+                        //std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
+                        Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
+                        //std::cerr << "tmp.allocationSizeInBytes() = " << tmp.allocationSizeInBytes() << "\n";
+                        table = std::move(tmp);
+                        //std::this_thread::sleep_for(std::chrono::seconds{2});
+                        //std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
+                        //std::size_t tableMemApprox = availableMemBefore - availableMemAfter;
+                        //iter++;
+                        //std::cerr << "after "<< iter << " table, tableMemApprox = " << tableMemApprox << ", free mem = " << availableMemAfter << "\n";                        
+                    }
                 }
 
 #endif
@@ -659,7 +695,11 @@ namespace gpu{
                         indices.data(),
                         int(indices.size()));
 
-                    future1.wait();
+                    try{
+                        future1.get();
+                    }catch(...){
+                        throw std::runtime_error("error gathering sequence data for minhasher construction!");
+                    }
                     //future2.wait();
 
                     //TIMERSTOPCPU(gather);
