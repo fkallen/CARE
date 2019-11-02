@@ -17,6 +17,7 @@
 #include <chrono>
 #include <numeric>
 #include <functional>
+#include <iterator>
 
 namespace care{
 namespace filesort{
@@ -30,40 +31,32 @@ void binKeyMergeTwoFiles(const std::string& infile1, const std::string& infile2,
 namespace detail{
 
     template<class Index_t>
-    using Data = std::pair<Index_t, std::string>;
+    struct Data{
+        Index_t first;
+        std::string second;
 
-    template<class Index_t>
-    bool dataLessThan(const Data<Index_t>& l, const Data<Index_t>& r){
-        return l.first < r.first;
-    }
+        Data() = default;
+        Data(Index_t f, std::string s) noexcept 
+            : first(f), second(std::move(s)){}
+        Data(const Data&) = default;
+        Data(Data&&) = default;
+        Data& operator=(const Data&) = default;
+        Data& operator=(Data&&) = default;
 
-    template<class Index_t>
-    bool dataFromStream(std::ifstream& stream, Index_t& number, std::string& line){
+        friend std::ostream& operator<< (std::ostream& stream, const Data& data){
+            stream.write(reinterpret_cast<const char*>(&data.first), sizeof(Index_t));
+            stream << data.second << "\n";
 
-        bool result = bool(stream) && bool(stream.read(reinterpret_cast<char*>(&number), sizeof(Index_t)))
-                        && bool(std::getline(stream, line));
+            return stream;
+        }
 
-        return result;
-    }
-
-    template<class Index_t>
-    bool dataFromStream(std::ifstream& stream, Data<Index_t>& d){
-        bool result = dataFromStream(stream, d.first, d.second);
-
-        return result;
-    }
-
-    template<class Index_t>
-    bool dataToStream(std::ofstream& stream, const Index_t& number, const std::string& line){
-        stream.write(reinterpret_cast<const char*>(&number), sizeof(Index_t));
-        stream << line << "\n";
-        return bool(stream);
-    }
-
-    template<class Index_t>
-    bool dataToStream (std::ofstream& stream, const Data<Index_t>& d){
-        return dataToStream(stream, d.first, d.second);
-    }
+        friend std::istream& operator>>(std::istream& stream, Data& data){
+            stream.read(reinterpret_cast<char*>(&data.first), sizeof(Index_t));
+            std::getline(stream, data.second);
+            
+            return stream;
+        }
+    };
 
     template<class Index_t, class Comp>
     void
@@ -204,7 +197,7 @@ void binKeyMergeTwoFiles(
                         const std::string& infile1, 
                         const std::string& infile2, 
                         const std::string& outfile, 
-                        Comp&& comparator){
+                        Comp&& indexcomparator){
     std::ifstream in1(infile1);
     std::ifstream in2(infile2);
     std::ofstream out(outfile);
@@ -213,77 +206,90 @@ void binKeyMergeTwoFiles(
     assert(in2);
     assert(out);
 
-    detail::Data<Index_t> d1;
-    detail::Data<Index_t> d2;
+    using Data_t = detail::Data<Index_t>;
 
-    int written = 0; // the element of which file was smaller
-    int numwritten = 0;
+    auto dataComparator = [&](const Data_t& l, const Data_t& r){
+        return indexcomparator(l.first, r.first);
+    };
 
-    int numread = 0;
+    std::merge(std::istream_iterator<Data_t>(in1),
+                std::istream_iterator<Data_t>(),
+                std::istream_iterator<Data_t>(in2),
+                std::istream_iterator<Data_t>(),
+                std::ostream_iterator<Data_t>(out, ""),
+                dataComparator);
 
-    while(in1 && in2){
+    // detail::Data<Index_t> d1;
+    // detail::Data<Index_t> d2;
 
-        if(written != 2){
-            if(!detail::dataFromStream(in1, d1)){
-                break;
-            }
-            numread++;
-        }        
-        if(written != 1){
-            if(!detail::dataFromStream(in2, d2)){
-                break;
-            }
-            numread++;
-        }
+    // int written = 0; // the element of which file was smaller
+    // int numwritten = 0;
 
-        if(comparator(d1.first, d2.first)){
-            detail::dataToStream(out, d1);
-            written = 1;
-            numwritten++;
-        }else{
-            detail::dataToStream(out, d2);
-            written = 2;
-            numwritten++;
-        }
-    }
+    // int numread = 0;
 
-    out.flush();
+    // while(in1 && in2){
 
-    if(in1 && written == 2){
-        detail::dataToStream(out, d1);
-        numwritten++;
-    }
+    //     if(written != 2){
+    //         if(!detail::dataFromStream(in1, d1)){
+    //             break;
+    //         }
+    //         numread++;
+    //     }        
+    //     if(written != 1){
+    //         if(!detail::dataFromStream(in2, d2)){
+    //             break;
+    //         }
+    //         numread++;
+    //     }
 
-    if(in2 && written == 1){
-        detail::dataToStream(out, d2);
-        numwritten++;
-    }
+    //     if(comparator(d1.first, d2.first)){
+    //         detail::dataToStream(out, d1);
+    //         written = 1;
+    //         numwritten++;
+    //     }else{
+    //         detail::dataToStream(out, d2);
+    //         written = 2;
+    //         numwritten++;
+    //     }
+    // }
 
-    while(detail::dataFromStream(in1, d1)){
-        numread++;
+    // out.flush();
 
-        if(written == 1 && comparator(d2.first, d1.first)){
-            detail::dataToStream(out, d2);
-            written = 0;
-            numwritten++;
-        }
-        detail::dataToStream(out, d1);
-        numwritten++;
-    }
+    // if(in1 && written == 2){
+    //     detail::dataToStream(out, d1);
+    //     numwritten++;
+    // }
 
-    while(detail::dataFromStream(in2, d2)){
-        numread++;
+    // if(in2 && written == 1){
+    //     detail::dataToStream(out, d2);
+    //     numwritten++;
+    // }
 
-        if(written == 2 && comparator(d1.first, d2.first)){
-            detail::dataToStream(out, d1);
-            written = 0;
-            numwritten++;
-        }
-        detail::dataToStream(out, d2);
-        numwritten++;
-    }
+    // while(detail::dataFromStream(in1, d1)){
+    //     numread++;
 
-    assert(numread == numwritten);
+    //     if(written == 1 && comparator(d2.first, d1.first)){
+    //         detail::dataToStream(out, d2);
+    //         written = 0;
+    //         numwritten++;
+    //     }
+    //     detail::dataToStream(out, d1);
+    //     numwritten++;
+    // }
+
+    // while(detail::dataFromStream(in2, d2)){
+    //     numread++;
+
+    //     if(written == 2 && comparator(d1.first, d2.first)){
+    //         detail::dataToStream(out, d1);
+    //         written = 0;
+    //         numwritten++;
+    //     }
+    //     detail::dataToStream(out, d2);
+    //     numwritten++;
+    // }
+
+    // assert(numread == numwritten);
 }
 
 template<class Index_t>
@@ -299,7 +305,7 @@ template<class Index_t, class Comp>
 std::vector<std::string>
 binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames, 
                             const std::string& tempdir, 
-                            Comp&& comparator){
+                            Comp&& indexcomparator){
 
 
     std::size_t availableMemoryInKB = getAvailableMemoryInKB();
@@ -325,7 +331,6 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
     std::cerr << "Available memory for sort: " << availableMemory / 2 << "\n";
 
     availableMemory /= 2;
-
 
     std::size_t availableGPUMemory = 0;
     #ifdef USE_THRUST    
@@ -357,10 +362,12 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
     
     //constexpr int itemsPerTempFile = 100;
 
-    detail::Data<Index_t> item;
-    constexpr auto dataSize = sizeof(detail::Data<Index_t>);
+    using Data_t = detail::Data<Index_t>;
 
-    std::vector<detail::Data<Index_t>> buffer;
+    Data_t item;
+    constexpr auto dataSize = sizeof(Data_t);
+
+    std::vector<Data_t> buffer;
     std::vector<Index_t> numberBuffer;
     std::vector<std::string> stringBuffer;
 
@@ -393,7 +400,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
         numberBuffer.clear();
         stringBuffer.clear();
 
-        while(detail::dataFromStream(istream, item)){
+        while(bool(istream >> item)){
             stringmem += item.second.capacity();
             //buffer.emplace_back(std::move(item));
             numberBuffer.emplace_back(item.first);
@@ -401,7 +408,7 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
 
             TIMERSTARTCPU(readingbatch);
             while(couldAddElementToBuffer()
-                    && detail::dataFromStream(istream, item)){
+                    && bool(istream >> item)){
 
                 stringmem += item.second.capacity();
                 
@@ -416,43 +423,44 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
 
             std::vector<std::size_t> indices(numberBuffer.size());
 
-            #ifdef USE_THRUST
-                std::cerr << "gpu sort " << buffer.size() << " elements into " <<  tempfilename << "\n";
+            // #ifdef USE_THRUST
+            //     std::cerr << "gpu sort " << buffer.size() << " elements into " <<  tempfilename << "\n";
 
-                thrust::device_vector<std::size_t> d_indices = indices;
-                thrust::device_vector<Index_t> d_numbers = numberBuffer;
-                auto dnumbersPtr = thrust::raw_pointer_cast(d_numbers.data());
-                thrust::sequence(d_indices.begin(), d_indices.end(), std::size_t(0));
-                thrust::sort(d_indices.begin(), d_indices.end(), [=] __device__ (auto l, auto r){
-                    return dnumbersPtr[l] < dnumbersPtr[r];
-                });
-                //thrust::device_vector<Index_t> d_sortednumbers(d_numbers.size());            
-                //thrust::copy(thrust::make_permutation_iterator(d_numbers.begin(), d_indices.begin()),
-                //            thrust::make_permutation_iterator(d_numbers.begin(), d_indices.end()),
-                //            d_sortednumbers.begin());
-                thrust::copy(d_indices.begin(), d_indices.end(), indices.begin());
-                //thrust::copy(d_sortednumbers.begin(), d_sortednumbers.end(), numberBuffer.begin());
+            //     thrust::device_vector<std::size_t> d_indices = indices;
+            //     thrust::device_vector<Index_t> d_numbers = numberBuffer;
+            //     auto dnumbersPtr = thrust::raw_pointer_cast(d_numbers.data());
+            //     thrust::sequence(d_indices.begin(), d_indices.end(), std::size_t(0));
+            //     thrust::sort(d_indices.begin(), d_indices.end(), [=] __device__ (auto l, auto r){
+            //         return dnumbersPtr[l] < dnumbersPtr[r];
+            //     });
+            //     //thrust::device_vector<Index_t> d_sortednumbers(d_numbers.size());            
+            //     //thrust::copy(thrust::make_permutation_iterator(d_numbers.begin(), d_indices.begin()),
+            //     //            thrust::make_permutation_iterator(d_numbers.begin(), d_indices.end()),
+            //     //            d_sortednumbers.begin());
+            //     thrust::copy(d_indices.begin(), d_indices.end(), indices.begin());
+            //     //thrust::copy(d_sortednumbers.begin(), d_sortednumbers.end(), numberBuffer.begin());
 
-                for(std::size_t i = 0; i < indices.size(); i++){
-                    const std::size_t position = indices[i];
-                    detail::dataToStream(sortedtempfile, numberBuffer[position], stringBuffer[position]);
-                }
-            #else     
+            //     for(std::size_t i = 0; i < indices.size(); i++){
+            //         const std::size_t position = indices[i];
+            //         detail::dataToStream(sortedtempfile, numberBuffer[position], stringBuffer[position]);
+            //     }
+            // #else     
                 TIMERSTARTCPU(actualsort);
                 std::cerr << "sort " << indices.size() << " elements into " <<  tempfilename << "\n";
 
                 std::iota(indices.begin(), indices.end(), std::size_t(0));
                 ///std::sort(buffer.begin(), buffer.end());
                 std::sort(indices.begin(), indices.end(), [&](auto l, auto r){
-                    return numberBuffer[l] < numberBuffer[r];
+                    return indexcomparator(numberBuffer[l], numberBuffer[r]);
                 });
                 TIMERSTOPCPU(actualsort);
                 TIMERSTARTCPU(writingsortedbatch);
                 for(auto i : indices){
-                    detail::dataToStream(sortedtempfile, numberBuffer[i], stringBuffer[i]);
+                    Data_t tmp(numberBuffer[i], std::move(stringBuffer[i]));
+                    sortedtempfile << tmp;
                 }
                 TIMERSTOPCPU(writingsortedbatch);
-            #endif       
+            //#endif       
 
             TIMERSTARTCPU(clear);
             indices.clear();
@@ -480,8 +488,8 @@ void
 binKeyMergeSortedChunksAndDeleteChunks(const std::string& tempdir,
                                         const std::vector<std::string>& infilenames, 
                                         const std::string& outfilename, 
-                                        Comp&& comparator){
-    detail::binKeyMergeSortedChunksImpl<Index_t>(true, tempdir, infilenames, outfilename, comparator);
+                                        Comp&& indexcomparator){
+    detail::binKeyMergeSortedChunksImpl<Index_t>(true, tempdir, infilenames, outfilename, indexcomparator);
 }
 
 template<class Index_t, class Comp>
@@ -497,8 +505,8 @@ void
 binKeyMergeSortedChunks(const std::string& tempdir,
                         const std::vector<std::string>& infilenames, 
                         const std::string& outfilename, 
-                        Comp&& comparator){
-    detail::binKeyMergeSortedChunksImpl<Index_t>(false, tempdir, infilenames, outfilename, comparator);
+                        Comp&& indexcomparator){
+    detail::binKeyMergeSortedChunksImpl<Index_t>(false, tempdir, infilenames, outfilename, indexcomparator);
 }
 
 template<class Index_t, class Comp>
@@ -517,12 +525,12 @@ template<class Index_t, class Comp>
 void binKeySort(const std::string& tempdir,
                 const std::vector<std::string>& infilenames, 
                 const std::string& outfilename,
-                Comp&& comparator){
+                Comp&& indexcomparator){
     TIMERSTARTCPU(split);
-    auto tempfilenames = binKeySplitIntoSortedChunks<Index_t>(infilenames, tempdir, comparator);
+    auto tempfilenames = binKeySplitIntoSortedChunks<Index_t>(infilenames, tempdir, indexcomparator);
     TIMERSTOPCPU(split);
     TIMERSTARTCPU(merge);
-    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(tempdir, tempfilenames, outfilename, comparator);
+    binKeyMergeSortedChunksAndDeleteChunks<Index_t>(tempdir, tempfilenames, outfilename, indexcomparator);
     TIMERSTOPCPU(merge);
 }
 
