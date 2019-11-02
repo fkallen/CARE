@@ -144,15 +144,29 @@ namespace care{
         nReads = nReads_loaded;
 
 
-        minhashTables.resize(minparams.maps);
+        //minhashTables.resize(minparams.maps);
 
-		for (int i = 0; i < minparams.maps; ++i) {
-			minhashTables[i].reset();
-			minhashTables[i].reset(new Map_t(nReads, deviceIds));
-		}
+		// for (int i = 0; i < minparams.maps; ++i) {
+		// 	minhashTables[i].reset();
+		// 	minhashTables[i].reset(new Map_t(nReads, deviceIds));
+		// }
 
-        for(auto& tableptr : minhashTables)
-            tableptr->readFromStream(instream);
+        // for(auto& tableptr : minhashTables)
+        //     tableptr->readFromStream(instream);
+
+        minhashTables.clear();
+
+        for(int i = 0; i < minparams.maps; i++){
+            try{
+                auto tmptableptr = std::make_unique<Minhasher::Map_t>();
+                tmptableptr->readFromStream(instream);
+                minhashTables.emplace_back(std::move(tmptableptr));
+            }catch(const std::bad_alloc& e){
+                throw std::runtime_error("Not enough memory to load minhasher. Abort!");
+            }catch(...){
+                throw std::runtime_error("Exception occurred while loading minhasher. Abort!");
+            }
+        }
     }
 
 	void Minhasher::init(std::uint64_t nReads_){
