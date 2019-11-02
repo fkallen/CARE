@@ -1767,6 +1767,44 @@ namespace gpu{
         }
     }
 
+
+    __global__
+    void check_built_msa_kernel(MSAPointers d_msapointers,
+                                const int* __restrict__ d_indices_per_subject,
+                                int nSubjects,
+                                size_t msa_weights_row_pitch){
+
+        const size_t msa_weights_row_pitch_floats = msa_weights_row_pitch / sizeof(float);
+
+        for(int subjectIndex = blockIdx.x; subjectIndex < nSubjects; subjectIndex += gridDim.x){
+            if(d_indices_per_subject[subjectIndex] > 0){
+                const int firstColumn_incl = d_msapointers.msaColumnProperties[subjectIndex].firstColumn_incl;
+                const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+
+                for(int column = firstColumn_incl + threadIdx.x; column < lastColumn_excl; column += blockDim.x){
+                    const int* const counts = d_msapointers.counts + 4 * msa_weights_row_pitch_floats * subjectIndex + column;
+                    const float* const weights = d_msapointers.weights + 4 * msa_weights_row_pitch_floats * subjectIndex + column;
+
+                    for(int k = 0; k < 4; k++){
+                        const int count = counts[k * msa_weights_row_pitch_floats];
+                        const float weight = weights[k * msa_weights_row_pitch_floats];
+                        if(count > 0 && weight <= 0.0f){
+                            printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
+                                   subjectIndex, column, k, count, weight);
+                            assert(false);
+                        }
+
+                        if(count <= 0 && weight > 0.0f){
+                            printf("msa check failed! subjectIndex %d, column %d, base %d, count %d, weight %f\n",
+                                   subjectIndex, column, k, count, weight);
+                            assert(false);
+                        }
+                    }
+                }                        
+            }
+        }                
+    }
+
     template<int BLOCKSIZE>
     __global__
     void msa_find_consensus_implicit_kernel(
@@ -4127,6 +4165,11 @@ namespace gpu{
                                         msa_row_pitch,
                                         msa_weights_row_pitch,
                                         debug); CUERR;
+
+        check_built_msa_kernel<<<n_subjects, 128>>>(d_msapointers,
+                                                    d_indices_per_subject,
+                                                    n_subjects,
+                                                    msa_weights_row_pitch);
     }
 
 
@@ -4316,6 +4359,11 @@ namespace gpu{
                                             debug); CUERR;
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;
+
+        check_built_msa_kernel<<<n_subjects, 128>>>(d_msapointers,
+                                                    d_indices_per_subject,
+                                                    n_subjects,
+                                                    msa_weights_row_pitch);
     }
 
 
