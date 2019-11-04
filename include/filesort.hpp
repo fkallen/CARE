@@ -364,12 +364,14 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
 
     using Data_t = detail::Data<Index_t>;
 
+    auto dataComparator = [&](const Data_t& l, const Data_t& r){
+        return indexcomparator(l.first, r.first);
+    };
+
     Data_t item;
     constexpr auto dataSize = sizeof(Data_t);
 
     std::vector<Data_t> buffer;
-    std::vector<Index_t> numberBuffer;
-    std::vector<std::string> stringBuffer;
 
     std::size_t stringmem = 0;
 
@@ -379,8 +381,8 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             result = result && (2 * numberBuffer.capacity() * dataSize) < availableGPUMemory;
         #endif
         //buffer.size() < itemsPerTempFile
-        if(numberBuffer.size() >= numberBuffer.capacity()){
-            result = result && (stringmem + 2 * numberBuffer.capacity() * dataSize) < availableMemory;
+        if(buffer.size() >= buffer.capacity()){
+            result = result && (stringmem + 2 * buffer.capacity() * dataSize) < availableMemory;
         }
         return result;
     };
@@ -396,15 +398,11 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
         }
 
         stringmem = 0;
-        buffer.clear(),
-        numberBuffer.clear();
-        stringBuffer.clear();
+        buffer.clear();
 
         while(bool(istream >> item)){
             stringmem += item.second.capacity();
-            //buffer.emplace_back(std::move(item));
-            numberBuffer.emplace_back(item.first);
-            stringBuffer.emplace_back(std::move(item.second));
+            buffer.emplace_back(std::move(item));
 
             TIMERSTARTCPU(readingbatch);
             while(couldAddElementToBuffer()
@@ -412,61 +410,28 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
 
                 stringmem += item.second.capacity();
                 
-                //buffer.emplace_back(std::move(item));
-                numberBuffer.emplace_back(item.first);
-                stringBuffer.emplace_back(std::move(item.second));
+                buffer.emplace_back(std::move(item));
             }
             TIMERSTOPCPU(readingbatch);
 
             std::string tempfilename(tempdir+"/tmp_"+std::to_string(numtempfiles));
             std::ofstream sortedtempfile(tempfilename);
 
-            std::vector<std::size_t> indices(numberBuffer.size());
+            TIMERSTARTCPU(actualsort);
+            std::cerr << "sort " << buffer.size() << " elements in memory " <<  tempfilename << "\n";
 
-            // #ifdef USE_THRUST
-            //     std::cerr << "gpu sort " << buffer.size() << " elements into " <<  tempfilename << "\n";
+            std::sort(buffer.begin(), buffer.end(), dataComparator);
 
-            //     thrust::device_vector<std::size_t> d_indices = indices;
-            //     thrust::device_vector<Index_t> d_numbers = numberBuffer;
-            //     auto dnumbersPtr = thrust::raw_pointer_cast(d_numbers.data());
-            //     thrust::sequence(d_indices.begin(), d_indices.end(), std::size_t(0));
-            //     thrust::sort(d_indices.begin(), d_indices.end(), [=] __device__ (auto l, auto r){
-            //         return dnumbersPtr[l] < dnumbersPtr[r];
-            //     });
-            //     //thrust::device_vector<Index_t> d_sortednumbers(d_numbers.size());            
-            //     //thrust::copy(thrust::make_permutation_iterator(d_numbers.begin(), d_indices.begin()),
-            //     //            thrust::make_permutation_iterator(d_numbers.begin(), d_indices.end()),
-            //     //            d_sortednumbers.begin());
-            //     thrust::copy(d_indices.begin(), d_indices.end(), indices.begin());
-            //     //thrust::copy(d_sortednumbers.begin(), d_sortednumbers.end(), numberBuffer.begin());
+            TIMERSTOPCPU(actualsort);
 
-            //     for(std::size_t i = 0; i < indices.size(); i++){
-            //         const std::size_t position = indices[i];
-            //         detail::dataToStream(sortedtempfile, numberBuffer[position], stringBuffer[position]);
-            //     }
-            // #else     
-                TIMERSTARTCPU(actualsort);
-                std::cerr << "sort " << indices.size() << " elements into " <<  tempfilename << "\n";
+            TIMERSTARTCPU(writingsortedbatch);
+            std::cerr << "save " << buffer.size() << " elements to file " <<  tempfilename << "\n";
+            std::copy(buffer.begin(), buffer.end(), std::ostream_iterator<Data_t>(sortedtempfile, ""));
 
-                std::iota(indices.begin(), indices.end(), std::size_t(0));
-                ///std::sort(buffer.begin(), buffer.end());
-                std::sort(indices.begin(), indices.end(), [&](auto l, auto r){
-                    return indexcomparator(numberBuffer[l], numberBuffer[r]);
-                });
-                TIMERSTOPCPU(actualsort);
-                TIMERSTARTCPU(writingsortedbatch);
-                for(auto i : indices){
-                    Data_t tmp(numberBuffer[i], std::move(stringBuffer[i]));
-                    sortedtempfile << tmp;
-                }
-                TIMERSTOPCPU(writingsortedbatch);
-            //#endif       
+            TIMERSTOPCPU(writingsortedbatch); 
 
             TIMERSTARTCPU(clear);
-            indices.clear();
             buffer.clear();
-            numberBuffer.clear();
-            stringBuffer.clear();
             stringmem = 0;
             tempfilenames.emplace_back(std::move(tempfilename));
             numtempfiles++;
