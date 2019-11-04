@@ -1814,6 +1814,7 @@ namespace gpu{
 
                 //compact the quality scores
                 if(transFuncData.correctionOptions.useQualityScores){
+#if 1                    
                     dim3 block(128,1,1);
                     dim3 grid(SDIV(currentNumIndices, block.x),1,1);
 
@@ -1840,7 +1841,37 @@ namespace gpu{
                             }
                         }
                     }); CUERR;
+#else 
 
+                    constexpr int blocksize = 128;
+                    dim3 block(blocksize,1,1);
+                    dim3 grid(SDIV(quality_pitch * currentNumIndices, blocksize),1,1);
+
+                    char* const d_candidate_qualities = dataArrays.d_candidate_qualities;
+                    char* const d_candidate_qualities_tmp = dataArrays.d_candidate_qualities_tmp;
+
+                    const size_t quality_pitch = dataArrays.quality_pitch;
+                    //const int maximum_sequence_length = dataArrays.maximum_sequence_length;
+                    const int* const d_num_indices = dataArrays.d_num_indices;
+                    //const int numCandidates = dataArrays.n_queries;
+
+                    cudaMemsetAsync(d_candidate_qualities_tmp, currentNumIndices * quality_pitch, 0, streams[primary_stream_index]); CUERR;
+
+                    generic_kernel<<<grid, block,0, streams[primary_stream_index]>>>([=] __device__ (){
+                        const int numIndices = *d_num_indices;
+
+                        for(int idx = blockIdx.x * blocksize + threadIdx.x; idx < quality_pitch * numIndices; idx += blocksize * gridDim.x){
+                            const int targetIndex = idx / numIndices;
+                            const int qualPos = idx % numIndices;
+                            const int srcIndex = d_shouldBeKept_positions[targetIndex];
+                            const char* const srcPtr = &d_candidate_qualities[srcIndex * quality_pitch];
+                            char* const destPtr = &d_candidate_qualities_tmp[targetIndex * quality_pitch];
+                            destPtr[qualPos] = srcPtr[qualPos];
+                        }
+                    }); CUERR;
+
+
+#endif
 
 
                    /* char* d_candidate_qualities_tmp2;
