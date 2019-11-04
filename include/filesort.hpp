@@ -418,14 +418,14 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
             std::ofstream sortedtempfile(tempfilename);
 
             TIMERSTARTCPU(actualsort);
-            std::cerr << "sort " << buffer.size() << " elements in memory " <<  tempfilename << "\n";
+            std::cerr << "sort " << buffer.size() << " elements in memory \n";
 
             std::sort(buffer.begin(), buffer.end(), dataComparator);
 
             TIMERSTOPCPU(actualsort);
 
             TIMERSTARTCPU(writingsortedbatch);
-            std::cerr << "save " << buffer.size() << " elements to file " <<  tempfilename << "\n";
+            std::cerr << "save " << buffer.size() << " elements to file " <<  tempfilename << '\n';
             std::copy(buffer.begin(), buffer.end(), std::ostream_iterator<Data_t>(sortedtempfile, ""));
 
             TIMERSTOPCPU(writingsortedbatch); 
