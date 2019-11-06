@@ -327,8 +327,11 @@ UncompressedWriter::UncompressedWriter(const std::string& filename, FileFormat f
 }
 
 void UncompressedWriter::writeReadImpl(const std::string& name, const std::string& comment, const std::string& sequence, const std::string& quality){
-    ofs << delimHeader << name << ' ' << comment << '\n'
-        << sequence << '\n';
+    ofs << delimHeader << name;
+    if(comment.length() > 0){
+        ofs << ' ' << comment;
+    }
+    ofs << '\n' << sequence << '\n';
     if(format == FileFormat::FASTQ){
         ofs << '+' << '\n'
             << quality << '\n';
