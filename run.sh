@@ -1,143 +1,45 @@
 #!/bin/bash
 
+care=/home/fekallen/arbeit/errorcorrector/errorcorrector_gpu
 
-#gpu version does NOT work for long reads at the moment. we tested with reads of fixed length 100
-executable=./errorcorrector_cpu
-
-if [ $# -gt 0 ]
+if [ $# -lt 2 ]
 then
-	executable=./errorcorrector_$1
+	echo "Usage: $0 inputfile outputfile coverage [numthreads]"
+	exit
 fi
 
-#max number of threads to use. in gpu version, when using N gpus each gpu will be used by threads / N threads
-threads=16
+inputfile=$1
+outputfile=$2
+coverage=$3
+numthreads=1
 
-if [ $# -gt 1 ]
+if [ $# -gt 3 ]
 then
-	threads=$2
+	numthreads=$4
 fi
 
-threadsgpu=0
+echo "run.sh $inputfile $outputfile $coverage $numthreads"
 
-if [ $# -gt 2 ]
-then
-	threadsgpu=$3
-fi
+filename=$(basename -- "$outputfile")
+extension="${filename##*.}"
+filename="${filename%.*}"
 
-deviceIds="--deviceIds=0"
-#deviceIds=""
+outputfilenamenopath=$filename"."$extension
 
-datapath=/home/fekallen/storage/evaluationtool
+outputdir=$(dirname $outputfile)
+tempdir="/home/fekallen/storage/temp/"
 
-#input file
-inputfile=$datapath/datasets/E.coli_SRR1191655_1M.fastq
-coverage=21
+mkdir -p $outputdir
+mkdir -p $tempdir
 
-#inputfile=$datapath/datasets/E.coli_SRR1191655.fastq
-#coverage=255
+echo "$care --inputfile=$inputfile --tempdir=$tempdir --outdir=$outputdir --outfile=$outputfilenamenopath --threads=$numthreads \
+      --hashmaps=48 --kmerlength=32 --batchsize=1000 --maxmismatchratio=0.20 --minalignmentoverlap=20 --minalignmentoverlapratio=0.20 \
+      --useQualityScores=true --coverage=$coverage --errorrate=0.06 --m_coverage=0.6 \
+      --candidateCorrection=true --candidateCorrectionNewColumns=15 --extractFeatures=false --deviceIds=0 --correctionType=0 \
+      --progress=true --nReads=0 --min_length=0 --max_length=0 --hits_per_candidate=1"
 
-#inputfile=$datapath/datasets/E.coli_SRR490124.fastq
-#coverage=465
-
-#inputfile=$datapath/datasets/E.coli_ERA000206.fastq
-#coverage=612
-
-#31642176 reads, cutoff 570
-#inputfile=$datapath/datasets/C.elegans_SRX218989.fastq
-#coverage=31
-
-#inputfile=$datapath/datasets/C.elegans_SRR543736.fastq
-#coverage=58
-
-#inputfile=$datapath/datasets/D.melanogaster_SRR823377.fastq
-#coverage=52
-
-#75938276 reads, cutoff 1547
-#inputfile=$datapath/datasets/D.melanogaster_SRR988075.fastq
-#coverage=64
-
-
-#inputfile=$datapath/datasets/L.pneumophila_SRR801797.fastq
-#coverage=260
-
-candidates="--maxCandidates=0"
-
-## MiSeq ##
-
-#inputfile=$datapath/datasets/Salmonella_enterica_SRR1206093.fastq
-#coverage=97
-
-#estimated error rate
-errorrate=0.03
-m=0.6
-numreads=0
-nReads="--nReads=$numreads"
-
-maxLen="--max_length=128"
-
-#output path. this is used as temporary storage, too
-outdir=$datapath/correcteddatasets/
-
-#output file
-outputfile="readscorrectednew.fq"
-#outputfile="ecolisrr11_m06_e001_h8_k16_hq_qscores.fq"
-
-#absolute output file path = outdir/outputfile
-outfile="--outfile=$outputfile"
-#outfile=
-
-classicMode=--classicMode=true
-forest=--forest="./forests/humanerx069715.so"
-
-#fastq
-fileformat=fastq
-
-#only valid for fastq fileformat
-useQualityScores=--useQualityScores=true
-#useQualityScores=
-
-candidateCorrection=--candidateCorrection=false
-
-#if indels should be corrected, too
-indels=--indels=false
-
-extractFeatures=--extractFeatures=false
-
-#minhashing parameters
-#kmer length
-k=16
-#hashmaps (one kmer hash value per map)
-maps=8
-
-num_hits=1
-
-#alignment scores for semiglobal alignment. only used if indels=true.
-#we use a high indel penalty to focus on substitutions only. you may want to change this to include indel correction
-matchscore=1
-subscore=-1
-insertscore=-100
-deletionscore=-100
-
-#batchsize reads are aligned simultaneously per thread. batchsize > 1 is useful for gpu alignment to increase gpu utilization
-
-batchsize=20000
-
-#properties of good alignment
-maxmismatchratio=0.20
-#minimum overlap size
-minalignmentoverlap=30
-#minimum relative overlap size
-minalignmentoverlapratio=0.30
-
-#correction parameters
-#during the voting phase, if at a fixed position in the read base B from the original read occurs N times and base D occurs M times,
-#then B is corrected into D if  M-N >= aa*pow(xx,N)
-xx=$(echo 'scale=2; 12/10' | bc)
-aa=$(echo 'scale=2; 10/10' | bc)
-
-progress="--progress=true"
-
-
-echo $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads --threadsForGPUs=$threadsgpu $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress $nReads $maxLen --hits_per_candidate=$num_hits $forest
-
-time $executable --fileformat=$fileformat --inputfile=$inputfile --outdir=$outdir $outfile --threads=$threads --threadsForGPUs=$threadsgpu $indels --hashmaps=$maps --kmerlength=$k --batchsize=$batchsize --base=$xx --alpha=$aa --matchscore=$matchscore --subscore=$subscore --insertscore=$insertscore --deletionscore=$deletionscore --maxmismatchratio=$maxmismatchratio --minalignmentoverlap=$minalignmentoverlap --minalignmentoverlapratio=$minalignmentoverlapratio $useQualityScores --coverage=$coverage --errorrate=$errorrate --m_coverage=$m $candidateCorrection $extractFeatures $deviceIds $classicMode $candidates $progress $nReads $maxLen --hits_per_candidate=$num_hits $forest
+$care --inputfile=$inputfile --tempdir=$tempdir --outdir=$outputdir --outfile=$outputfilenamenopath --threads=$numthreads \
+      --hashmaps=48 --kmerlength=32 --batchsize=1000 --maxmismatchratio=0.20 --minalignmentoverlap=20 --minalignmentoverlapratio=0.20 \
+      --useQualityScores=true --coverage=$coverage --errorrate=0.06 --m_coverage=0.6 \
+      --candidateCorrection=true --candidateCorrectionNewColumns=15 --extractFeatures=false --deviceIds=0 --correctionType=0 \
+      --progress=true --nReads=0 --min_length=0 --max_length=0 --hits_per_candidate=1
