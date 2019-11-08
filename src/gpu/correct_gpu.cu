@@ -19,6 +19,8 @@
 #include <sequencefileio.hpp>
 #include <rangegenerator.hpp>
 #include <threadpool.hpp>
+#include <memoryfile.hpp>
+#include <util.hpp>
 
 #include <hpc_helpers.cuh>
 
@@ -357,9 +359,9 @@ namespace gpu{
         FileOptions fileOptions;
 		std::atomic_uint8_t* correctionStatusFlagsPerRead;
 		std::ofstream* featurestream;
-        std::function<void(const TempCorrectedSequence&)> saveCorrectedSequence;
-		std::function<void(const read_number)> lock;
-		std::function<void(const read_number)> unlock;
+        std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence&&)> saveCorrectedSequence;
+		std::function<void(read_number)> lock;
+		std::function<void(read_number)> unlock;
 
         std::condition_variable isFinishedCV;
         std::mutex isFinishedMutex;
@@ -3338,7 +3340,7 @@ void state_unpackclassicresults_func(Batch& batch){
     			//std::cout << "finished readId " << task.readId << std::endl;
 
     			if(task.corrected) {
-                    transFuncData->saveCorrectedSequence(task.anchoroutput);
+                    transFuncData->saveCorrectedSequence(task.anchoroutput, task.anchoroutput.encode());
     			}else{
                     if(task.candidate_read_ids.empty()){
                         notCorrectedNoCandidates++;
@@ -3349,7 +3351,7 @@ void state_unpackclassicresults_func(Batch& batch){
                 }
 
                 for(const auto& tmp : task.candidatesoutput){
-                    transFuncData->saveCorrectedSequence(tmp);
+                    transFuncData->saveCorrectedSequence(tmp, tmp.encode());
                 }
     		}
 
@@ -3554,8 +3556,17 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       std::cerr << "correctionStatusFlagsPerRead bytes: " << sizeof(std::atomic_uint8_t) * sequenceFileProperties.nReads / 1024. / 1024. << " MB\n";
 
-      std::ofstream outputstream;
-      std::unique_ptr<SequenceFileWriter> writer;
+    const std::size_t availableMemory = getAvailableMemoryInKB();
+    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(1) << 30);
+
+    auto heapusageOfTCS = [](const auto& x){
+        return 150; //TODO: proper calculation
+    };
+
+    MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
+
+    //   std::ofstream outputstream;
+    //   std::unique_ptr<SequenceFileWriter> writer;
 
       //if candidate correction is not enabled, it is possible to write directly into the result file
       // if(!correctionOptions.correctCandidates){
@@ -3565,10 +3576,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       //         throw std::runtime_error("Could not open output file " + tmpfiles[0]);
       //     }
       // }else{
-          outputstream = std::move(std::ofstream(tmpfiles[0]));
-          if(!outputstream){
-              throw std::runtime_error("Could not open output file " + tmpfiles[0]);
-          }
+        //   outputstream = std::move(std::ofstream(tmpfiles[0]));
+        //   if(!outputstream){
+        //       throw std::runtime_error("Could not open output file " + tmpfiles[0]);
+        //   }
      // }
 
 
@@ -3705,7 +3716,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       //std::mutex outputstreammutex;
 
-      transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
+      transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, EncodedTempCorrectedSequence&& encoded){
           // auto isValidSequence = [](const std::string& s){
           //     return std::all_of(s.begin(), s.end(), [](char c){
           //         return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
@@ -3726,7 +3737,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           //std::cout << tmp << '\n';
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-            outputstream << tmp << '\n';
+              //outputstream << tmp << '\n';
+              partialResults.storeElement(std::move(encoded));
           }
       };
 
@@ -3800,8 +3812,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
       //flushCachedResults();
-      outputstream.flush();
+      //outputstream.flush();
       featurestream.flush();
+      partialResults.flush();
 
       #ifdef DO_PROFILE
           cudaProfilerStop();
@@ -3874,7 +3887,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                                 sequenceFileProperties.nReads, 
                                 fileOptions.inputfile, 
                                 fileOptions.format, 
-                                tmpfiles, 
+                                partialResults, 
                                 fileOptions.outputfile, 
                                 false);
 

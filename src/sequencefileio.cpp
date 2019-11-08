@@ -4,6 +4,7 @@
 #include <threadsafe_buffer.hpp>
 #include <sequence.hpp>
 #include <filesort.hpp>
+#include <memoryfile.hpp>
 
 #include <iterator>
 #include <iostream>
@@ -870,80 +871,29 @@ void mergeResultFiles(
                     std::uint32_t expectedNumReads, 
                     const std::string& originalReadFile,
                     FileFormat originalFormat,
-                    const std::vector<std::string>& filesToMerge, 
+                    MemoryFile<EncodedTempCorrectedSequence>& partialResults, 
                     const std::string& outputfile,
                     bool isSorted){
-
 
     bool oldsyncflag = true;//std::ios::sync_with_stdio(false);
 
     const std::string outputfileFilename = filesys::path(outputfile).filename();
 
-    std::string tempfile = tempdir + "/" + outputfileFilename + "_mergetempfile";
-    std::stringstream commandbuilder;
-
     //sort the result files and save sorted result file in tempfile.
     //Then, merge original file and tempfile, replacing the reads in
     //original file by the corresponding reads in the tempfile.
 
+    if(!isSorted){
+        auto comparator = [](const auto& l, const auto& r){
+            return l.readId < r.readId;
+        };
 
-
-    if(isSorted && filesToMerge.size() == 1){
-        tempfile = filesToMerge[0];
-    }else{
-        if(isSorted){
-            if(tmpresultfileformat == 0){
-
-                TIMERSTARTCPU(sort_during_merge);
-                int r1 = filesort::gnuTxtNumericMerge(
-                                                    tempdir,
-                                                    filesToMerge, 
-                                                    tempfile, 
-                                                    1, 
-                                                    4);
-                TIMERSTOPCPU(sort_during_merge);
-
-                if(r1 != 0){
-                    throw std::runtime_error("Merge of result files failed! sort returned " + std::to_string(r1));
-                }
-
-            }else if(tmpresultfileformat == 1){
-
-                TIMERSTARTCPU(sort_during_merge);
-                filesort::binKeyMergeSortedChunks<read_number>(tempdir, filesToMerge, tempfile, std::less<read_number>{});
-                TIMERSTOPCPU(sort_during_merge);
-
-            }
-
-        }else{
-
-            if(tmpresultfileformat == 0){
-
-                TIMERSTARTCPU(sort_during_merge);
-                int r1 = filesort::gnuTxtNumericSort(
-                                                    tempdir,
-                                                    filesToMerge, 
-                                                    tempfile, 
-                                                    1, 
-                                                    4);
-                TIMERSTOPCPU(sort_during_merge);
-
-                if(r1 != 0){
-                    throw std::runtime_error("Sort of result files failed! sort returned " + std::to_string(r1));
-                }
-
-            }else if(tmpresultfileformat == 1){
-
-                TIMERSTARTCPU(sort_during_merge);
-                filesort::binKeySort<read_number>(tempdir, filesToMerge, tempfile);
-                TIMERSTOPCPU(sort_during_merge);
-
-            }
-        }
+        TIMERSTARTCPU(sort_during_merge);
+        partialResults.sort(tempdir, comparator);
+        TIMERSTOPCPU(sort_during_merge);
     }
 
     std::unique_ptr<SequenceFileReader> reader = makeSequenceReader(originalReadFile, originalFormat);
-    //std::unique_ptr<SequenceFileReader> reader = std::make_unique<FastqReader>(originalReadFile);
 
     //only output uncompressed for now
     FileFormat outputformat = originalFormat;
@@ -953,11 +903,7 @@ void mergeResultFiles(
         outputformat = FileFormat::FASTA;
 
     std::unique_ptr<SequenceFileWriter> writer = makeSequenceWriter(outputfile, outputformat);
-    //SequenceWriterThread swt(outputfile, outputformat);
 
-    std::ifstream correctionsstream(tempfile);
-
-    std::string correctionline;
     //loop over correction sequences
     TIMERSTARTCPU(actualmerging);
 
@@ -1304,29 +1250,17 @@ void mergeResultFiles(
 
     bool firstiter = true;
 
-    // while(std::getline(correctionsstream, correctionline)){
-    //     std::stringstream ss(correctionline);
-    //     TempCorrectedSequence tcs;
-    //     ss >> tcs;
-    while(bool(correctionsstream)){
-        TempCorrectedSequence tcs;
-        if(!(correctionsstream >> tcs)){
-            break;
-        }
+    auto filereader = partialResults.makeReader();
+
+    while(filereader.hasNext()){
+        TempCorrectedSequence tcs = filereader.next();
+
         if(firstiter || tcs.readId == currentReadId){
             currentReadId = tcs.readId ;
             correctionVector.emplace_back(std::move(tcs));
 
-            // while(std::getline(correctionsstream, correctionline)){
-            //     std::stringstream ss2(correctionline);
-            //     TempCorrectedSequence tcs2;
-            //     ss2 >> tcs2;
-
-            while(bool(correctionsstream)){
-                TempCorrectedSequence tcs2;
-                if(!(correctionsstream >> tcs2)){
-                    break;
-                }
+            while(filereader.hasNext()){
+                TempCorrectedSequence tcs2 = filereader.next();
                 if(tcs2.readId == currentReadId){
                     correctionVector.emplace_back(std::move(tcs2));
                 }else{
@@ -1463,110 +1397,228 @@ void mergeResultFiles(
 }
 
 
-std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
-    if(tmpresultfileformat == 0){
-        os << tmp.readId << ' ';
-    }else if(tmpresultfileformat == 1){
-        os.write(reinterpret_cast<const char*>(&tmp.readId), sizeof(read_number));
-    }
-    
-    std::uint8_t data = bool(tmp.hq);
-    data = (data << 1) | bool(tmp.useEdits);
-    data = (data << 6) | std::uint8_t(int(tmp.type));
-    
-    if(tmpresultfileformat == 0){
-        os << data << ' ';
-    }else if(tmpresultfileformat == 1){
-        os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
+
+    TempCorrectedSequence::TempCorrectedSequence(const EncodedTempCorrectedSequence& encoded){
+        decode(encoded);
     }
 
-    if(tmp.useEdits){
-        os << tmp.edits.size() << ' ';
-        for(const auto& edit : tmp.edits){
-            os << edit.pos << ' ';
-        }
-        for(const auto& edit : tmp.edits){
-            os << edit.base;
-        }
-        if(tmp.edits.size() > 0){
-            os << ' ';
-        }
-    }else{
-        os << tmp.sequence << ' ';
+    TempCorrectedSequence& TempCorrectedSequence::operator=(const EncodedTempCorrectedSequence& encoded){
+        decode(encoded);
     }
 
-    if(tmp.type == TempCorrectedSequence::Type::Anchor){
-        const auto& vec = tmp.uncorrectedPositionsNoConsensus;
-        os << vec.size();
-        if(!vec.empty()){
-            os << ' ';
-            std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
-        }
-    }else{
-        os << tmp.shift;
+    bool EncodedTempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
+        os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
+        os << data << '\n';
+        return bool(os);
     }
 
-    return os;
-}
-
-std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
-    std::uint8_t data = 0;
-
-    if(tmpresultfileformat == 0){
-        is >> tmp.readId;
-    }else if(tmpresultfileformat == 1){
-        is.read(reinterpret_cast<char*>(&tmp.readId), sizeof(read_number));
-        is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
+    bool EncodedTempCorrectedSequence::readFromBinaryStream(std::istream& is){
+        is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
+        std::getline(is, data);
+        return bool(is);
     }
 
-    std::string line;
-    if(std::getline(is, line)){
-        std::stringstream sstream(line);
-        auto& stream = sstream;
+    EncodedTempCorrectedSequence TempCorrectedSequence::encode() const{
+        EncodedTempCorrectedSequence encoded;
+        encoded.readId = readId;
 
-        if(tmpresultfileformat == 0){
-            stream >> data; 
-        }
+        std::stringstream sstream;
+
+        std::uint8_t data = bool(hq);
+        data = (data << 1) | bool(useEdits);
+        data = (data << 6) | std::uint8_t(int(type));
         
-        tmp.hq = (data >> 7) & 1;
-        tmp.useEdits = (data >> 6) & 1;
-        tmp.type = TempCorrectedSequence::Type(int(data & 0x3F));
+        sstream.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
 
-        if(tmp.useEdits){
-            size_t size;
-            stream >> size;
-            int numEdits = size;
-            tmp.edits.resize(size);
-            for(int i = 0; i < numEdits; i++){
-                stream >> tmp.edits[i].pos;
+        if(useEdits){
+            sstream << edits.size() << ' ';
+            for(const auto& edit : edits){
+                sstream << edit.pos << ' ';
             }
-            for(int i = 0; i < numEdits; i++){
-                stream >> tmp.edits[i].base;
+            for(const auto& edit : edits){
+                sstream << edit.base;
+            }
+            if(edits.size() > 0){
+                sstream << ' ';
             }
         }else{
-            stream >> tmp.sequence;
+            sstream << sequence << ' ';
         }
 
-        if(tmp.type == TempCorrectedSequence::Type::Anchor){
+        if(type == TempCorrectedSequence::Type::Anchor){
+            const auto& vec = uncorrectedPositionsNoConsensus;
+            sstream << vec.size();
+            if(!vec.empty()){
+                sstream << ' ';
+                std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(sstream, " "));
+            }
+        }else{
+            sstream << shift;
+        }
+
+        encoded.data = sstream.str();
+
+        return encoded;
+    }
+
+    void TempCorrectedSequence::decode(const EncodedTempCorrectedSequence& encoded){
+
+        readId = encoded.readId;
+
+        std::istringstream sstream(encoded.data);
+
+        std::uint8_t flags = 0;
+        sstream.read(reinterpret_cast<char*>(&flags), sizeof(std::uint8_t));
+
+        hq = (flags >> 7) & 1;
+        useEdits = (flags >> 6) & 1;
+        type = TempCorrectedSequence::Type(int(flags & 0x3F));        
+
+        if(useEdits){
+            size_t size;
+            sstream >> size;
+            int numEdits = size;
+            edits.resize(size);
+            for(int i = 0; i < numEdits; i++){
+                sstream >> edits[i].pos;
+            }
+            for(int i = 0; i < numEdits; i++){
+                sstream >> edits[i].base;
+            }
+        }else{
+            sstream >> sequence;
+        }
+
+        if(type == TempCorrectedSequence::Type::Anchor){
             size_t vecsize;
-            stream >> vecsize;
+            sstream >> vecsize;
             if(vecsize > 0){
-                auto& vec = tmp.uncorrectedPositionsNoConsensus;
+                auto& vec = uncorrectedPositionsNoConsensus;
                 vec.resize(vecsize);
                 for(size_t i = 0; i < vecsize; i++){
-                    stream >> vec[i];
+                    sstream >> vec[i];
                 }
             }
         }else{
-            stream >> tmp.shift;
-            tmp.shift = std::abs(tmp.shift);
+            sstream >> shift;
+            shift = std::abs(shift);
         }
     }
 
-    
+    bool TempCorrectedSequence::writeToBinaryStream(std::ostream& os) const{
+        if(tmpresultfileformat == 0){
+            os << readId << ' ';
+        }else if(tmpresultfileformat == 1){
+            os.write(reinterpret_cast<const char*>(&readId), sizeof(read_number));
+        }
+        
+        std::uint8_t data = bool(hq);
+        data = (data << 1) | bool(useEdits);
+        data = (data << 6) | std::uint8_t(int(type));
+        
+        if(tmpresultfileformat == 0){
+            os << data << ' ';
+        }else if(tmpresultfileformat == 1){
+            os.write(reinterpret_cast<const char*>(&data), sizeof(std::uint8_t));
+        }
 
-    return is;
-}
+        if(useEdits){
+            os << edits.size() << ' ';
+            for(const auto& edit : edits){
+                os << edit.pos << ' ';
+            }
+            for(const auto& edit : edits){
+                os << edit.base;
+            }
+            if(edits.size() > 0){
+                os << ' ';
+            }
+        }else{
+            os << sequence << ' ';
+        }
+
+        if(type == TempCorrectedSequence::Type::Anchor){
+            const auto& vec = uncorrectedPositionsNoConsensus;
+            os << vec.size();
+            if(!vec.empty()){
+                os << ' ';
+                std::copy(vec.begin(), vec.end(), std::ostream_iterator<int>(os, " "));
+            }
+        }else{
+            os << shift;
+        }
+
+        return bool(os);
+    }
+
+    bool TempCorrectedSequence::readFromBinaryStream(std::istream& is){
+        std::uint8_t data = 0;
+
+        if(tmpresultfileformat == 0){
+            is >> readId;
+        }else if(tmpresultfileformat == 1){
+            is.read(reinterpret_cast<char*>(&readId), sizeof(read_number));
+            is.read(reinterpret_cast<char*>(&data), sizeof(std::uint8_t));
+        }
+
+        std::string line;
+        if(std::getline(is, line)){
+            std::stringstream sstream(line);
+            auto& stream = sstream;
+
+            if(tmpresultfileformat == 0){
+                stream >> data; 
+            }
+            
+            hq = (data >> 7) & 1;
+            useEdits = (data >> 6) & 1;
+            type = TempCorrectedSequence::Type(int(data & 0x3F));
+
+            if(useEdits){
+                size_t size;
+                stream >> size;
+                int numEdits = size;
+                edits.resize(size);
+                for(int i = 0; i < numEdits; i++){
+                    stream >> edits[i].pos;
+                }
+                for(int i = 0; i < numEdits; i++){
+                    stream >> edits[i].base;
+                }
+            }else{
+                stream >> sequence;
+            }
+
+            if(type == TempCorrectedSequence::Type::Anchor){
+                size_t vecsize;
+                stream >> vecsize;
+                if(vecsize > 0){
+                    auto& vec = uncorrectedPositionsNoConsensus;
+                    vec.resize(vecsize);
+                    for(size_t i = 0; i < vecsize; i++){
+                        stream >> vec[i];
+                    }
+                }
+            }else{
+                stream >> shift;
+                shift = std::abs(shift);
+            }
+        }
+
+        return bool(is);
+    }
+
+
+
+    std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp){
+        tmp.writeToBinaryStream(os);
+        return os;
+    }
+
+    std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp){
+        tmp.readFromBinaryStream(is);
+        return is;
+    }
 
 
 #endif
