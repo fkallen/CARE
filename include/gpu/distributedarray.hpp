@@ -10,6 +10,7 @@
 #include <gpu/nvtxtimelinemarkers.hpp>
 #include <gpu/peeraccess.hpp>
 #include <threadpool.hpp>
+#include <util.hpp>
 
 #include <algorithm>
 #include <numeric>
@@ -1038,7 +1039,17 @@ public:
     }
 
     void writeGpuPartitionsToStream(std::ofstream& stream) const{
-        constexpr Index_t batchsize = 5000000;
+        //constexpr Index_t batchsize = 5000000;
+
+        constexpr std::size_t safety = std::size_t(64) * 1024 * 1024;
+        std::size_t availableBytes = getAvailableMemoryInKB() * 1024;
+        if(availableBytes > safety){
+            availableBytes -= safety;
+        }
+
+        const Index_t batchsize = availableBytes / (sizeof(Value_t) * sizeOfElement);
+        std::vector<Value_t> vec;
+        vec.reserve(batchsize * sizeOfElement);
 
         int currentId;
         cudaGetDevice(&currentId); CUERR;
@@ -1050,10 +1061,17 @@ public:
                 Index_t begin = batch * batchsize;
                 Index_t end = std::min(elementsPerLocation[gpu], (batch + 1) * batchsize);
                 const Index_t numElements = end-begin;
-                std::vector<Value_t> vec(numElements * sizeOfElement);
+
+                vec.resize(numElements * sizeOfElement);
+
                 const Value_t* src = offsetPtr(dataPtrPerLocation[gpu], begin);
+                TIMERSTARTCPU(writeGpuPartitionsToStream_memcpy);
                 cudaMemcpy(vec.data(), src, sizeOfElement * numElements, D2H); CUERR;
+                TIMERSTOPCPU(writeGpuPartitionsToStream_memcpy);
+
+                TIMERSTARTCPU(writeGpuPartitionsToStream_file);
                 stream.write(reinterpret_cast<const char*>(vec.data()), sizeOfElement * numElements);
+                TIMERSTOPCPU(writeGpuPartitionsToStream_file);
             }
 
         }
@@ -1061,7 +1079,15 @@ public:
     }
 
     void readGpuPartitionsFromStream(std::ifstream& stream){
-        constexpr Index_t batchsize = 5000000;
+        constexpr std::size_t safety = std::size_t(64) * 1024 * 1024;
+        std::size_t availableBytes = getAvailableMemoryInKB() * 1024;
+        if(availableBytes > safety){
+            availableBytes -= safety;
+        }
+
+        const Index_t batchsize = availableBytes / (sizeof(Value_t) * sizeOfElement);
+        std::vector<Value_t> vec;
+        vec.reserve(batchsize * sizeOfElement);
         
         int currentId;
         cudaGetDevice(&currentId); CUERR;
@@ -1073,10 +1099,18 @@ public:
                 Index_t begin = batch * batchsize;
                 Index_t end = std::min(elementsPerLocation[gpu], (batch + 1) * batchsize);
                 const Index_t numElements = end-begin;
-                std::vector<Value_t> vec(numElements * sizeOfElement);
+
+                vec.resize(numElements * sizeOfElement);
+
+                TIMERSTARTCPU(readGpuPartitionsFromStream_file);
                 stream.read(reinterpret_cast<char*>(vec.data()), sizeOfElement * numElements);
+                TIMERSTOPCPU(readGpuPartitionsFromStream_file);
+
+                
                 Value_t* dest = offsetPtr(dataPtrPerLocation[gpu], begin);
-                cudaMemcpy(dest, vec.data(), sizeOfElement * numElements, H2D); CUERR;                
+                TIMERSTARTCPU(readGpuPartitionsFromStream_memcpy);
+                cudaMemcpy(dest, vec.data(), sizeOfElement * numElements, H2D); CUERR; 
+                TIMERSTOPCPU(readGpuPartitionsFromStream_memcpy);               
             }
 
         }
