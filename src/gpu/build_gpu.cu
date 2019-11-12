@@ -744,7 +744,9 @@ namespace gpu{
                 
                 const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
                 std::ofstream rstempostream(rstempfile, std::ios::binary);
-                readStorage.writeGpuDataToStreamAndFreeGpuMem(rstempostream);
+                constexpr std::size_t GB1 = std::size_t(1) << 30;
+                std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                auto savedReadstorageGpuData = readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1);
 
                 //if all tables could be constructed at once, no need to save them to temporary file
                 if(minhashOptions.maps == int(minhashTables.size())){
@@ -758,7 +760,9 @@ namespace gpu{
                     }
 
                     std::ifstream rstempistream(rstempfile, std::ios::binary);
-                    readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
+                    readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
+                    savedReadstorageGpuData.clear();
+                    removeFile(rstempfile);
                 }else{
                     for(int i = 0; i < int(minhashTables.size()); i++){
                         int globalTableId = globalTableIds[i];
@@ -782,7 +786,8 @@ namespace gpu{
                     minhashTables.clear();
 
                     std::ifstream rstempistream(rstempfile, std::ios::binary);
-                    readStorage.allocGpuMemAndReadGpuDataFromStream(rstempistream);
+                    readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
+                    savedReadstorageGpuData.clear();
 
                     if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
                         outstream.flush();

@@ -579,6 +579,8 @@ void DistributedReadStorage::gatherSequenceLengthsToHostBufferNew(
 }
 
 
+#if 0
+
 void DistributedReadStorage::saveToFile(const std::string& filename) const{
     std::ofstream stream(filename, std::ios::binary);
 
@@ -697,9 +699,65 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
     stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
 }
 
+#else 
+
+void DistributedReadStorage::saveToFile(const std::string& filename) const{
+    std::ofstream stream(filename, std::ios::binary);
+
+    //int ser_id = serialization_id;
+    //std::size_t lengthsize = sizeof(Length_t);
+    //stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
+
+    read_number inserted = getNumberOfReads();
+
+    stream.write(reinterpret_cast<const char*>(&inserted), sizeof(read_number));
+    stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
+    stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
+    stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
+    stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
+
+    gpulengthStorage.writeCpuLengthStoreToStream(stream);
+
+    constexpr read_number batchsize = 10000000;
+    int numBatches = SDIV(getNumberOfReads(), batchsize);
+
+    {
+
+        size_t outputpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
+
+        size_t totalSequenceMemory = outputpitch * getNumberOfReads();
+        stream.write(reinterpret_cast<const char*>(&totalSequenceMemory), sizeof(size_t));
+
+        distributedSequenceData2.writeHostPartitionToStream(stream);
+        distributedSequenceData2.writeGpuPartitionsToStream(stream);
+    }
+
+    if(useQualityScores){
+        size_t outputpitch = sequenceLengthUpperBound;
+
+        size_t totalqualityMemory = outputpitch * getNumberOfReads();
+        stream.write(reinterpret_cast<const char*>(&totalqualityMemory), sizeof(size_t));
+
+        distributedQualities2.writeHostPartitionToStream(stream);
+        distributedQualities2.writeGpuPartitionsToStream(stream);
+    }
+
+    //read ids with N
+    std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
+    stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
+    stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
+}
+
+
+
+#endif
+
 void DistributedReadStorage::loadFromFile(const std::string& filename){
     loadFromFile(filename, deviceIds);
 }
+
+
+#if 0
 
 void DistributedReadStorage::loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_){
     std::ifstream stream(filename, std::ios::binary);
@@ -831,20 +889,142 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
 }
 
+#else 
 
-void DistributedReadStorage::writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const{
-    distributedSequenceData2.writeGpuPartitionsToStream(stream);
-    distributedQualities2.writeGpuPartitionsToStream(stream);
+void DistributedReadStorage::loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_){
+    std::ifstream stream(filename, std::ios::binary);
+    if(!stream)
+        throw std::runtime_error("Cannot open file " + filename);
+
+    destroy();
+
+    // std::size_t lengthsize = sizeof(Length_t);
+    // std::size_t loaded_lengthsize;
+    // stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
+
+    // if(loaded_lengthsize != lengthsize)
+    //     throw std::runtime_error("Wrong size of length type!");
+
+
+    read_number loaded_numberOfReads;
+    int loaded_sequenceLengthLowerBound;
+    int loaded_sequenceLengthUpperBound;
+    bool loaded_useQualityScores;
+
+    stream.read(reinterpret_cast<char*>(&loaded_numberOfReads), sizeof(read_number));
+    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
+    stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));
+    stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
+
+    init(deviceIds_, loaded_numberOfReads, loaded_useQualityScores, 
+        loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
+
+    numberOfInsertedReads = loaded_numberOfReads;
+
+    stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
+
+    lengthStorage.readFromStream(stream);
+
+    constexpr read_number batchsize = 10000000;
+    int numBatches = SDIV(loaded_numberOfReads, batchsize);
+
+    {
+        size_t totalSequenceMemory = 1;
+        stream.read(reinterpret_cast<char*>(&totalSequenceMemory), sizeof(size_t));
+
+        distributedSequenceData2.readHostPartitionFromStream(stream);
+        distributedSequenceData2.readGpuPartitionsFromStream(stream);
+    }
+
+    if(useQualityScores){
+
+        size_t totalqualityMemory = 1;
+        stream.read(reinterpret_cast<char*>(&totalqualityMemory), sizeof(size_t));
+
+        distributedQualities2.readHostPartitionFromStream(stream);
+        distributedQualities2.readGpuPartitionsFromStream(stream);
+    }
+
+    //read ids with N
+    std::size_t numUndeterminedReads = 0;
+    stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));
+    readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
+    stream.read(reinterpret_cast<char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
+
+}
+
+
+
+#endif
+
+
+// void DistributedReadStorage::writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const{
+//     distributedSequenceData2.writeGpuPartitionsToStream(stream);
+//     distributedQualities2.writeGpuPartitionsToStream(stream);
+//     distributedSequenceData2.deallocateGpuPartitions();
+//     distributedQualities2.deallocateGpuPartitions();  
+// }
+
+// void DistributedReadStorage::allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const{
+//     distributedSequenceData2.allocateGpuPartitions();
+//     distributedQualities2.allocateGpuPartitions();
+//     distributedSequenceData2.readGpuPartitionsFromStream(stream);
+//     distributedQualities2.readGpuPartitionsFromStream(stream);  
+// }
+
+DistributedReadStorage::SavedGpuData DistributedReadStorage::saveGpuDataAndFreeGpuMem(std::ofstream& stream, 
+                                                                                      std::size_t numBytesMustRemainFree) const{
+    auto getFreeBytes = [&](){
+        std::int64_t availableBytes = getAvailableMemoryInKB() * 1024;
+        if(availableBytes > numBytesMustRemainFree){
+            availableBytes -= numBytesMustRemainFree;
+        }else{
+            availableBytes = 0;
+        }
+        return availableBytes;
+    };
+
+    SavedGpuData saved;
+
+    if(distributedSequenceData2.isEnoughMemoryForGpuPartitions(getFreeBytes())){
+        saved.sequencedata = distributedSequenceData2.writeGpuPartitionsToMemory();
+        saved.sequenceDataInMemory = true;
+    }else{
+        distributedSequenceData2.writeGpuPartitionsToStream(stream);
+        saved.sequenceDataInMemory = false;
+    }
+
+    if(distributedQualities2.isEnoughMemoryForGpuPartitions(getFreeBytes())){
+        saved.qualitydata = distributedQualities2.writeGpuPartitionsToMemory();
+        saved.qualityDataInMemory = true;
+    }else{
+        distributedQualities2.writeGpuPartitionsToStream(stream);
+        saved.qualityDataInMemory = false;
+    }
+
     distributedSequenceData2.deallocateGpuPartitions();
     distributedQualities2.deallocateGpuPartitions();  
+
+    return saved;
 }
 
-void DistributedReadStorage::allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const{
+void DistributedReadStorage::allocGpuMemAndLoadGpuData(std::ifstream& stream, const DistributedReadStorage::SavedGpuData& saved) const{
     distributedSequenceData2.allocateGpuPartitions();
     distributedQualities2.allocateGpuPartitions();
-    distributedSequenceData2.readGpuPartitionsFromStream(stream);
-    distributedQualities2.readGpuPartitionsFromStream(stream);  
+
+    if(saved.sequenceDataInMemory){
+        distributedSequenceData2.readGpuPartitionsFromMemory(saved.sequencedata);
+    }else{
+        distributedSequenceData2.readGpuPartitionsFromStream(stream);
+    }
+
+    if(saved.qualityDataInMemory){
+        distributedQualities2.readGpuPartitionsFromMemory(saved.qualitydata);
+    }else{
+        distributedQualities2.readGpuPartitionsFromStream(stream);
+    }
 }
+
 
 
 

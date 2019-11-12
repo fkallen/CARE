@@ -1038,16 +1038,28 @@ public:
         return elementsPerLocation;
     }
 
-    void writeGpuPartitionsToStream(std::ofstream& stream) const{
-        //constexpr Index_t batchsize = 5000000;
+    void writeHostPartitionToStream(std::ofstream& stream) const{
+        const auto begin = dataPtrPerLocation[hostLocation];
+        const std::size_t size = elementsPerLocation[hostLocation] * sizeOfElement;
+        stream.write(reinterpret_cast<const char*>(begin), size);
+    }
 
-        constexpr std::size_t safety = std::size_t(64) * 1024 * 1024;
-        std::size_t availableBytes = getAvailableMemoryInKB() * 1024;
+    void readHostPartitionFromStream(std::ifstream& stream) const{
+        auto begin = dataPtrPerLocation[hostLocation];
+        const std::size_t size = elementsPerLocation[hostLocation] * sizeOfElement;
+        stream.read(reinterpret_cast<char*>(begin), size);
+    }
+
+    void writeGpuPartitionsToStream(std::ofstream& stream) const{
+        constexpr std::int64_t maxbatchsize = 5000000;
+
+        constexpr std::int64_t safety = std::int64_t(64) * 1024 * 1024;
+        std::int64_t availableBytes = getAvailableMemoryInKB() * 1024;
         if(availableBytes > safety){
             availableBytes -= safety;
         }
 
-        const Index_t batchsize = availableBytes / (sizeof(Value_t) * sizeOfElement);
+        const std::int64_t batchsize = std::min(maxbatchsize, std::int64_t(availableBytes / (sizeof(Value_t) * sizeOfElement)));
         std::vector<Value_t> vec;
         vec.reserve(batchsize * sizeOfElement);
 
@@ -1056,11 +1068,11 @@ public:
         for(int gpu = 0; gpu < numGpus; gpu++){
             cudaSetDevice(deviceIds[gpu]); CUERR;
 
-            const Index_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
-            for(Index_t batch = 0; batch < numBatches; batch++){
-                Index_t begin = batch * batchsize;
-                Index_t end = std::min(elementsPerLocation[gpu], (batch + 1) * batchsize);
-                const Index_t numElements = end-begin;
+            const std::int64_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
+            for(std::int64_t batch = 0; batch < numBatches; batch++){
+                std::int64_t begin = batch * batchsize;
+                std::int64_t end = std::min(std::int64_t(elementsPerLocation[gpu]), (batch + 1) * batchsize);
+                const std::int64_t numElements = end-begin;
 
                 vec.resize(numElements * sizeOfElement);
 
@@ -1079,13 +1091,15 @@ public:
     }
 
     void readGpuPartitionsFromStream(std::ifstream& stream){
-        constexpr std::size_t safety = std::size_t(64) * 1024 * 1024;
-        std::size_t availableBytes = getAvailableMemoryInKB() * 1024;
+        constexpr std::int64_t maxbatchsize = 5000000;
+
+        constexpr std::int64_t safety = std::int64_t(64) * 1024 * 1024;
+        std::int64_t availableBytes = getAvailableMemoryInKB() * 1024;
         if(availableBytes > safety){
             availableBytes -= safety;
         }
 
-        const Index_t batchsize = availableBytes / (sizeof(Value_t) * sizeOfElement);
+        const std::int64_t batchsize = std::min(maxbatchsize, std::int64_t(availableBytes / (sizeof(Value_t) * sizeOfElement)));
         std::vector<Value_t> vec;
         vec.reserve(batchsize * sizeOfElement);
         
@@ -1094,11 +1108,11 @@ public:
         for(int gpu = 0; gpu < numGpus; gpu++){
             cudaSetDevice(deviceIds[gpu]); CUERR;
 
-            const Index_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
-            for(Index_t batch = 0; batch < numBatches; batch++){
-                Index_t begin = batch * batchsize;
-                Index_t end = std::min(elementsPerLocation[gpu], (batch + 1) * batchsize);
-                const Index_t numElements = end-begin;
+            const std::int64_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
+            for(std::int64_t batch = 0; batch < numBatches; batch++){
+                std::int64_t begin = batch * batchsize;
+                std::int64_t end = std::min(std::int64_t(elementsPerLocation[gpu]), (batch + 1) * batchsize);
+                const std::int64_t numElements = end-begin;
 
                 vec.resize(numElements * sizeOfElement);
 
@@ -1116,6 +1130,60 @@ public:
         }
         cudaSetDevice(currentId); CUERR;
     }
+
+
+
+    std::vector<std::vector<char>> writeGpuPartitionsToMemory() const{
+        std::vector<std::vector<char>> gpuPartitionsOnHost;
+        gpuPartitionsOnHost.reserve(numGpus);
+
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            cudaSetDevice(deviceIds[gpu]); CUERR;
+
+            std::size_t bytes = elementsPerLocation[gpu] * sizeOfElement;
+            std::vector<char> vec(bytes);
+            TIMERSTARTCPU(writeGpuPartitionsToMemory_memcpy);
+            cudaMemcpy(vec.data(), dataPtrPerLocation[gpu], bytes, D2H); CUERR;
+            TIMERSTOPCPU(writeGpuPartitionsToMemory_memcpy);
+
+            gpuPartitionsOnHost.emplace_back(std::move(vec));
+        }
+        cudaSetDevice(currentId); CUERR;
+
+        return gpuPartitionsOnHost;
+    }
+
+    void readGpuPartitionsFromMemory(const std::vector<std::vector<char>>& savedpartitions){
+        assert(savedpartitions.size() == numGpus);
+
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            cudaSetDevice(deviceIds[gpu]); CUERR;
+
+            std::size_t bytes = savedpartitions[gpu].size();
+            TIMERSTARTCPU(readGpuPartitionsFromMemory_memcpy);
+            cudaMemcpy(dataPtrPerLocation[gpu], savedpartitions[gpu].data(), bytes, H2D); CUERR;
+            TIMERSTOPCPU(readGpuPartitionsFromMemory_memcpy);
+        }
+        cudaSetDevice(currentId); CUERR;
+    }
+
+    bool isEnoughMemoryForGpuPartitions(std::size_t availablehostbytes) const{
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            const std::size_t gpubytes = elementsPerLocation[gpu] * sizeOfElement;
+            if(availablehostbytes < gpubytes){
+                return false;
+            }else{
+                availablehostbytes -= gpubytes;
+            }
+        }
+        return true;
+    }
+
+
 
     void deallocateGpuPartitions(){
         int currentId;

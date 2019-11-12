@@ -31,6 +31,18 @@ public:
         int minimumSequenceLength = std::numeric_limits<int>::max();
     };
 
+    struct SavedGpuData{
+        std::vector<std::vector<char>> sequencedata;
+        std::vector<std::vector<char>> qualitydata;
+
+        bool sequenceDataInMemory = false;
+        bool qualityDataInMemory = false;
+
+        void clear(){
+            *this = SavedGpuData{};
+        }
+    };
+
     using Length_t = int;
 
     using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
@@ -90,8 +102,10 @@ public:
     void saveToFile(const std::string& filename) const;
     void loadFromFile(const std::string& filename);
     void loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_);
-    void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
-    void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
+    // void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
+    // void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
+    SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numBytesMustRemainFree) const;
+    void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
     void setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
     void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
