@@ -4166,10 +4166,10 @@ namespace gpu{
                                         msa_weights_row_pitch,
                                         debug); CUERR;
 
-        check_built_msa_kernel<<<n_subjects, 128>>>(d_msapointers,
+        check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(d_msapointers,
                                                     d_indices_per_subject,
                                                     n_subjects,
-                                                    msa_weights_row_pitch);
+                                                    msa_weights_row_pitch); CUERR;
     }
 
 
