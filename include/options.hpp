@@ -66,6 +66,7 @@ namespace care{
         bool showProgress = true;
         bool canUseGpu = false;
         int max_candidates = 0;
+        int gpuParallelBatches = 1;
         std::vector<int> deviceIds;
 	};
 

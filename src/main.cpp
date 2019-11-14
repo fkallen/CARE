@@ -39,8 +39,10 @@ int main(int argc, char** argv){
 		//("threadsForGPUs", "Number of thread to use for GPU work. Must be not be greater than threads and not negative", cxxopts::value<int>()->default_value("0"))
 		("base", "Graph parameter for cutoff (alpha*pow(base,edge))", cxxopts::value<float>()->default_value("1.1")->implicit_value("1.1"))
 		("alpha", "Graph parameter for cutoff (alpha*pow(base,edge))", cxxopts::value<float>()->default_value("1.0")->implicit_value("1.0"))
-		("batchsize", "This mainly affects the GPU alignment since the alignments of batchsize reads to their candidates is done in parallel.Must be greater than 0.",
-		cxxopts::value<int>()->default_value("5"))
+		("batchsize", "Number of reads to correct in a single batch. Must be greater than 0.",
+		cxxopts::value<int>()->default_value("1000")->implicit_value("1000"))
+		("gpuParallelBatches", "Number of batches to process in parallel in the GPU version. Must be greater than 0.",
+		cxxopts::value<int>()->default_value("4")->implicit_value("4"))
 		("useQualityScores", "If set, quality scores (if any) are considered during read correction",
 		cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
 		("candidateCorrection", "If set, candidate reads will be corrected,too.",

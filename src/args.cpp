@@ -116,6 +116,7 @@ namespace args{
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
+        result.gpuParallelBatches = pr["gpuParallelBatches"].as<int>();
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 
