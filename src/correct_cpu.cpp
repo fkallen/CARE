@@ -17,6 +17,8 @@
 #include <sequencefileio.hpp>
 #include "cpu_correction_core.hpp"
 #include <threadpool.hpp>
+#include <memoryfile.hpp>
+#include <util.hpp>
 
 #include <array>
 #include <chrono>
@@ -1048,12 +1050,21 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
     std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
 
-    std::ofstream outputstream;
+    // std::ofstream outputstream;
 
-    outputstream = std::move(std::ofstream(tmpfiles[0]));
-    if(!outputstream){
-        throw std::runtime_error("Could not open output file " + tmpfiles[0]);
-    }
+    // outputstream = std::move(std::ofstream(tmpfiles[0]));
+    // if(!outputstream){
+    //     throw std::runtime_error("Could not open output file " + tmpfiles[0]);
+    // }
+
+    const std::size_t availableMemory = getAvailableMemoryInKB();
+    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(1) << 30);
+
+    auto heapusageOfTCS = [](const auto& x){
+        return x.data.capacity();
+    };
+
+    MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
 
     std::ofstream featurestream;
       //if(correctionOptions.extractFeatures){
@@ -1081,11 +1092,13 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
     }
 
-    auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp){
-        if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-            outputstream << tmp << '\n';
-        }
-    };
+    auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
+          //std::unique_lock<std::mutex> l(outputstreammutex);
+          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+              //outputstream << tmp << '\n';
+              partialResults.storeElement(std::move(encoded));
+          }
+      };
 
     std::vector<std::uint8_t> correctionStatusFlagsPerRead;
     std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
@@ -1489,10 +1502,14 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         }else{
             //collect results of batch into a single buffer, then write results to file in another thread
             std::vector<TempCorrectedSequence> anchorcorrections;
+            std::vector<EncodedTempCorrectedSequence> encodedanchorcorrections;
             anchorcorrections.reserve(correctionTasks.size());
+            encodedanchorcorrections.reserve(correctionTasks.size());
 
             std::vector<std::vector<TempCorrectedSequence>> candidatecorrectionsPerTask;
+            std::vector<std::vector<EncodedTempCorrectedSequence>> encodedcandidatecorrectionsPerTask;
             candidatecorrectionsPerTask.reserve(correctionTasks.size());
+            encodedcandidatecorrectionsPerTask.reserve(correctionTasks.size());
 
             for(size_t i = 0; i < correctionTasks.size(); i++){
                 auto& task = correctionTasks[i];
@@ -1501,22 +1518,34 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 if(task.active){
                     if(task.corrected){                        
                         anchorcorrections.emplace_back(std::move(task.anchoroutput));
+                        encodedanchorcorrections.emplace_back(anchorcorrections.back().encode());
                     }
                     if(task.candidatesoutput.size() > 0){
                         candidatecorrectionsPerTask.emplace_back(std::move(task.candidatesoutput));
+
+                        std::vector<EncodedTempCorrectedSequence> encodedvec;
+                        for(const auto& tcs : candidatecorrectionsPerTask.back()){
+                            encodedvec.emplace_back(tcs.encode());
+                        }
+
+                        encodedcandidatecorrectionsPerTask.emplace_back(std::move(encodedvec));
                     } 
                 }
             }
 
             auto outputfunction = [&,
                                    anchorcorrections = std::move(anchorcorrections),
-                                   candidatecorrectionsPerTask = std::move(candidatecorrectionsPerTask)](){
-                for(const auto& seq : anchorcorrections){
-                    saveCorrectedSequence(seq);
+                                   candidatecorrectionsPerTask = std::move(candidatecorrectionsPerTask),
+                                   encodedanchorcorrections = std::move(encodedanchorcorrections),
+                                   encodedcandidatecorrectionsPerTask = std::move(encodedcandidatecorrectionsPerTask)
+                                   ](){
+                for(int i = 0; i < int(anchorcorrections.size()); i++){
+                    saveCorrectedSequence(anchorcorrections[i], encodedanchorcorrections[i]);
                 }
-                for(const auto& candidateCorrections : candidatecorrectionsPerTask){
-                    for(const auto& seq : candidateCorrections){
-                        saveCorrectedSequence(seq);
+
+                for(int i = 0; i < (candidatecorrectionsPerTask.size()); i++){
+                    for(int j = 0; j < (candidatecorrectionsPerTask[i].size()); j++){
+                        saveCorrectedSequence(candidatecorrectionsPerTask[i][j], encodedcandidatecorrectionsPerTask[i][j]);
                     }
                 }
             };
@@ -1562,7 +1591,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
     featurestream.flush();
-    outputstream.flush();
+    //outputstream.flush();
+    partialResults.flush();
 
     minhasher.destroy();
     readStorage.destroy();
@@ -1618,11 +1648,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
         TIMERSTARTCPU(merge);
 
-        mergeResultFiles(fileOptions.tempdirectory,
+        mergeResultFiles(
+                        fileOptions.tempdirectory,
                         sequenceFileProperties.nReads, 
                         fileOptions.inputfile, 
                         fileOptions.format, 
-                        tmpfiles, 
+                        partialResults, 
                         fileOptions.outputfile, 
                         false);
 
