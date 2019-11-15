@@ -69,7 +69,6 @@
 namespace care{
 namespace gpu{
 
-    constexpr int nParallelBatches = 4;
     //constexpr std::uint8_t maxSavedCorrectedCandidatesPerRead = 5;
 
     //read status bitmask
@@ -982,9 +981,16 @@ namespace gpu{
             }
         };
 
-        threadpool.parallelFor(0, batch.initialNumberOfAnchorIds, [=](auto begin, auto end, auto /*threadId*/){
-            maketasks(begin, end);
-        });
+#if 1
+        threadpool.parallelFor(0, 
+            batch.initialNumberOfAnchorIds, 
+            [=](auto begin, auto end, auto /*threadId*/){
+                maketasks(begin, end);
+            }
+        );
+#else 
+        maketasks(0, batch.initialNumberOfAnchorIds);
+#endif
 
         allChunksFinished();
     }
@@ -3408,8 +3414,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       TransitionFunctionData transFuncData;
 
-      std::array<Batch, nParallelBatches> batches;
-      std::array<Batch*, nParallelBatches> batchPointers;
+      const int nParallelBatches = runtimeOptions.gpuParallelBatches;
+      const int batchsize = correctionOptions.batchsize;
+
+      std::cerr << "Using " << nParallelBatches << " batches of size " << batchsize << " for correction\n";
+
+      std::vector<Batch> batches(nParallelBatches);
 
       BackgroundThread outputThread;
 
@@ -3446,7 +3456,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].transFuncData = &transFuncData;
           batches[i].outputThread = &outputThread;
-          batchPointers[i] = &batches[i];
 
           deviceIdIndex = (deviceIdIndex + 1) % deviceIds.size();
       }
