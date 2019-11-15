@@ -25,6 +25,10 @@
 #include <iterator>
 #include <unordered_map>
 
+//#ifdef __NVCC__
+//#include <gpu/nvtxtimelinemarkers.hpp>
+//#endif
+
 
 
 namespace care{
@@ -465,9 +469,14 @@ namespace care{
                 // }
                 // const Index_t index = std::distance(keys.begin(), lb);
 
+                //nvtx::push_range("check empty key", 6);
                 auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
+                //nvtx::pop_range("check empty key");
+
                 if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
+                    //nvtx::push_range("fetch index",3);
                     const Index_t index = keyIndexMap.get(key);
+                    //nvtx::pop_range("fetch index");
 
 				    //if(index != std::numeric_limits<Index_t>::max()){
 				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};

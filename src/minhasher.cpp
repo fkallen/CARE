@@ -16,7 +16,11 @@
 #include <vector>
 #include <numeric>
 
+//#define NVTXTIMELINE
+
+#ifdef NVTXTIMELINE
 #include <gpu/nvtxtimelinemarkers.hpp>
+#endif
 
 
 namespace care{
@@ -355,17 +359,14 @@ namespace care{
     std::vector<Minhasher::Result_t> Minhasher::getCandidates(const std::string& sequence,
                                         int num_hits,
                                         std::uint64_t max_number_candidates) const noexcept{
-        std::vector<Result_t> result;
 
         if(num_hits == 1){
-            result = getCandidates_any_map(sequence, max_number_candidates);
+            return getCandidates_any_map(sequence, max_number_candidates);
         }else if(num_hits == minparams.maps){
-            result = getCandidates_all_maps(sequence, max_number_candidates);
+            return getCandidates_all_maps(sequence, max_number_candidates);
         }else{
-            result = getCandidates_some_maps(sequence, num_hits, max_number_candidates);
+            return getCandidates_some_maps(sequence, num_hits, max_number_candidates);
         }
-
-        return result;
     }
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_any_map(const std::string& sequence,
@@ -376,7 +377,13 @@ namespace care{
             return {};
 
         //TIMERSTARTCPU(minhashfunc);
+#ifdef NVTXTIMELINE        
+        nvtx::push_range("hashing", 3);
+#endif        
         auto hashValues = minhashfunc(sequence);
+#ifdef NVTXTIMELINE        
+        nvtx::pop_range("hashing");
+#endif        
         //TIMERSTOPCPU(minhashfunc);
 
         using Range_t = std::pair<const Value_t*, const Value_t*>;
@@ -441,6 +448,10 @@ namespace care{
 
         //TIMERSTARTCPU(query);
 
+#ifdef NVTXTIMELINE
+        nvtx::push_range("map queries", 4);
+#endif
+
         for(int map = 0; map < minparams.maps; ++map){
             kmer_type key = hashValues[map] & key_mask;
             auto entries_range = queryMap(map, key);
@@ -450,14 +461,26 @@ namespace care{
                 ranges.emplace_back(entries_range);
             }
         }
+#ifdef NVTXTIMELINE
+        nvtx::pop_range("map queries");
+#endif 
+
 #endif
         //TIMERSTOPCPU(query);
 
-        //TIMERSTARTCPU(setunion);
+        //TIMERSTARTCPU(setunion);     
+#ifdef NVTXTIMELINE         
+        nvtx::push_range("setunion", 5);
+#endif
+
         std::vector<Value_t> allUniqueResults(maximumResultSize);
 
         auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
         allUniqueResults.erase(resultEnd, allUniqueResults.end());
+
+#ifdef NVTXTIMELINE        
+        nvtx::pop_range("setunion");
+#endif 
 
         //TIMERSTOPCPU(setunion);
 
