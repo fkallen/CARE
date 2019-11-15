@@ -579,7 +579,7 @@ void DistributedReadStorage::gatherSequenceLengthsToHostBufferNew(
 }
 
 
-#if 0
+#if 1
 
 void DistributedReadStorage::saveToFile(const std::string& filename) const{
     std::ofstream stream(filename, std::ios::binary);
@@ -757,7 +757,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename){
 }
 
 
-#if 0
+#if 1
 
 void DistributedReadStorage::loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_){
     std::ifstream stream(filename, std::ios::binary);
