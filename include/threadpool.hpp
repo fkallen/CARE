@@ -179,17 +179,19 @@ private:
     template<bool waitForCompletion, class Index_t, class Func>
     void parallelFor_impl(Index_t firstIndex, Index_t lastIndex, Func&& loop, std::size_t numThreads){
         //2 debug variables
-        volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
-        volatile int initialNumUnfinishedParallelForChunks = numUnfinishedParallelForChunks;
+        // volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
+        // volatile int initialNumUnfinishedParallelForChunks = numUnfinishedParallelForChunks;
 
-        if(waitForCompletion){
-            ++numRunningParallelForWithWaiting;
-        }
+        // if(waitForCompletion){
+        //     ++numRunningParallelForWithWaiting;
+        // }
+
+        assert(waitForCompletion);
 
         std::mutex m;
         std::condition_variable cv;
         std::size_t finishedWork = 0;
-        std::size_t startedWork = 0;
+        //std::size_t startedWork = 0;
         std::size_t enqueuedWork = 0;
 
         Index_t totalIterations = lastIndex - firstIndex;
@@ -200,6 +202,7 @@ private:
 
             Index_t begin = firstIndex;
             Index_t end = begin + chunksize;
+#if 0            
             for(Index_t c = 0; c < chunks-1; c++){
                 if(c < leftover){
                     end++;
@@ -208,17 +211,17 @@ private:
                 if(end-begin > 0){
                     if(waitForCompletion){
                         enqueuedWork++;
-                        ++numUnfinishedParallelForChunks;
+                        //++numUnfinishedParallelForChunks;
 
                         enqueue([&, begin, end, c](){
-                            {
-                                std::lock_guard<std::mutex> lg(m);
-                                startedWork++;
-                            }
+                            // {
+                            //     std::lock_guard<std::mutex> lg(m);
+                            //     startedWork++;
+                            // }
 
                             loop(begin, end, c);
 
-                            --numUnfinishedParallelForChunks;
+                            //--numUnfinishedParallelForChunks;
 
                             if(waitForCompletion){
                                 std::lock_guard<std::mutex> lg(m);
@@ -226,21 +229,51 @@ private:
                                 cv.notify_one();
                             }
                         });
-                    }else{
-                        ++numUnfinishedParallelForChunks;
+                    }//else{
+                    //     //++numUnfinishedParallelForChunks;
 
-                        enqueue([&, begin, end, c](){
-                            loop(begin, end, c);
+                    //     enqueue([&, begin, end, c](){
+                    //         loop(begin, end, c);
 
-                            --numUnfinishedParallelForChunks;
-                        });
-                    }
+                    //     //    --numUnfinishedParallelForChunks;
+                    //     });
+                    // }
+
+                    begin = end;
+                    end += chunksize;
+                }                
+            }
+#else 
+
+            std::vector<std::function<void()>> chunkFunctions;
+            chunkFunctions.reserve(chunks-1);
+
+            for(Index_t c = 0; c < chunks-1; c++){
+                if(c < leftover){
+                    end++;
+                }
+
+                if(end-begin > 0){
+                    enqueuedWork++;
+
+                    chunkFunctions.emplace_back([&, begin, end, c](){
+
+                        loop(begin, end, c);
+
+                        std::lock_guard<std::mutex> lg(m);
+                        finishedWork++;
+                        cv.notify_one();
+                    });
 
                     begin = end;
                     end += chunksize;
                 }                
             }
 
+            pq->enqueue(chunkFunctions.begin(), chunkFunctions.end());
+
+
+#endif
             if(end-begin > 0){
                 loop(begin, end, chunks-1);                
             }
@@ -250,22 +283,22 @@ private:
                 std::unique_lock<std::mutex> ul(m);
                 if(finishedWork != enqueuedWork){
                     //std::cerr << "Waiting\n";
-                    int waitIter = 0;
+                    //int waitIter = 0;
                     cv.wait(ul, [&](){
-                        constexpr int warningThreshold = 50;
-                        constexpr int userinputThreshold = 1000;
-                        waitIter++;
+                        // constexpr int warningThreshold = 50;
+                        // constexpr int userinputThreshold = 1000;
+                        // waitIter++;
 
-                        if(waitIter > warningThreshold){
-                            std::cerr << "Iter " << waitIter << ", wait for completion " << startedWork << " / " 
-                                                << finishedWork << " / " << enqueuedWork << "\n";
-                        }
+                        // if(waitIter > warningThreshold){
+                        //     std::cerr << "Iter " << waitIter << ", wait for completion " << startedWork << " / " 
+                        //                         << finishedWork << " / " << enqueuedWork << "\n";
+                        // }
 
-                        if(waitIter > userinputThreshold){
-                            int x;
-                            std::cerr << "Iter " << waitIter << ", enter number to continue\n";
-                            std::cin >> x;
-                        }
+                        // if(waitIter > userinputThreshold){
+                        //     int x;
+                        //     std::cerr << "Iter " << waitIter << ", enter number to continue\n";
+                        //     std::cin >> x;
+                        // }
                         
                         return finishedWork == enqueuedWork;
                     });
@@ -274,14 +307,14 @@ private:
             }
         }
 
-        if(waitForCompletion){
-            --numRunningParallelForWithWaiting;
-        }
+        // if(waitForCompletion){
+        //     --numRunningParallelForWithWaiting;
+        // }
     }
 
     std::unique_ptr<am::parallel_queue> pq;
-    std::atomic_int numRunningParallelForWithWaiting{0};
-    std::atomic_int numUnfinishedParallelForChunks{0};
+    // std::atomic_int numRunningParallelForWithWaiting{0};
+    // std::atomic_int numUnfinishedParallelForChunks{0};
 };
 
 
