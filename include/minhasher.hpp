@@ -469,6 +469,7 @@ namespace care{
                 // }
                 // const Index_t index = std::distance(keys.begin(), lb);
 
+                /*
                 //nvtx::push_range("check empty key", 6);
                 auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
                 //nvtx::pop_range("check empty key");
@@ -486,6 +487,12 @@ namespace care{
                 }else{
                     return {}; //key has no values
                 }
+                */
+
+               //nvtx::push_range("fetch index",3);
+                const Index_t index = keyIndexMap.get(key);
+                return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+                //nvtx::pop_range("fetch index");
 			}
 
 		};
