@@ -12,7 +12,7 @@
 #include <sequence.hpp>
 #include <featureextractor.hpp>
 #include <forestclassifier.hpp>
-#include <nn_classifier.hpp>
+//#include <nn_classifier.hpp>
 #include <minhasher.hpp>
 #include <options.hpp>
 #include <candidatedistribution.hpp>
@@ -369,7 +369,7 @@ namespace gpu{
         std::function<void(const SerializedFeature&)> saveFeature;
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
-        NN_Correction_Classifier nnClassifier;
+        //NN_Correction_Classifier nnClassifier;
 	};
 
     std::string nameOf(const BatchState& state){
@@ -2534,6 +2534,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
         assert(batch.state == expectedState);
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Convnet);
 
+#if 0        
         cudaSetDevice(batch.deviceId); CUERR;
 
         DataArrays& dataArrays = batch.dataArrays;
@@ -2643,6 +2644,7 @@ cudaMemcpyAsync(dataArrays.h_consensus,
             }
 
         }
+#endif 
 
         batch.setState(BatchState::WriteResults, expectedState);
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
@@ -3505,13 +3507,14 @@ void correct_gpu(const MinhashOptions& minhashOptions,
          transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
       }
 
+#if 0
       NN_Correction_Classifier_Base nnClassifierBase;
       NN_Correction_Classifier nnClassifier;
       if(correctionOptions.correctionType == CorrectionType::Convnet){
           nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
           nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
       }
-
+#endif 
       // BEGIN CORRECTION
 
 

@@ -13,7 +13,7 @@
 #include "rangegenerator.hpp"
 #include "featureextractor.hpp"
 #include "forestclassifier.hpp"
-#include "nn_classifier.hpp"
+//#include "nn_classifier.hpp"
 #include <sequencefileio.hpp>
 #include "cpu_correction_core.hpp"
 #include <threadpool.hpp>
@@ -873,6 +873,7 @@ namespace cpu{
             }
         }
 
+#if 0
         void correctSubjectWithNeuralNetwork(TaskData& data,
                                             CorrectionTask& task,
                                             const NN_Correction_Classifier& nnClassifier,
@@ -915,6 +916,7 @@ namespace cpu{
                     }
                 }*/
         }
+#endif 
 
         void setCorrectionStatusFlags(const TaskData& taskdata, 
                                         CorrectionTask& task,
@@ -1080,12 +1082,14 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
     #endif
 
+#if 0
     NN_Correction_Classifier_Base nnClassifierBase;
     NN_Correction_Classifier nnClassifier;
     if(correctionOptions.correctionType == CorrectionType::Convnet){
         nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
         nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
     }
+#endif 
 
     ForestClassifier forestClassifier;
     if(correctionOptions.correctionType == CorrectionType::Forest){
