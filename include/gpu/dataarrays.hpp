@@ -5,23 +5,23 @@
 #include "bestalignment.hpp"
 #include "msa.hpp"
 #include "utility_kernels.cuh"
-#include <gpu/thrust_custom_allocators.hpp>
+//#include <gpu/thrust_custom_allocators.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/kernels.hpp>
 #include <config.hpp>
 
-#ifdef __NVCC__
+// #ifdef __NVCC__
 
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
+// #include <thrust/host_vector.h>
+// #include <thrust/device_vector.h>
 
-#include <thrust/fill.h>
-#include <thrust/device_ptr.h>
-#include <thrust/async/for_each.h>
+// #include <thrust/fill.h>
+// #include <thrust/device_ptr.h>
+// #include <thrust/async/for_each.h>
 
-#include <thrust/system/cuda/experimental/pinned_allocator.h>
+// #include <thrust/system/cuda/experimental/pinned_allocator.h>
 
-#endif
+// #endif
 
 namespace care {
 namespace gpu {
