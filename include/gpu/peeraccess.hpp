@@ -148,6 +148,7 @@
                                 if(status != cudaErrorPeerAccessNotEnabled){
                                     CUERR; //error
                                 }
+                                cudaGetLastError(); //reset error state;
                             }
                         }
                     }
