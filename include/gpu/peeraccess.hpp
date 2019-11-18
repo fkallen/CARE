@@ -138,7 +138,7 @@
                     cudaSetDevice(i); CUERR;
                     for(int k = 0; k < numGpus; k++){
                         if(canAccessPeer(i,k)){
-                            cudaError_t status = cudaDeviceDisablePeerAccess(k); CUERR;
+                            cudaError_t status = cudaDeviceDisablePeerAccess(k);
                             if(status == cudaSuccess){
                                 //if device i can disable access to device k, it must have been enabled
                                 result[i * numGpus + k] = 1;
