@@ -76,14 +76,22 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound);
 
         updateMemoryLimits();
-        distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, maximumUsableBytesPerGpu, getMaximumNumberOfReads(), intsPerSequence));
+        distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, 
+                                                                                        maximumUsableBytesPerGpu, 
+                                                                                        DistributedArrayLayout::GPUBlock,
+                                                                                        getMaximumNumberOfReads(), 
+                                                                                        intsPerSequence));
 
         //updateMemoryLimits();
         //distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, maximumUsableBytesPerGpu, getMaximumNumberOfReads(), 1));
 
         if(useQualityScores){
             updateMemoryLimits();
-            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, maximumUsableBytesPerGpu, getMaximumNumberOfReads(), sequenceLengthUpperBound));
+            distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, 
+                                                                                maximumUsableBytesPerGpu, 
+                                                                                DistributedArrayLayout::GPUBlock,
+                                                                                getMaximumNumberOfReads(), 
+                                                                                sequenceLengthUpperBound));
         }
 
         getGpuMemoryInfo();
@@ -160,9 +168,9 @@ void DistributedReadStorage::destroy(){
     std::vector<size_t> fractions(deviceIds.size(), 0);
     lengthStorage = std::move(LengthStore_t{});
     gpulengthStorage = std::move(GPULengthStore_t{});
-    distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, 0, 0));
-    distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, 0, 0));
-    distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, fractions, 0, 0));
+    distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
+    distributedSequenceLengths2 = std::move(DistributedArray<Length_t, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
+    distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, fractions, DistributedArrayLayout::GPUBlock, 0, 0));
     statistics = Statistics{};
 }
 

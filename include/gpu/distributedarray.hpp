@@ -27,11 +27,15 @@
 
 
 
-
+enum class DistributedArrayLayout{
+    GPUBlock, GPUEqual
+};
 
 template<class Value_t, class Index_t = size_t>
 struct DistributedArray{
 public:
+
+    
 
     struct GatherHandleStruct{
         SimpleAllocationPinnedHost<Index_t> pinnedLocalIndices;
@@ -63,6 +67,7 @@ public:
     int numLocations; //numGpus + 1
     int hostLocation; // numLocations - 1
     int preferedLocation;
+    DistributedArrayLayout layout;
     Index_t numRows;
     Index_t numColumns;
     size_t sizeOfElement;
@@ -75,15 +80,21 @@ public:
     PeerAccess_t peerAccess;
 
     DistributedArray()
-        : DistributedArray({},{},0,0,-1){
+        : DistributedArray({},{}, DistributedArrayLayout::GPUBlock, 0,0,-1){
     }
 
-    DistributedArray(std::vector<int> deviceIds_, std::vector<size_t> memoryLimitBytesPerGPU_, Index_t numRows_, Index_t numCols_, int preferedLocation_ = -1)
+    DistributedArray(std::vector<int> deviceIds_, 
+                    std::vector<size_t> memoryLimitBytesPerGPU_, 
+                    DistributedArrayLayout layout_,
+                    Index_t numRows_, 
+                    Index_t numCols_, 
+                    int preferedLocation_ = -1)
                     : debug(false),
                     numGpus(deviceIds_.size()),
                     numLocations(numGpus+1),
                     hostLocation(numLocations-1),
                     preferedLocation(preferedLocation_),
+                    layout(layout_),
                     numRows(numRows_),
                     numColumns(numCols_),
                     sizeOfElement(numCols_ * sizeof(Value_t)),
@@ -118,19 +129,45 @@ public:
             }else{
 
                 size_t remainingElements = numRows;
+                if(layout == DistributedArrayLayout::GPUBlock){
+                    for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
+                        cudaSetDevice(deviceIds[gpu]); CUERR;
 
-                for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
-                    cudaSetDevice(deviceIds[gpu]); CUERR;
+                        size_t rows = std::min(remainingElements, memoryLimitBytesPerGPU[gpu] / sizeOfElement);
+                        elementsPerLocation[gpu] = rows;
+                        if(rows == 0){
+                            continue;
+                        }
 
-                    size_t rows = std::min(remainingElements, memoryLimitBytesPerGPU[gpu] / sizeOfElement);
-                    elementsPerLocation[gpu] = rows;
-                    if(rows == 0){
-                        continue;
+                        cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
+
+                        remainingElements -= rows;
+                    }
+                }else if(layout == DistributedArrayLayout::GPUEqual){
+                    std::size_t totalPossibleElementsPerGpu = 0;
+
+                    std::vector<std::size_t> possibleElementsPerGpu(numGpus);
+                    for(int gpu = 0; gpu < numGpus; gpu++){
+                        possibleElementsPerGpu[gpu] = memoryLimitBytesPerGPU[gpu] / sizeOfElement;
+                        elementsPerLocation[gpu] = 0;
+
+                        totalPossibleElementsPerGpu += possibleElementsPerGpu[gpu];
                     }
 
-                    cudaMalloc(&(dataPtrPerLocation[gpu]), rows * sizeOfElement); CUERR;
+                    for(std::size_t i = 0; i < std::min(totalPossibleElementsPerGpu, std::size_t(numRows)); i++){
+                        const int gpu = i % numGpus;
+                        elementsPerLocation[gpu]++;
+                    }
 
-                    remainingElements -= rows;
+                    for(int gpu = 0; gpu < numGpus; gpu++){
+                        cudaMalloc(&(dataPtrPerLocation[gpu]), elementsPerLocation[gpu] * sizeOfElement); CUERR;
+                    }
+
+                    if(numRows > totalPossibleElementsPerGpu){
+                        remainingElements = numRows - totalPossibleElementsPerGpu;
+                    }else{
+                        remainingElements = 0;
+                    }
                 }
 
                 //remaining elements are stored in host memory
