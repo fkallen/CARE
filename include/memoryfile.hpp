@@ -163,11 +163,29 @@ private:
             //check if element could be saved in memory, disregaring vector growth
             if(vector.capacity() * sizeof(T) + usedHeapMemory + getHeapUsageOfElement(element) <= maxMemoryOfVectorAndHeap){
                 if(vector.size() < vector.capacity()){
-                    return storeInMemory(std::move(element));
+                    bool retval = true;
+
+                    try{
+                        retval = storeInMemory(std::move(element));
+                    }catch(std::bad_alloc& e){
+                        isUsingFile = true;
+                        retval = storeInFile(std::move(element));
+                    }
+
+                    return retval;
                 }else{ //size == capacity
                     
                     if(2 * vector.capacity() * sizeof(T) + usedHeapMemory + getHeapUsageOfElement(element) <= maxMemoryOfVectorAndHeap){
-                        return storeInMemory(std::move(element));
+                        bool retval = true;
+
+                        try{
+                            retval = storeInMemory(std::move(element));
+                        }catch(std::bad_alloc& e){
+                            isUsingFile = true;
+                            retval = storeInFile(std::move(element));
+                        }
+
+                        return retval;
                     }else{
                         isUsingFile = true;
                         return storeInFile(std::move(element));
