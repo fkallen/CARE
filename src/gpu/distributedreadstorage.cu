@@ -30,6 +30,8 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                     int minimum_sequence_length, int maximum_sequence_length){
     assert(minimum_sequence_length <= maximum_sequence_length);
 
+    constexpr DistributedArrayLayout layout = DistributedArrayLayout::GPUBlock;
+
     isReadOnly = false;
     deviceIds = deviceIds_;
     numberOfInsertedReads = 0;
@@ -78,7 +80,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         updateMemoryLimits();
         distributedSequenceData2 = std::move(DistributedArray<unsigned int, read_number>(deviceIds, 
                                                                                         maximumUsableBytesPerGpu, 
-                                                                                        DistributedArrayLayout::GPUBlock,
+                                                                                        layout,
                                                                                         getMaximumNumberOfReads(), 
                                                                                         intsPerSequence));
 
@@ -89,7 +91,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
             updateMemoryLimits();
             distributedQualities2 = std::move(DistributedArray<char, read_number>(deviceIds, 
                                                                                 maximumUsableBytesPerGpu, 
-                                                                                DistributedArrayLayout::GPUBlock,
+                                                                                layout,
                                                                                 getMaximumNumberOfReads(), 
                                                                                 sequenceLengthUpperBound));
         }
