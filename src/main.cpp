@@ -106,6 +106,10 @@ int main(int argc, char** argv){
 		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
         ("nnmodel", "DL model",
 		cxxopts::value<std::string>()->default_value("")->implicit_value(""))
+
+		("memHashtables", "Memory limit for hash tables and hash table construction",
+		cxxopts::value<std::string>()->default_value("0")->implicit_value("0"))
+		
 	;
 
 	options.parse_positional({"deviceIds"});
@@ -122,6 +126,7 @@ int main(int argc, char** argv){
 	GoodAlignmentProperties goodAlignmentProperties = args::to<GoodAlignmentProperties>(parseresults);
 	CorrectionOptions correctionOptions = args::to<CorrectionOptions>(parseresults);
 	RuntimeOptions runtimeOptions = args::to<RuntimeOptions>(parseresults);
+	MemoryOptions memoryOptions = args::to<MemoryOptions>(parseresults);
 	FileOptions fileOptions = args::to<FileOptions>(parseresults);
 
 	if(!args::isValid(minhashOptions)) throw std::runtime_error("Invalid minhashOptions!");
@@ -129,6 +134,7 @@ int main(int argc, char** argv){
 	if(!args::isValid(goodAlignmentProperties)) throw std::runtime_error("Invalid goodAlignmentProperties!");
 	if(!args::isValid(correctionOptions)) throw std::runtime_error("Invalid correctionOptions!");
 	if(!args::isValid(runtimeOptions)) throw std::runtime_error("Invalid runtimeOptions!");
+	if(!args::isValid(memoryOptions)) throw std::runtime_error("Invalid memoryOptions!");
 	if(!args::isValid(fileOptions)) throw std::runtime_error("Invalid fileOptions!");
 
 	if(correctionOptions.correctCandidates && correctionOptions.extractFeatures) {
@@ -167,6 +173,7 @@ int main(int argc, char** argv){
 				alignmentOptions,
 				correctionOptions,
 				runtimeOptions,
+				memoryOptions,
 				fileOptions,
 				goodAlignmentProperties);
 

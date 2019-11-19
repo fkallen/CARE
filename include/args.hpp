@@ -31,6 +31,9 @@ namespace args{
 	RuntimeOptions to<RuntimeOptions>(const cxxopts::ParseResult& pr);
 
 	template<>
+	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr);
+
+	template<>
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr);
 
     template<class T>
@@ -50,6 +53,9 @@ namespace args{
 
     template<>
     bool isValid<RuntimeOptions>(const RuntimeOptions& opt);
+
+    template<>
+    bool isValid<MemoryOptions>(const MemoryOptions& opt);
 
     template<>
     bool isValid<FileOptions>(const FileOptions& opt);

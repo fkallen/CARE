@@ -129,6 +129,38 @@ namespace args{
         return result;
 	}
 
+    template<>
+	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr){
+        MemoryOptions result;
+
+        const auto memoryForHashtablesString = pr["memHashtables"].as<std::string>();
+        if(memoryForHashtablesString.length() > 0){
+            switch(memoryForHashtablesString.back()){
+                case 'K':{
+                    const std::size_t factor = std::size_t(1) << 10; 
+                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
+                    result.memoryForHashtables = factor * std::stoull(numberString);
+                }break;
+                case 'M':{
+                    const std::size_t factor = std::size_t(1) << 20; 
+                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
+                    result.memoryForHashtables = factor * std::stoull(numberString);
+                }break;
+                case 'G':{
+                    const std::size_t factor = std::size_t(1) << 30; 
+                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
+                    result.memoryForHashtables = factor * std::stoull(numberString);
+                }break;
+                default:
+                    result.memoryForHashtables = std::stoull(memoryForHashtablesString);
+            }
+        }else{
+            result.memoryForHashtables = 0;
+        }
+
+        return result;
+	}
+
 	template<>
 	FileOptions to<FileOptions>(const cxxopts::ParseResult& pr){
         FileOptions result;
@@ -272,6 +304,13 @@ namespace args{
         //     valid = false;
         //     std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
         // }
+
+        return valid;
+    }
+
+    template<>
+    bool isValid<MemoryOptions>(const MemoryOptions& opt){
+        bool valid = true;
 
         return valid;
     }

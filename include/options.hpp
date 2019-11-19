@@ -70,6 +70,10 @@ namespace care{
         std::vector<int> deviceIds;
 	};
 
+    struct MemoryOptions{
+        std::size_t memoryForHashtables = 0;
+    };
+
 	struct FileOptions{
 		FileFormat format;
 		std::string fileformatstring;
