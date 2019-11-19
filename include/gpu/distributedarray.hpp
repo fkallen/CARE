@@ -160,6 +160,7 @@ public:
                     }
 
                     for(int gpu = 0; gpu < numGpus; gpu++){
+                        cudaSetDevice(deviceIds[gpu]); CUERR;
                         cudaMalloc(&(dataPtrPerLocation[gpu]), elementsPerLocation[gpu] * sizeOfElement); CUERR;
                     }
 
@@ -212,6 +213,7 @@ public:
         numLocations = rhs.numLocations;
         hostLocation = rhs.hostLocation;
         preferedLocation = rhs.preferedLocation;
+        layout = rhs.layout;
         numRows = rhs.numRows;
         numColumns = rhs.numColumns;
         sizeOfElement = rhs.sizeOfElement;
