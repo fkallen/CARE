@@ -536,12 +536,13 @@ namespace gpu{
             std::size_t writtenTableBytes = 0;
 
             constexpr std::size_t GB1 = std::size_t(1) << 30;
-            std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
+            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024 - GB1;
             if(memoryOptions.memoryForHashtables > 0){
-                maxMemoryForTransformedTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTransformedTables);
+                maxMemoryForTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTables);
             }
 
-            std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+            std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
+            std::size_t availableMemForTables = maxMemoryForTables;
 
 
 
@@ -565,71 +566,16 @@ namespace gpu{
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
-            while(numConstructedTables < minhashOptions.maps && maxMemoryForTransformedTables > writtenTableBytes){
+            while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
                 std::vector<Minhasher::Map_t> minhashTables;
                 
-#if 0
-                minhashTables.reserve(minhashOptions.maps+3);
-                const int remainingTables = minhashOptions.maps - numConstructedTables;
 
-                for(int i = numConstructedTables; i < minhashOptions.maps+3; i++){
-                    try{
-                        Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
-                        minhashTables.emplace_back(std::move(table));
-                    }catch(...){
-                        //std::cerr << "Could not construct table "<< i << " in current pass\n";
-                        break;
-                    }                        
-                }
-                if(minhashTables.size() == 0){
-                    throw std::runtime_error("Error: Could not create minhash tables!");
-                }
-
-                //std::cout << "remainingTables = " << remainingTables << ", minhashTables.size() = " << minhashTables.size() << std::endl;
-
-                if(minhashTables.size() > 1){
-                    minhashTables.pop_back();
-                    //std::cout << "pop" << std::endl;
-                }
-
-                if(minhashTables.size() > 1){
-                    minhashTables.pop_back();
-                    //std::cout << "pop" << std::endl;
-                }
-
-                if(minhashTables.size() > 1){
-                    minhashTables.pop_back();
-                    //std::cout << "pop" << std::endl;
-                }
-#else 
                 int maxNumTables = 0;
 
-                // {
-                //     constexpr std::size_t MB50 = 50 * (std::size_t(1) << 20);
-                //     constexpr std::size_t MB128 = std::size_t(1) << 27;
-                //     constexpr std::size_t GB1 = std::size_t(1) << 30;
-                //     std::this_thread::sleep_for(std::chrono::seconds{2});
-                //     std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
-                //     Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
-                //     std::cerr << "table.allocationSizeInBytes() = " << table.allocationSizeInBytes() << "\n";
-                //     std::this_thread::sleep_for(std::chrono::seconds{2});
-                //     std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
-                //     std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB50;
-                //     //leave a headroom of 1 gigabyte
-                //     maxNumTables = (getAvailableMemoryInKB() * 1024 - GB1) / tableMemApprox;
-                //     maxNumTables -= 2; // need free memory of 2 table to perform transformation
-                //     std::cerr << "availableMemBefore = " << availableMemBefore << "\n";
-                //     std::cerr << "availableMemAfter = " << availableMemAfter << "\n";
-                //     std::cerr << "tableMemApprox = " << tableMemApprox << "\n";
-                //     std::cerr << "maxNumTables = " << maxNumTables << "\n";
-                // }
-
                 {
-                    constexpr std::size_t GB1 = std::size_t(1) << 30;
                     std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
-                    std::size_t availableMem = getAvailableMemoryInKB() * 1024;
-                    maxNumTables = (availableMem - GB1) / requiredMemPerTable;
-                    maxNumTables -= 2; // need free memory of 2 table to perform transformation
+                    maxNumTables = availableMemForTables / requiredMemPerTable;
+                    maxNumTables -= 2; // need free memory of 2 tables to perform transformation 
                     std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
                     std::cerr << "maxNumTables = " << maxNumTables << "\n";
                 }
@@ -638,27 +584,12 @@ namespace gpu{
                     throw std::runtime_error("Not enough memory to construct 1 table");
                 }
 
-                std::this_thread::sleep_for(std::chrono::seconds{2});
-                std::cerr << "free mem = " << getAvailableMemoryInKB() * 1024 << "\n";
-
                 int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
                 minhashTables.resize(currentIterNumTables);
-                {int iter = 0;
-                    for(auto& table : minhashTables){
-                        //std::this_thread::sleep_for(std::chrono::seconds{2});
-                        //std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
-                        Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
-                        //std::cerr << "tmp.allocationSizeInBytes() = " << tmp.allocationSizeInBytes() << "\n";
-                        table = std::move(tmp);
-                        //std::this_thread::sleep_for(std::chrono::seconds{2});
-                        //std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
-                        //std::size_t tableMemApprox = availableMemBefore - availableMemAfter;
-                        //iter++;
-                        //std::cerr << "after "<< iter << " table, tableMemApprox = " << tableMemApprox << ", free mem = " << availableMemAfter << "\n";                        
-                    }
+                for(auto& table : minhashTables){
+                    Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
+                    table = std::move(tmp);
                 }
-
-#endif
 
                 std::vector<int> tableIds(minhashTables.size());                
                 std::vector<int> hashIds(minhashTables.size());
@@ -751,15 +682,30 @@ namespace gpu{
                 }
 
                 progressThread.finished();
-                
-                const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
-                std::ofstream rstempostream(rstempfile, std::ios::binary);
-                constexpr std::size_t GB1 = std::size_t(1) << 30;
-                std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
-                auto savedReadstorageGpuData = readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1);
 
+                //check free gpu mem for transformation
+                std::size_t estRequiredFreeGpuMem = estimateGpuMemoryForTransformKeyValueMap(minhashTables[0]);
+                std::size_t freeGpuMem, totalGpuMem;
+                cudaMemGetInfo(&freeGpuMem, &totalGpuMem); CUERR;
+
+                DistributedReadStorage::SavedGpuData savedReadstorageGpuData;
+                const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
+                bool didSaveGpudata = false;
+
+                //if there is more than 10% gpu memory missing, make room for it
+                if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
+                    std::ofstream rstempostream(rstempfile, std::ios::binary);
+                    std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                    savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1));
+
+                    didSaveGpudata = true;
+                }
+
+                
+                
                 //if all tables could be constructed at once, no need to save them to temporary file
                 if(minhashOptions.maps == int(minhashTables.size())){
+
                     for(int i = 0; i < int(minhashTables.size()); i++){
                         int globalTableId = globalTableIds[i];
                         int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
@@ -769,11 +715,15 @@ namespace gpu{
                         minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
                     }
 
-                    std::ifstream rstempistream(rstempfile, std::ios::binary);
-                    readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
-                    savedReadstorageGpuData.clear();
-                    removeFile(rstempfile);
+                    if(didSaveGpudata){
+                        std::ifstream rstempistream(rstempfile, std::ios::binary);
+                        readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
+                        savedReadstorageGpuData.clear();
+                        removeFile(rstempfile);
+                    }
+                    
                 }else{
+                    
                     for(int i = 0; i < int(minhashTables.size()); i++){
                         int globalTableId = globalTableIds[i];
                         int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
@@ -786,23 +736,27 @@ namespace gpu{
                         writtenTableBytes = outstream.tellp();
     
                         std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
-                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTransformedTables << "\n";
+                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
                         std::cerr << "numSavedTables = " << numSavedTables << "\n";
     
-                        if(maxMemoryForTransformedTables <= writtenTableBytes){
+                        if(maxMemoryForTables <= writtenTableBytes){
                             break;
                         }
                     }
                     minhashTables.clear();
 
-                    std::ifstream rstempistream(rstempfile, std::ios::binary);
-                    readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
-                    savedReadstorageGpuData.clear();
+                    if(didSaveGpudata){
+                        std::ifstream rstempistream(rstempfile, std::ios::binary);
+                        readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
+                        savedReadstorageGpuData.clear();
+                    }
 
-                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
+                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
                         outstream.flush();
+
+                        std::size_t available = maxMemoryForTables;
     
-                        std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";
+                        std::cerr << "available before loading maps: " << available << "\n";
                         
                         int usableNumMaps = 0;
     
@@ -813,10 +767,28 @@ namespace gpu{
                                 std::cerr << "try loading table " << i << "\n";
                                 Minhasher::Map_t table{};
                                 table.readFromStream(instream);
-                                minhasher.moveassignMap(i, std::move(table));
-                                std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
-                                usableNumMaps++;
-                                std::cerr << "usable num maps = " << usableNumMaps << "\n";
+                                std::size_t tablesize = table.allocationSizeInBytes();
+                                if(available > tablesize){
+                                    available -= tablesize;
+
+                                    minhasher.moveassignMap(i, std::move(table));
+
+                                    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                                    usableNumMaps++;
+                                    std::cerr << "usable num maps = " << usableNumMaps << "\n";
+                                }else if(available == tablesize){
+                                    available -= tablesize;
+
+                                    minhasher.moveassignMap(i, std::move(table));
+                                    
+                                    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                                    usableNumMaps++;
+                                    std::cerr << "usable num maps = " << usableNumMaps << "\n";
+                                    break;
+                                }else{
+                                    std::cerr << "Loading table " << i << " failed\n";
+                                    break;
+                                }
                             }catch(...){
                                 std::cerr << "Loading table " << i << " failed\n";
                                 break;
@@ -824,7 +796,9 @@ namespace gpu{
                         }
     
                         removeFile(tmpmapsFilename);
-                        removeFile(rstempfile);
+                        if(didSaveGpudata){
+                            removeFile(rstempfile);
+                        }
     
                         minhasher.minhashTables.resize(usableNumMaps);
                         std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";

@@ -315,6 +315,27 @@ namespace care{
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
 
         template<class Key_t, class Value_t, class Index_t>
+        static std::size_t estimateRequiredGpuMem(
+                            std::vector<Key_t>& keys, 
+                            std::vector<Value_t>& values, 
+                            std::vector<Index_t>& countsPrefixSum){
+            
+            return estimateRequiredGpuMem<Key_t, Value_t, Index_t>(values.size());
+        }
+
+        template<class Key_t, class Value_t, class Index_t>
+        static std::size_t estimateRequiredGpuMem(Index_t numEntries){
+
+            std::size_t mem = 0;
+            mem += sizeof(Key_t) * numEntries; //d_keys
+            mem += sizeof(Value_t) * numEntries; //d_values
+            mem += sizeof(Index_t) * numEntries; //d_indices
+            mem += std::max(sizeof(Index_t), sizeof(Value_t)) * numEntries; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
+
+            return mem;
+        }
+
+        template<class Key_t, class Value_t, class Index_t>
         static void execute(std::vector<Key_t>& keys, 
                             std::vector<Value_t>& values, 
                             std::vector<Index_t>& countsPrefixSum,
@@ -637,6 +658,11 @@ namespace care{
         }
 
     };
+
+    template<class KeyValueMap>
+    std::size_t estimateGpuMemoryForTransformKeyValueMap(KeyValueMap& map){
+        return MinhasherTransformGPUCompactKeys<true>::estimateRequiredGpuMem(map.keys, map.values, map.countsPrefixSum);
+    }
 
     template<class KeyValueMap>
     void transform_keyvaluemap_gpu(KeyValueMap& map, const std::vector<int>& deviceIds, int maxValuesPerKey){
