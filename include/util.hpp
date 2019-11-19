@@ -68,7 +68,7 @@ __inline__
 std::size_t getAvailableMemoryInKB(){
     //return getAvailableMemoryInKB_linux();
 
-    return std::min(getAvailableMemoryInKB_linux(), getRSSLimit_linux() - getCurrentRSS_linux());
+    return std::min(getAvailableMemoryInKB_linux(), (getRSSLimit_linux() - getCurrentRSS_linux()) / 1024);
 };
 
 
