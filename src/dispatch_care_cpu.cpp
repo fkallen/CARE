@@ -55,6 +55,7 @@ namespace care{
                             AlignmentOptions alignmentOptions,
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
+                            MemoryOptions memoryOptions,
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties){
 
@@ -67,6 +68,7 @@ namespace care{
         BuiltDataStructures dataStructures = buildAndSaveDataStructures(minhashOptions,
                                                                 correctionOptions,
                                                                 runtimeOptions,
+                                                                memoryOptions,
                                                                 fileOptions);
 
         TIMERSTOPCPU(load_and_build);

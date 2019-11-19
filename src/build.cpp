@@ -344,6 +344,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
                                 			   const RuntimeOptions& runtimeOptions,
+                                               const MemoryOptions& memoryOptions,
                                 			   std::uint64_t nReads,
                                                const MinhashOptions& minhashOptions,
                                 			   cpu::ContiguousReadStorage& readStorage){
@@ -573,6 +574,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
     BuiltDataStructures buildDataStructuresImpl(const MinhashOptions& minhashOptions,
                                             const CorrectionOptions& correctionOptions,
                                             const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
                                             const FileOptions& fileOptions,
                                             bool saveDataStructuresToFile){
 
@@ -611,7 +613,12 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
         detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
 
         TIMERSTARTCPU(build_minhasher);
-        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, readStorage);
+        result.builtMinhasher = build_minhasher(fileOptions, 
+                                                runtimeOptions, 
+                                                memoryOptions,
+                                                sequenceFileProperties.nReads, 
+                                                minhashOptions, 
+                                                readStorage);
         TIMERSTOPCPU(build_minhasher);
 
         if(saveDataStructuresToFile && fileOptions.save_hashtables_to != "") {
@@ -626,16 +633,18 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
     BuiltDataStructures buildDataStructures(const MinhashOptions& minhashOptions,
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions){
 
-        return buildDataStructuresImpl(minhashOptions, correctionOptions, runtimeOptions, fileOptions, false);
+        return buildDataStructuresImpl(minhashOptions, correctionOptions, runtimeOptions, memoryOptions, fileOptions, false);
     }
 
     BuiltDataStructures buildAndSaveDataStructures(const MinhashOptions& minhashOptions,
                                             const CorrectionOptions& correctionOptions,
                                             const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
                                             const FileOptions& fileOptions){
 
-        return buildDataStructuresImpl(minhashOptions, correctionOptions, runtimeOptions, fileOptions, true);
+        return buildDataStructuresImpl(minhashOptions, correctionOptions, runtimeOptions, memoryOptions, fileOptions, true);
     }
 }

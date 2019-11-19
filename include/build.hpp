@@ -83,6 +83,7 @@ namespace care{
 
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
                                 			   const RuntimeOptions& runtimeOptions,
+                                               const MemoryOptions& memoryOptions,
                                 			   std::uint64_t nReads,
                                                const MinhashOptions& minhashOptions,
                                 			   cpu::ContiguousReadStorage& readStorage);
@@ -90,11 +91,13 @@ namespace care{
     BuiltDataStructures buildDataStructures(const MinhashOptions& minhashOptions,
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions);
 
     BuiltDataStructures buildAndSaveDataStructures(const MinhashOptions& minhashOptions,
                                 			const CorrectionOptions& correctionOptions,
                                 			const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions);
 
 #ifdef __NVCC__
@@ -121,6 +124,7 @@ namespace care{
 
         BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
                                     			   const RuntimeOptions& runtimeOptions,
+                                                   const MemoryOptions& memoryOptions,
                                     			   std::uint64_t nReads,
                                                    const MinhashOptions& minhashOptions,
                                     			   const GpuReadStorageWithFlags& readStorage);
@@ -128,11 +132,13 @@ namespace care{
         BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
                                     			const CorrectionOptions& correctionOptions,
                                     			const RuntimeOptions& runtimeOptions,
+                                                const MemoryOptions& memoryOptions,
                                     			const FileOptions& fileOptions);
 
         BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
                                                             const CorrectionOptions& correctionOptions,
                                                             const RuntimeOptions& runtimeOptions,
+                                                            const MemoryOptions& memoryOptions,
                                                             const FileOptions& fileOptions);
     }
 #endif

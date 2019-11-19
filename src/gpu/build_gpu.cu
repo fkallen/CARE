@@ -372,7 +372,8 @@ namespace gpu{
 
 #if 0
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions& fileOptions,
-                                			   const RuntimeOptions& runtimeOptions,
+                                               const RuntimeOptions& runtimeOptions,
+                                               const MemoryOptions& memoryOptions,
                                 			   std::uint64_t nReads,
                                                const MinhashOptions& minhashOptions,
                                 			   const GpuReadStorageWithFlags& readStoragewFlags){
@@ -488,6 +489,7 @@ namespace gpu{
 #else 
     BuiltDataStructure<Minhasher> build_minhasher(const FileOptions &fileOptions,
                                                 const RuntimeOptions &runtimeOptions,
+                                                const MemoryOptions& memoryOptions,
                                                 std::uint64_t nReads,
                                                 const MinhashOptions &minhashOptions,
                                                 const GpuReadStorageWithFlags &readStoragewFlags)
@@ -529,12 +531,20 @@ namespace gpu{
             if(!outstream){
                 throw std::runtime_error("Could not open temp file " + tmpmapsFilename + "!");
             }
+
+
             std::size_t writtenTableBytes = 0;
 
             constexpr std::size_t GB1 = std::size_t(1) << 30;
-            const std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
+            std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
+            if(memoryOptions.memoryForHashtables > 0){
+                maxMemoryForTransformedTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTransformedTables);
+            }
 
             std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+
+
+
             
             std::chrono::time_point<std::chrono::system_clock> tpa = std::chrono::system_clock::now();        
             std::mutex progressMutex;
@@ -835,6 +845,7 @@ namespace gpu{
     BuiltGpuDataStructures buildGpuDataStructuresImpl(const MinhashOptions& minhashOptions,
                                                         const CorrectionOptions& correctionOptions,
                                                         const RuntimeOptions& runtimeOptions,
+                                                        const MemoryOptions& memoryOptions,
                                                         const FileOptions& fileOptions,
                                                         bool saveDataStructuresToFile){                                                     
 
@@ -874,7 +885,12 @@ namespace gpu{
         detail::printInputFileProperties(std::cout, fileOptions.inputfile, sequenceFileProperties);
 
         TIMERSTARTCPU(build_minhasher);
-        result.builtMinhasher = build_minhasher(fileOptions, runtimeOptions, sequenceFileProperties.nReads, minhashOptions, result.builtReadStorage.data);
+        result.builtMinhasher = build_minhasher(fileOptions, 
+            runtimeOptions, 
+            memoryOptions,
+            sequenceFileProperties.nReads, 
+            minhashOptions, 
+            result.builtReadStorage.data);
         TIMERSTOPCPU(build_minhasher);
 
         if(saveDataStructuresToFile && fileOptions.save_hashtables_to != "") {
@@ -901,12 +917,14 @@ namespace gpu{
 
     BuiltGpuDataStructures buildGpuDataStructures(const MinhashOptions& minhashOptions,
                                 			const CorrectionOptions& correctionOptions,
-                                			const RuntimeOptions& runtimeOptions,
+                                            const RuntimeOptions& runtimeOptions,
+                                            const MemoryOptions& memoryOptions,
                                 			const FileOptions& fileOptions){
 
         return buildGpuDataStructuresImpl(minhashOptions,
                                         correctionOptions,
                                         runtimeOptions,
+                                        memoryOptions,
                                         fileOptions,
                                         false);
     }
@@ -914,11 +932,13 @@ namespace gpu{
     BuiltGpuDataStructures buildAndSaveGpuDataStructures(const MinhashOptions& minhashOptions,
                                                         const CorrectionOptions& correctionOptions,
                                                         const RuntimeOptions& runtimeOptions,
+                                                        const MemoryOptions& memoryOptions,
                                                         const FileOptions& fileOptions){                                                     
 
         return buildGpuDataStructuresImpl(minhashOptions,
                                         correctionOptions,
                                         runtimeOptions,
+                                        memoryOptions,
                                         fileOptions,
                                         true);
     }

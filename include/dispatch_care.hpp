@@ -10,6 +10,7 @@ namespace care{
                             AlignmentOptions alignmentOptions,
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
+                            MemoryOptions memoryOptions,
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties);
 
