@@ -247,9 +247,10 @@ namespace care{
         }
     }
 
-    template<class Key_t, class Value_t, class Index_t>
+    template<class Key_t, class Value_t, class Index_t, class Count_t>
     void cpu_transformation(std::vector<Key_t>& keys,
                             std::vector<Value_t>& values,
+                            std::vector<Count_t>& counts,
                             std::vector<Index_t>& countsPrefixSum,
                             std::vector<Key_t>& keysWithoutValues,
                             int maxValuesPerKey){
@@ -278,7 +279,8 @@ namespace care{
 
         if(map.size == 0) return;
 
-        cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
+        cpu_transformation(map.keys, map.values, 
+                            map.counts, map.countsPrefixSum, 
                             map.keysWithoutValues, maxValuesPerKey);
 
         map.nKeys = map.keys.size();
@@ -597,9 +599,10 @@ namespace care{
         template<class T>
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
 
-        template<class Key_t, class Value_t, class Index_t>
+        template<class Key_t, class Value_t, class Index_t, class Count_t>
         static bool execute(std::vector<Key_t>& keys, 
                             std::vector<Value_t>& values, 
+                            std::vector<Count_t>& counts,
                             std::vector<Index_t>& countsPrefixSum, 
                             std::vector<Key_t>& keysWithoutValues,
                             const std::vector<int>& deviceIds,
@@ -672,24 +675,28 @@ namespace care{
 
         if(deviceIds.size() == 0){
 
-            cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
+            cpu_transformation(map.keys, map.values, 
+                                map.counts, map.countsPrefixSum, 
                                 map.keysWithoutValues, maxValuesPerKey);
 
         }else{
-            bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, 
+            bool success = GPUTransformation<false>::execute(map.keys, map.values, 
+                                                            map.counts, map.countsPrefixSum, 
                                                             map.keysWithoutValues, deviceIds, maxValuesPerKey);
 
             if(!success){
                 std::cout << "\nFallback to managed memory transformation. ";
-                success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, 
+                success = GPUTransformation<true>::execute(map.keys, map.values, 
+                                                            map.counts, map.countsPrefixSum, 
                                                             map.keysWithoutValues, deviceIds, maxValuesPerKey);
             }
 
             if(!success){
                 std::cout << "\nFallback to cpu transformation. ";
-		std::cout.flush();
-                cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
-                                    map.keysWithoutValues, maxValuesPerKey);
+                std::cout.flush();
+                cpu_transformation(map.keys, map.values, 
+                                map.counts, map.countsPrefixSum, 
+                                map.keysWithoutValues, maxValuesPerKey);
             }
         }
 

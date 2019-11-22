@@ -195,6 +195,8 @@ namespace care{
 			using Value_t = value_t;
 			using Index_t = index_t;
 
+            using Count_t = std::uint16_t;
+
 			static constexpr bool resultsAreSorted = true;
 
 			Index_t size;
@@ -204,6 +206,7 @@ namespace care{
             bool canUseGpu = false;
 			std::vector<Key_t> keys;
 			std::vector<Value_t> values;
+            std::vector<Count_t> counts;
 			std::vector<Index_t> countsPrefixSum;
             std::vector<Key_t> keysWithoutValues;
             std::vector<int> deviceIds;
@@ -235,6 +238,7 @@ namespace care{
                 noMoreWrites = other.noMoreWrites;
                 keys = other.keys;
                 values = other.values;
+                counts = other.counts;
                 countsPrefixSum = other.countsPrefixSum;
                 keysWithoutValues = other.keysWithoutValues;
                 keyIndexMap = other.keyIndexMap;
@@ -248,6 +252,7 @@ namespace care{
                 noMoreWrites = other.noMoreWrites;
                 keys = std::move(other.keys);
                 values = std::move(other.values);
+                counts = std::move(other.counts);
                 countsPrefixSum = std::move(other.countsPrefixSum);
                 keysWithoutValues = std::move(other.keysWithoutValues);
                 keyIndexMap = std::move(other.keyIndexMap);
@@ -266,6 +271,8 @@ namespace care{
                 if(keys != rhs.keys)
                     return false;
                 if(values != rhs.values)
+                    return false;
+                if(counts != rhs.counts)
                     return false;
                 if(countsPrefixSum != rhs.countsPrefixSum)
                     return false;
@@ -305,6 +312,10 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(&emptyKeys), sizeof(std::size_t));
                 outstream.write(reinterpret_cast<const char*>(keysWithoutValues.data()), sizeof(Key_t) * emptyKeys);
 
+                std::size_t elements = counts.size();
+                outstream.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+                outstream.write(reinterpret_cast<const char*>(counts.data()), sizeof(Count_t) * elements);
+
                 keyIndexMap.writeToStream(outstream);
             }
 
@@ -339,12 +350,18 @@ namespace care{
                 keysWithoutValues.resize(emptyKeys);
                 instream.read(reinterpret_cast<char*>(keysWithoutValues.data()), sizeof(Key_t) * emptyKeys);
 
+                std::size_t elements = 0;
+                instream.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+                counts.resize(elements);
+                instream.read(reinterpret_cast<char*>(counts.data()), sizeof(Count_t) * elements);
+
                 keyIndexMap.readFromStream(instream);
             }
 
             std::size_t numBytes() const{
                 return keys.size() * sizeof(Key_t)
                     + values.size() * sizeof(Value_t)
+                    + counts.size() * sizeof(Count_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
                     + keysWithoutValues.size() * sizeof(Key_t)
                     + keyIndexMap.numBytes()
@@ -354,6 +371,7 @@ namespace care{
             std::size_t allocationSizeInBytes() const{
                 return keys.capacity() * sizeof(Key_t)
                     + values.capacity() * sizeof(Value_t)
+                    + counts.capacity() * sizeof(Count_t)
                     + countsPrefixSum.capacity() * sizeof(Index_t)
                     + keysWithoutValues.capacity() * sizeof(Key_t)
                     + keyIndexMap.allocationSizeInBytes()
@@ -382,6 +400,7 @@ namespace care{
 				noMoreWrites = false;
 				keys.clear();
 				values.clear();
+                counts.clear();
 				countsPrefixSum.clear();
                 keysWithoutValues.clear();
 				keyIndexMap.clear();
@@ -391,6 +410,7 @@ namespace care{
 				clear();
 				keys.shrink_to_fit();
 				values.shrink_to_fit();
+                counts.shrink_to_fit();
 				countsPrefixSum.shrink_to_fit();
                 keysWithoutValues.shrink_to_fit();
 				keyIndexMap.shrink_to_fit();
@@ -415,44 +435,8 @@ namespace care{
 			std::vector<Value_t> get(Key_t key) const noexcept{
                 assert(noMoreWrites);
 
-                // auto range = std::equal_range(keys.begin(), keys.end(), key);
-				// if(range.first == keys.end()) return {};
-                //
-				// Index_t index = std::distance(keys.begin(), range.first);
-
-                // auto lb = std::lower_bound(keys.begin(), keys.end(), key);
-                // if(lb == keys.end() || *lb != key) {
-                //     return {};
-                // }
-                // const Index_t index = std::distance(keys.begin(), lb);
-
-                auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
-                if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
-                    const Index_t index = keyIndexMap.get(key);
-
-				    //if(index != std::numeric_limits<Index_t>::max()){
-				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
-                    //}else{
-                    //    return {};
-                    //}
-                }else{
-                    return {}; //key has no values
-                }
-                
-			}
-
-            Index_t prepare_get_ranged(Key_t key) const noexcept{
-                assert(noMoreWrites);
-                Index_t index = keyIndexMap.get(key);
-                __builtin_prefetch(countsPrefixSum.data() + index, 0, 0);
-                __builtin_prefetch(countsPrefixSum.data() + index + 1, 0, 0);
-
-				return index;
-			}
-
-            std::pair<const Value_t*, const Value_t*> execute_get_ranged(Index_t preparedIndex) const noexcept{
-
-				return {&values[countsPrefixSum[preparedIndex]], &values[countsPrefixSum[preparedIndex+1]]};
+                const auto pair = get_ranged(key);
+                return {pair.first, pair.second};                
 			}
 
 			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) const noexcept{
