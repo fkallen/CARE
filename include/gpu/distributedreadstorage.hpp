@@ -31,16 +31,28 @@ public:
         int minimumSequenceLength = std::numeric_limits<int>::max();
     };
 
+    struct SavedGpuPartitionData{
+        void clear(){
+            *this = SavedGpuPartitionData{};
+        }
+ 
+        enum class Type {Memory, File};
+
+        Type sequenceDataLocation = Type::File;
+        Type qualityDataLocation = Type::File;
+
+        int partitionId = -42;
+
+        std::vector<char> sequenceData;
+        std::vector<char> qualityData;
+    };
+
     struct SavedGpuData{
-        std::vector<std::vector<char>> sequencedata;
-        std::vector<std::vector<char>> qualitydata;
-
-        bool sequenceDataInMemory = false;
-        bool qualityDataInMemory = false;
-
         void clear(){
             *this = SavedGpuData{};
         }
+
+        std::vector<SavedGpuPartitionData> gpuPartitionData;
     };
 
     using Length_t = int;
@@ -105,6 +117,27 @@ public:
     // void writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const;
     // void allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const;
     SavedGpuData saveGpuDataAndFreeGpuMem(std::ofstream& stream, std::size_t numBytesMustRemainFree) const;
+    SavedGpuPartitionData saveGpuPartitionData(
+            int deviceId,
+            std::ofstream& stream, 
+            std::size_t numBytesMustRemainFree) const;
+
+    void loadGpuPartitionData(int deviceId, 
+                                        std::ifstream& stream, 
+                                        const SavedGpuPartitionData& saved) const;
+
+    void allocateGpuData(int deviceId) const;
+    void deallocateGpuData(int deviceId) const;
+
+    SavedGpuPartitionData saveGpuPartitionDataAndFreeGpuMem(
+                    int deviceId,
+                    std::ofstream& stream, 
+                    std::size_t numBytesMustRemainFree) const;
+
+    void allocGpuMemAndLoadGpuPartitionData(int deviceId, 
+                                            std::ifstream& stream, 
+                                            const SavedGpuPartitionData& saved) const;
+
     void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
     void setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);

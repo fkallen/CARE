@@ -693,7 +693,8 @@ namespace gpu{
                 bool didSaveGpudata = false;
 
                 //if there is more than 10% gpu memory missing, make room for it
-                if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
+                //if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
+                {
                     std::ofstream rstempostream(rstempfile, std::ios::binary);
                     std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
                     savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1));

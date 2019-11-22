@@ -1097,7 +1097,15 @@ public:
         stream.read(reinterpret_cast<char*>(begin), size);
     }
 
-    void writeGpuPartitionsToStream(std::ofstream& stream) const{
+    void writeGpuPartitionToStream(int partition, std::ofstream& stream) const{
+        assert(0 <= partition);
+        assert(partition < numGpus);
+
+        int currentId;
+        cudaGetDevice(&currentId); CUERR;
+
+        cudaSetDevice(deviceIds[partition]); CUERR;
+
         constexpr std::int64_t maxbatchsize = 5000000;
 
         constexpr std::int64_t safety = std::int64_t(64) * 1024 * 1024;
@@ -1110,34 +1118,28 @@ public:
         std::vector<Value_t> vec;
         vec.reserve(batchsize * sizeOfElement);
 
-        int currentId;
-        cudaGetDevice(&currentId); CUERR;
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
+        const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
+        for(std::int64_t batch = 0; batch < numBatches; batch++){
+            std::int64_t begin = batch * batchsize;
+            std::int64_t end = std::min(std::int64_t(elementsPerLocation[partition]), (batch + 1) * batchsize);
+            const std::int64_t numElements = end-begin;
 
-            const std::int64_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
-            for(std::int64_t batch = 0; batch < numBatches; batch++){
-                std::int64_t begin = batch * batchsize;
-                std::int64_t end = std::min(std::int64_t(elementsPerLocation[gpu]), (batch + 1) * batchsize);
-                const std::int64_t numElements = end-begin;
+            vec.resize(numElements * sizeOfElement);
 
-                vec.resize(numElements * sizeOfElement);
+            const Value_t* src = offsetPtr(dataPtrPerLocation[partition], begin);
+            TIMERSTARTCPU(writeGpuPartitionToStream_memcpy);
+            cudaMemcpy(vec.data(), src, sizeOfElement * numElements, D2H); CUERR;
+            TIMERSTOPCPU(writeGpuPartitionToStream_memcpy);
 
-                const Value_t* src = offsetPtr(dataPtrPerLocation[gpu], begin);
-                TIMERSTARTCPU(writeGpuPartitionsToStream_memcpy);
-                cudaMemcpy(vec.data(), src, sizeOfElement * numElements, D2H); CUERR;
-                TIMERSTOPCPU(writeGpuPartitionsToStream_memcpy);
-
-                TIMERSTARTCPU(writeGpuPartitionsToStream_file);
-                stream.write(reinterpret_cast<const char*>(vec.data()), sizeOfElement * numElements);
-                TIMERSTOPCPU(writeGpuPartitionsToStream_file);
-            }
-
+            TIMERSTARTCPU(writeGpuPartitionToStream_file);
+            stream.write(reinterpret_cast<const char*>(vec.data()), sizeOfElement * numElements);
+            TIMERSTOPCPU(writeGpuPartitionToStream_file);
         }
+
         cudaSetDevice(currentId); CUERR;
     }
 
-    void readGpuPartitionsFromStream(std::ifstream& stream){
+    void readGpuPartitionFromStream(int partition, std::ifstream& stream){
         constexpr std::int64_t maxbatchsize = 5000000;
 
         constexpr std::int64_t safety = std::int64_t(64) * 1024 * 1024;
@@ -1152,32 +1154,29 @@ public:
         
         int currentId;
         cudaGetDevice(&currentId); CUERR;
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
+        cudaSetDevice(deviceIds[partition]); CUERR;
 
-            const std::int64_t numBatches = SDIV(elementsPerLocation[gpu], batchsize);
-            for(std::int64_t batch = 0; batch < numBatches; batch++){
-                std::int64_t begin = batch * batchsize;
-                std::int64_t end = std::min(std::int64_t(elementsPerLocation[gpu]), (batch + 1) * batchsize);
-                const std::int64_t numElements = end-begin;
+        const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
+        for(std::int64_t batch = 0; batch < numBatches; batch++){
+            std::int64_t begin = batch * batchsize;
+            std::int64_t end = std::min(std::int64_t(elementsPerLocation[partition]), (batch + 1) * batchsize);
+            const std::int64_t numElements = end-begin;
 
-                vec.resize(numElements * sizeOfElement);
+            vec.resize(numElements * sizeOfElement);
 
-                TIMERSTARTCPU(readGpuPartitionsFromStream_file);
-                stream.read(reinterpret_cast<char*>(vec.data()), sizeOfElement * numElements);
-                TIMERSTOPCPU(readGpuPartitionsFromStream_file);
+            TIMERSTARTCPU(readGpuPartitionFromStream_file);
+            stream.read(reinterpret_cast<char*>(vec.data()), sizeOfElement * numElements);
+            TIMERSTOPCPU(readGpuPartitionFromStream_file);
 
-                
-                Value_t* dest = offsetPtr(dataPtrPerLocation[gpu], begin);
-                TIMERSTARTCPU(readGpuPartitionsFromStream_memcpy);
-                cudaMemcpy(dest, vec.data(), sizeOfElement * numElements, H2D); CUERR; 
-                TIMERSTOPCPU(readGpuPartitionsFromStream_memcpy);               
-            }
-
+            
+            Value_t* dest = offsetPtr(dataPtrPerLocation[partition], begin);
+            TIMERSTARTCPU(readGpuPartitionFromStream_memcpy);
+            cudaMemcpy(dest, vec.data(), sizeOfElement * numElements, H2D); CUERR; 
+            TIMERSTOPCPU(readGpuPartitionFromStream_memcpy);               
         }
+
         cudaSetDevice(currentId); CUERR;
     }
-
 
     std::vector<char> writeGpuPartitionToMemory(int partition) const{
         assert(0 <= partition);
@@ -1213,6 +1212,18 @@ public:
         TIMERSTOPCPU(readGpuPartitionFromMemory_memcpy);
 
         cudaSetDevice(currentId); CUERR;
+    }
+
+    void writeGpuPartitionsToStream(std::ofstream& stream) const{
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            writeGpuPartitionToStream(gpu, stream);
+        }
+    }
+
+    void readGpuPartitionsFromStream(std::ifstream& stream){
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            readGpuPartitionFromStream(gpu, stream);
+        }
     }
 
     std::vector<std::vector<char>> writeGpuPartitionsToMemory() const{
@@ -1254,26 +1265,42 @@ public:
         return true;
     }
 
+    void deallocateGpuPartition(int partition){
+        assert(0 <= partition);
+        assert(partition < numGpus);
 
-
-    void deallocateGpuPartitions(){
         int currentId;
         cudaGetDevice(&currentId); CUERR;
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
-            cudaFree(dataPtrPerLocation[gpu]); CUERR;
-        }
+
+        cudaSetDevice(deviceIds[partition]); CUERR;
+        cudaFree(dataPtrPerLocation[partition]); CUERR;
+
         cudaSetDevice(currentId); CUERR;
     }
 
-    void allocateGpuPartitions(){
+    void allocateGpuPartition(int partition){
+        assert(0 <= partition);
+        assert(partition < numGpus);
+
         int currentId;
         cudaGetDevice(&currentId); CUERR;
-        for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
-            cudaMalloc(&dataPtrPerLocation[gpu], sizeOfElement * elementsPerLocation[gpu]); CUERR;
-        }
+
+        cudaSetDevice(deviceIds[partition]); CUERR;
+        cudaMalloc(&dataPtrPerLocation[partition], sizeOfElement * elementsPerLocation[partition]); CUERR;
+
         cudaSetDevice(currentId); CUERR;
+    }
+
+    void deallocateGpuPartitions(){
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            deallocateGpuPartition(gpu);
+        }
+    }
+
+    void allocateGpuPartitions(){
+        for(int gpu = 0; gpu < numGpus; gpu++){
+            allocateGpuPartition(gpu);
+        }
     }
 
 private:

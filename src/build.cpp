@@ -376,9 +376,13 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::size_t writtenTableBytes = 0;
 
             constexpr std::size_t GB1 = std::size_t(1) << 30;
-            const std::size_t maxMemoryForTransformedTables = getAvailableMemoryInKB() * 1024 - GB1;
+            std::size_t maxMemoryForTables = getAvailableMemoryInKB() * 1024 - GB1;
+            if(memoryOptions.memoryForHashtables > 0){
+                maxMemoryForTables = std::min(memoryOptions.memoryForHashtables, maxMemoryForTables);
+            }
 
-	        std::cerr << "maxMemoryForTransformedTables = " << maxMemoryForTransformedTables << " bytes\n";
+            std::cerr << "maxMemoryForTables = " << maxMemoryForTables << " bytes\n";
+            std::size_t availableMemForTables = maxMemoryForTables;
 
             
 
@@ -394,22 +398,23 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             int numSavedTables = 0;
             int numConstructedTables = 0;
 
-            while(numConstructedTables < minhashOptions.maps && maxMemoryForTransformedTables > writtenTableBytes){
+            while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
                 std::vector<Minhasher::Map_t> minhashTables;
 
                 int maxNumTables = 0;
 
                 {
-                    constexpr std::size_t MB128 = std::size_t(1) << 27;
-                    std::size_t availableMemBefore = getAvailableMemoryInKB() * 1024;
-                    Minhasher::Map_t table(nReads, runtimeOptions.deviceIds);
-                    std::size_t availableMemAfter = getAvailableMemoryInKB() * 1024;
-                    std::size_t tableMemApprox = availableMemBefore - availableMemAfter + MB128;
-                    maxNumTables = 1 + (getAvailableMemoryInKB() * 1024) / tableMemApprox;
-                    maxNumTables -= 2; // need free memory of 2 table to perform transformation
+                    std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                    maxNumTables = availableMemForTables / requiredMemPerTable;
+                    maxNumTables -= 2; // need free memory of 2 tables to perform transformation 
+                    std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
+                    std::cerr << "maxNumTables = " << maxNumTables << "\n";
                 }
 
-                assert(maxNumTables > 0);
+                if(maxNumTables <= 0){
+                    throw std::runtime_error("Not enough memory to construct 1 table");
+                }
+
                 int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
                 minhashTables.resize(currentIterNumTables);
                 for(auto& table : minhashTables){
@@ -510,16 +515,16 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                         writtenTableBytes = outstream.tellp();
     
                         std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
-                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTransformedTables << "\n";
+                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
                         std::cerr << "numSavedTables = " << numSavedTables << "\n";
     
-                        if(maxMemoryForTransformedTables <= writtenTableBytes){
+                        if(maxMemoryForTables <= writtenTableBytes){
                             break;
                         }
                     }
                     minhashTables.clear();
 
-                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTransformedTables < writtenTableBytes){
+                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
                         outstream.flush();
     
                         std::cerr << "available before loading maps: " << (getAvailableMemoryInKB() * 1024) << "\n";

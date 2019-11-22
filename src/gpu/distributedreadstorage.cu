@@ -968,22 +968,13 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 #endif
 
 
-// void DistributedReadStorage::writeGpuDataToStreamAndFreeGpuMem(std::ofstream& stream) const{
-//     distributedSequenceData2.writeGpuPartitionsToStream(stream);
-//     distributedQualities2.writeGpuPartitionsToStream(stream);
-//     distributedSequenceData2.deallocateGpuPartitions();
-//     distributedQualities2.deallocateGpuPartitions();  
-// }
+DistributedReadStorage::SavedGpuPartitionData DistributedReadStorage::saveGpuPartitionData(
+            int deviceId,
+            std::ofstream& stream, 
+            std::size_t numBytesMustRemainFreee) const{
 
-// void DistributedReadStorage::allocGpuMemAndReadGpuDataFromStream(std::ifstream& stream) const{
-//     distributedSequenceData2.allocateGpuPartitions();
-//     distributedQualities2.allocateGpuPartitions();
-//     distributedSequenceData2.readGpuPartitionsFromStream(stream);
-//     distributedQualities2.readGpuPartitionsFromStream(stream);  
-// }
+    std::int64_t numBytesMustRemainFree = numBytesMustRemainFreee;
 
-DistributedReadStorage::SavedGpuData DistributedReadStorage::saveGpuDataAndFreeGpuMem(std::ofstream& stream, 
-                                                                                      std::size_t numBytesMustRemainFree) const{
     auto getFreeBytes = [&](){
         std::int64_t availableBytes = getAvailableMemoryInKB() * 1024;
         if(availableBytes > numBytesMustRemainFree){
@@ -994,44 +985,117 @@ DistributedReadStorage::SavedGpuData DistributedReadStorage::saveGpuDataAndFreeG
         return availableBytes;
     };
 
+    auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+    assert(it != deviceIds.end());
+
+    int gpuIndex = std::distance(deviceIds.begin(), it);
+
+    SavedGpuPartitionData saved;
+    saved.partitionId = gpuIndex;
+
+    if(getFreeBytes() >= std::int64_t(distributedSequenceData2.getPartitionSizeInBytes(gpuIndex))){
+        saved.sequenceData = distributedSequenceData2.writeGpuPartitionToMemory(gpuIndex);
+        saved.sequenceDataLocation = SavedGpuPartitionData::Type::Memory;
+    }else{
+        distributedSequenceData2.writeGpuPartitionToStream(gpuIndex, stream);
+        saved.sequenceDataLocation = SavedGpuPartitionData::Type::File;
+    }
+
+    if(getFreeBytes() >= std::int64_t(distributedQualities2.getPartitionSizeInBytes(gpuIndex))){
+        saved.qualityData = distributedQualities2.writeGpuPartitionToMemory(gpuIndex);
+        saved.qualityDataLocation = SavedGpuPartitionData::Type::Memory;
+    }else{
+        distributedQualities2.writeGpuPartitionToStream(gpuIndex, stream);
+        saved.qualityDataLocation = SavedGpuPartitionData::Type::File;
+    }
+
+    return saved;
+}
+
+void DistributedReadStorage::loadGpuPartitionData(int deviceId, 
+                                                std::ifstream& stream, 
+                                                const DistributedReadStorage::SavedGpuPartitionData& saved) const{
+                      
+    auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+    assert(it != deviceIds.end());
+
+    int gpuIndex = std::distance(deviceIds.begin(), it);
+
+    if(saved.sequenceDataLocation == SavedGpuPartitionData::Type::Memory){
+        distributedSequenceData2.readGpuPartitionFromMemory(gpuIndex, saved.sequenceData);
+    }else{
+        distributedSequenceData2.readGpuPartitionFromStream(gpuIndex, stream);
+    }
+
+    if(saved.qualityDataLocation == SavedGpuPartitionData::Type::Memory){
+        distributedQualities2.readGpuPartitionFromMemory(gpuIndex, saved.qualityData);
+    }else{
+        distributedQualities2.readGpuPartitionFromStream(gpuIndex, stream);
+    }
+}
+
+void DistributedReadStorage::allocateGpuData(int deviceId) const{
+    auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+    assert(it != deviceIds.end());
+
+    int gpuIndex = std::distance(deviceIds.begin(), it);
+
+    distributedSequenceData2.allocateGpuPartition(gpuIndex);
+    distributedQualities2.allocateGpuPartition(gpuIndex);  
+}
+
+void DistributedReadStorage::deallocateGpuData(int deviceId) const{
+    auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
+    assert(it != deviceIds.end());
+
+    int gpuIndex = std::distance(deviceIds.begin(), it);
+
+    distributedSequenceData2.deallocateGpuPartition(gpuIndex);
+    distributedQualities2.deallocateGpuPartition(gpuIndex);  
+}
+
+DistributedReadStorage::SavedGpuPartitionData DistributedReadStorage::saveGpuPartitionDataAndFreeGpuMem(
+                    int deviceId,
+                    std::ofstream& stream, 
+                    std::size_t numBytesMustRemainFreee) const{
+
+    auto result = saveGpuPartitionData(deviceId,
+                                        stream, 
+                                        numBytesMustRemainFreee);
+
+    deallocateGpuData(deviceId);
+
+    return result;
+}
+
+void DistributedReadStorage::allocGpuMemAndLoadGpuPartitionData(int deviceId, 
+                                                                std::ifstream& stream, 
+                                                                const DistributedReadStorage::SavedGpuPartitionData& saved) const{
+                      
+    allocateGpuData(deviceId);
+
+    loadGpuPartitionData(deviceId, 
+                        stream, 
+                        saved);
+}
+
+DistributedReadStorage::SavedGpuData DistributedReadStorage::saveGpuDataAndFreeGpuMem(std::ofstream& stream, 
+                                                                                      std::size_t numBytesMustRemainFree) const{
     SavedGpuData saved;
+    saved.gpuPartitionData.reserve(deviceIds.size());
 
-    if(distributedSequenceData2.isEnoughMemoryForGpuPartitions(getFreeBytes())){
-        saved.sequencedata = distributedSequenceData2.writeGpuPartitionsToMemory();
-        saved.sequenceDataInMemory = true;
-    }else{
-        distributedSequenceData2.writeGpuPartitionsToStream(stream);
-        saved.sequenceDataInMemory = false;
+    for(int gpu = 0; gpu < int(deviceIds.size()); gpu++){
+        saved.gpuPartitionData.emplace_back(saveGpuPartitionDataAndFreeGpuMem(deviceIds[gpu], stream, numBytesMustRemainFree));
     }
-
-    if(distributedQualities2.isEnoughMemoryForGpuPartitions(getFreeBytes())){
-        saved.qualitydata = distributedQualities2.writeGpuPartitionsToMemory();
-        saved.qualityDataInMemory = true;
-    }else{
-        distributedQualities2.writeGpuPartitionsToStream(stream);
-        saved.qualityDataInMemory = false;
-    }
-
-    distributedSequenceData2.deallocateGpuPartitions();
-    distributedQualities2.deallocateGpuPartitions();  
 
     return saved;
 }
 
 void DistributedReadStorage::allocGpuMemAndLoadGpuData(std::ifstream& stream, const DistributedReadStorage::SavedGpuData& saved) const{
-    distributedSequenceData2.allocateGpuPartitions();
-    distributedQualities2.allocateGpuPartitions();
-
-    if(saved.sequenceDataInMemory){
-        distributedSequenceData2.readGpuPartitionsFromMemory(saved.sequencedata);
-    }else{
-        distributedSequenceData2.readGpuPartitionsFromStream(stream);
-    }
-
-    if(saved.qualityDataInMemory){
-        distributedQualities2.readGpuPartitionsFromMemory(saved.qualitydata);
-    }else{
-        distributedQualities2.readGpuPartitionsFromStream(stream);
+    for(const auto& partitionData : saved.gpuPartitionData){
+        allocGpuMemAndLoadGpuPartitionData(deviceIds[partitionData.partitionId], 
+                                            stream, 
+                                            partitionData);
     }
 }
 
