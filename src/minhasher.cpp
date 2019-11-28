@@ -478,6 +478,15 @@ namespace care{
         auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
         allUniqueResults.erase(resultEnd, allUniqueResults.end());
 
+        // std::vector<Value_t> allUniqueResultsPQ(maximumResultSize);
+        // auto resultEndPQ = k_way_set_union_with_priorityqueue(allUniqueResultsPQ.begin(), ranges);
+        // allUniqueResultsPQ.erase(resultEndPQ, allUniqueResultsPQ.end()); 
+
+        // assert(allUniqueResults.size() == allUniqueResultsPQ.size());
+        // assert(allUniqueResults == allUniqueResultsPQ);
+
+
+
 #ifdef NVTXTIMELINE        
         nvtx::pop_range("setunion");
 #endif 
@@ -755,157 +764,87 @@ namespace care{
     Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
         assert(minparams.k <= maximum_kmer_length);
 
-        std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
+        const int length = sequence.length();
 
-        auto make_kmer_encoded = [](const std::string& sequence, int k){
+        std::array<std::uint64_t, maximum_number_of_maps> minhashSignature;
+        std::fill_n(minhashSignature.begin(), minparams.maps, std::numeric_limits<std::uint64_t>::max());
 
-            constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
-            constexpr std::uint32_t BASE_A = 0x00000000;
-            constexpr std::uint32_t BASE_C = 0x00000001;
-            constexpr std::uint32_t BASE_G = 0x00000002;
-            constexpr std::uint32_t BASE_T = 0x00000003;
+        if(length < minparams.k) return minhashSignature;
 
-            const int l = std::min(k, int(sequence.length()));
+        const kmer_type kmer_mask = std::numeric_limits<kmer_type>::max() >> ((maximum_kmer_length - minparams.k) * 2);
+        const int rcshiftamount = (maximum_kmer_length - minparams.k) * 2;
+        
 
-            std::uint32_t kmer_enc = 0;
-
-            for(int i = 0; i < l; i++){
-                const int pos = i % basesPerInt;
-                switch(sequence[i]) {
-                case 'A':
-                        kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
-                        break;
-                case 'C':
-                        kmer_enc |= BASE_C << (2*((basesPerInt - 1)-pos));
-                        break;
-                case 'G':
-                        kmer_enc |= BASE_G << (2*((basesPerInt - 1)-pos));
-                        break;
-                case 'T':
-                        kmer_enc |= BASE_T << (2*((basesPerInt - 1)-pos));
-                        break;
-                default:
-                        kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
-                        break;
-                }
-            }
-
-            return kmer_enc;
+        auto murmur3_fmix = [](std::uint64_t x) {
+            x ^= x >> 33;
+            x *= 0xff51afd7ed558ccd;
+            x ^= x >> 33;
+            x *= 0xc4ceb9fe1a85ec53;
+            x ^= x >> 33;
+            return x;
         };
 
-        auto make_next_kmer_enc = [](std::uint32_t kmer_enc, int k, const char nextbase){
-            constexpr int basesPerInt = sizeof(std::uint32_t) * 8 / 2;
-            constexpr std::uint32_t BASE_A = 0x00000000;
-            constexpr std::uint32_t BASE_C = 0x00000001;
-            constexpr std::uint32_t BASE_G = 0x00000002;
-            constexpr std::uint32_t BASE_T = 0x00000003;
+        
+#if 0
+        auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+            const auto fwdhash = murmur3_fmix(fwd + numhashfunc);
+            const auto rchash = murmur3_fmix(rc + numhashfunc);
+            const auto smallest = std::min(fwdhash, rchash);
+            // if(numhashfunc == 1){
+            //     std::cerr << fwd << ' ' << rc << ' ' << fwdhash << ' ' << rchash << ' '  << minhashSignature[numhashfunc] << '\n';
+            // }
+            minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], smallest);
+        };
+#else 
 
-            kmer_enc <<= 2;
+        auto handlekmer = [&](auto fwd, auto rc, int numhashfunc){
+            const auto smallest = std::min(fwd, rc);
+            const auto hashvalue = murmur3_fmix(smallest + numhashfunc);
+            minhashSignature[numhashfunc] = std::min(minhashSignature[numhashfunc], hashvalue);
+        };
 
-            const int pos = (k-1) % basesPerInt;
-            switch(nextbase) {
+
+#endif
+        kmer_type kmer_encoded = 0;
+        kmer_type rc_kmer_encoded = std::numeric_limits<kmer_type>::max();
+
+        auto addBase = [&](char c){
+            kmer_encoded <<= 2;
+            rc_kmer_encoded >>= 2;
+            switch(c) {
             case 'A':
-                    kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
-                    break;
+                kmer_encoded |= 0;
+                rc_kmer_encoded |= kmer_type(3) << (sizeof(kmer_type) * 8 - 2);
+                break;
             case 'C':
-                    kmer_enc |= BASE_C << (2*((basesPerInt - 1)-pos));
-                    break;
+                kmer_encoded |= 1;
+                rc_kmer_encoded |= kmer_type(2) << (sizeof(kmer_type) * 8 - 2);
+                break;
             case 'G':
-                    kmer_enc |= BASE_G << (2*((basesPerInt - 1)-pos));
-                    break;
+                kmer_encoded |= 2;
+                rc_kmer_encoded |= kmer_type(1) << (sizeof(kmer_type) * 8 - 2);
+                break;
             case 'T':
-                    kmer_enc |= BASE_T << (2*((basesPerInt - 1)-pos));
-                    break;
-            default:
-                    kmer_enc |= BASE_A << (2*((basesPerInt - 1)-pos));
-                    break;
-            }
-            return kmer_enc;
-        };
-
-        auto make_reverse_complement_int = [](std::uint32_t s){
-            s = ((s >> 2)  & 0x33333333u) | ((s & 0x33333333u) << 2);
-            s = ((s >> 4)  & 0x0F0F0F0Fu) | ((s & 0x0F0F0F0Fu) << 4);
-            s = ((s >> 8)  & 0x00FF00FFu) | ((s & 0x00FF00FFu) << 8);
-            s = ((s >> 16) & 0x0000FFFFu) | ((s & 0x0000FFFFu) << 16);
-            return (std::uint32_t(-1) - s) >> (8 * sizeof(s) - (16 << 1));
-        };
-
-        auto thomas_mueller_hash = [](std::uint32_t x){
-            x = ((x >> 16) ^ x) * 0x45d9f3b;
-            x = ((x >> 16) ^ x) * 0x45d9f3b;
-            x = ((x >> 16) ^ x);
-            return x;
-        };
-
-        auto nvidia_hash = [](std::uint32_t x) {
-            x = (x + 0x7ed55d16) + (x << 12);
-            x = (x ^ 0xc761c23c) ^ (x >> 19);
-            x = (x + 0x165667b1) + (x <<  5);
-            x = (x + 0xd3a2646c) ^ (x <<  9);
-            x = (x + 0xfd7046c5) + (x <<  3);
-            x = (x ^ 0xb55a4f09) ^ (x >> 16);
-            return x;
-        };
-
-        auto hashfunc = [&](std::uint32_t x, int i){
-            if(i % 2 == 0){
-                return thomas_mueller_hash(x);
-            }else{
-                return nvidia_hash(x);
+                kmer_encoded |= 3;
+                rc_kmer_encoded |= kmer_type(0) << (sizeof(kmer_type) * 8 - 2);
+                break;
+            default:break;
             }
         };
 
-        std::uint32_t kmer = make_kmer_encoded(sequence, minparams.k);
-        std::uint32_t revcompl = make_reverse_complement_int(kmer);
+        for(int i = 0; i < minparams.k - 1; i++){
+            addBase(sequence[i]);
+        }
 
-        //std::cout << "kmer " << kmer << std::endl;
-        //std::cout << "revcompl " << revcompl << std::endl;
+        for(int i = minparams.k - 1; i < length; i++){
+            addBase(sequence[i]);
 
-        auto updatehashes = [&](bool first){
-            std::uint32_t hashfwd = hashfunc(kmer,0);
-            std::uint32_t hashrc = hashfunc(revcompl,0);
-
-            std::uint32_t hash = hashfwd;
-            if(hashrc < hashfwd){
-                hash = hashrc;
+            for(int m = 0; m < minparams.maps; m++){
+                handlekmer(kmer_encoded & kmer_mask, 
+                            rc_kmer_encoded >> rcshiftamount, 
+                            m);
             }
-
-            if(first){
-                minhashSignature[0] = hash;
-            }else{
-                if (minhashSignature[0] > hash){
-                    minhashSignature[0] = hash;
-                }
-            }
-
-            for (int j = 1; j < minparams.maps; ++j) {
-                hashfwd = hashfunc(hashfwd,j);
-                hashrc = hashfunc(hashrc,j);
-                hash = hashfwd;
-                if(hashrc < hashfwd){
-                    hash = hashrc;
-                }
-
-                if(first){
-                    minhashSignature[j] = hash;
-                }else{
-                    if (minhashSignature[j] > hash){
-                        minhashSignature[j] = hash;
-                    }
-                }
-            }
-        };
-
-        updatehashes(true);
-
-        for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
-
-			kmer = make_next_kmer_enc(kmer, minparams.k, sequence[i + minparams.k]);
-            revcompl = make_reverse_complement_int(kmer);
-
-            updatehashes((false));
-		}
+        }
 
         return minhashSignature;
 
