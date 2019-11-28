@@ -17,6 +17,7 @@
 #include <chrono>
 #include <type_traits>
 #include <iostream>
+#include <queue>
 
 
 #include <unistd.h>
@@ -268,6 +269,86 @@ OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>
 
     return outputend;
 }
+
+
+
+template<class OutputIt, class Iter>
+OutputIt k_way_set_union_with_priorityqueue(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>& ranges){
+    using OutputType = typename std::iterator_traits<OutputIt>::value_type;
+    using InputType = typename std::iterator_traits<Iter>::value_type;
+
+    static_assert(std::is_same<OutputType, InputType>::value, "");
+
+    //handle simple cases
+
+    if(ranges.empty()){
+        return outputbegin;
+    }
+
+    if(ranges.size() == 1){
+        return std::copy(ranges[0].first, ranges[0].second, outputbegin);
+    }
+
+    if(ranges.size() == 2){
+        return std::set_union(ranges[0].first,
+                              ranges[0].second,
+                              ranges[1].first,
+                              ranges[1].second,
+                              outputbegin);
+    }
+
+    //handle generic case
+
+    struct PQval{
+        int rangeIndex;
+        Iter dataIter;
+
+        bool operator<(const PQval& rhs) const{
+            return *dataIter > *(rhs.dataIter); //order such that smallest element comes first in priority queue
+        }
+    };
+
+
+    std::priority_queue<PQval> pq;
+
+    for(int i = 0; i < int(ranges.size()); i++){
+        const auto& range = ranges[i];
+        if(std::distance(range.first, range.second) > 0){
+            pq.emplace(PQval{i, range.first});
+        }
+    }
+
+    //position of the previously added output element
+    auto currentOutputIter = outputbegin;
+    //points behind the last element in output range
+    auto outputEnd = outputbegin;
+
+    while(!pq.empty()){
+        auto cur = pq.top();
+        pq.pop();
+
+        if(currentOutputIter != outputEnd){
+            if(*currentOutputIter < *(cur.dataIter)){
+                ++currentOutputIter;
+                *currentOutputIter = *(cur.dataIter);
+                ++outputEnd;
+            }
+        }else{
+            *currentOutputIter = *(cur.dataIter); //the first output element can always be inserted
+            ++outputEnd;
+        }
+
+         //if there is another element from the same range, add it to the priority queue
+        ++cur.dataIter;
+        if(cur.dataIter != ranges[cur.rangeIndex].second){
+            pq.emplace(cur);
+        }        
+    }
+
+    return outputEnd;
+}
+
+
 
 template<class OutputIt, class Iter>
 OutputIt k_way_set_union_complicatedsort(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>& ranges){
