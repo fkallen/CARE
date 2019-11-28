@@ -91,7 +91,7 @@
             assert(canAccessPeer(device, peerDevice));
             int oldId; cudaGetDevice(&oldId); CUERR;
             cudaSetDevice(device); CUERR;
-            cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice); CUERR;
+            cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice);
             if(status != cudaSuccess){
                 if(status == cudaErrorPeerAccessNotEnabled){
                     if(debugmode == PeerAccessDebugMode::Enabled){
