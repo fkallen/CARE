@@ -80,7 +80,7 @@ public:
     PeerAccess_t peerAccess;
 
     DistributedArray()
-        : DistributedArray({},{}, DistributedArrayLayout::GPUBlock, 0,0,-1){
+        : DistributedArray({},{}, DistributedArrayLayout::GPUEqual, 0,0,-1){
     }
 
     DistributedArray(std::vector<int> deviceIds_, 
@@ -123,7 +123,7 @@ public:
             }
 
             if(preferedLocationIsSufficient){
-                cudaSetDevice(deviceIds[preferedLocation]); CUERR;
+                wrapperCudaSetDevice(deviceIds[preferedLocation]); CUERR;
                 elementsPerLocation[preferedLocation] = numRows;
                 cudaMalloc(&dataPtrPerLocation[preferedLocation], totalRequiredMemory); CUERR;
             }else{
@@ -131,7 +131,7 @@ public:
                 size_t remainingElements = numRows;
                 if(layout == DistributedArrayLayout::GPUBlock){
                     for(int gpu = 0; gpu < numGpus && remainingElements > 0; gpu++){
-                        cudaSetDevice(deviceIds[gpu]); CUERR;
+                        wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
 
                         size_t rows = std::min(remainingElements, memoryLimitBytesPerGPU[gpu] / sizeOfElement);
                         elementsPerLocation[gpu] = rows;
@@ -160,7 +160,7 @@ public:
                     }
 
                     for(int gpu = 0; gpu < numGpus; gpu++){
-                        cudaSetDevice(deviceIds[gpu]); CUERR;
+                        wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
                         cudaMalloc(&(dataPtrPerLocation[gpu]), elementsPerLocation[gpu] * sizeOfElement); CUERR;
                     }
 
@@ -195,7 +195,7 @@ public:
                 std::cerr << "]\n";
             }
 
-            cudaSetDevice(oldId); CUERR;
+            wrapperCudaSetDevice(oldId); CUERR;
         }
     }
 
@@ -246,6 +246,18 @@ public:
         destroy();
     }
 
+    inline
+    cudaError_t wrapperCudaSetDevice(int newId) const{
+        int currentId = -1;
+        cudaGetDevice(&currentId); CUERR;
+
+        std::cerr << "cudaSetDevice " << currentId << " -> " << newId << '\n';
+        cudaError_t res = cudaSetDevice(newId); CUERR;
+        return res;
+    }
+
+
+
     // template<class Ptr>
     // Ptr offsetPtr(Ptr valuetBasePointer, Index_t rowIndex){
     //     return (Ptr)(((char*)(valuetBasePointer)) + sizeOfElement * rowIndex);
@@ -284,9 +296,9 @@ public:
             std::copy_n(data, numColumns, destPtr);
         }else{
             int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-            cudaSetDevice(deviceIds[location]); CUERR;
+            wrapperCudaSetDevice(deviceIds[location]); CUERR;
             cudaMemcpy(destPtr, data, sizeOfElement, H2D); CUERR;
-            cudaSetDevice(oldDevice); CUERR;
+            wrapperCudaSetDevice(oldDevice); CUERR;
         }
     }
 
@@ -357,13 +369,13 @@ public:
                 if(location == hostLocation){
                     std::copy_n(srcPtr, numColumns * numHits, destPtr);
                 }else{
-                    cudaSetDevice(deviceIds[location]); CUERR;
+                    wrapperCudaSetDevice(deviceIds[location]); CUERR;
                     cudaMemcpy(destPtr, srcPtr, sizeOfElement * numHits, H2D); CUERR;
                 }
             }
         }
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     void setSafe(const std::vector<Index_t>& indices, const Value_t* data){
@@ -398,9 +410,9 @@ public:
                 }else{
                     Index_t start = indices[0];
                     Value_t* destPtr = offsetPtr(dataPtrPerLocation[locationId], start);
-                    cudaSetDevice(deviceIds[locationId]); CUERR;
+                    wrapperCudaSetDevice(deviceIds[locationId]); CUERR;
                     cudaMemcpy(destPtr, data, indices.size() * sizeOfElement, H2D); CUERR;
-                    cudaSetDevice(oldDevice); CUERR;
+                    wrapperCudaSetDevice(oldDevice); CUERR;
                     return;
                 }
             }
@@ -440,7 +452,7 @@ public:
                     if(location == hostLocation){
                         std::copy_n(srcPtr, size_t(numColumns) * (to-from), destPtr);
                     }else{
-                        cudaSetDevice(deviceIds[location]); CUERR;
+                        wrapperCudaSetDevice(deviceIds[location]); CUERR;
                         cudaMemcpy(destPtr, srcPtr, sizeOfElement * (to-from), H2D); CUERR;
                     }
 
@@ -449,7 +461,7 @@ public:
             }
         }
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     void get(Index_t index, Value_t* result){
@@ -461,9 +473,9 @@ public:
             std::copy_n(srcPtr, numColumns, result);
         }else{
             int oldDevice; cudaGetDevice(&oldDevice); CUERR;
-            cudaSetDevice(deviceIds[location]); CUERR;
+            wrapperCudaSetDevice(deviceIds[location]); CUERR;
             cudaMemcpy(result, srcPtr, sizeOfElement, D2H); CUERR;
-            cudaSetDevice(oldDevice); CUERR;
+            wrapperCudaSetDevice(oldDevice); CUERR;
         }
     }
 
@@ -475,12 +487,12 @@ public:
         handle->eventsPerGpu.resize(numGpus);
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
         for(int gpu = 0; gpu < numGpus; gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
+            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
             cudaStreamCreate(&(handle->streamsPerGpu[gpu])); CUERR;
             cudaEventCreate(&(handle->eventsPerGpu[gpu])); CUERR;
         }
         cudaEventCreate(&(handle->readyEvent)); CUERR;
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
 
         return handle;
     }
@@ -492,7 +504,7 @@ public:
         handle->pinnedResultData = std::move(SimpleAllocationPinnedHost<Value_t>{});
 
         for(size_t gpu = 0; gpu < handle->dataPerGpu.size(); gpu++){
-            cudaSetDevice(deviceIds[gpu]); CUERR;
+            wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
 
             handle->deviceLocalIndicesPerLocation[gpu] = std::move(SimpleAllocationDevice<Index_t>{});
             handle->dataPerGpu[gpu] = std::move(SimpleAllocationDevice<Value_t>{});
@@ -503,16 +515,16 @@ public:
         cudaEventDestroy(handle->readyEvent); CUERR;
 
         for(auto& pair : handle->tmpResultsOfDevice){
-            cudaSetDevice(pair.first); CUERR;
+            wrapperCudaSetDevice(pair.first); CUERR;
             pair.second = std::move(SimpleAllocationDevice<Value_t>{});
         }
 
         for(auto& pair : handle->permutationIndicesOfDevice){
-            cudaSetDevice(pair.first); CUERR;
+            wrapperCudaSetDevice(pair.first); CUERR;
             pair.second = std::move(SimpleAllocationDevice<Index_t>{});
         }
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     std::future<void> gatherElementsInHostMemAsync(const GatherHandle& handle,
@@ -562,7 +574,7 @@ public:
 
                 const int locationId = singlePartitionInfo.locationId;
                 const int deviceId = deviceIds[locationId];
-                cudaSetDevice(deviceId); CUERR;
+                wrapperCudaSetDevice(deviceId); CUERR;
 
                 const cudaStream_t stream = handle->streamsPerGpu[locationId];
                 auto& h_indices = handle->pinnedLocalIndices;
@@ -581,7 +593,7 @@ public:
                 cudaMemcpyAsync(h_result.get(), d_result.get(), sizeof(Value_t) * numIds * numColumns, D2H, stream); CUERR;
                 cudaStreamSynchronize(stream); CUERR;
 
-                cudaSetDevice(oldId); CUERR;
+                wrapperCudaSetDevice(oldId); CUERR;
                 
                 for(Index_t i = 0; i < numIds; i++){
                     const Value_t* srcPtr = offsetPtr(h_result.get(), i);
@@ -633,7 +645,7 @@ public:
                 const int deviceId = deviceIds[gpu];
                 const cudaStream_t stream = handle->streamsPerGpu[gpu];
 
-                cudaSetDevice(deviceIds[gpu]); CUERR;
+                wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
 
                 auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
                 auto& myResult = handle->dataPerGpu[gpu];
@@ -650,9 +662,9 @@ public:
 
                 copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, myLocalIds.get(), numHits, deviceId, stream);
 
-                cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * sizeOfElement,
+                cudaMemcpyAsync(handle->pinnedResultData.get() + hitsPerLocationPrefixSum[gpu] * numColumns,
                                 myResult.get(),
-                                sizeOfElement * numHits,
+                                numHits * sizeOfElement,
                                 D2H,
                                 stream); CUERR;
 
@@ -678,7 +690,7 @@ public:
             cudaEventSynchronize(event); CUERR;
         }
 
-        cudaSetDevice(oldId); CUERR;
+        wrapperCudaSetDevice(oldId); CUERR;
 
         //permute pinnedResultData and store in output array
         for(Index_t dstindex = 0; dstindex < numIds; dstindex++){
@@ -701,12 +713,12 @@ public:
 
         cudaStream_t stream = 0;
         int oldDevice = 0; cudaGetDevice(&oldDevice); CUERR;
-        cudaSetDevice(deviceId); CUERR;
+        wrapperCudaSetDevice(deviceId); CUERR;
         cudaStreamCreate(&stream); CUERR;
         gatherElementsInGpuMemAsync(handle, indices, d_indices, numIds, deviceId, d_result, resultPitch, stream);
         cudaStreamSynchronize(stream); CUERR;
         cudaStreamDestroy(stream); CUERR;
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
@@ -722,7 +734,7 @@ public:
 
         const int numCpuThreads = care::threadpool.getConcurrency();
 
-        //fastpath, if all elements of distributed array reside on the gpu with device id deviceId
+        //fastpath, if all elements of distributed array reside in a single partition
         if(singlePartitionInfo.isSinglePartition){
             if(singlePartitionInfo.locationId == hostLocation){
                 if(debug) std::cerr << "single location array fasthpath on host\n";
@@ -746,11 +758,11 @@ public:
 
                 int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
-                cudaSetDevice(resultDeviceId); CUERR;
+                wrapperCudaSetDevice(resultDeviceId); CUERR;
 
                 cudaMemcpyAsync(d_result, h_result.get(), sizeof(Value_t) * numIds * numColumns, H2D, stream); CUERR;
 
-                cudaSetDevice(oldDevice); CUERR;
+                wrapperCudaSetDevice(oldDevice); CUERR;
 
                 return;
             }else{
@@ -846,7 +858,8 @@ public:
 //TIMERSTARTCPU(resizedevicevectors)
         handle->pinnedResultData.resize(numIds * numColumns);
 
-        cudaSetDevice(resultDeviceId); CUERR;
+        wrapperCudaSetDevice(resultDeviceId); CUERR;
+        
         handle->localIndicesOnDevice[resultDeviceId].resize(numIds);
         cudaMemcpyAsync(handle->localIndicesOnDevice[resultDeviceId].get(),
                         handle->pinnedLocalIndices.get(),
@@ -876,7 +889,7 @@ public:
                 if(true && (peerAccess.canAccessPeer(resultDeviceId, mydeviceId) || resultDeviceId == mydeviceId)){
                     if(debug) std::cerr << "use peer access / local access: " << resultDeviceId << " <---- " << mydeviceId << "\n";
 
-                    cudaSetDevice(resultDeviceId); CUERR;
+                    wrapperCudaSetDevice(resultDeviceId); CUERR;
 
                     Value_t* destptr = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
                     Index_t* localIdsPtr = handle->localIndicesOnDevice[resultDeviceId].get() + hitsPerLocationPrefixSum[gpu];
@@ -886,7 +899,7 @@ public:
                     if(debug) std::cerr << "use intermediate host: " << resultDeviceId << " <---- host <---- " << mydeviceId << "\n";
 
 
-            	    cudaSetDevice(mydeviceId); CUERR;
+            	    wrapperCudaSetDevice(mydeviceId); CUERR;
 
                     auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
                     auto& myResult = handle->dataPerGpu[gpu];
@@ -912,7 +925,7 @@ public:
 
                     cudaEventRecord(myevent, mystream); CUERR;
 
-                    cudaSetDevice(resultDeviceId); CUERR;
+                    wrapperCudaSetDevice(resultDeviceId); CUERR;
                     cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
 
                     //copy partial results to tmp result buffer on device
@@ -947,7 +960,7 @@ public:
             );
         }
 
-        cudaSetDevice(resultDeviceId); CUERR;
+        wrapperCudaSetDevice(resultDeviceId); CUERR;
 
         cudaMemcpyAsync(offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[hostLocation]),
                         offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[hostLocation]),
@@ -1002,7 +1015,7 @@ public:
         // std::copy(hostResultPermuted.begin(), hostResultPermuted.end(), std::ostream_iterator<int>(std::cerr, " "));
         // std::cerr << "\n";
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     //d_result, d_indices must point to memory of device deviceId. d_indices[i] + indexOffset must be a local element index for this device
@@ -1012,7 +1025,7 @@ public:
 
         int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
-        cudaSetDevice(deviceId); CUERR;
+        wrapperCudaSetDevice(deviceId); CUERR;
 
         auto it = std::find(deviceIds.begin(), deviceIds.end(), deviceId);
         assert(it != deviceIds.end());
@@ -1037,7 +1050,7 @@ public:
             }
         }); CUERR;
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     //d_result points to memory of resultDevice, d_indices points to memory of sourceDevice. Gathers array elements of sourceDevice to resultDevice
@@ -1058,7 +1071,7 @@ public:
 
         const Value_t* const gpuData = dataPtrPerLocation[gpu];
 
-        cudaSetDevice(resultDevice); CUERR;
+        wrapperCudaSetDevice(resultDevice); CUERR;
 
         dim3 block(256,1,1);
         dim3 grid(std::min(65535ul, SDIV(nIndices * numCols, block.x)),1,1);
@@ -1073,7 +1086,7 @@ public:
             }
         }); CUERR;
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     //d_result, d_indices must point to memory of device deviceId. d_indices[i] must be a local element index for this device
@@ -1104,7 +1117,7 @@ public:
         int currentId;
         cudaGetDevice(&currentId); CUERR;
 
-        cudaSetDevice(deviceIds[partition]); CUERR;
+        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
 
         constexpr std::int64_t maxbatchsize = 5000000;
 
@@ -1136,7 +1149,7 @@ public:
             TIMERSTOPCPU(writeGpuPartitionToStream_file);
         }
 
-        cudaSetDevice(currentId); CUERR;
+        wrapperCudaSetDevice(currentId); CUERR;
     }
 
     void readGpuPartitionFromStream(int partition, std::ifstream& stream){
@@ -1154,7 +1167,7 @@ public:
         
         int currentId;
         cudaGetDevice(&currentId); CUERR;
-        cudaSetDevice(deviceIds[partition]); CUERR;
+        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
 
         const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
         for(std::int64_t batch = 0; batch < numBatches; batch++){
@@ -1175,7 +1188,7 @@ public:
             TIMERSTOPCPU(readGpuPartitionFromStream_memcpy);               
         }
 
-        cudaSetDevice(currentId); CUERR;
+        wrapperCudaSetDevice(currentId); CUERR;
     }
 
     std::vector<char> writeGpuPartitionToMemory(int partition) const{
@@ -1185,7 +1198,7 @@ public:
         int currentId;
         cudaGetDevice(&currentId); CUERR;
 
-        cudaSetDevice(deviceIds[partition]); CUERR;
+        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
 
         std::size_t bytes = getPartitionSizeInBytes(partition);
         std::vector<char> vec(bytes);
@@ -1194,7 +1207,7 @@ public:
         cudaMemcpy(vec.data(), dataPtrPerLocation[partition], bytes, D2H); CUERR;
         TIMERSTOPCPU(writeGpuPartitionToMemory_memcpy);
 
-        cudaSetDevice(currentId); CUERR;
+        wrapperCudaSetDevice(currentId); CUERR;
 
         return vec;
     }
@@ -1204,14 +1217,14 @@ public:
         int currentId;
         cudaGetDevice(&currentId); CUERR;
 
-        cudaSetDevice(deviceIds[partition]); CUERR;
+        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
 
         std::size_t bytes = savedpartition.size();
         TIMERSTARTCPU(readGpuPartitionFromMemory_memcpy);
         cudaMemcpy(dataPtrPerLocation[partition], savedpartition.data(), bytes, H2D); CUERR;
         TIMERSTOPCPU(readGpuPartitionFromMemory_memcpy);
 
-        cudaSetDevice(currentId); CUERR;
+        wrapperCudaSetDevice(currentId); CUERR;
     }
 
     void writeGpuPartitionsToStream(std::ofstream& stream) const{
@@ -1272,10 +1285,10 @@ public:
         int currentId;
         cudaGetDevice(&currentId); CUERR;
 
-        cudaSetDevice(deviceIds[partition]); CUERR;
+        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
         cudaFree(dataPtrPerLocation[partition]); CUERR;
 
-        cudaSetDevice(currentId); CUERR;
+        wrapperCudaSetDevice(currentId); CUERR;
     }
 
     void allocateGpuPartition(int partition){
@@ -1285,10 +1298,10 @@ public:
         int currentId;
         cudaGetDevice(&currentId); CUERR;
 
-        cudaSetDevice(deviceIds[partition]); CUERR;
+        wrapperCudaSetDevice(deviceIds[partition]); CUERR;
         cudaMalloc(&dataPtrPerLocation[partition], sizeOfElement * elementsPerLocation[partition]); CUERR;
 
-        cudaSetDevice(currentId); CUERR;
+        wrapperCudaSetDevice(currentId); CUERR;
     }
 
     void deallocateGpuPartitions(){
@@ -1310,7 +1323,7 @@ private:
         if(dataPtrPerLocation.size() > 0){
 
             for(int gpu = 0; gpu < numGpus; gpu++){
-                cudaSetDevice(deviceIds[gpu]); CUERR;
+                wrapperCudaSetDevice(deviceIds[gpu]); CUERR;
                 if(debug) std::cerr << "DistributedArray::destroy device " << deviceIds[gpu] << " cudaFree(" << static_cast<void*>(dataPtrPerLocation[gpu]) << ")\n";
                 cudaFree(dataPtrPerLocation[gpu]); CUERR;
             }
@@ -1319,7 +1332,7 @@ private:
             delete [] dataPtrPerLocation[hostLocation];
         }
 
-        cudaSetDevice(oldDevice); CUERR;
+        wrapperCudaSetDevice(oldDevice); CUERR;
     }
 };
 
