@@ -895,7 +895,7 @@ public:
                 cudaStream_t mystream = handle->streamsPerGpu[gpu];
                 cudaEvent_t myevent = handle->eventsPerGpu[gpu];
 
-                if(true && (peerAccess.canAccessPeer(resultDeviceId, mydeviceId) || resultDeviceId == mydeviceId)){
+                if(true && (/*peerAccess.canAccessPeer(resultDeviceId, mydeviceId) ||*/ resultDeviceId == mydeviceId)){
                     if(debug) std::cerr << "use peer access / local access: " << resultDeviceId << " <---- " << mydeviceId << "\n";
 
                     wrapperCudaSetDevice(resultDeviceId); CUERR;
@@ -929,6 +929,26 @@ public:
 
                     copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, mydeviceId, myLocalIds.get(), numHits, mydeviceId, mystream, 0);
 
+#if 1
+
+                    if(debug) cudaDeviceSynchronize(); CUERR;
+
+                    cudaEventRecord(myevent, mystream); CUERR;
+
+                    wrapperCudaSetDevice(resultDeviceId); CUERR;
+                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
+
+                    //copy partial results to tmp result buffer on device
+                    Value_t* mytmpResultsOfDevice = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
+                    cudaMemcpyPeerAsync(mytmpResultsOfDevice,
+                                        resultDeviceId,
+                                        myResult.get(),
+                                        mydeviceId,
+                                        sizeOfElement * numHits,
+                                        stream); CUERR;
+
+                    if(debug) cudaDeviceSynchronize(); CUERR;
+#else
                     Value_t* const myPinnedResults = offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[gpu]);
                     cudaMemcpyAsync(myPinnedResults,
                                     myResult.get(),
@@ -952,6 +972,7 @@ public:
                                     stream); CUERR;
 
                     if(debug) cudaDeviceSynchronize(); CUERR;
+#endif                    
                 }
             }
     	}
