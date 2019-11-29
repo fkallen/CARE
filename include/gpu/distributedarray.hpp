@@ -108,6 +108,8 @@ public:
         elementsPerLocationPS.resize(numLocations+1, 0);
         dataPtrPerLocation.resize(numLocations, nullptr);
 
+        peerAccess.enableAllPeerAccesses();
+
         if(numRows > 0 && numColumns > 0){
 
             int oldId; cudaGetDevice(&oldId); CUERR;
@@ -248,10 +250,10 @@ public:
 
     inline
     cudaError_t wrapperCudaSetDevice(int newId) const{
-        int currentId = -1;
-        cudaGetDevice(&currentId); CUERR;
+        // int currentId = -1;
+        // cudaGetDevice(&currentId); CUERR;
 
-        std::cerr << "cudaSetDevice " << currentId << " -> " << newId << '\n';
+        // std::cerr << "cudaSetDevice " << currentId << " -> " << newId << '\n';
         cudaError_t res = cudaSetDevice(newId); CUERR;
         return res;
     }
@@ -859,13 +861,15 @@ public:
         handle->pinnedResultData.resize(numIds * numColumns);
 
         wrapperCudaSetDevice(resultDeviceId); CUERR;
-        
+
         handle->localIndicesOnDevice[resultDeviceId].resize(numIds);
         cudaMemcpyAsync(handle->localIndicesOnDevice[resultDeviceId].get(),
                         handle->pinnedLocalIndices.get(),
                         sizeof(Index_t) * numIds,
                         H2D,
                         stream); CUERR;
+
+        if(debug) cudaDeviceSynchronize(); CUERR;
 
         handle->tmpResultsOfDevice[resultDeviceId].resize(numIds * numColumns);
 
@@ -876,6 +880,9 @@ public:
                         sizeof(Index_t) * numIds,
                         H2D,
                         stream); CUERR;
+
+        if(debug) cudaDeviceSynchronize(); CUERR;
+
 //TIMERSTOPCPU(resizedevicevectors);
 
         //gather from gpus to host
@@ -895,6 +902,8 @@ public:
                     Index_t* localIdsPtr = handle->localIndicesOnDevice[resultDeviceId].get() + hitsPerLocationPrefixSum[gpu];
 
                     copyDataToGpuBufferAsync(destptr, sizeOfElement, resultDeviceId, localIdsPtr, numHits, mydeviceId, stream, 0);
+
+                    if(debug) cudaDeviceSynchronize(); CUERR;
                 }else{
                     if(debug) std::cerr << "use intermediate host: " << resultDeviceId << " <---- host <---- " << mydeviceId << "\n";
 
@@ -912,6 +921,8 @@ public:
                                     H2D,
                                     mystream); CUERR;
 
+                    if(debug) cudaDeviceSynchronize(); CUERR;
+
             	    myResult.resize(numHits * numColumns);
 
                     copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, mydeviceId, myLocalIds.get(), numHits, mydeviceId, mystream, 0);
@@ -922,6 +933,8 @@ public:
                                     sizeOfElement * numHits,
                                     D2H,
                                     mystream); CUERR;
+
+                    if(debug) cudaDeviceSynchronize(); CUERR;
 
                     cudaEventRecord(myevent, mystream); CUERR;
 
@@ -935,6 +948,8 @@ public:
                                     sizeOfElement * hitsPerLocation[gpu],
                                     H2D,
                                     stream); CUERR;
+
+                    if(debug) cudaDeviceSynchronize(); CUERR;
                 }
             }
     	}
@@ -968,6 +983,8 @@ public:
                         H2D,
                         stream); CUERR;
 
+        if(debug) cudaDeviceSynchronize(); CUERR;
+
         {
             assert(resultPitch % sizeof(Value_t) == 0);
 
@@ -991,6 +1008,8 @@ public:
             }); CUERR;
 
         }
+
+        if(debug) cudaDeviceSynchronize(); CUERR;
 
         // cudaStreamSynchronize(stream); CUERR;
         //
