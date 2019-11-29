@@ -864,15 +864,6 @@ public:
 
         wrapperCudaSetDevice(resultDeviceId); CUERR;
 
-        handle->localIndicesOnDevice[resultDeviceId].resize(numIds);
-        cudaMemcpyAsync(handle->localIndicesOnDevice[resultDeviceId].get(),
-                        handle->pinnedLocalIndices.get(),
-                        sizeof(Index_t) * numIds,
-                        H2D,
-                        stream); CUERR;
-
-        if(debug) cudaDeviceSynchronize(); CUERR;
-
         handle->tmpResultsOfDevice[resultDeviceId].resize(numIds * numColumns);
 
         handle->permutationIndicesOfDevice[resultDeviceId].resize(numIds);
@@ -894,86 +885,55 @@ public:
                 int mydeviceId = deviceIds[gpu];
                 cudaStream_t mystream = handle->streamsPerGpu[gpu];
                 cudaEvent_t myevent = handle->eventsPerGpu[gpu];
+             
+                wrapperCudaSetDevice(mydeviceId); CUERR;
 
-                if(true && (/*peerAccess.canAccessPeer(resultDeviceId, mydeviceId) ||*/ resultDeviceId == mydeviceId)){
-                    if(debug) std::cerr << "use peer access / local access: " << resultDeviceId << " <---- " << mydeviceId << "\n";
+                Value_t* destptr = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
 
-                    wrapperCudaSetDevice(resultDeviceId); CUERR;
+                Value_t* localGatherPtr = nullptr;
+                cudaStream_t localGatherStream = cudaStream_t(0);
 
-                    Value_t* destptr = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
-                    Index_t* localIdsPtr = handle->localIndicesOnDevice[resultDeviceId].get() + hitsPerLocationPrefixSum[gpu];
-
-                    copyDataToGpuBufferAsync(destptr, sizeOfElement, resultDeviceId, localIdsPtr, numHits, mydeviceId, stream, 0);
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
+                if(resultDeviceId == mydeviceId){
+                    localGatherPtr = destptr;
+                    localGatherStream = stream;
                 }else{
-                    if(debug) std::cerr << "use intermediate host: " << resultDeviceId << " <---- host <---- " << mydeviceId << "\n";
+                    handle->dataPerGpu[gpu].resize(numHits * numColumns);
+                    localGatherPtr = handle->dataPerGpu[gpu].get();
+                    localGatherStream = mystream;
+                }
+                
+                auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
 
+                myLocalIds.resize(numHits);
+                Index_t* localIdsPtr = myLocalIds.get();
+                cudaMemcpyAsync(localIdsPtr,
+                                handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
+                                sizeof(Index_t) * numHits,
+                                H2D,
+                                localGatherStream); CUERR;
 
-            	    wrapperCudaSetDevice(mydeviceId); CUERR;
+                if(debug) cudaDeviceSynchronize(); CUERR;
 
-                    auto& myLocalIds = handle->deviceLocalIndicesPerLocation[gpu];
-                    auto& myResult = handle->dataPerGpu[gpu];
+                //local gather on device mydeviceId
+                copyDataToGpuBufferAsync(localGatherPtr, sizeOfElement, mydeviceId, localIdsPtr, numHits, mydeviceId, localGatherStream, 0);
 
+                if(debug) cudaDeviceSynchronize(); CUERR;
 
-            	    myLocalIds.resize(numHits);
-                    cudaMemcpyAsync(myLocalIds.get(),
-                                    handle->pinnedLocalIndices.get() + hitsPerLocationPrefixSum[gpu],
-                                    sizeof(Index_t) * numHits,
-                                    H2D,
-                                    mystream); CUERR;
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
-
-            	    myResult.resize(numHits * numColumns);
-
-                    copyDataToGpuBufferAsync(myResult.get(), sizeOfElement, mydeviceId, myLocalIds.get(), numHits, mydeviceId, mystream, 0);
-
-#if 1
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
-
+                //send partial results to destination gpu
+                if(resultDeviceId != mydeviceId){
                     cudaEventRecord(myevent, mystream); CUERR;
-
                     wrapperCudaSetDevice(resultDeviceId); CUERR;
                     cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
-
-                    //copy partial results to tmp result buffer on device
-                    Value_t* mytmpResultsOfDevice = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
-                    cudaMemcpyPeerAsync(mytmpResultsOfDevice,
+                    
+                    cudaMemcpyPeerAsync(destptr,
                                         resultDeviceId,
-                                        myResult.get(),
+                                        localGatherPtr,
                                         mydeviceId,
                                         sizeOfElement * numHits,
                                         stream); CUERR;
 
                     if(debug) cudaDeviceSynchronize(); CUERR;
-#else
-                    Value_t* const myPinnedResults = offsetPtr(handle->pinnedResultData.get(), hitsPerLocationPrefixSum[gpu]);
-                    cudaMemcpyAsync(myPinnedResults,
-                                    myResult.get(),
-                                    sizeOfElement * numHits,
-                                    D2H,
-                                    mystream); CUERR;
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
-
-                    cudaEventRecord(myevent, mystream); CUERR;
-
-                    wrapperCudaSetDevice(resultDeviceId); CUERR;
-                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
-
-                    //copy partial results to tmp result buffer on device
-                    Value_t* mytmpResultsOfDevice = offsetPtr(handle->tmpResultsOfDevice[resultDeviceId].get(), hitsPerLocationPrefixSum[gpu]);
-                    cudaMemcpyAsync(mytmpResultsOfDevice,
-                                    myPinnedResults,
-                                    sizeOfElement * hitsPerLocation[gpu],
-                                    H2D,
-                                    stream); CUERR;
-
-                    if(debug) cudaDeviceSynchronize(); CUERR;
-#endif                    
-                }
+                }                       
             }
     	}
 
