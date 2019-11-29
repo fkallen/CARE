@@ -55,7 +55,7 @@ public:
     };
 
     using GatherHandle = std::shared_ptr<GatherHandleStruct>;
-    using PeerAccess_t = PeerAccessDebug;
+    using PeerAccess_t = PeerAccess;
 
     struct SinglePartitionInfo{
         bool isSinglePartition = false;
@@ -768,16 +768,76 @@ public:
 
                 return;
             }else{
-                if(debug) std::cerr << "single location array fasthpath on partition " << singlePartitionInfo.locationId << "\n";
+                //if(debug) std::cerr << "single location array fast path on partition " << singlePartitionInfo.locationId << "\n";
 
                 const int locationId = singlePartitionInfo.locationId;
-                const int deviceId = deviceIds[locationId];
+                const int mydeviceId = deviceIds[locationId];
+                cudaStream_t mystream = handle->streamsPerGpu[locationId];
+                cudaEvent_t myevent = handle->eventsPerGpu[locationId];
+#if 1
+                 if(mydeviceId == resultDeviceId){
+                     copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, mydeviceId, stream, -elementsPerLocationPS[locationId]);
 
-                if(deviceId == resultDeviceId){
-                    copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]);
+                     return;
+                 }
+#else
 
-                    return;
+                wrapperCudaSetDevice(mydeviceId); CUERR;
+
+                Value_t* destptr = d_result;
+
+                Value_t* localGatherPtr = nullptr;
+                Index_t* localIndicesPtr = nullptr;
+                cudaStream_t localGatherStream = cudaStream_t(0);
+
+                if(resultDeviceId == mydeviceId){
+                    localGatherPtr = destptr;
+                    localIndicesPtr = const_cast<Index_t*>(d_indices);
+                    localGatherStream = stream;
+                }else{
+                    handle->dataPerGpu[locationId].resize(numIds * numColumns);
+                    localGatherPtr = handle->dataPerGpu[locationId].get();
+
+                    handle->deviceLocalIndicesPerLocation[locationId].resize(numIds);
+                    localIndicesPtr = handle->deviceLocalIndicesPerLocation[locationId].get();
+                    cudaMemcpyPeerAsync(localIndicesPtr,
+                                        mydeviceId,
+                                        d_indices,
+                                        resultDeviceId,
+                                        sizeof(Index_t) * numIds,
+                                        localGatherStream); CUERR;
+
+                    localGatherStream = mystream;
                 }
+
+                if(debug) cudaDeviceSynchronize(); CUERR;
+
+                //local gather on device mydeviceId
+                copyDataToGpuBufferAsync(localGatherPtr, resultPitch, localIndicesPtr, numIds, mydeviceId, localGatherStream, -elementsPerLocationPS[locationId]);
+
+                if(debug) cudaDeviceSynchronize(); CUERR;           
+
+                //send partial results to destination gpu
+                
+                if(resultDeviceId != mydeviceId){
+
+                    cudaEventRecord(myevent, localGatherStream); CUERR;
+                    wrapperCudaSetDevice(resultDeviceId); CUERR;
+                    cudaStreamWaitEvent(stream, myevent,0); CUERR; //wait in result stream until partial results are on the host.
+                    
+                    cudaMemcpyPeerAsync(destptr,
+                                        resultDeviceId,
+                                        localGatherPtr,
+                                        mydeviceId,
+                                        sizeOfElement * numIds,
+                                        stream); CUERR;
+
+                    if(debug) cudaDeviceSynchronize(); CUERR;
+                } 
+
+                return;
+#endif
+               
             }
         }
 
@@ -790,6 +850,7 @@ public:
         if(deviceIdIter != deviceIds.end()){
             deviceIdLocation = std::distance(deviceIds.begin(), deviceIdIter);
         }
+
 
         const int threadlocoffset = SDIV(numLocations,32) * 32;
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
