@@ -773,9 +773,11 @@ public:
                 const int locationId = singlePartitionInfo.locationId;
                 const int deviceId = deviceIds[locationId];
 
-                copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]);
+                if(deviceId == resultDeviceId){
+                    copyDataToGpuBufferAsync(d_result, resultPitch, d_indices, numIds, deviceId, stream, -elementsPerLocationPS[locationId]);
 
-                return;
+                    return;
+                }
             }
         }
 
