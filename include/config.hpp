@@ -44,6 +44,12 @@ namespace care{
 
 //##################################################
 
+    template<class T> struct max_k;
+    template<> struct max_k<std::uint8_t>{static constexpr int value = 4;};
+    template<> struct max_k<std::uint16_t>{static constexpr int value = 8;};
+    template<> struct max_k<std::uint32_t>{static constexpr int value = 16;};
+    template<> struct max_k<std::uint64_t>{static constexpr int value = 32;};
+
 }
 
 #endif

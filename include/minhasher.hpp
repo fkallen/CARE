@@ -34,11 +34,6 @@
 namespace care{
 
     namespace minhasherdetail{
-        template<class T> struct max_k;
-        template<> struct max_k<std::uint8_t>{static constexpr int value = 4;};
-        template<> struct max_k<std::uint16_t>{static constexpr int value = 8;};
-        template<> struct max_k<std::uint32_t>{static constexpr int value = 16;};
-        template<> struct max_k<std::uint64_t>{static constexpr int value = 32;};
 
 		/*
 		 * hash map to map keys to indices using linear probing
@@ -492,7 +487,7 @@ struct Minhasher {
     static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
-    static constexpr int maximum_kmer_length = minhasherdetail::max_k<kmer_type>::value;
+    static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
     struct Handle{
 		std::vector<Value_t> allUniqueResults;
