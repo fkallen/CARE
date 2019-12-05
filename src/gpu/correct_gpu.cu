@@ -774,7 +774,7 @@ namespace gpu{
         //                             streams[primary_stream_index],
         //                             transFuncData.runtimeOptions.nCorrectorThreads);
 
-        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsyncNew(
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
                                     dataArrays.d_subject_sequences_lengths.get(),
                                     batch.deviceId,
                                     dataArrays.d_subject_read_ids.get(),
@@ -1079,14 +1079,14 @@ namespace gpu{
         //                                                           streams[primary_stream_index],
         //                                                           transFuncData.runtimeOptions.nCorrectorThreads);
 
-        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsyncNew(
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
                                         dataArrays.d_subject_sequences_lengths.get(),
                                         batch.deviceId,
                                         dataArrays.d_subject_read_ids.get(),
                                         dataArrays.n_subjects,   
                                         streams[primary_stream_index]);
 
-        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsyncNew(
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
                                         dataArrays.d_candidate_sequences_lengths.get(),
                                         batch.deviceId,
                                         dataArrays.d_candidate_read_ids.get(),

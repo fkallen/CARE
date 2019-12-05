@@ -568,6 +568,8 @@ namespace gpu{
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
+            std::vector<Minhasher::Map_t> constructedTables;
+
             while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
                 std::vector<Minhasher::Map_t> minhashTables;
                 
@@ -633,7 +635,7 @@ namespace gpu{
                     //                             indices.size(),
                     //                             1); 
 
-                    readStorage.gatherSequenceLengthsToHostBufferNew(
+                    readStorage.gatherSequenceLengthsToHostBuffer(
                         lengths.data(),
                         indices.data(),
                         int(indices.size()));

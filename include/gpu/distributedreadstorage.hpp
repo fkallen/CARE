@@ -76,9 +76,8 @@ public:
     std::mutex mutexUndeterminedBaseReads;
     LengthStore_t lengthStorage;
     GPULengthStore_t gpulengthStorage;
-    mutable DistributedArray<unsigned int, read_number> distributedSequenceData2;
-    mutable DistributedArray<Length_t, read_number> distributedSequenceLengths2;
-    mutable DistributedArray<char, read_number> distributedQualities2;
+    mutable DistributedArray<unsigned int, read_number> distributedSequenceData;
+    mutable DistributedArray<char, read_number> distributedQualities;
 
 
 
@@ -153,24 +152,12 @@ public:
 
     GatherHandleSequences makeGatherHandleSequences() const;
 
-    GatherHandleLengths makeGatherHandleLengths() const;
-
     GatherHandleQualities makeGatherHandleQualities() const;
 
     void gatherSequenceDataToGpuBufferAsync(
                                 const GatherHandleSequences& handle,
                                 char* d_sequence_data,
                                 size_t out_sequence_pitch,
-                                const read_number* h_readIds,
-                                const read_number* d_readIds,
-                                int nReadIds,
-                                int deviceId,
-                                cudaStream_t stream,
-                                int numCpuThreads) const;
-
-    void gatherSequenceLengthsToGpuBufferAsync(
-                                const GatherHandleLengths& handle,
-                                int* d_lengths,
                                 const read_number* h_readIds,
                                 const read_number* d_readIds,
                                 int nReadIds,
@@ -197,13 +184,6 @@ public:
                                 int nReadIds,
                                 int numCpuThreads) const;
 
-    std::future<void> gatherSequenceLengthsToHostBufferAsync(
-                                const GatherHandleLengths& handle,
-                                int* h_lengths,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
     std::future<void> gatherQualitiesToHostBufferAsync(
                                 const GatherHandleQualities& handle,
                                 char* h_quality_data,
@@ -220,13 +200,6 @@ public:
                                 int nReadIds,
                                 int numCpuThreads) const;
 
-    void gatherSequenceLengthsToHostBuffer(
-                                const GatherHandleLengths& handle,
-                                int* h_lengths,
-                                const read_number* h_readIds,
-                                int nReadIds,
-                                int numCpuThreads) const;
-
     void gatherQualitiesToHostBuffer(
                                 const GatherHandleQualities& handle,
                                 char* h_quality_data,
@@ -235,14 +208,14 @@ public:
                                 int nReadIds,
                                 int numCpuThreads) const;
 
-    void gatherSequenceLengthsToGpuBufferAsyncNew(
+    void gatherSequenceLengthsToGpuBufferAsync(
                                 int* d_lengths,
                                 int deviceId,
                                 const read_number* d_readIds,
                                 int nReadIds,    
                                 cudaStream_t stream) const;
 
-    void gatherSequenceLengthsToHostBufferNew(
+    void gatherSequenceLengthsToHostBuffer(
                                 int* lengths,
                                 const read_number* readIds,
                                 int nReadIds) const;
