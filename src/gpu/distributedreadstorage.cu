@@ -57,7 +57,6 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                 cudaSetDevice(deviceIds[gpu]); CUERR;
 
                 cudaMemGetInfo(&freeMemPerGpu[gpu], &totalMemPerGpu[gpu]); CUERR;
-                freeMemPerGpu[gpu] = 0;
             }
         };
 
@@ -729,26 +728,8 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
 
     gpulengthStorage.writeCpuLengthStoreToStream(stream);
 
-    {
-
-        size_t outputpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
-
-        size_t totalSequenceMemory = outputpitch * getNumberOfReads();
-        stream.write(reinterpret_cast<const char*>(&totalSequenceMemory), sizeof(size_t));
-
-        distributedSequenceData2.writeGpuPartitionsToStream(stream);
-        distributedSequenceData2.writeHostPartitionToStream(stream);        
-    }
-
-    if(useQualityScores){
-        size_t outputpitch = sequenceLengthUpperBound;
-
-        size_t totalqualityMemory = outputpitch * getNumberOfReads();
-        stream.write(reinterpret_cast<const char*>(&totalqualityMemory), sizeof(size_t));
-
-        distributedQualities2.writeGpuPartitionsToStream(stream);
-        distributedQualities2.writeHostPartitionToStream(stream);        
-    }
+    distributedSequenceData2.writeToStream(stream);      
+    distributedQualities2.writeToStream(stream);       
 
     //read ids with N
     std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
@@ -933,22 +914,8 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
     lengthStorage.readFromStream(stream);
 
-    {
-        size_t totalSequenceMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalSequenceMemory), sizeof(size_t));
-        
-        distributedSequenceData2.readGpuPartitionsFromStream(stream);
-        distributedSequenceData2.readHostPartitionFromStream(stream);
-    }
-
-    if(useQualityScores){
-
-        size_t totalqualityMemory = 1;
-        stream.read(reinterpret_cast<char*>(&totalqualityMemory), sizeof(size_t));
-
-        distributedQualities2.readGpuPartitionsFromStream(stream);
-        distributedQualities2.readHostPartitionFromStream(stream);
-    }
+    distributedSequenceData2.readFromStream(stream);
+    distributedQualities2.readFromStream(stream);
 
     //read ids with N
     std::size_t numUndeterminedReads = 0;

@@ -49,7 +49,9 @@ namespace gpu{
             BuiltDataStructure<GpuReadStorageWithFlags> result;
             auto& readStorage = result.data.readStorage;
 
+            TIMERSTARTCPU(load_from_file);
             readStorage.loadFromFile(fileOptions.load_binary_reads_from, runtimeOptions.deviceIds);
+            TIMERSTOPCPU(load_from_file);
             result.builtType = BuiltType::Loaded;
 
             if(useQualityScores && !readStorage.canUseQualityScores())
@@ -846,7 +848,9 @@ namespace gpu{
 
         if(saveDataStructuresToFile && fileOptions.save_binary_reads_to != "") {
             std::cout << "Saving reads to file " << fileOptions.save_binary_reads_to << std::endl;
-    		readStorage.saveToFile(fileOptions.save_binary_reads_to);
+            TIMERSTARTCPU(save_to_file);
+            readStorage.saveToFile(fileOptions.save_binary_reads_to);
+            TIMERSTOPCPU(save_to_file);
     		std::cout << "Saved reads" << std::endl;
     	}
 
