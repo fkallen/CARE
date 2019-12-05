@@ -34,6 +34,54 @@
 namespace care{
 namespace gpu{
 
+    int loadTablesFromFileAndAssignToMinhasher(const std::string& filename, 
+                                            Minhasher& minhasher, 
+                                            int numTablesToLoad, 
+                                            int firstTableId,
+                                            std::size_t availableMemory){
+
+        std::cerr << "available before loading maps: " << availableMemory << "\n";
+        
+        int assignedNumMaps = 0;
+
+        //load as many transformed tables from file as possible and move them to minhasher
+        std::ifstream instream(filename, std::ios::binary);
+        for(int i = 0; i < numTablesToLoad; i++){
+            try{
+                std::cerr << "try loading table " << i << "\n";
+                Minhasher::Map_t table{};
+                table.readFromStream(instream);
+                std::size_t tablesize = table.allocationSizeInBytes();
+                if(availableMemory > tablesize){
+                    availableMemory -= tablesize;
+
+                    minhasher.moveassignMap(firstTableId + i, std::move(table));
+
+                    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                    assignedNumMaps++;
+                    std::cerr << "usable num maps = " << assignedNumMaps << "\n";
+                }else if(availableMemory == tablesize){
+                    availableMemory -= tablesize;
+
+                    minhasher.moveassignMap(firstTableId + i, std::move(table));
+                    
+                    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
+                    assignedNumMaps++;
+                    std::cerr << "usable num maps = " << assignedNumMaps << "\n";
+                    break;
+                }else{
+                    std::cerr << "Loading table " << i << " failed\n";
+                    break;
+                }
+            }catch(...){
+                std::cerr << "Loading table " << i << " failed\n";
+                break;
+            }                        
+        }
+
+        return assignedNumMaps;
+    }
+
 
 
     BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
@@ -568,7 +616,8 @@ namespace gpu{
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
-            std::vector<Minhasher::Map_t> constructedTables;
+            std::vector<Minhasher::Map_t> cachedConstructedTables;
+            std::int64_t bytesOfCachedConstructedTables = 0;
 
             while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
                 std::vector<Minhasher::Map_t> minhashTables;
@@ -576,240 +625,254 @@ namespace gpu{
 
                 int maxNumTables = 0;
 
-                {
+                auto updateMaxNumTables = [&](){
                     std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
-                    maxNumTables = availableMemForTables / requiredMemPerTable;
+                    maxNumTables = (maxMemoryForTables - bytesOfCachedConstructedTables) / requiredMemPerTable;
                     maxNumTables -= 2; // need free memory of 2 tables to perform transformation 
                     std::cerr << "requiredMemPerTable = " << requiredMemPerTable << "\n";
                     std::cerr << "maxNumTables = " << maxNumTables << "\n";
-                }
+                };
+
+                updateMaxNumTables();
+
+                bool savedToManyTablesToFile = false;
 
                 if(maxNumTables <= 0){
-                    throw std::runtime_error("Not enough memory to construct 1 table");
-                }
+                    if(cachedConstructedTables.empty()){
+                        throw std::runtime_error("Not enough memory to construct 1 table");
+                    }else{
+                        //save cached constructed tables to file to make room for more tables
 
-                int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
-                minhashTables.resize(currentIterNumTables);
-                for(auto& table : minhashTables){
-                    Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
-                    table = std::move(tmp);
-                }
-
-                std::vector<int> tableIds(minhashTables.size());                
-                std::vector<int> hashIds(minhashTables.size());
-                std::vector<int> globalTableIds(minhashTables.size());
-                
-                std::iota(tableIds.begin(), tableIds.end(), 0);
-                std::iota(hashIds.begin(), hashIds.end(), numConstructedTables);
-                std::iota(globalTableIds.begin(), globalTableIds.end(), numConstructedTables);
-
-                std::cout << "Constructing maps: ";
-                std::copy(globalTableIds.begin(), globalTableIds.end(), std::ostream_iterator<int>(std::cout, " "));
-                std::cout << "\n";
-
-                ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
-
-                for (int iter = 0; iter < numIters; iter++){
-                    read_number readIdBegin = iter * parallelReads;
-                    read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
-
-                    std::vector<read_number> indices(readIdEnd - readIdBegin);
-                    std::iota(indices.begin(), indices.end(), readIdBegin);
-
-                    std::vector<char> sequenceData(indices.size() * sequencepitch);
-                    std::vector<DistributedReadStorage::Length_t> lengths(indices.size());
-
-                    //TIMERSTARTCPU(gather);
-
-                    auto future1 = readStorage.gatherSequenceDataToHostBufferAsync(
-                        sequencehandle,
-                        sequenceData.data(),
-                        sequencepitch,
-                        indices.data(),
-                        indices.size(),
-                        1);
-                    // auto future2 = readStorage.gatherSequenceLengthsToHostBufferAsync(
-                    //                             lengthhandle,
-                    //                             lengths.data(),
-                    //                             indices.data(),
-                    //                             indices.size(),
-                    //                             1); 
-
-                    readStorage.gatherSequenceLengthsToHostBuffer(
-                        lengths.data(),
-                        indices.data(),
-                        int(indices.size()));
-
-                    try{
-                        future1.get();
-                    }catch(...){
-                        throw std::runtime_error("error gathering sequence data for minhasher construction!");
-                    }
-                    //future2.wait();
-
-                    //TIMERSTOPCPU(gather);
-
-                    //TIMERSTARTCPU(insert);
-
-                    auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
-                        std::uint64_t countlimit = 10000;
-                        std::uint64_t count = 0;
-                        std::uint64_t oldcount = 0;
-
-                        for (read_number readId = begin; readId < end; readId++){
-                            read_number localId = readId - readIdBegin;
-                            const char *encodedsequence = (const char *)&sequenceData[localId * sequencepitch];
-                            const int sequencelength = lengths[localId];
-                            std::string sequencestring = get2BitHiLoString((const unsigned int *)encodedsequence, sequencelength);
-                            minhasher.insertSequenceIntoExternalTables(sequencestring, 
-                                                                        readId, 
-                                                                        tableIds,
-                                                                        minhashTables,
-                                                                        hashIds);
-
-                            count++;
-                            if(count == countlimit){
-                                progressThread.addProgress(count);
-                                count = 0;                                                         
+                        std::cerr << "saving cached constructed tables to file to make room for more tables\n";
+                        for(int i = 0; i < int(cachedConstructedTables.size()); i++){                            
+                            cachedConstructedTables[i].writeToStream(outstream);
+                            numSavedTables++;
+                            writtenTableBytes = outstream.tellp();
+        
+                            std::cerr << "tablesize = " << cachedConstructedTables[i].numBytes() << "\n";
+                            std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
+                            std::cerr << "numSavedTables = " << numSavedTables << "\n";
+        
+                            if(maxMemoryForTables <= writtenTableBytes){
+                                savedToManyTablesToFile = true;
+                                std::cerr << "savedToManyTablesToFile\n";
+                                break;
                             }
                         }
-                        if(count > 0){
-                            progressThread.addProgress(count);
-                        }
-                    };
+                        cachedConstructedTables.clear();
+                        bytesOfCachedConstructedTables = 0;
 
-                    threadpool.parallelFor(readIdBegin,
-                                        readIdEnd,
-                                        std::move(lambda));
-
-                    //TIMERSTOPCPU(insert);
+                        updateMaxNumTables();
+                    }
                 }
 
-                progressThread.finished();
+                if(!savedToManyTablesToFile){
 
-                //check free gpu mem for transformation
-                std::size_t estRequiredFreeGpuMem = estimateGpuMemoryForTransformKeyValueMap(minhashTables[0]);
-                std::size_t freeGpuMem, totalGpuMem;
-                cudaMemGetInfo(&freeGpuMem, &totalGpuMem); CUERR;
+                    int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
 
-                DistributedReadStorage::SavedGpuData savedReadstorageGpuData;
-                const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
-                bool didSaveGpudata = false;
+                    std::vector<int> tableIds(currentIterNumTables);                
+                    std::vector<int> hashIds(currentIterNumTables);
+                    std::vector<int> globalTableIds(currentIterNumTables);
+                    
+                    std::iota(tableIds.begin(), tableIds.end(), 0);
+                    std::iota(hashIds.begin(), hashIds.end(), numConstructedTables);
+                    std::iota(globalTableIds.begin(), globalTableIds.end(), numConstructedTables);
 
-                //if there is more than 10% gpu memory missing, make room for it
-                //if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
-                {
-                    std::ofstream rstempostream(rstempfile, std::ios::binary);
-                    std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
-                    savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1));
+                    std::cout << "Constructing maps: ";
+                    std::copy(globalTableIds.begin(), globalTableIds.end(), std::ostream_iterator<int>(std::cout, " "));
+                    std::cout << "\n";
 
-                    didSaveGpudata = true;
-                }
-
-                
-                
-                //if all tables could be constructed at once, no need to save them to temporary file
-                if(minhashOptions.maps == int(minhashTables.size())){
-
-                    for(int i = 0; i < int(minhashTables.size()); i++){
-                        int globalTableId = globalTableIds[i];
-                        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                        std::cerr << "Transforming table " << globalTableId << ". ";
-                        transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
-                        numConstructedTables++;
-                        minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
+                    
+                    minhashTables.resize(currentIterNumTables);
+                    for(auto& table : minhashTables){
+                        Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
+                        table = std::move(tmp);
                     }
 
-                    if(didSaveGpudata){
-                        std::ifstream rstempistream(rstempfile, std::ios::binary);
-                        readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
-                        savedReadstorageGpuData.clear();
-                        removeFile(rstempfile);
-                    }
-                    
-                }else{
-                    
-                    for(int i = 0; i < int(minhashTables.size()); i++){
-                        int globalTableId = globalTableIds[i];
-                        int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
-                        std::cerr << "Transforming table " << globalTableId << ". ";
-                        transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
-                        numConstructedTables++;
-                        
-                        minhashTables[i].writeToStream(outstream);
-                        numSavedTables++;
-                        writtenTableBytes = outstream.tellp();
-    
-                        std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
-                        std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
-                        std::cerr << "numSavedTables = " << numSavedTables << "\n";
-    
-                        if(maxMemoryForTables <= writtenTableBytes){
-                            break;
+                    ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+                    for (int iter = 0; iter < numIters; iter++){
+                        read_number readIdBegin = iter * parallelReads;
+                        read_number readIdEnd = std::min((iter + 1) * parallelReads, numReads);
+
+                        std::vector<read_number> indices(readIdEnd - readIdBegin);
+                        std::iota(indices.begin(), indices.end(), readIdBegin);
+
+                        std::vector<char> sequenceData(indices.size() * sequencepitch);
+                        std::vector<DistributedReadStorage::Length_t> lengths(indices.size());
+
+                        //TIMERSTARTCPU(gather);
+
+                        auto future1 = readStorage.gatherSequenceDataToHostBufferAsync(
+                            sequencehandle,
+                            sequenceData.data(),
+                            sequencepitch,
+                            indices.data(),
+                            indices.size(),
+                            1);
+
+                        readStorage.gatherSequenceLengthsToHostBuffer(
+                            lengths.data(),
+                            indices.data(),
+                            int(indices.size()));
+
+                        try{
+                            future1.get();
+                        }catch(...){
+                            throw std::runtime_error("error gathering sequence data for minhasher construction!");
                         }
-                    }
-                    minhashTables.clear();
+                        //future2.wait();
 
-                    if(didSaveGpudata){
-                        std::ifstream rstempistream(rstempfile, std::ios::binary);
-                        readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
-                        savedReadstorageGpuData.clear();
-                    }
+                        //TIMERSTOPCPU(gather);
 
-                    if(numConstructedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
-                        outstream.flush();
+                        //TIMERSTARTCPU(insert);
 
-                        std::size_t available = maxMemoryForTables;
-    
-                        std::cerr << "available before loading maps: " << available << "\n";
-                        
-                        int usableNumMaps = 0;
-    
-                        //load as many transformed tables from file as possible and move them to minhasher
-                        std::ifstream instream(tmpmapsFilename, std::ios::binary);
-                        for(int i = 0; i < numSavedTables; i++){
-                            try{
-                                std::cerr << "try loading table " << i << "\n";
-                                Minhasher::Map_t table{};
-                                table.readFromStream(instream);
-                                std::size_t tablesize = table.allocationSizeInBytes();
-                                if(available > tablesize){
-                                    available -= tablesize;
+                        auto lambda = [&, readIdBegin](auto begin, auto end, int threadId) {
+                            std::uint64_t countlimit = 10000;
+                            std::uint64_t count = 0;
+                            std::uint64_t oldcount = 0;
 
-                                    minhasher.moveassignMap(i, std::move(table));
+                            for (read_number readId = begin; readId < end; readId++){
+                                read_number localId = readId - readIdBegin;
+                                const char *encodedsequence = (const char *)&sequenceData[localId * sequencepitch];
+                                const int sequencelength = lengths[localId];
+                                std::string sequencestring = get2BitHiLoString((const unsigned int *)encodedsequence, sequencelength);
+                                minhasher.insertSequenceIntoExternalTables(sequencestring, 
+                                                                            readId, 
+                                                                            tableIds,
+                                                                            minhashTables,
+                                                                            hashIds);
 
-                                    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
-                                    usableNumMaps++;
-                                    std::cerr << "usable num maps = " << usableNumMaps << "\n";
-                                }else if(available == tablesize){
-                                    available -= tablesize;
-
-                                    minhasher.moveassignMap(i, std::move(table));
-                                    
-                                    std::cerr << "available after loading table " << i << ": " << (getAvailableMemoryInKB() * 1024) << "\n";
-                                    usableNumMaps++;
-                                    std::cerr << "usable num maps = " << usableNumMaps << "\n";
-                                    break;
-                                }else{
-                                    std::cerr << "Loading table " << i << " failed\n";
-                                    break;
+                                count++;
+                                if(count == countlimit){
+                                    progressThread.addProgress(count);
+                                    count = 0;                                                         
                                 }
-                            }catch(...){
-                                std::cerr << "Loading table " << i << " failed\n";
-                                break;
-                            }                        
+                            }
+                            if(count > 0){
+                                progressThread.addProgress(count);
+                            }
+                        };
+
+                        threadpool.parallelFor(readIdBegin,
+                                            readIdEnd,
+                                            std::move(lambda));
+
+                        //TIMERSTOPCPU(insert);
+                    }
+
+                    progressThread.finished();
+
+                    //check free gpu mem for transformation
+                    std::size_t estRequiredFreeGpuMem = estimateGpuMemoryForTransformKeyValueMap(minhashTables[0]);
+                    std::size_t freeGpuMem, totalGpuMem;
+                    cudaMemGetInfo(&freeGpuMem, &totalGpuMem); CUERR;
+
+                    DistributedReadStorage::SavedGpuData savedReadstorageGpuData;
+                    const std::string rstempfile = fileOptions.tempdirectory+"/rstemp";
+                    bool didSaveGpudata = false;
+
+                    //if there is more than 10% gpu memory missing, make room for it
+                    //if(std::size_t(freeGpuMem * 1.1) < estRequiredFreeGpuMem){
+                    {
+                        std::ofstream rstempostream(rstempfile, std::ios::binary);
+                        std::size_t requiredMemPerTable = Minhasher::Map_t::getRequiredSizeInBytesBeforeCompaction(nReads);
+                        savedReadstorageGpuData = std::move(readStorage.saveGpuDataAndFreeGpuMem(rstempostream, 2*requiredMemPerTable + GB1));
+
+                        didSaveGpudata = true;
+                    }
+
+                    
+                    
+                    //if all tables could be constructed at once, no need to save them to temporary file
+                    if(minhashOptions.maps == int(minhashTables.size())){
+
+                        for(int i = 0; i < int(minhashTables.size()); i++){
+                            int globalTableId = globalTableIds[i];
+                            int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                            std::cerr << "Transforming table " << globalTableId << ". ";
+                            transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+                            numConstructedTables++;
+                            minhasher.moveassignMap(globalTableId, std::move(minhashTables[i]));
                         }
-    
-                        removeFile(tmpmapsFilename);
+
                         if(didSaveGpudata){
+                            std::ifstream rstempistream(rstempfile, std::ios::binary);
+                            readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
+                            savedReadstorageGpuData.clear();
                             removeFile(rstempfile);
                         }
-    
-                        minhasher.minhashTables.resize(usableNumMaps);
-                        std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
-                        minhasher.minparams.maps = usableNumMaps;
-                    }   
-                } 
+                        
+                    }else{
+
+                        for(int i = 0; i < int(minhashTables.size()); i++){
+                            int globalTableId = globalTableIds[i];
+                            int maxValuesPerKey = minhasher.getResultsPerMapThreshold();                    
+                            std::cerr << "Transforming table " << globalTableId << ". ";
+                            transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
+
+                            numConstructedTables++;
+                            bytesOfCachedConstructedTables += minhashTables[i].numBytes();
+                            cachedConstructedTables.emplace_back(std::move(minhashTables[i]));
+
+                            std::cerr << "cached " << cachedConstructedTables.size() << " constructed tables in memory\n";
+
+                            if(maxMemoryForTables <= bytesOfCachedConstructedTables){
+                                break;
+                            }
+                        }
+                        minhashTables.clear();
+
+                        if(didSaveGpudata){
+                            std::ifstream rstempistream(rstempfile, std::ios::binary);
+                            readStorage.allocGpuMemAndLoadGpuData(rstempistream, savedReadstorageGpuData);
+                            savedReadstorageGpuData.clear();
+                        }
+
+                        if(cachedConstructedTables.size() + numSavedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
+                            outstream.flush();
+                            
+                            int usableNumMaps = loadTablesFromFileAndAssignToMinhasher(
+                                                        tmpmapsFilename, 
+                                                        minhasher, 
+                                                        numSavedTables, 
+                                                        0,
+                                                        maxMemoryForTables);
+
+                            for(int i = 0; i < int(cachedConstructedTables.size()) && usableNumMaps < minhashOptions.maps; i++){
+                                auto& table = cachedConstructedTables[i];
+                                minhasher.moveassignMap(usableNumMaps, std::move(table));
+                                
+                                usableNumMaps++;
+                            }
+
+        
+                            removeFile(tmpmapsFilename);
+                            if(didSaveGpudata){
+                                removeFile(rstempfile);
+                            }
+        
+                            minhasher.minhashTables.resize(usableNumMaps);
+                            std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
+                            minhasher.minparams.maps = usableNumMaps;
+                        } 
+                    } 
+                }else{
+                    //all constructed tables have been saved to file, and no table is cached
+
+                    outstream.flush();
+
+                    int usableNumMaps = loadTablesFromFileAndAssignToMinhasher(
+                                                    tmpmapsFilename, 
+                                                    minhasher, 
+                                                    numSavedTables, 
+                                                    0,
+                                                    maxMemoryForTables);
+
+                    minhasher.minhashTables.resize(usableNumMaps);
+                    std::cout << "Can use " << usableNumMaps << " out of specified " << minhasher.minparams.maps << " tables\n";
+                    minhasher.minparams.maps = usableNumMaps;
+                }
             }
         }
 
