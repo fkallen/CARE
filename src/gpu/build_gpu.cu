@@ -617,9 +617,9 @@ namespace gpu{
 
             int numConstructedTables = 0;
             std::vector<Minhasher::Map_t> cachedConstructedTables;
-            std::int64_t bytesOfCachedConstructedTables = 0;
+            std::size_t bytesOfCachedConstructedTables = 0;
 
-            while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > writtenTableBytes){
+            while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > (writtenTableBytes + bytesOfCachedConstructedTables)){
                 std::vector<Minhasher::Map_t> minhashTables;
                 
 
@@ -663,6 +663,10 @@ namespace gpu{
                         bytesOfCachedConstructedTables = 0;
 
                         updateMaxNumTables();
+
+                        if(maxNumTables <= 0){                        
+                            throw std::runtime_error("Not enough memory to construct 1 table");
+                        }
                     }
                 }
 
@@ -829,8 +833,24 @@ namespace gpu{
                             savedReadstorageGpuData.clear();
                         }
 
-                        if(cachedConstructedTables.size() + numSavedTables >= minhashOptions.maps || maxMemoryForTables < writtenTableBytes){
+                        if(int(cachedConstructedTables.size()) + numSavedTables >= minhashOptions.maps 
+                                    || maxMemoryForTables < writtenTableBytes){
+
                             outstream.flush();
+
+                            //discard any cached table such that size of cached tables + size of tables in file < memory limit
+                            std::size_t totalTableBytes = writtenTableBytes;
+                            int end = 0;
+                            for(int i = 0; i < int(cachedConstructedTables.size()); i++){
+                                const auto& table = cachedConstructedTables[i];
+                                if(totalTableBytes + table.numBytes() <= maxMemoryForTables){
+                                    totalTableBytes += table.numBytes();
+                                    end++;
+                                }else{
+                                    break;
+                                }
+                            }
+                            cachedConstructedTables.erase(cachedConstructedTables.begin() + end, cachedConstructedTables.end());
                             
                             int usableNumMaps = loadTablesFromFileAndAssignToMinhasher(
                                                         tmpmapsFilename, 
@@ -845,7 +865,6 @@ namespace gpu{
                                 
                                 usableNumMaps++;
                             }
-
         
                             removeFile(tmpmapsFilename);
                             if(didSaveGpudata){
