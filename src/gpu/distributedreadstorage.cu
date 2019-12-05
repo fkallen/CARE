@@ -57,6 +57,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
                 cudaSetDevice(deviceIds[gpu]); CUERR;
 
                 cudaMemGetInfo(&freeMemPerGpu[gpu], &totalMemPerGpu[gpu]); CUERR;
+                freeMemPerGpu[gpu] = 0;
             }
         };
 
@@ -589,7 +590,7 @@ void DistributedReadStorage::gatherSequenceLengthsToHostBufferNew(
 }
 
 
-#if 1
+#if 0
 
 void DistributedReadStorage::saveToFile(const std::string& filename) const{
     std::ofstream stream(filename, std::ios::binary);
@@ -728,9 +729,6 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
 
     gpulengthStorage.writeCpuLengthStoreToStream(stream);
 
-    constexpr read_number batchsize = 10000000;
-    int numBatches = SDIV(getNumberOfReads(), batchsize);
-
     {
 
         size_t outputpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
@@ -738,8 +736,8 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
         size_t totalSequenceMemory = outputpitch * getNumberOfReads();
         stream.write(reinterpret_cast<const char*>(&totalSequenceMemory), sizeof(size_t));
 
-        distributedSequenceData2.writeHostPartitionToStream(stream);
         distributedSequenceData2.writeGpuPartitionsToStream(stream);
+        distributedSequenceData2.writeHostPartitionToStream(stream);        
     }
 
     if(useQualityScores){
@@ -748,8 +746,8 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
         size_t totalqualityMemory = outputpitch * getNumberOfReads();
         stream.write(reinterpret_cast<const char*>(&totalqualityMemory), sizeof(size_t));
 
-        distributedQualities2.writeHostPartitionToStream(stream);
         distributedQualities2.writeGpuPartitionsToStream(stream);
+        distributedQualities2.writeHostPartitionToStream(stream);        
     }
 
     //read ids with N
@@ -767,7 +765,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename){
 }
 
 
-#if 1
+#if 0
 
 void DistributedReadStorage::loadFromFile(const std::string& filename, const std::vector<int>& deviceIds_){
     std::ifstream stream(filename, std::ios::binary);
@@ -935,15 +933,12 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
 
     lengthStorage.readFromStream(stream);
 
-    constexpr read_number batchsize = 10000000;
-    int numBatches = SDIV(loaded_numberOfReads, batchsize);
-
     {
         size_t totalSequenceMemory = 1;
         stream.read(reinterpret_cast<char*>(&totalSequenceMemory), sizeof(size_t));
-
-        distributedSequenceData2.readHostPartitionFromStream(stream);
+        
         distributedSequenceData2.readGpuPartitionsFromStream(stream);
+        distributedSequenceData2.readHostPartitionFromStream(stream);
     }
 
     if(useQualityScores){
@@ -951,8 +946,8 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
         size_t totalqualityMemory = 1;
         stream.read(reinterpret_cast<char*>(&totalqualityMemory), sizeof(size_t));
 
-        distributedQualities2.readHostPartitionFromStream(stream);
         distributedQualities2.readGpuPartitionsFromStream(stream);
+        distributedQualities2.readHostPartitionFromStream(stream);
     }
 
     //read ids with N
