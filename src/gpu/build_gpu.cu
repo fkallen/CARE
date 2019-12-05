@@ -635,7 +635,7 @@ namespace gpu{
 
                 updateMaxNumTables();
 
-                bool savedToManyTablesToFile = false;
+                bool savedTooManyTablesToFile = false;
 
                 if(maxNumTables <= 0){
                     if(cachedConstructedTables.empty()){
@@ -654,8 +654,8 @@ namespace gpu{
                             std::cerr << "numSavedTables = " << numSavedTables << "\n";
         
                             if(maxMemoryForTables <= writtenTableBytes){
-                                savedToManyTablesToFile = true;
-                                std::cerr << "savedToManyTablesToFile\n";
+                                savedTooManyTablesToFile = true;
+                                std::cerr << "savedTooManyTablesToFile\n";
                                 break;
                             }
                         }
@@ -670,7 +670,7 @@ namespace gpu{
                     }
                 }
 
-                if(!savedToManyTablesToFile){
+                if(!savedTooManyTablesToFile){
 
                     int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
 
