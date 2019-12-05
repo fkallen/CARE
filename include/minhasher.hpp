@@ -204,16 +204,15 @@ namespace care{
             std::vector<Count_t> counts;
 			std::vector<Index_t> countsPrefixSum;
             std::vector<Key_t> keysWithoutValues;
-            std::vector<int> deviceIds;
 
 			double load = 0.8;
 			KeyIndexMap<Key_t, Index_t> keyIndexMap;
 
-            KeyValueMapFixedSize() : KeyValueMapFixedSize(0, {}){
+            KeyValueMapFixedSize() : KeyValueMapFixedSize(0){
 			}
 
-			KeyValueMapFixedSize(Index_t size_, const std::vector<int>& deviceIds_)
-                : size(size_), nKeys(size_), nValues(size_), noMoreWrites(false), deviceIds(deviceIds_){
+			KeyValueMapFixedSize(Index_t size_)
+                : size(size_), nKeys(size_), nValues(size_), noMoreWrites(false){
 				keys.resize(size);
 				values.resize(size);
 			}
@@ -359,8 +358,7 @@ namespace care{
                     + counts.size() * sizeof(Count_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
                     + keysWithoutValues.size() * sizeof(Key_t)
-                    + keyIndexMap.numBytes()
-                    + deviceIds.size();
+                    + keyIndexMap.numBytes();
             }
 
             std::size_t allocationSizeInBytes() const{
@@ -369,8 +367,7 @@ namespace care{
                     + counts.capacity() * sizeof(Count_t)
                     + countsPrefixSum.capacity() * sizeof(Index_t)
                     + keysWithoutValues.capacity() * sizeof(Key_t)
-                    + keyIndexMap.allocationSizeInBytes()
-                    + deviceIds.capacity();
+                    + keyIndexMap.allocationSizeInBytes();
             }
 
             static std::size_t getRequiredSizeInBytesBeforeCompaction(std::uint64_t elements){
@@ -499,14 +496,11 @@ struct Minhasher {
 	MinhashOptions minparams;
     read_number nReads;
     bool canUseGpu = false;
-    std::vector<int> deviceIds;
     bool allowUVM = false;
 
     Minhasher();
 
     Minhasher(const MinhashOptions& parameters);
-
-	Minhasher(const MinhashOptions& parameters, const std::vector<int>& deviceIds);
 
     Minhasher(const Minhasher&) = delete;
     Minhasher& operator=(const Minhasher&) = delete;

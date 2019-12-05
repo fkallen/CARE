@@ -27,13 +27,8 @@ namespace care{
 
     Minhasher::Minhasher() : Minhasher(MinhashOptions{2,16}){}
 
-    Minhasher::Minhasher(const MinhashOptions& parameters)
-		: Minhasher(parameters, {})
-	{
-	}
-
-	Minhasher::Minhasher(const MinhashOptions& parameters, const std::vector<int>& deviceIds_)
-		: minparams(parameters), nReads(0), deviceIds(deviceIds_)
+	Minhasher::Minhasher(const MinhashOptions& parameters)
+		: minparams(parameters), nReads(0)
 	{
 		if(maximum_number_of_maps < minparams.maps)
 			throw std::runtime_error("Minhasher: Maximum number of maps is "
@@ -54,7 +49,6 @@ namespace care{
         minparams = std::move(rhs.minparams);
         nReads = std::move(rhs.nReads);
         canUseGpu = std::move(rhs.canUseGpu);
-        deviceIds = std::move(rhs.deviceIds);
         allowUVM = std::move(rhs.allowUVM);
 
         return *this;
@@ -152,7 +146,6 @@ namespace care{
 
 		// for (int i = 0; i < minparams.maps; ++i) {
 		// 	minhashTables[i].reset();
-		// 	minhashTables[i].reset(new Map_t(nReads, deviceIds));
 		// }
 
         // for(auto& tableptr : minhashTables)
@@ -185,14 +178,12 @@ namespace care{
 
 		for (int i = 0; i < minparams.maps; ++i) {
 			minhashTables[i].reset();
-			//minhashTables[i].reset(new Map_t(nReads, deviceIds));
 		}
 	}
 
     void Minhasher::initMap(int mapId){
         assert(mapId < minparams.maps);
         minhashTables[mapId].reset();
-        minhashTables[mapId].reset(new Map_t(nReads, deviceIds));
     }
 
     void Minhasher::moveassignMap(int mapId, Minhasher::Map_t&& newMap){

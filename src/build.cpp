@@ -418,7 +418,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                 int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
                 minhashTables.resize(currentIterNumTables);
                 for(auto& table : minhashTables){
-                    Minhasher::Map_t tmp(nReads, runtimeOptions.deviceIds);
+                    Minhasher::Map_t tmp(nReads);
                     table = std::move(tmp);
                 }
 
