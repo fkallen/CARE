@@ -286,7 +286,7 @@ private:
                 loop(begin, end, chunks-1);                
             }
 
-            auto waitUntilThreadPoolChunksAreDone = [pforData](){
+            auto waitUntilThreadPoolChunksAreDoneThenSignal = [pforData](){
                 if(pforData->finishedWork != pforData->enqueuedWork){
                     std::unique_lock<std::mutex> ul(pforData->mProgress);
                     while(pforData->finishedWork != pforData->enqueuedWork){
