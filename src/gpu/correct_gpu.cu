@@ -248,11 +248,35 @@ namespace gpu{
         int deviceId;
 
         ThreadPool::ParallelForHandle pforHandle;
+
+        bool done = true;
+        std::mutex mDone;
+        std::condition_variable cvDone;
+
+        void wait(){
+            if(!isDone()){
+                std::unique_lock<std::mutex> l(mDone);
+                while(!isDone()){
+                    cvDone.wait(l);
+                }
+            }
+        }
+
+        void signal(){
+            std::unique_lock<std::mutex> l(mDone);
+            done = true;
+            cvDone.notify_all();
+        }
+
+        bool isDone() const{
+            return done;
+        }
     };
 
     struct Batch {
 
         NextIterationData nextIterationData;
+        bool isFirstIteration = true;
 
 		std::vector<CorrectionTask> tasks;
 		int initialNumberOfCandidates = 0;
@@ -341,6 +365,7 @@ namespace gpu{
             combinedStreams = false;
 
             initialNumberOfAnchorIds = 0;
+            initialNumberOfCandidates = 0;
 
     		numsortedCandidateIds = 0;
     		numsortedCandidateIdTasks = 0;
@@ -352,6 +377,23 @@ namespace gpu{
             doImproveMSA = false;
             numMinimizations = 0;
             previousNumIndices = 0;
+        }
+
+        void updateFromIterationData(NextIterationData& data){
+            std::swap(dataArrays.h_subject_sequences_data, data.h_subject_sequences_data);
+            std::swap(dataArrays.h_subject_sequences_lengths, data.h_subject_sequences_lengths);
+            std::swap(dataArrays.h_subject_read_ids, data.h_subject_read_ids);
+            std::swap(dataArrays.d_subject_sequences_data, data.d_subject_sequences_data);
+            std::swap(dataArrays.d_subject_sequences_lengths, data.d_subject_sequences_lengths);
+            std::swap(dataArrays.d_subject_read_ids, data.d_subject_read_ids);
+            std::swap(tasks, data.tasks);
+
+            initialNumberOfAnchorIds = data.initialNumberOfAnchorIds;
+            initialNumberOfCandidates = data.initialNumberOfCandidates;  
+
+            data.tasks.clear();
+            data.initialNumberOfAnchorIds = 0;
+            data.initialNumberOfCandidates = 0;
         }
 
 	};
@@ -419,6 +461,7 @@ namespace gpu{
     }
 
     void state_unprepared_func(Batch& batch);
+    void state_unprepared_func2(Batch& batch);
     void state_findcandidateids_func(Batch& batch);
 	void state_copyreads_func(Batch& batch);
 	void state_startalignment_func(Batch& batch);
@@ -444,7 +487,7 @@ namespace gpu{
             // }
 
             batch.statesInProgress++;
-            //std::cerr << "batch " << batch->id << " " << nameOf(batch->state) << "\n";
+            //std::cerr << "batch " << batch.id << " " << nameOf(batch.state) << "\n";
             nvtx::push_range("batch "+std::to_string(batch.id)+nameOf(batch.state), int(batch.state));
             f(batch);
             nvtx::pop_range();
@@ -454,7 +497,7 @@ namespace gpu{
 
         switch(batch.state) {
         case BatchState::Unprepared:
-            call(state_unprepared_func);
+            call(state_unprepared_func2);
             break;
         case BatchState::FindCandidateIds:
                 call(state_findcandidateids_func);
@@ -788,6 +831,7 @@ namespace gpu{
         nextData.initialNumberOfAnchorIds = std::distance(readIdsBegin, readIdsEnd);
 
         if(nextData.initialNumberOfAnchorIds == 0){
+            nextData.signal();
             return;
         };
 
@@ -805,7 +849,7 @@ namespace gpu{
             maximumSequenceBytes,
             nextData.h_subject_read_ids,
             nextData.d_subject_read_ids,
-            batch.initialNumberOfAnchorIds,
+            nextData.initialNumberOfAnchorIds,
             batch.deviceId,
             nextData.stream,
             transFuncData.runtimeOptions.nCorrectorThreads);
@@ -814,7 +858,7 @@ namespace gpu{
             nextData.d_subject_sequences_lengths.get(),
             batch.deviceId,
             nextData.d_subject_read_ids.get(),
-            batch.initialNumberOfAnchorIds,            
+            nextData.initialNumberOfAnchorIds,            
             nextData.stream);
 
         cudaMemcpyAsync(
@@ -837,6 +881,8 @@ namespace gpu{
 
         Batch* batchptr = &batch;
         NextIterationData* nextDataPtr = &nextData;
+
+        nextData.initialNumberOfCandidates = 0;
 
         auto maketasks = [batchptr, nextDataPtr, maximumSequenceBytes](int begin, int end){
 
@@ -910,6 +956,8 @@ namespace gpu{
 
         auto it = std::remove_if(nextData.tasks.begin(), nextData.tasks.end(), [](const auto& t){return !t.active;});
         nextData.tasks.erase(it, nextData.tasks.end());
+
+        nextData.signal();
     }
 
     void state_unprepared_func(Batch& batch){
@@ -986,6 +1034,108 @@ namespace gpu{
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
     }
 
+    void state_unprepared_func2(Batch& batch){
+
+        constexpr BatchState expectedState = BatchState::Unprepared;
+
+        assert(batch.state == expectedState);
+        assert(batch.initialNumberOfCandidates == 0 && batch.tasks.empty());
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        if(batch.isFirstIteration){
+            batch.nextIterationData.done = false;
+            makeNextIterationData(batch, batch.nextIterationData);            
+            batch.isFirstIteration = false;
+        }else{
+            batch.nextIterationData.wait(); //wait until data is available
+        }
+
+        if(batch.nextIterationData.initialNumberOfCandidates == 0) {
+            batch.setState(BatchState::Finished, expectedState);
+            //cudaStreamSynchronize(batch.streams[primary_stream_index])
+            return;
+        }else{
+
+            batch.updateFromIterationData(batch.nextIterationData);
+
+            //asynchronously prepare data for next iteration
+            Batch* batchptr = &batch;
+            batch.nextIterationData.done = false;
+            threadpool.enqueue([batchptr](){
+                makeNextIterationData(*batchptr, batchptr->nextIterationData);
+            });
+
+            auto& dataArrays = batch.dataArrays;
+            const auto& transFuncData = *(batch.transFuncData);
+            auto& streams = batch.streams;
+
+            //assert(batch.initialNumberOfCandidates < transFuncData.correctionOptions.batchsize + transFuncData.runtimeOptions.max_candidates);
+
+            //allocate data arrays
+            nvtx::push_range("set_problem_dimensions", 4);
+            dataArrays.set_problem_dimensions(
+                int(batch.tasks.size()),
+                batch.initialNumberOfCandidates,
+                transFuncData.sequenceFileProperties.maxSequenceLength,
+                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
+                transFuncData.goodAlignmentProperties.min_overlap,
+                transFuncData.goodAlignmentProperties.min_overlap_ratio,
+                transFuncData.correctionOptions.useQualityScores); CUERR;
+
+            nvtx::pop_range();
+
+            std::size_t temp_storage_bytes = 0;
+            std::size_t max_temp_storage_bytes = 0;
+            cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
+                        (int*)nullptr, (int*)nullptr,
+                        dataArrays.n_subjects+1,
+                        (int*)nullptr,
+                        dataArrays.n_queries,
+                        streams[primary_stream_index]); CUERR;
+
+            max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+            cub::DeviceSelect::Flagged((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                        (bool*)nullptr, (int*)nullptr, (int*)nullptr,
+                        batch.initialNumberOfCandidates,
+                        streams[primary_stream_index]); CUERR;
+
+            max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+
+            cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                        (int*)nullptr,
+                        dataArrays.n_subjects,
+                        streams[primary_stream_index]); CUERR;
+
+            cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
+                        (int*)nullptr,
+                        dataArrays.n_subjects,
+                        streams[primary_stream_index]); CUERR;
+
+            cub::DeviceSegmentedRadixSort::SortPairs((void*)nullptr,
+                                                    temp_storage_bytes,
+                                                    (const char*) nullptr,
+                                                    (char*)nullptr,
+                                                    (const int*)nullptr,
+                                                    (int*)nullptr,
+                                                    batch.initialNumberOfCandidates,
+                                                    dataArrays.n_subjects,
+                                                    (const int*)nullptr,
+                                                    (const int*)nullptr,
+                                                    0,
+                                                    3,
+                                                    streams[primary_stream_index]);
+
+            max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
+            temp_storage_bytes = max_temp_storage_bytes;
+            dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
+            dataArrays.zero_gpu(streams[primary_stream_index]);
+
+            batch.setState(BatchState::CopyReads, expectedState);
+            //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        }
+    }
 
 
     void state_findcandidateids_func(Batch& batch){
@@ -3502,7 +3652,9 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        if(!(transFuncData.readIdGenerator->empty())) {
+        if(!(transFuncData.readIdGenerator->empty() 
+             && batch.nextIterationData.isDone()
+             && batch.nextIterationData.tasks.empty())) {
             //there are reads left to correct, so this batch can be reused again
             batch.reset();
         }else{
