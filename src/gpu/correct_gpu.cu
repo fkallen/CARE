@@ -200,6 +200,8 @@ namespace gpu{
 
     static constexpr int nBatchStates = static_cast<int>(BatchState::Finished)+1;
 
+    std::string nameOf(const BatchState&);
+
     struct TransitionFunctionData;
 
     struct FindCandidateIdsDataFrame{
@@ -228,9 +230,29 @@ namespace gpu{
         }
     };
 
-    std::string nameOf(const BatchState&);
+    struct NextIterationData{
+        SimpleAllocationPinnedHost<char> h_subject_sequences_data;
+        SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
+        SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
+
+        SimpleAllocationDevice<char> d_subject_sequences_data;
+        SimpleAllocationDevice<int> d_subject_sequences_lengths;
+        SimpleAllocationDevice<read_number> d_subject_read_ids;
+
+        std::vector<CorrectionTask> tasks;
+        int initialNumberOfAnchorIds = -1;
+        std::atomic<int> initialNumberOfCandidates{-1};
+
+        cudaStream_t stream;
+        cudaEvent_t event;
+        int deviceId;
+
+        ThreadPool::ParallelForHandle pforHandle;
+    };
 
     struct Batch {
+
+        NextIterationData nextIterationData;
 
 		std::vector<CorrectionTask> tasks;
 		int initialNumberOfCandidates = 0;
@@ -717,6 +739,179 @@ namespace gpu{
     };
 
 
+    void initNextIterationData(NextIterationData& nextData, int deviceId){
+        nextData.deviceId = deviceId;
+
+        cudaSetDevice(deviceId); CUERR;
+        cudaStreamCreate(&nextData.stream); CUERR;
+        cudaEventCreate(&nextData.event); CUERR;
+    }
+
+    void destroyNextIterationData(NextIterationData& nextData){
+        cudaSetDevice(nextData.deviceId); CUERR;
+        cudaStreamDestroy(nextData.stream); CUERR;
+        cudaEventDestroy(nextData.event); CUERR;
+
+        nextData.h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
+        nextData.h_subject_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
+        nextData.h_subject_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
+
+        nextData.d_subject_sequences_data = std::move(SimpleAllocationDevice<char>{});
+        nextData.d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
+        nextData.d_subject_read_ids = std::move(SimpleAllocationDevice<read_number>{});
+
+        nextData.tasks.clear();
+        nextData.tasks.shrink_to_fit();
+    }
+
+    void makeNextIterationData(Batch& batch, NextIterationData& nextData){
+        assert(nextData.deviceId == batch.deviceId);
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        const int maximumSequenceBytes = sizeof(unsigned int) 
+                        * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
+        const auto batchsize = transFuncData.correctionOptions.batchsize;
+
+        nextData.h_subject_sequences_data.resize(maximumSequenceBytes * batchsize);
+        nextData.d_subject_sequences_data.resize(maximumSequenceBytes * batchsize);
+        nextData.h_subject_sequences_lengths.resize(batchsize);
+        nextData.d_subject_sequences_lengths.resize(batchsize);
+        nextData.h_subject_read_ids.resize(batchsize);
+        nextData.d_subject_read_ids.resize(batchsize);
+        nextData.tasks.reserve(batchsize);
+
+        read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
+        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
+        nextData.initialNumberOfAnchorIds = std::distance(readIdsBegin, readIdsEnd);
+
+        if(nextData.initialNumberOfAnchorIds == 0){
+            return;
+        };
+
+        //copy read ids to device. gather sequences + lengths for those ids and copy them back to host
+        cudaMemcpyAsync(
+            nextData.d_subject_read_ids,
+            nextData.h_subject_read_ids,
+            nextData.h_subject_read_ids.sizeInBytes(),
+            H2D,
+            nextData.stream); CUERR;
+
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+            batch.subjectSequenceGatherHandle2,
+            nextData.d_subject_sequences_data.get(),
+            maximumSequenceBytes,
+            nextData.h_subject_read_ids,
+            nextData.d_subject_read_ids,
+            batch.initialNumberOfAnchorIds,
+            batch.deviceId,
+            nextData.stream,
+            transFuncData.runtimeOptions.nCorrectorThreads);
+
+        transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
+            nextData.d_subject_sequences_lengths.get(),
+            batch.deviceId,
+            nextData.d_subject_read_ids.get(),
+            batch.initialNumberOfAnchorIds,            
+            nextData.stream);
+
+        cudaMemcpyAsync(
+            nextData.h_subject_sequences_data,
+            nextData.d_subject_sequences_data,
+            nextData.d_subject_sequences_data.sizeInBytes(),
+            D2H,
+            nextData.stream); CUERR;
+
+        cudaMemcpyAsync(
+            nextData.h_subject_sequences_lengths,
+            nextData.d_subject_sequences_lengths,
+            nextData.d_subject_sequences_lengths.sizeInBytes(),
+            D2H,
+            nextData.stream); CUERR;
+
+        nextData.tasks.resize(nextData.initialNumberOfAnchorIds);
+
+        //minhash the retrieved anchors to find candidate ids
+
+        Batch* batchptr = &batch;
+        NextIterationData* nextDataPtr = &nextData;
+
+        auto maketasks = [batchptr, nextDataPtr, maximumSequenceBytes](int begin, int end){
+
+            const auto& transFuncData = *(batchptr->transFuncData);
+            const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
+
+            const auto& minhasher = transFuncData.minhasher;
+
+            int initialNumberOfCandidates = 0;
+
+            for(int i = begin; i < end; i++){
+                auto& task = nextDataPtr->tasks[i];
+
+                const read_number readId = nextDataPtr->h_subject_read_ids[i];
+
+                task = CorrectionTask(readId);
+                const bool ok = true;
+
+                if(ok){
+                    const char* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * maximumSequenceBytes;
+                    const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
+
+                    //TIMERSTARTCPU(get2BitHiLoString);
+                    task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+                    //TIMERSTOPCPU(get2BitHiLoString);
+
+                    //TIMERSTARTCPU(getCandidates);
+                    task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
+                                                                        hits_per_candidate,
+                                                                        transFuncData.runtimeOptions.max_candidates);
+                    //TIMERSTOPCPU(getCandidates);
+
+                    //TIMERSTARTCPU(lower_bound);
+                    auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+                    //TIMERSTOPCPU(lower_bound);
+
+                    if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                        //TIMERSTARTCPU(erase);
+                        task.candidate_read_ids.erase(readIdPos);
+                        //TIMERSTOPCPU(erase);
+                    }
+
+                    std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+                    //assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+                    if(myNumCandidates == 0) {
+                        task.active = false;
+                    }
+                }else{
+                    task.active = false;
+                }
+
+                const int myNumCandidates = int(task.candidate_read_ids.size());
+                initialNumberOfCandidates += myNumCandidates;
+            }
+
+            nextDataPtr->initialNumberOfCandidates += initialNumberOfCandidates;
+        };
+
+        cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers
+
+        threadpool.parallelFor(
+            nextData.pforHandle,
+            0, 
+            nextData.initialNumberOfAnchorIds, 
+            [=](auto begin, auto end, auto /*threadId*/){
+                maketasks(begin, end);
+            }
+        );
+
+        auto it = std::remove_if(nextData.tasks.begin(), nextData.tasks.end(), [](const auto& t){return !t.active;});
+        nextData.tasks.erase(it, nextData.tasks.end());
+    }
+
     void state_unprepared_func(Batch& batch){
 
         constexpr BatchState expectedState = BatchState::Unprepared;
@@ -765,16 +960,6 @@ namespace gpu{
                                     batch.deviceId,
                                     streams[primary_stream_index],
                                     transFuncData.runtimeOptions.nCorrectorThreads);
-
-        // transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
-        //                             batch.subjectLengthGatherHandle2,
-        //                             dataArrays.d_subject_sequences_lengths.get(),
-        //                             dataArrays.h_subject_read_ids.get(),
-        //                             dataArrays.d_subject_read_ids.get(),
-        //                             batch.initialNumberOfAnchorIds,
-        //                             batch.deviceId,
-        //                             streams[primary_stream_index],
-        //                             transFuncData.runtimeOptions.nCorrectorThreads);
 
         transFuncData.readStorage->gatherSequenceLengthsToGpuBufferAsync(
                                     dataArrays.d_subject_sequences_lengths.get(),
@@ -3462,6 +3647,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].transFuncData = &transFuncData;
           batches[i].outputThread = &outputThread;
+          
+          initNextIterationData(batches[i].nextIterationData, batches[i].deviceId);
 
           deviceIdIndex = (deviceIdIndex + 1) % deviceIds.size();
       }
@@ -3602,6 +3789,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           cudaSetDevice(batch.deviceId); CUERR;
 
           batch.dataArrays.reset();
+          destroyNextIterationData(batch.nextIterationData);
 
           for(auto& stream : batch.streams) {
               cudaStreamDestroy(stream); CUERR;
