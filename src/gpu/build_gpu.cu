@@ -615,11 +615,31 @@ namespace gpu{
                 return duration;
             };
 
+            auto getSequenceData = [&](char* dest, int sequencepitch, const read_number* indices, int numIndices){
+                readStorage.gatherSequenceDataToHostBuffer(
+                    sequencehandle,
+                    dest,
+                    sequencepitch,
+                    indices,
+                    numIndices,
+                    1);          
+            };
+
+            auto getSequenceLength = [&](DistributedReadStorage::Length_t* dest, const read_number* indices, int numIndices){
+                readStorage.gatherSequenceLengthsToHostBuffer(
+                    dest,
+                    indices,
+                    numIndices);
+            };
+
+
+
             int numSavedTables = 0;
 
             int numConstructedTables = 0;
             std::vector<Minhasher::Map_t> cachedConstructedTables;
             std::size_t bytesOfCachedConstructedTables = 0;
+            bool allowCaching = false;
 
             while(numConstructedTables < minhashOptions.maps && maxMemoryForTables > (writtenTableBytes + bytesOfCachedConstructedTables)){
 
@@ -635,10 +655,16 @@ namespace gpu{
 
                 updateMaxNumTables();
 
+                //if at least 75 percent of all tables can be constructed in first iteration, keep all constructed tables in memory
+                //else save constructed tables to file if there are less than minhashOptions.maps
+                if(numConstructedTables == 0 && float(maxNumTables) / minhashOptions.maps >= 0.75){
+                    allowCaching = true;
+                }
+
                 bool savedTooManyTablesToFile = false;
 
                 if(maxNumTables <= 0){
-                    if(cachedConstructedTables.empty()){
+                    if(cachedConstructedTables.empty() && !allowCaching){
                         throw std::runtime_error("Not enough memory to construct 1 table");
                     }else{
                         //save cached constructed tables to file to make room for more tables
@@ -674,24 +700,6 @@ namespace gpu{
 
                     int currentIterNumTables = std::min(minhashOptions.maps - numConstructedTables, maxNumTables);
 
-                    auto getSequenceData = [&](char* dest, int sequencepitch, const read_number* indices, int numIndices){
-                        readStorage.gatherSequenceDataToHostBuffer(
-                            sequencehandle,
-                            dest,
-                            sequencepitch,
-                            indices,
-                            numIndices,
-                            1);
-                    
-                        
-                    };
-
-                    auto getSequenceLength = [&](DistributedReadStorage::Length_t* dest, const read_number* indices, int numIndices){
-                        readStorage.gatherSequenceLengthsToHostBuffer(
-                            dest,
-                            indices,
-                            numIndices);
-                    };
 
                     std::vector<Minhasher::Map_t> minhashTables = constructTables(minhasher, 
                                                                                     currentIterNumTables, 
@@ -751,14 +759,29 @@ namespace gpu{
                             transform_keyvaluemap_gpu(minhashTables[i], runtimeOptions.deviceIds, maxValuesPerKey);
 
                             numConstructedTables++;
-                            bytesOfCachedConstructedTables += minhashTables[i].numBytes();
-                            cachedConstructedTables.emplace_back(std::move(minhashTables[i]));
 
-                            std::cerr << "cached " << cachedConstructedTables.size() << " constructed tables in memory\n";
+                            if(allowCaching){
+                                bytesOfCachedConstructedTables += minhashTables[i].numBytes();
+                                cachedConstructedTables.emplace_back(std::move(minhashTables[i]));
+    
+                                std::cerr << "cached " << cachedConstructedTables.size() << " constructed tables in memory\n";
+    
+                                if(maxMemoryForTables <= bytesOfCachedConstructedTables){
+                                    break;
+                                }
+                            }else{
+                                minhashTables[i].writeToStream(outstream);
+                                numSavedTables++;
+                                writtenTableBytes = outstream.tellp();
+            
+                                std::cerr << "tablesize = " << minhashTables[i].numBytes() << "\n";
+                                std::cerr << "written total of " << writtenTableBytes << " / " << maxMemoryForTables << "\n";
+                                std::cerr << "numSavedTables = " << numSavedTables << "\n";
 
-                            if(maxMemoryForTables <= bytesOfCachedConstructedTables){
-                                break;
-                            }
+                                if(maxMemoryForTables <= writtenTableBytes){
+                                    break;
+                                }
+                            }                            
                         }
                         minhashTables.clear();
 
