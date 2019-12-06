@@ -368,6 +368,8 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
             omp_set_num_threads(runtimeOptions.threads);
 
+            ThreadPool::ParallelForHandle pforHandle;
+
             const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
             std::ofstream outstream(tmpmapsFilename, std::ios::binary);
             if(!outstream){
@@ -486,9 +488,11 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                     // }
                 };
 
-                threadpool.parallelFor(readIdBegin,
-                                    readIdEnd,
-                                    std::move(lambda));
+                threadpool.parallelFor(
+                    pforHandle,
+                    readIdBegin,
+                    readIdEnd,
+                    std::move(lambda));
 
                 progressThread.finished();
 

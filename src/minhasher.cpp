@@ -464,11 +464,20 @@ namespace care{
         nvtx::push_range("setunion", 5);
 #endif
 
+#if 1
         std::vector<Value_t> allUniqueResults(maximumResultSize);
 
         auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
         allUniqueResults.erase(resultEnd, allUniqueResults.end());
+#else 
+        std::unordered_set<Value_t> uniqueValues;
+        for(const auto& range : ranges){
+            uniqueValues.insert(range.first, range.second);
+        }
+        std::vector<Value_t> allUniqueResults(uniqueValues.size());
+        std::copy(uniqueValues.cbegin(), uniqueValues.cend(), allUniqueResults.begin());
 
+#endif
         // std::vector<Value_t> allUniqueResultsPQ(maximumResultSize);
         // auto resultEndPQ = k_way_set_union_with_priorityqueue(allUniqueResultsPQ.begin(), ranges);
         // allUniqueResultsPQ.erase(resultEndPQ, allUniqueResultsPQ.end()); 

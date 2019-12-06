@@ -273,7 +273,9 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
         }
     };
 
-    threadpool.parallelFor(0, numReads, prepare);
+    ThreadPool::ParallelForHandle pforHandle;
+
+    threadpool.parallelFor(pforHandle, 0, numReads, prepare);
 
     //TIMERSTOPCPU(internal);
 

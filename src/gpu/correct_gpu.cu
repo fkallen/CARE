@@ -266,6 +266,8 @@ namespace gpu{
         TransitionFunctionData* transFuncData;
         BackgroundThread* outputThread;
 
+        ThreadPool::ParallelForHandle pforHandle;
+
         bool isTerminated = false;
 
         int id = -1;
@@ -982,7 +984,9 @@ namespace gpu{
         };
 
 #if 1
-        threadpool.parallelFor(0, 
+        threadpool.parallelFor(
+            batch.pforHandle,
+            0, 
             batch.initialNumberOfAnchorIds, 
             [=](auto begin, auto end, auto /*threadId*/){
                 maketasks(begin, end);
@@ -3016,11 +3020,11 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 
 
         if(!transFuncData.correctionOptions.correctCandidates){
-            threadpool.parallelFor(0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
+            threadpool.parallelFor(batch.pforHandle, 0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
             });
         }else{
-            threadpool.parallelFor(0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
+            threadpool.parallelFor(batch.pforHandle, 0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
                 unpackcandidates(begin, end);
             });

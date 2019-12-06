@@ -52,6 +52,7 @@ public:
         std::vector<cudaEvent_t> eventsPerGpu;
 
         cudaEvent_t readyEvent;
+        care::ThreadPool::ParallelForHandle pforHandle;
     };
 
     using GatherHandle = std::shared_ptr<GatherHandleStruct>;
@@ -744,7 +745,7 @@ public:
                 auto& h_result = handle->pinnedResultData;
                 h_result.resize(numIds * numColumns);
 
-                care::threadpool.parallelFor(
+                care::threadpool.parallelFor(handle->pforHandle, 
                     Index_t(0), 
                     numIds, 
                     [&](Index_t begin, Index_t end, int threadId){
@@ -856,7 +857,7 @@ public:
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
         std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
 
-        care::threadpool.parallelFor(
+        care::threadpool.parallelFor(handle->pforHandle, 
             Index_t(0), 
             numIds, 
             [&](Index_t begin, Index_t end, int threadId){                
@@ -1004,7 +1005,7 @@ public:
             const auto hitsOffset = hitsPerLocationPrefixSum[hostLocation];
             const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsOffset;            
 
-            care::threadpool.parallelFor(
+            care::threadpool.parallelFor(handle->pforHandle, 
                 Index_t(0), 
                 numHits, 
                 [&](Index_t begin, Index_t end, int threadId){

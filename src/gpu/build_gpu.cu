@@ -52,6 +52,8 @@ namespace gpu{
         const int numIters = SDIV(numReads, parallelReads);
         const size_t sequencepitch = getEncodedNumInts2BitHiLo(upperBoundSequenceLength) * sizeof(int);
 
+        ThreadPool::ParallelForHandle pforHandle;
+
         std::vector<Minhasher::Map_t> minhashTables(numTables);
 
         std::vector<int> tableIds(numTables);                
@@ -139,9 +141,11 @@ namespace gpu{
                 }
             };
 
-            threadpool.parallelFor(readIdBegin,
-                                readIdEnd,
-                                std::move(lambda));
+            threadpool.parallelFor(
+                pforHandle,
+                readIdBegin,
+                readIdEnd,
+                std::move(lambda));
 
             //TIMERSTOPCPU(insert);
         }
