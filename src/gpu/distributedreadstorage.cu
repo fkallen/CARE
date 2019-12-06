@@ -500,6 +500,8 @@ void DistributedReadStorage::gatherSequenceLengthsToGpuBufferAsync(
 
     assert(isReadOnly);
 
+    if(nReadIds == 0) return;
+
     gpulengthStorage.gatherLengthsOnDeviceAsync(d_lengths, 
                                                 deviceId,
                                                 d_readIds, 
