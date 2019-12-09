@@ -146,8 +146,10 @@ namespace detail{
         }
 
         SimpleAllocation& operator=(SimpleAllocation&& rhs) noexcept{
-            Allocator alloc;
-            alloc.deallocate(data_);
+            if(data_ != nullptr){
+                Allocator alloc;
+                alloc.deallocate(data_);
+            }            
 
             data_ = rhs.data_;
             size_ = rhs.size_;
@@ -161,8 +163,10 @@ namespace detail{
         }
 
         ~SimpleAllocation(){
-            Allocator alloc;
-            alloc.deallocate(data_);
+            if(data_ != nullptr){
+                Allocator alloc;
+                alloc.deallocate(data_);
+            } 
         }
 
         friend void swap(SimpleAllocation& l, SimpleAllocation& r) noexcept{
