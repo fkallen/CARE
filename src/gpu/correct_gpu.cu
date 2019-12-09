@@ -273,10 +273,62 @@ namespace gpu{
         }
     };
 
+    struct BatchResultData{
+        std::vector<CorrectionTask> tasks;
+
+        SimpleAllocationPinnedHost<char> h_corrected_subjects;
+        SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
+        SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
+        SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
+        SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
+        SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
+
+        SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
+        SimpleAllocationPinnedHost<char> h_corrected_candidates;
+        SimpleAllocationPinnedHost<char> h_candidate_sequences_data;
+        SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
+        SimpleAllocationPinnedHost<int> h_indices_per_subject_prefixsum;
+
+        SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
+        SimpleAllocationPinnedHost<int> h_alignment_shifts;
+        SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
+
+        int maximum_sequence_length;
+        int sequence_pitch;
+        int encoded_sequence_pitch;
+
+        ThreadPool::ParallelForHandle pforHandle;
+
+        bool done = true;
+        std::mutex mDone;
+        std::condition_variable cvDone;
+
+        void wait(){
+            if(!isDone()){
+                std::unique_lock<std::mutex> l(mDone);
+                while(!isDone()){
+                    cvDone.wait(l);
+                }
+            }
+        }
+
+        void signal(){
+            std::unique_lock<std::mutex> l(mDone);
+            done = true;
+            cvDone.notify_all();
+        }
+
+        bool isDone() const{
+            return done;
+        }
+    };
+
     struct Batch {
 
         NextIterationData nextIterationData;
         bool isFirstIteration = true;
+
+        BatchResultData resultData;
 
 		std::vector<CorrectionTask> tasks;
 		int initialNumberOfCandidates = 0;
@@ -474,7 +526,8 @@ namespace gpu{
     void state_startconvnetcorrection_func(Batch& batch);
     void state_startclassiccandidatecorrection_func(Batch& batch);
     void state_combinestreams_func(Batch& batch);
-	void state_unpackclassicresults_func(Batch& batch);
+    void state_unpackclassicresults_func(Batch& batch);
+    void state_unpackclassicresults_func2(Batch& batch);
 	void state_writeresults_func(Batch& batch);
 	void state_writefeatures_func(Batch& batch);
 	void state_finished_func(Batch& batch);
@@ -958,6 +1011,35 @@ namespace gpu{
         nextData.tasks.erase(it, nextData.tasks.end());
 
         nextData.signal();
+    }
+
+    void makeBatchResultData(Batch& batch, BatchResultData& resultData){
+        resultData.tasks = std::move(batch.tasks);
+
+        auto& da = batch.dataArrays;
+        std::swap(resultData.h_corrected_subjects, da.h_corrected_subjects);
+        std::swap(resultData.h_subject_is_corrected, da.h_subject_is_corrected);
+        std::swap(resultData.h_is_high_quality_subject, da.h_is_high_quality_subject);
+        std::swap(resultData.h_subject_sequences_lengths, da.h_subject_sequences_lengths);
+        std::swap(resultData.h_num_uncorrected_positions_per_subject, da.h_num_uncorrected_positions_per_subject);
+        std::swap(resultData.h_uncorrected_positions_per_subject, da.h_uncorrected_positions_per_subject);
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        if(transFuncData.correctionOptions.correctCandidates){
+            std::swap(resultData.h_num_corrected_candidates, da.h_num_corrected_candidates);
+            std::swap(resultData.h_corrected_candidates, da.h_corrected_candidates);
+            std::swap(resultData.h_candidate_sequences_data, da.h_candidate_sequences_data);            
+            std::swap(resultData.h_indices_of_corrected_candidates, da.h_indices_of_corrected_candidates);
+            std::swap(resultData.h_indices_per_subject_prefixsum, da.h_indices_per_subject_prefixsum);
+            std::swap(resultData.h_candidate_sequences_lengths, da.h_candidate_sequences_lengths);
+            std::swap(resultData.h_alignment_shifts, da.h_alignment_shifts);
+            std::swap(resultData.h_candidate_read_ids, da.h_candidate_read_ids);
+        }
+
+        resultData.maximum_sequence_length = da.maximum_sequence_length;
+        resultData.sequence_pitch = da.sequence_pitch;
+        resultData.encoded_sequence_pitch = da.encoded_sequence_pitch;
     }
 
     void state_unprepared_func(Batch& batch){
@@ -1720,6 +1802,8 @@ namespace gpu{
 
         batch.setState(BatchState::RearrangeIndices, expectedState);
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+        //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
 
     void state_rearrangeindices_func(Batch& batch){
@@ -3139,6 +3223,297 @@ cudaMemcpyAsync(dataArrays.h_consensus,
 
         cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
     }
+
+ 
+    void state_unpackclassicresults_func2(Batch& batch){
+
+        const auto& transFuncDataPtr = batch.transFuncData;
+        assert(transFuncDataPtr->correctionOptions.correctionType == CorrectionType::Classic);
+
+        constexpr BatchState expectedState = BatchState::UnpackClassicResults;
+
+        assert(batch.state == expectedState);
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        if(!batch.combinedStreams){
+            auto& events = batch.events;
+            auto& streams = batch.streams;
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
+
+            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+            batch.combinedStreams = true;            
+        }
+
+        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+        cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
+        if(errort != cudaSuccess){
+            std::cout << "error cudaEventQuery\n";
+            std::exit(0);
+        }
+        assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
+        assert(cudaEventQuery(events[result_transfer_finished_event_index]) == cudaSuccess); CUERR;
+
+        batch.resultData.wait();
+        batch.resultData.done = false;
+
+        makeBatchResultData(batch, batch.resultData);
+
+        BatchResultData* resultDataPtr = &batch.resultData;
+
+        //batch.dataArrays.copyEverythingToHostForDebugging();
+
+        auto unpackAnchors = [resultDataPtr,transFuncDataPtr](int begin, int end){
+
+            const auto& transFuncData = *transFuncDataPtr;
+            auto& resultData = *resultDataPtr;
+
+            //std::cerr << "in unpackAnchors " << begin << " - " << end << "\n";
+
+            for(int subject_index = begin; subject_index < end; ++subject_index) {
+                auto& task = resultData.tasks[subject_index];
+                const char* const my_corrected_subject_data = resultData.h_corrected_subjects + subject_index * resultData.sequence_pitch;
+                task.corrected = resultData.h_subject_is_corrected[subject_index];
+                task.highQualityAlignment = resultData.h_is_high_quality_subject[subject_index].hq();
+
+                // if(task.readId == 5383){
+                //     dataArrays.printActiveDataOfSubject(subject_index, std::cerr);
+                // }
+
+                if(task.corrected) {
+                    const int subject_length = resultData.h_subject_sequences_lengths[subject_index];
+                    task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+
+                    //task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
+
+                    const int numUncorrectedPositions = resultData.h_num_uncorrected_positions_per_subject[subject_index];
+                    if(numUncorrectedPositions > 0){
+                        task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                        std::copy_n(resultData.h_uncorrected_positions_per_subject + subject_index * resultData.maximum_sequence_length,
+                                    numUncorrectedPositions,
+                                    task.uncorrectedPositionsNoConsensus.begin());
+
+                    }
+
+                    auto isValidSequence = [](const std::string& s){
+                        return std::all_of(s.begin(), s.end(), [](char c){
+                            return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                        });
+                    };
+
+                    if(!isValidSequence(task.corrected_subject)){
+                        std::cout << task.corrected_subject << std::endl;
+                    }
+
+                    if(task.highQualityAlignment){
+                        transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+                    }
+                    //transFuncData->unlock(task.readId);
+
+                    const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
+
+                    if(!originalReadContainsN){
+                        const int maxEdits = subject_length / 7;
+                        int edits = 0;
+                        for(int i = 0; i < subject_length && edits <= maxEdits; i++){
+                            if(task.corrected_subject[i] != task.subject_string[i]){
+                                task.anchoroutput.edits.emplace_back(i, task.corrected_subject[i]);
+                                edits++;
+                            }
+                        }
+                        task.anchoroutput.useEdits = edits <= maxEdits;
+                    }else{
+                        task.anchoroutput.useEdits = false;
+                    }
+
+                    task.anchoroutput.hq = task.highQualityAlignment;                    
+                    task.anchoroutput.type = TempCorrectedSequence::Type::Anchor;
+                    task.anchoroutput.readId = task.readId;
+                    task.anchoroutput.sequence = std::move(task.corrected_subject);
+                    task.anchoroutput.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+
+                }else{
+
+                    transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+
+                }
+            }
+        };
+
+        auto unpackcandidates = [resultDataPtr,transFuncDataPtr](int begin, int end){
+            const auto& transFuncData = *transFuncDataPtr;
+            auto& resultData = *resultDataPtr;
+
+            //std::cerr << "in unpackcandidates " << begin << " - " << end << "\n";
+
+            for(int subject_index = begin; subject_index < end; ++subject_index) {
+                auto& task = resultData.tasks[subject_index];
+
+                const int n_corrected_candidates = resultData.h_num_corrected_candidates[subject_index];
+                const char* const my_corrected_candidates_data = resultData.h_corrected_candidates
+                                                + resultData.h_indices_per_subject_prefixsum[subject_index] * resultData.sequence_pitch;
+                const int* const my_indices_of_corrected_candidates = resultData.h_indices_of_corrected_candidates
+                                                + resultData.h_indices_per_subject_prefixsum[subject_index];
+
+
+                task.corrected_candidates_shifts.resize(n_corrected_candidates);
+                task.corrected_candidates_read_ids.resize(n_corrected_candidates);
+                task.corrected_candidates.resize(n_corrected_candidates);
+                task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
+                task.candidatesoutput.reserve(n_corrected_candidates);
+
+                // if(task.readId == 10){
+                //     for(int i = 0; i < n_corrected_candidates; ++i) {
+                //         std::cerr << my_indices_of_corrected_candidates[i] << " ";
+                //     }
+                //     std::cerr << std::endl;
+                // }
+
+                for(int i = 0; i < n_corrected_candidates; ++i) {
+                    const int global_candidate_index = my_indices_of_corrected_candidates[i];
+
+                    const read_number candidate_read_id = resultData.h_candidate_read_ids[global_candidate_index];
+
+                    bool savingIsOk = false;
+                    const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[candidate_read_id];
+                    if(!(mask & readCorrectedAsHQAnchor)) {
+                        savingIsOk = true;
+                    }
+                    if (savingIsOk) {
+
+                        const int candidate_length = resultData.h_candidate_sequences_lengths[global_candidate_index];
+                        const int candidate_shift = resultData.h_alignment_shifts[global_candidate_index];
+
+                        const char* const candidate_data = my_corrected_candidates_data + i * resultData.sequence_pitch;
+                        if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
+                            std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
+                                    << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                        }
+                        assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
+                        task.corrected_candidates_shifts[i] = candidate_shift;
+                        task.corrected_candidates_read_ids[i] = candidate_read_id;
+                        task.corrected_candidates[i] = std::move(std::string{candidate_data, candidate_data + candidate_length});
+
+                        const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+
+                        // if(!originalReadContainsN){
+                            
+                        //     task.corrected_candidate_equals_uncorrected[i] = task.corrected_candidates[i] == uncorrectedCandidate;
+                        // }else{
+                        //     task.corrected_candidate_equals_uncorrected[i] = false;
+                        // }
+
+                       
+
+                        TempCorrectedSequence tmp;
+
+                        if(!originalReadContainsN){
+                            const char* ptr = &resultData.h_candidate_sequences_data[global_candidate_index * resultData.encoded_sequence_pitch];
+                            const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
+
+                            const int maxEdits = candidate_length / 7;
+                            int edits = 0;
+                            for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
+                                if(task.corrected_candidates[i][pos] != uncorrectedCandidate[pos]){
+                                    tmp.edits.emplace_back(pos, task.corrected_candidates[i][pos]);
+                                    edits++;
+                                }
+                            }
+
+                            tmp.useEdits = edits <= maxEdits;
+                        }else{
+                            tmp.useEdits = false;
+                        }
+                        
+                        tmp.type = TempCorrectedSequence::Type::Candidate;
+                        tmp.shift = task.corrected_candidates_shifts[i];
+                        tmp.readId = candidate_read_id;
+                        tmp.sequence = std::move(task.corrected_candidates[i]);
+
+                        task.candidatesoutput.emplace_back(std::move(tmp));
+    				}
+                }
+            }
+        };
+
+        auto writeOutput = [resultDataPtr,
+                            transFuncDataPtr,
+                            id = batch.id](){
+            nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread", 4);
+            int notCorrectedNoCandidates = 0;
+            int notCorrected = 0;
+
+            //write result to file
+    		for(std::size_t subject_index = 0; subject_index < resultDataPtr->tasks.size(); ++subject_index) {
+
+    			const auto& task = resultDataPtr->tasks[subject_index];
+    			//std::cout << task.readId << "result" << std::endl;
+
+    			//std::cout << "finished readId " << task.readId << std::endl;
+
+    			if(task.corrected) {
+                    transFuncDataPtr->saveCorrectedSequence(task.anchoroutput, task.anchoroutput.encode());
+    			}else{
+                    if(task.candidate_read_ids.empty()){
+                        notCorrectedNoCandidates++;
+                    }
+
+                    notCorrected++;
+                }
+
+                for(const auto& tmp : task.candidatesoutput){
+                    transFuncDataPtr->saveCorrectedSequence(tmp, tmp.encode());
+                }
+            }
+            
+            resultDataPtr->signal();
+
+            //std::cerr << "not corrected "<< " " << notCorrectedNoCandidates << " " << notCorrected << "/" << tasks.size() << "\n";
+
+            nvtx::pop_range();
+        };
+
+		auto outputThreadPtr = batch.outputThread;
+
+        if(!transFuncDataPtr->correctionOptions.correctCandidates){
+            threadpool.enqueue([=](){
+
+                threadpool.parallelFor(
+                    resultDataPtr->pforHandle, 
+                    0, 
+                    int(resultDataPtr->tasks.size()), 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackAnchors(begin, end);
+                    }
+                );
+
+                outputThreadPtr->enqueue(std::move(writeOutput));
+
+            });            
+        }else{
+            threadpool.enqueue([=](){
+
+                threadpool.parallelFor(
+                    resultDataPtr->pforHandle, 
+                    0, 
+                    int(resultDataPtr->tasks.size()), 
+                    [=](auto begin, auto end, auto /*threadId*/){
+                        unpackAnchors(begin, end);
+                        unpackcandidates(begin, end);
+                    }
+                );
+
+                outputThreadPtr->enqueue(std::move(writeOutput));
+
+            });
+        }
+
+        batch.setState(BatchState::Finished, expectedState);
+    }
+
 
 
     void state_unpackclassicresults_func(Batch& batch){
