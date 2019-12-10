@@ -4278,7 +4278,7 @@ namespace gpu{
     		getProp(256);
 
     		const auto& kernelProperties = mymap[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
     		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitShared] = std::move(mymap);
 
@@ -4286,7 +4286,7 @@ namespace gpu{
     	}else{
     		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
     		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
     		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
     	}
 
@@ -4333,8 +4333,7 @@ namespace gpu{
 
         const int blocks = SDIV(std::max(1, int(*h_num_indices * expectedAffectedIndicesFraction)), blocksize);
         //const int blocks = SDIV(n_queries, blocksize);
-        //dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
-        dim3 grid(120,1,1);
+        dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
         /*if(debug){
             block.x = 1;

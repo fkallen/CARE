@@ -1145,7 +1145,9 @@ namespace gpu{
             Batch* batchptr = &batch;
             batch.nextIterationData.done = false;
             threadpool.enqueue([batchptr](){
+                //nvtx::push_range("makeNextIterationData",2);
                 makeNextIterationData(*batchptr, batchptr->nextIterationData);
+                //nvtx::pop_range();
             });
 
             auto& dataArrays = batch.dataArrays;
