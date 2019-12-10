@@ -4333,7 +4333,8 @@ namespace gpu{
 
         const int blocks = SDIV(std::max(1, int(*h_num_indices * expectedAffectedIndicesFraction)), blocksize);
         //const int blocks = SDIV(n_queries, blocksize);
-    	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
+        //dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
+        dim3 grid(120,1,1);
 
         /*if(debug){
             block.x = 1;
@@ -4365,7 +4366,7 @@ namespace gpu{
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;
 
-        check_built_msa_kernel<<<n_subjects, 128>>>(d_msapointers,
+        check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(d_msapointers,
                                                     d_indices_per_subject,
                                                     n_subjects,
                                                     msa_weights_row_pitch);
