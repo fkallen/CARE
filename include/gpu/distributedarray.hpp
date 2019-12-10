@@ -1232,34 +1232,56 @@ public:
         }
 
         const std::int64_t bytesPerElement = sizeof(Value_t) * sizeOfElement;
-        const std::int64_t buffersize = std::max(bytesPerElement, std::min(availableBytes, maxBytes));
+        const std::int64_t doublebuffersize = std::max(bytesPerElement, std::min(availableBytes, 2*maxBytes));
+        const std::int64_t buffersize = doublebuffersize / 2;
 
-        Value_t* buffer = nullptr;
-        cudaMallocHost(&buffer, buffersize); CUERR;
+        assert(buffersize > 4);
+
+        std::array<Value_t*, 2> buffers;
+        cudaMallocHost(&buffers[0], buffersize); CUERR;
+        cudaMallocHost(&buffers[1], buffersize); CUERR;
         
         int currentId;
         cudaGetDevice(&currentId); CUERR;
         wrapperCudaSetDevice(deviceIds[partition]); CUERR;
 
+        std::array<cudaStream_t, 2> streams;
+        cudaStreamCreate(&streams[0]); CUERR;
+        cudaStreamCreate(&streams[1]); CUERR;
+
         const std::int64_t batchsize = buffersize / bytesPerElement;
         const std::int64_t numBatches = SDIV(elementsPerLocation[partition], batchsize);
+
+        int bufferindex = 0;
+
         for(std::int64_t batch = 0; batch < numBatches; batch++){
             std::int64_t begin = batch * batchsize;
             std::int64_t end = std::min(std::int64_t(elementsPerLocation[partition]), (batch + 1) * batchsize);
             const std::int64_t numElements = end-begin;
 
+            cudaStreamSynchronize(streams[bufferindex]); CUERR;
+
             //TIMERSTARTCPU(readGpuPartitionFromStream_file);
-            stream.read(reinterpret_cast<char*>(buffer), sizeOfElement * numElements);
+            stream.read(reinterpret_cast<char*>(buffers[bufferindex]), sizeOfElement * numElements);
             //TIMERSTOPCPU(readGpuPartitionFromStream_file);
 
             
             Value_t* dest = offsetPtr(dataPtrPerLocation[partition], begin);
             //TIMERSTARTCPU(readGpuPartitionFromStream_memcpy);
-            cudaMemcpy(dest, buffer, sizeOfElement * numElements, H2D); CUERR; 
-            //TIMERSTOPCPU(readGpuPartitionFromStream_memcpy);               
+            cudaMemcpyAsync(dest, buffers[bufferindex], sizeOfElement * numElements, H2D, streams[bufferindex]); CUERR; 
+            //TIMERSTOPCPU(readGpuPartitionFromStream_memcpy);       
+
+            bufferindex = bufferindex == 0 ? 1 : 0;        
         }
 
-        cudaFreeHost(buffer); CUERR;
+        cudaStreamSynchronize(streams[0]); CUERR;
+        cudaStreamSynchronize(streams[1]); CUERR;
+
+        cudaStreamDestroy(streams[0]); CUERR;
+        cudaStreamDestroy(streams[1]); CUERR;
+
+        cudaFreeHost(buffers[0]); CUERR;
+        cudaFreeHost(buffers[1]); CUERR;
 
         wrapperCudaSetDevice(currentId); CUERR;
     }
