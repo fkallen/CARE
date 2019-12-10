@@ -25,16 +25,15 @@
 #include <iterator>
 #include <unordered_map>
 
+//#ifdef __NVCC__
+//#include <gpu/nvtxtimelinemarkers.hpp>
+//#endif
+
 
 
 namespace care{
 
     namespace minhasherdetail{
-        template<class T> struct max_k;
-        template<> struct max_k<std::uint8_t>{static constexpr int value = 4;};
-        template<> struct max_k<std::uint16_t>{static constexpr int value = 8;};
-        template<> struct max_k<std::uint32_t>{static constexpr int value = 16;};
-        template<> struct max_k<std::uint64_t>{static constexpr int value = 32;};
 
 		/*
 		 * hash map to map keys to indices using linear probing
@@ -191,6 +190,8 @@ namespace care{
 			using Value_t = value_t;
 			using Index_t = index_t;
 
+            using Count_t = std::uint16_t;
+
 			static constexpr bool resultsAreSorted = true;
 
 			Index_t size;
@@ -200,18 +201,18 @@ namespace care{
             bool canUseGpu = false;
 			std::vector<Key_t> keys;
 			std::vector<Value_t> values;
+            std::vector<Count_t> counts;
 			std::vector<Index_t> countsPrefixSum;
             std::vector<Key_t> keysWithoutValues;
-            std::vector<int> deviceIds;
 
 			double load = 0.8;
 			KeyIndexMap<Key_t, Index_t> keyIndexMap;
 
-            KeyValueMapFixedSize() : KeyValueMapFixedSize(0, {}){
+            KeyValueMapFixedSize() : KeyValueMapFixedSize(0){
 			}
 
-			KeyValueMapFixedSize(Index_t size_, const std::vector<int>& deviceIds_)
-                : size(size_), nKeys(size_), nValues(size_), noMoreWrites(false), deviceIds(deviceIds_){
+			KeyValueMapFixedSize(Index_t size_)
+                : size(size_), nKeys(size_), nValues(size_), noMoreWrites(false){
 				keys.resize(size);
 				values.resize(size);
 			}
@@ -231,6 +232,7 @@ namespace care{
                 noMoreWrites = other.noMoreWrites;
                 keys = other.keys;
                 values = other.values;
+                counts = other.counts;
                 countsPrefixSum = other.countsPrefixSum;
                 keysWithoutValues = other.keysWithoutValues;
                 keyIndexMap = other.keyIndexMap;
@@ -244,6 +246,7 @@ namespace care{
                 noMoreWrites = other.noMoreWrites;
                 keys = std::move(other.keys);
                 values = std::move(other.values);
+                counts = std::move(other.counts);
                 countsPrefixSum = std::move(other.countsPrefixSum);
                 keysWithoutValues = std::move(other.keysWithoutValues);
                 keyIndexMap = std::move(other.keyIndexMap);
@@ -262,6 +265,8 @@ namespace care{
                 if(keys != rhs.keys)
                     return false;
                 if(values != rhs.values)
+                    return false;
+                if(counts != rhs.counts)
                     return false;
                 if(countsPrefixSum != rhs.countsPrefixSum)
                     return false;
@@ -301,6 +306,10 @@ namespace care{
                 outstream.write(reinterpret_cast<const char*>(&emptyKeys), sizeof(std::size_t));
                 outstream.write(reinterpret_cast<const char*>(keysWithoutValues.data()), sizeof(Key_t) * emptyKeys);
 
+                std::size_t elements = counts.size();
+                outstream.write(reinterpret_cast<const char*>(&elements), sizeof(std::size_t));
+                outstream.write(reinterpret_cast<const char*>(counts.data()), sizeof(Count_t) * elements);
+
                 keyIndexMap.writeToStream(outstream);
             }
 
@@ -335,25 +344,30 @@ namespace care{
                 keysWithoutValues.resize(emptyKeys);
                 instream.read(reinterpret_cast<char*>(keysWithoutValues.data()), sizeof(Key_t) * emptyKeys);
 
+                std::size_t elements = 0;
+                instream.read(reinterpret_cast<char*>(&elements), sizeof(std::size_t));
+                counts.resize(elements);
+                instream.read(reinterpret_cast<char*>(counts.data()), sizeof(Count_t) * elements);
+
                 keyIndexMap.readFromStream(instream);
             }
 
             std::size_t numBytes() const{
                 return keys.size() * sizeof(Key_t)
                     + values.size() * sizeof(Value_t)
+                    + counts.size() * sizeof(Count_t)
                     + countsPrefixSum.size() * sizeof(Index_t)
                     + keysWithoutValues.size() * sizeof(Key_t)
-                    + keyIndexMap.numBytes()
-                    + deviceIds.size();
+                    + keyIndexMap.numBytes();
             }
 
             std::size_t allocationSizeInBytes() const{
                 return keys.capacity() * sizeof(Key_t)
                     + values.capacity() * sizeof(Value_t)
+                    + counts.capacity() * sizeof(Count_t)
                     + countsPrefixSum.capacity() * sizeof(Index_t)
                     + keysWithoutValues.capacity() * sizeof(Key_t)
-                    + keyIndexMap.allocationSizeInBytes()
-                    + deviceIds.capacity();
+                    + keyIndexMap.allocationSizeInBytes();
             }
 
             static std::size_t getRequiredSizeInBytesBeforeCompaction(std::uint64_t elements){
@@ -378,6 +392,7 @@ namespace care{
 				noMoreWrites = false;
 				keys.clear();
 				values.clear();
+                counts.clear();
 				countsPrefixSum.clear();
                 keysWithoutValues.clear();
 				keyIndexMap.clear();
@@ -387,6 +402,7 @@ namespace care{
 				clear();
 				keys.shrink_to_fit();
 				values.shrink_to_fit();
+                counts.shrink_to_fit();
 				countsPrefixSum.shrink_to_fit();
                 keysWithoutValues.shrink_to_fit();
 				keyIndexMap.shrink_to_fit();
@@ -411,44 +427,8 @@ namespace care{
 			std::vector<Value_t> get(Key_t key) const noexcept{
                 assert(noMoreWrites);
 
-                // auto range = std::equal_range(keys.begin(), keys.end(), key);
-				// if(range.first == keys.end()) return {};
-                //
-				// Index_t index = std::distance(keys.begin(), range.first);
-
-                // auto lb = std::lower_bound(keys.begin(), keys.end(), key);
-                // if(lb == keys.end() || *lb != key) {
-                //     return {};
-                // }
-                // const Index_t index = std::distance(keys.begin(), lb);
-
-                auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
-                if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
-                    const Index_t index = keyIndexMap.get(key);
-
-				    //if(index != std::numeric_limits<Index_t>::max()){
-				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
-                    //}else{
-                    //    return {};
-                    //}
-                }else{
-                    return {}; //key has no values
-                }
-                
-			}
-
-            Index_t prepare_get_ranged(Key_t key) const noexcept{
-                assert(noMoreWrites);
-                Index_t index = keyIndexMap.get(key);
-                __builtin_prefetch(countsPrefixSum.data() + index, 0, 0);
-                __builtin_prefetch(countsPrefixSum.data() + index + 1, 0, 0);
-
-				return index;
-			}
-
-            std::pair<const Value_t*, const Value_t*> execute_get_ranged(Index_t preparedIndex) const noexcept{
-
-				return {&values[countsPrefixSum[preparedIndex]], &values[countsPrefixSum[preparedIndex+1]]};
+                const auto pair = get_ranged(key);
+                return {pair.first, pair.second};                
 			}
 
 			std::pair<const Value_t*, const Value_t*> get_ranged(Key_t key) const noexcept{
@@ -465,9 +445,15 @@ namespace care{
                 // }
                 // const Index_t index = std::distance(keys.begin(), lb);
 
+                /*
+                //nvtx::push_range("check empty key", 6);
                 auto emptyKeyIter = std::lower_bound(keysWithoutValues.begin(), keysWithoutValues.end(), key);
+                //nvtx::pop_range("check empty key");
+
                 if(!(emptyKeyIter != keysWithoutValues.end() && *emptyKeyIter == key)){
+                    //nvtx::push_range("fetch index",3);
                     const Index_t index = keyIndexMap.get(key);
+                    //nvtx::pop_range("fetch index");
 
 				    //if(index != std::numeric_limits<Index_t>::max()){
 				        return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
@@ -477,6 +463,12 @@ namespace care{
                 }else{
                     return {}; //key has no values
                 }
+                */
+
+               //nvtx::push_range("fetch index",3);
+                const Index_t index = keyIndexMap.get(key);
+                return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
+                //nvtx::pop_range("fetch index");
 			}
 
 		};
@@ -492,7 +484,7 @@ struct Minhasher {
     static constexpr int bits_key = sizeof(kmer_type) * 8;
 	static constexpr std::uint64_t key_mask = (std::uint64_t(1) << (bits_key - 1)) | ((std::uint64_t(1) << (bits_key - 1)) - 1);
     static constexpr std::uint64_t max_read_num = std::numeric_limits<Index_t>::max();
-    static constexpr int maximum_kmer_length = minhasherdetail::max_k<kmer_type>::value;
+    static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
     struct Handle{
 		std::vector<Value_t> allUniqueResults;
@@ -504,14 +496,11 @@ struct Minhasher {
 	MinhashOptions minparams;
     read_number nReads;
     bool canUseGpu = false;
-    std::vector<int> deviceIds;
     bool allowUVM = false;
 
     Minhasher();
 
     Minhasher(const MinhashOptions& parameters);
-
-	Minhasher(const MinhashOptions& parameters, const std::vector<int>& deviceIds);
 
     Minhasher(const Minhasher&) = delete;
     Minhasher& operator=(const Minhasher&) = delete;

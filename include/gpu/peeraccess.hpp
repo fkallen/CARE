@@ -91,7 +91,7 @@
             assert(canAccessPeer(device, peerDevice));
             int oldId; cudaGetDevice(&oldId); CUERR;
             cudaSetDevice(device); CUERR;
-            cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice); CUERR;
+            cudaError_t status = cudaDeviceDisablePeerAccess(peerDevice);
             if(status != cudaSuccess){
                 if(status == cudaErrorPeerAccessNotEnabled){
                     if(debugmode == PeerAccessDebugMode::Enabled){
@@ -138,7 +138,7 @@
                     cudaSetDevice(i); CUERR;
                     for(int k = 0; k < numGpus; k++){
                         if(canAccessPeer(i,k)){
-                            cudaError_t status = cudaDeviceDisablePeerAccess(k); CUERR;
+                            cudaError_t status = cudaDeviceDisablePeerAccess(k);
                             if(status == cudaSuccess){
                                 //if device i can disable access to device k, it must have been enabled
                                 result[i * numGpus + k] = 1;
@@ -148,6 +148,7 @@
                                 if(status != cudaErrorPeerAccessNotEnabled){
                                     CUERR; //error
                                 }
+                                cudaGetLastError(); //reset error state;
                             }
                         }
                     }

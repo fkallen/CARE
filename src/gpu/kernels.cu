@@ -2549,6 +2549,11 @@ namespace gpu{
                         }
                     }
                 }
+            }else{
+                if(threadIdx.x == 0){
+                    d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
+                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = false;
+                }
             }
         }
     }
@@ -4166,10 +4171,10 @@ namespace gpu{
                                         msa_weights_row_pitch,
                                         debug); CUERR;
 
-        check_built_msa_kernel<<<n_subjects, 128>>>(d_msapointers,
+        check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(d_msapointers,
                                                     d_indices_per_subject,
                                                     n_subjects,
-                                                    msa_weights_row_pitch);
+                                                    msa_weights_row_pitch); CUERR;
     }
 
 
@@ -4273,7 +4278,7 @@ namespace gpu{
     		getProp(256);
 
     		const auto& kernelProperties = mymap[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
 
     		handle.kernelPropertiesMap[KernelId::MSAAddSequencesImplicitShared] = std::move(mymap);
 
@@ -4281,7 +4286,7 @@ namespace gpu{
     	}else{
     		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
     		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
-    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM * 2;
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
     		//std::cout << max_blocks_per_device << " = " << handle.deviceProperties.multiProcessorCount << " * " << kernelProperties.max_blocks_per_SM << std::endl;
     	}
 
@@ -4328,7 +4333,7 @@ namespace gpu{
 
         const int blocks = SDIV(std::max(1, int(*h_num_indices * expectedAffectedIndicesFraction)), blocksize);
         //const int blocks = SDIV(n_queries, blocksize);
-    	dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
+        dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
         /*if(debug){
             block.x = 1;
@@ -4360,7 +4365,7 @@ namespace gpu{
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;
 
-        check_built_msa_kernel<<<n_subjects, 128>>>(d_msapointers,
+        check_built_msa_kernel<<<n_subjects, 128, 0, stream>>>(d_msapointers,
                                                     d_indices_per_subject,
                                                     n_subjects,
                                                     msa_weights_row_pitch);
@@ -4983,7 +4988,7 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
-
+        cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(n_subjects, max_blocks_per_device));
@@ -5207,6 +5212,10 @@ namespace gpu{
         cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_candidatesPerHQAnchorPrefixSum, 0, 0, stream);
+
+        // set number of corrected candidates per subject to 0
+        cudaMemsetAsync(d_correctionResultPointers.numCorrectedCandidates, 0, sizeof(int) * n_subjects, stream); CUERR;
+        //call_fill_kernel_async(d_correctionResultPointers.numCorrectedCandidates, n_subjects, 0, stream);
 
         //make tiles per anchor prefixsum
         // int* d_tilesPerHQAnchorPrefixSum;

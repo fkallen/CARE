@@ -116,6 +116,7 @@ namespace args{
 		result.nCorrectorThreads = std::min(result.threads, (int)std::thread::hardware_concurrency());
         result.showProgress = pr["progress"].as<bool>();
         result.max_candidates = pr["maxCandidates"].as<int>();
+        result.gpuParallelBatches = pr["gpuParallelBatches"].as<int>();
 
         auto deviceIdsStrings = pr["deviceIds"].as<std::vector<std::string>>();
 
@@ -124,6 +125,38 @@ namespace args{
         }
 
         result.canUseGpu = result.deviceIds.size() > 0;
+
+        return result;
+	}
+
+    template<>
+	MemoryOptions to<MemoryOptions>(const cxxopts::ParseResult& pr){
+        MemoryOptions result;
+
+        const auto memoryForHashtablesString = pr["memHashtables"].as<std::string>();
+        if(memoryForHashtablesString.length() > 0){
+            switch(memoryForHashtablesString.back()){
+                case 'K':{
+                    const std::size_t factor = std::size_t(1) << 10; 
+                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
+                    result.memoryForHashtables = factor * std::stoull(numberString);
+                }break;
+                case 'M':{
+                    const std::size_t factor = std::size_t(1) << 20; 
+                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
+                    result.memoryForHashtables = factor * std::stoull(numberString);
+                }break;
+                case 'G':{
+                    const std::size_t factor = std::size_t(1) << 30; 
+                    const auto numberString = memoryForHashtablesString.substr(0, memoryForHashtablesString.size()-1);
+                    result.memoryForHashtables = factor * std::stoull(numberString);
+                }break;
+                default:
+                    result.memoryForHashtables = std::stoull(memoryForHashtablesString);
+            }
+        }else{
+            result.memoryForHashtables = 0;
+        }
 
         return result;
 	}
@@ -271,6 +304,13 @@ namespace args{
         //     valid = false;
         //     std::cout << "Error: threadsForGPUs must be <= threads, is " + std::to_string(opt.threadsForGPUs) << std::endl;
         // }
+
+        return valid;
+    }
+
+    template<>
+    bool isValid<MemoryOptions>(const MemoryOptions& opt){
+        bool valid = true;
 
         return valid;
     }

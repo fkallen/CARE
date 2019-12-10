@@ -53,6 +53,7 @@ namespace care{
                             AlignmentOptions alignmentOptions,
                             CorrectionOptions correctionOptions,
                             RuntimeOptions runtimeOptions,
+                            MemoryOptions memoryOptions,
                             FileOptions fileOptions,
                             GoodAlignmentProperties goodAlignmentProperties){
 
@@ -70,6 +71,7 @@ namespace care{
         gpu::BuiltGpuDataStructures dataStructuresgpu = gpu::buildAndSaveGpuDataStructures(minhashOptions,
                                                                                     correctionOptions,
                                                                                     runtimeOptions,
+                                                                                    memoryOptions,
                                                                                     fileOptions);
 
         TIMERSTOPCPU(set_up_datastructures);

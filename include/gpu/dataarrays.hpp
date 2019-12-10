@@ -5,23 +5,23 @@
 #include "bestalignment.hpp"
 #include "msa.hpp"
 #include "utility_kernels.cuh"
-#include <gpu/thrust_custom_allocators.hpp>
+//#include <gpu/thrust_custom_allocators.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/kernels.hpp>
 #include <config.hpp>
 
-#ifdef __NVCC__
+// #ifdef __NVCC__
 
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
+// #include <thrust/host_vector.h>
+// #include <thrust/device_vector.h>
 
-#include <thrust/fill.h>
-#include <thrust/device_ptr.h>
-#include <thrust/async/for_each.h>
+// #include <thrust/fill.h>
+// #include <thrust/device_ptr.h>
+// #include <thrust/async/for_each.h>
 
-#include <thrust/system/cuda/experimental/pinned_allocator.h>
+// #include <thrust/system/cuda/experimental/pinned_allocator.h>
 
-#endif
+// #endif
 
 namespace care {
 namespace gpu {
@@ -343,49 +343,49 @@ struct DataArrays {
 	}
 
 	void zero_gpu(cudaStream_t stream){
-        cudaMemsetAsync(d_consensus, 0, d_consensus.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_support, 0, d_support.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_coverage, 0, d_coverage.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_origWeights, 0, d_origWeights.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_origCoverages, 0, d_origCoverages.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_msa_column_properties, 0, d_msa_column_properties.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_counts, 0, d_counts.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_weights, 0, d_weights.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_consensus, 0, d_consensus.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_support, 0, d_support.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_coverage, 0, d_coverage.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_origWeights, 0, d_origWeights.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_origCoverages, 0, d_origCoverages.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_msa_column_properties, 0, d_msa_column_properties.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_counts, 0, d_counts.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_weights, 0, d_weights.sizeInBytes(), stream); CUERR;
 
-        cudaMemsetAsync(d_corrected_subjects, 0, d_corrected_subjects.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_corrected_candidates, 0, d_corrected_candidates.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_num_corrected_candidates, 0, d_num_corrected_candidates.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_subject_is_corrected, 0, d_subject_is_corrected.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_indices_of_corrected_candidates, 0, d_indices_of_corrected_candidates.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_is_high_quality_subject, 0, d_is_high_quality_subject.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_high_quality_subject_indices, 0, d_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_num_high_quality_subject_indices, 0, d_num_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_num_uncorrected_positions_per_subject, 0, d_num_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_uncorrected_positions_per_subject, 0, d_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_corrected_subjects, 0, d_corrected_subjects.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_corrected_candidates, 0, d_corrected_candidates.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_num_corrected_candidates, 0, d_num_corrected_candidates.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_subject_is_corrected, 0, d_subject_is_corrected.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_indices_of_corrected_candidates, 0, d_indices_of_corrected_candidates.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_is_high_quality_subject, 0, d_is_high_quality_subject.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_high_quality_subject_indices, 0, d_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_num_high_quality_subject_indices, 0, d_num_high_quality_subject_indices.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_num_uncorrected_positions_per_subject, 0, d_num_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
+        //cudaMemsetAsync(d_uncorrected_positions_per_subject, 0, d_uncorrected_positions_per_subject.sizeInBytes(), stream); CUERR;
 
 
-        cudaMemsetAsync(d_alignment_scores, 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_overlaps, 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_shifts, 0, d_alignment_shifts.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_nOps, 0, d_alignment_nOps.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_isValid, 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_alignment_best_alignment_flags, 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_alignment_scores, 0, d_alignment_scores.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_alignment_overlaps, 0, d_alignment_overlaps.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_alignment_shifts, 0, d_alignment_shifts.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_alignment_nOps, 0, d_alignment_nOps.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_alignment_isValid, 0, d_alignment_isValid.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_alignment_best_alignment_flags, 0, d_alignment_best_alignment_flags.sizeInBytes(), stream); CUERR;
 
-        cudaMemsetAsync(d_subject_sequences_data, 0, d_subject_sequences_data.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_sequences_data, 0, d_candidate_sequences_data.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_subject_sequences_lengths, 0, d_subject_sequences_lengths.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_sequences_lengths, 0, d_candidate_sequences_lengths.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidates_per_subject, 0, d_candidates_per_subject.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidates_per_subject_prefixsum, 0, d_candidates_per_subject_prefixsum.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_subject_read_ids, 0, d_subject_read_ids.sizeInBytes(), stream); CUERR;
-        cudaMemsetAsync(d_candidate_read_ids, 0, d_candidate_read_ids.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_subject_sequences_data, 0, d_subject_sequences_data.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_candidate_sequences_data, 0, d_candidate_sequences_data.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_subject_sequences_lengths, 0, d_subject_sequences_lengths.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_candidate_sequences_lengths, 0, d_candidate_sequences_lengths.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_candidates_per_subject, 0, d_candidates_per_subject.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_candidates_per_subject_prefixsum, 0, d_candidates_per_subject_prefixsum.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_subject_read_ids, 0, d_subject_read_ids.sizeInBytes(), stream); CUERR;
+        // cudaMemsetAsync(d_candidate_read_ids, 0, d_candidate_read_ids.sizeInBytes(), stream); CUERR;
 
-        if(useQualityScores){
-            cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
-            cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-            cudaMemsetAsync(d_candidate_qualities_transposed, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
-            cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
-        }
+        // if(useQualityScores){
+        //     cudaMemsetAsync(d_subject_qualities, 0, d_subject_qualities.sizeInBytes(), stream); CUERR;
+        //     cudaMemsetAsync(d_candidate_qualities, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+        //     cudaMemsetAsync(d_candidate_qualities_transposed, 0, d_candidate_qualities.sizeInBytes(), stream); CUERR;
+        //     cudaMemsetAsync(d_candidate_qualities_tmp, 0, d_candidate_qualities_tmp.sizeInBytes(), stream); CUERR;
+        // }
 	}
 
 	void reset(){

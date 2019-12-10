@@ -2,6 +2,7 @@
 #define CARE_SEQUENCEFILEIO_HPP
 
 #include <config.hpp>
+#include <memoryfile.hpp>
 
 #include <cstdint>
 #include <fstream>
@@ -256,18 +257,14 @@ void forEachReadInFile(const std::string& filename, FileFormat format, Func f){
 */
 void deleteFiles(std::vector<std::string> filenames);
 
-void mergeResultFiles(
-                    const std::string& tempdir,
-                    std::uint32_t expectedNumReads, 
-                    const std::string& originalReadFile,
-                    FileFormat originalFormat,
-                    const std::vector<std::string>& filesToMerge, 
-                    const std::string& outputfile,
-                    bool isSorted);
 
+struct EncodedTempCorrectedSequence{
+    read_number readId;
+    std::string data;
 
-
-
+    bool writeToBinaryStream(std::ostream& s) const;
+    bool readFromBinaryStream(std::istream& s);
+};
 
 // represents a sequence produced by the correction of a read.
 // Will be saved to file during correction.
@@ -283,6 +280,21 @@ struct TempCorrectedSequence{
     static constexpr char AnchorChar = 'a';
     static constexpr char CandidateChar = 'c';
 
+    TempCorrectedSequence() = default;
+    TempCorrectedSequence(const TempCorrectedSequence&) = default;
+    TempCorrectedSequence(TempCorrectedSequence&&) = default;
+    TempCorrectedSequence& operator=(const TempCorrectedSequence&) = default;
+    TempCorrectedSequence& operator=(TempCorrectedSequence&&) = default;
+
+    TempCorrectedSequence(const EncodedTempCorrectedSequence&);
+    TempCorrectedSequence& operator=(const EncodedTempCorrectedSequence&);
+
+    EncodedTempCorrectedSequence encode() const;
+    void decode(const EncodedTempCorrectedSequence&);
+
+    bool writeToBinaryStream(std::ostream& s) const;
+    bool readFromBinaryStream(std::istream& s);
+
     bool hq = false; //if anchor
     bool useEdits = false;
     Type type = Type::Anchor;
@@ -292,7 +304,28 @@ struct TempCorrectedSequence{
     std::string sequence = "";
     std::vector<Edit> edits;
     std::vector<int> uncorrectedPositionsNoConsensus{}; //if anchor
+
+    
 };
+
+
+
+
+
+void mergeResultFiles(
+                    const std::string& tempdir,
+                    std::uint32_t expectedNumReads, 
+                    const std::string& originalReadFile,
+                    FileFormat originalFormat,
+                    MemoryFile<EncodedTempCorrectedSequence>& partialResults, 
+                    const std::string& outputfile,
+                    bool isSorted);
+
+
+
+
+
+
 
 std::ostream& operator<<(std::ostream& os, const TempCorrectedSequence& tmp);
 std::istream& operator>>(std::istream& is, TempCorrectedSequence& tmp);

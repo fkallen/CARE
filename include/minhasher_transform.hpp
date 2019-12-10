@@ -179,31 +179,10 @@ namespace care{
                                                 removeflags.end(),
                                                 [] (auto flag){
                                                     return flag == 1;
-                                                });
-
-            deallocVector(keysWithoutValues);
-            keysWithoutValues.resize(numKeysToRemove);
-
-            thrust::copy_if(keys.begin(),
-                            keys.end(),
-                            removeflags.begin(),
-                            keysWithoutValues.begin(),
-                            [](auto flag){
-                                return flag == 1;
-                            });
-
-            std::vector<Key_t> keys_tmp(keys.size() - numKeysToRemove);
-            thrust::copy_if(keys.begin(),
-                            keys.end(),
-                            removeflags.begin(),
-                            keys_tmp.begin(),
-                            [](auto flag){
-                                return flag == 0;
-                            });
-            keys.swap(keys_tmp);            
+                                                });         
         }
 
-        std::cout << "Removed high frequency keys: " << numKeysToRemove << ". "; 
+        std::cout << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
 
         //handle values
         int numValuesToRemove = 0;
@@ -247,31 +226,31 @@ namespace care{
 
         //handle counts prefix sum
         {
-            std::vector<Index_t> counts_tmp(keys.size());
-            thrust::copy_if(
-                            counts.begin(),
-                            counts.end(),
-                            counts_tmp.begin(),
-                            [=](auto i){
-                                return i <= maxValuesPerKey;
+            thrust::for_each(policy,
+                            thrust::counting_iterator<Index_t>(0),
+                            thrust::counting_iterator<Index_t>(0) + counts.size(),
+                            [&] (auto i){
+                                if(counts[i] > maxValuesPerKey){
+                                    counts[i] = 0;
+                                }
                             });
-
-            deallocVector(counts);
+                            
             deallocVector(countsPrefixSum);
 
             countsPrefixSum.resize(keys.size() + 1);
             countsPrefixSum[0] = 0;
 
             thrust::inclusive_scan(policy,
-                                    counts_tmp.begin(),
-                                    counts_tmp.end(),
+                                    counts.begin(),
+                                    counts.end(),
                                     countsPrefixSum.begin() + 1);              
         }
     }
 
-    template<class Key_t, class Value_t, class Index_t>
+    template<class Key_t, class Value_t, class Index_t, class Count_t>
     void cpu_transformation(std::vector<Key_t>& keys,
                             std::vector<Value_t>& values,
+                            std::vector<Count_t>& counts,
                             std::vector<Index_t>& countsPrefixSum,
                             std::vector<Key_t>& keysWithoutValues,
                             int maxValuesPerKey){
@@ -300,7 +279,8 @@ namespace care{
 
         if(map.size == 0) return;
 
-        cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
+        cpu_transformation(map.keys, map.values, 
+                            map.counts, map.countsPrefixSum, 
                             map.keysWithoutValues, maxValuesPerKey);
 
         map.nKeys = map.keys.size();
@@ -331,10 +311,31 @@ namespace care{
 
 #ifdef __NVCC__
 
-template<bool allowFallback>
+    template<bool allowFallback>
     struct MinhasherTransformGPUCompactKeys{
         template<class T>
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
+
+        template<class Key_t, class Value_t, class Index_t>
+        static std::size_t estimateRequiredGpuMem(
+                            std::vector<Key_t>& keys, 
+                            std::vector<Value_t>& values, 
+                            std::vector<Index_t>& countsPrefixSum){
+            
+            return estimateRequiredGpuMem<Key_t, Value_t, Index_t>(values.size());
+        }
+
+        template<class Key_t, class Value_t, class Index_t>
+        static std::size_t estimateRequiredGpuMem(Index_t numEntries){
+
+            std::size_t mem = 0;
+            mem += sizeof(Key_t) * numEntries; //d_keys
+            mem += sizeof(Value_t) * numEntries; //d_values
+            mem += sizeof(Index_t) * numEntries; //d_indices
+            mem += std::max(sizeof(Index_t), sizeof(Value_t)) * numEntries; //d_indices_tmp for sorting d_indices or d_values_tmp for sorted values
+
+            return mem;
+        }
 
         template<class Key_t, class Value_t, class Index_t>
         static void execute(std::vector<Key_t>& keys, 
@@ -480,6 +481,7 @@ template<bool allowFallback>
             thrust::copy(countsPrefixSum.begin(), countsPrefixSum.end(), d_countsPrefixSum.begin());
 
             thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_counts(countsPrefixSum.size()-1);
+            //make counts array from prefixsum
             thrust::adjacent_difference(allocatorPolicy,
                                         d_countsPrefixSum.begin()+1,
                                         d_countsPrefixSum.end(),
@@ -504,40 +506,9 @@ template<bool allowFallback>
                                                         [] __device__ (auto flag){
                                                             return flag;
                                                         });
-
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys(keys.size());
-                thrust::copy(keys.begin(), keys.end(), d_keys.begin());
-
-                //thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(keys.size() - numKeysToRemove);
-                thrust::device_vector<Key_t, ThrustAlloc<Key_t>> d_keys_tmp(numKeysToRemove);
-                thrust::copy_if(d_keys.begin(),
-                                d_keys.end(),
-                                d_removeflags.begin(),
-                                d_keys_tmp.begin(),
-                                [] __device__ (auto flag){
-                                    return flag;
-                                });
-
-                deallocVector(keysWithoutValues);
-                keysWithoutValues.resize(numKeysToRemove);
-                thrust::copy(d_keys_tmp.begin(), d_keys_tmp.end(), keysWithoutValues.begin());
-
-
-                d_keys_tmp.resize(keys.size() - numKeysToRemove);
-                thrust::copy_if(d_keys.begin(),
-                                d_keys.end(),
-                                d_removeflags.begin(),
-                                d_keys_tmp.begin(),
-                                [] __device__ (auto flag){
-                                    return !flag;
-                                });
-
-                deallocVector(keys);
-                keys.resize(d_keys_tmp.size());
-                thrust::copy(d_keys_tmp.begin(), d_keys_tmp.end(), keys.begin()); 
             }
 
-            std::cout << "Removed high frequency keys: " << numKeysToRemove << ". "; 
+            std::cout << "Can remove values of " << numKeysToRemove << " high frequency keys. "; 
 
             //handle values
             int numValuesToRemove = 0;
@@ -548,6 +519,7 @@ template<bool allowFallback>
                 auto countPrefixSumPtr = d_countsPrefixSum.data();
                 auto flagsPtr = d_removeflags.data();
 
+                //if counts[i] > maxValuesPerKey, set removeflag for all corresponding values of this key                
                 thrust::for_each(allocatorPolicy,
                     thrust::counting_iterator<Index_t>(0),
                     thrust::counting_iterator<Index_t>(0) + oldSizeKeys,
@@ -561,9 +533,11 @@ template<bool allowFallback>
                         }
                     });
 
+                //copy values to device
                 thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values(values.size());
                 thrust::copy(values.begin(), values.end(), d_values.begin());                
 
+                //determine number of set remove flags
                 numValuesToRemove = thrust::count_if(allocatorPolicy,
                                                         d_removeflags.begin(),
                                                         d_removeflags.end(),
@@ -571,6 +545,7 @@ template<bool allowFallback>
                                                             return flag;
                                                         });
 
+                //select the remaining values, then copy them back to host
                 thrust::device_vector<Value_t, ThrustAlloc<Value_t>> d_values_tmp(oldSizeValues - numValuesToRemove);
 
                 thrust::copy_if(d_values.begin(),
@@ -591,20 +566,22 @@ template<bool allowFallback>
 
             //handle counts prefix sum
             {
-                thrust::device_vector<Index_t, ThrustAlloc<Index_t>> d_counts_tmp(keys.size());
-                auto tmpend = thrust::copy_if(allocatorPolicy,
-                                            d_counts.begin(),
-                                            d_counts.end(),
-                                            d_counts_tmp.begin(),
-                                            [=] __device__ (auto i){
-                                                return i <= maxValuesPerKey;
-                                            });
+                auto countsPtr = d_counts.data();
 
-                assert(d_counts_tmp.size() == thrust::distance(d_counts_tmp.begin(), tmpend));
+                //set counts of removed keys to 0
+                thrust::for_each(allocatorPolicy,
+                                 thrust::counting_iterator<Index_t>(0),
+                                 thrust::counting_iterator<Index_t>(0) + d_counts.size(),
+                                 [=] __device__ (auto i){
+                                    if(countsPtr[i] > maxValuesPerKey){
+                                        countsPtr[i] = 0;
+                                    }
+                                 });
 
+                //make new prefix_sum
                 auto psend = thrust::inclusive_scan(allocatorPolicy,
-                                        d_counts_tmp.begin(),
-                                        d_counts_tmp.end(),
+                                        d_counts.begin(),
+                                        d_counts.end(),
                                         d_countsPrefixSum.begin());
 
                 assert(keys.size() == thrust::distance(d_countsPrefixSum.begin(), psend));
@@ -622,9 +599,10 @@ template<bool allowFallback>
         template<class T>
         using ThrustAlloc = ThrustFallbackDeviceAllocator<T, allowFallback>;
 
-        template<class Key_t, class Value_t, class Index_t>
+        template<class Key_t, class Value_t, class Index_t, class Count_t>
         static bool execute(std::vector<Key_t>& keys, 
                             std::vector<Value_t>& values, 
+                            std::vector<Count_t>& counts,
                             std::vector<Index_t>& countsPrefixSum, 
                             std::vector<Key_t>& keysWithoutValues,
                             const std::vector<int>& deviceIds,
@@ -685,6 +663,11 @@ template<bool allowFallback>
     };
 
     template<class KeyValueMap>
+    std::size_t estimateGpuMemoryForTransformKeyValueMap(KeyValueMap& map){
+        return MinhasherTransformGPUCompactKeys<true>::estimateRequiredGpuMem(map.keys, map.values, map.countsPrefixSum);
+    }
+
+    template<class KeyValueMap>
     void transform_keyvaluemap_gpu(KeyValueMap& map, const std::vector<int>& deviceIds, int maxValuesPerKey){
         if(map.noMoreWrites) return;
 
@@ -692,24 +675,28 @@ template<bool allowFallback>
 
         if(deviceIds.size() == 0){
 
-            cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
+            cpu_transformation(map.keys, map.values, 
+                                map.counts, map.countsPrefixSum, 
                                 map.keysWithoutValues, maxValuesPerKey);
 
         }else{
-            bool success = GPUTransformation<false>::execute(map.keys, map.values, map.countsPrefixSum, 
+            bool success = GPUTransformation<false>::execute(map.keys, map.values, 
+                                                            map.counts, map.countsPrefixSum, 
                                                             map.keysWithoutValues, deviceIds, maxValuesPerKey);
 
             if(!success){
                 std::cout << "\nFallback to managed memory transformation. ";
-                success = GPUTransformation<true>::execute(map.keys, map.values, map.countsPrefixSum, 
+                success = GPUTransformation<true>::execute(map.keys, map.values, 
+                                                            map.counts, map.countsPrefixSum, 
                                                             map.keysWithoutValues, deviceIds, maxValuesPerKey);
             }
 
             if(!success){
                 std::cout << "\nFallback to cpu transformation. ";
-		std::cout.flush();
-                cpu_transformation(map.keys, map.values, map.countsPrefixSum, 
-                                    map.keysWithoutValues, maxValuesPerKey);
+                std::cout.flush();
+                cpu_transformation(map.keys, map.values, 
+                                map.counts, map.countsPrefixSum, 
+                                map.keysWithoutValues, maxValuesPerKey);
             }
         }
 

@@ -111,6 +111,48 @@ struct BackgroundThread{
 struct ThreadPool{
     using task_type = am::parallel_queue::task_type;
 
+    struct ParallelForHandle{
+        struct ParallelForData{
+            bool isDone = true;
+            std::size_t finishedWork = 0;
+            std::size_t enqueuedWork = 0;
+            std::mutex mProgress;
+            std::condition_variable cvProgress;
+
+            std::mutex mDone;
+            std::condition_variable cvDone;
+
+            void wait(){
+                if(!isDone){
+                    std::unique_lock<std::mutex> l(mDone);
+                    while(!isDone){
+                        cvDone.wait(l);
+                    }
+                }
+            }
+
+            void signal(){
+                std::unique_lock<std::mutex> l(mDone);
+                isDone = true;
+                cvDone.notify_all();
+            }
+        };
+
+        std::unique_ptr<ParallelForData> dataPtr;
+
+        ParallelForHandle() : dataPtr(std::make_unique<ParallelForData>()){}
+        ParallelForHandle(ParallelForHandle&&) = default;
+        ParallelForHandle& operator=(ParallelForHandle&&) = default;
+
+        void wait(){
+            dataPtr->wait();
+        }
+
+        void signal(){
+            dataPtr->signal();
+        }
+    };
+
     ThreadPool()
         : pq(std::make_unique<am::parallel_queue>()){
     }
@@ -131,28 +173,27 @@ struct ThreadPool{
         }
     */
     template<class Index_t, class Func>
-    void parallelFor(Index_t begin, Index_t end, Func&& loop){
-        parallelFor(begin, end, std::forward<Func>(loop), getConcurrency());
+    void parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
+        parallelFor(handle, begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
-    void parallelFor(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    void parallelFor(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = true;
 
-        parallelFor_impl<waitForCompletion>(begin, end, std::forward<Func>(loop), numThreads);
+        parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, true);
     }
 
     template<class Index_t, class Func>
-    void parallelForNoWait(Index_t begin, Index_t end, Func&& loop){
-        //parallelForNoWait(begin, end, std::forward<Func>(loop), getConcurrency());
+    void parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop){
+        parallelForNoWait(handle, begin, end, std::forward<Func>(loop), getConcurrency());
     }
 
     template<class Index_t, class Func>
-    void parallelForNoWait(Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
+    void parallelForNoWait(ParallelForHandle& handle, Index_t begin, Index_t end, Func&& loop, std::size_t numThreads){
         constexpr bool waitForCompletion = false;
-        assert(false);
 
-        //parallelFor_impl<waitForCompletion>(begin, end, std::forward<Func>(loop), numThreads);
+        parallelFor_impl<waitForCompletion>(handle, begin, end, std::forward<Func>(loop), numThreads, false);
     }
 
     void wait(){
@@ -177,20 +218,31 @@ private:
             loop(i)
     */
     template<bool waitForCompletion, class Index_t, class Func>
-    void parallelFor_impl(Index_t firstIndex, Index_t lastIndex, Func&& loop, std::size_t numThreads){
+    void parallelFor_impl(ParallelForHandle& handle, 
+                        Index_t firstIndex, 
+                        Index_t lastIndex, 
+                        Func&& loop, 
+                        std::size_t numThreads, 
+                        bool selfCanParticipate){
+
         //2 debug variables
-        volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
-        volatile int initialNumUnfinishedParallelForChunks = numUnfinishedParallelForChunks;
+        // volatile int initialNumRunningParallelForWithWaiting = numRunningParallelForWithWaiting;
+        // volatile int initialNumUnfinishedParallelForChunks = numUnfinishedParallelForChunks;
 
-        if(waitForCompletion){
-            ++numRunningParallelForWithWaiting;
-        }
+        // if(waitForCompletion){
+        //     ++numRunningParallelForWithWaiting;
+        // }
 
-        std::mutex m;
-        std::condition_variable cv;
-        std::size_t finishedWork = 0;
-        std::size_t startedWork = 0;
-        std::size_t enqueuedWork = 0;
+        //assert(waitForCompletion);
+
+        auto pforData = handle.dataPtr.get();
+
+        handle.wait(); //make sure previous parallelfor is finished
+
+        pforData->isDone = false;
+        pforData->finishedWork = 0;
+        //std::size_t startedWork = 0;
+        pforData->enqueuedWork = 0;
 
         Index_t totalIterations = lastIndex - firstIndex;
         if(totalIterations > 0){
@@ -200,88 +252,65 @@ private:
 
             Index_t begin = firstIndex;
             Index_t end = begin + chunksize;
-            for(Index_t c = 0; c < chunks-1; c++){
+
+            const Index_t threadpoolChunks = selfCanParticipate ? chunks - 1 : chunks;
+
+            std::vector<std::function<void()>> chunkFunctions;
+            chunkFunctions.reserve(threadpoolChunks);
+
+            for(Index_t c = 0; c < threadpoolChunks; c++){
                 if(c < leftover){
                     end++;
                 }
 
                 if(end-begin > 0){
-                    if(waitForCompletion){
-                        enqueuedWork++;
-                        ++numUnfinishedParallelForChunks;
+                    pforData->enqueuedWork++;
 
-                        enqueue([&, begin, end, c](){
-                            {
-                                std::lock_guard<std::mutex> lg(m);
-                                startedWork++;
-                            }
+                    chunkFunctions.emplace_back([&, begin, end, c, pforData](){
 
-                            loop(begin, end, c);
+                        loop(begin, end, c);
 
-                            --numUnfinishedParallelForChunks;
-
-                            if(waitForCompletion){
-                                std::lock_guard<std::mutex> lg(m);
-                                finishedWork++;
-                                cv.notify_one();
-                            }
-                        });
-                    }else{
-                        ++numUnfinishedParallelForChunks;
-
-                        enqueue([&, begin, end, c](){
-                            loop(begin, end, c);
-
-                            --numUnfinishedParallelForChunks;
-                        });
-                    }
+                        std::lock_guard<std::mutex> lg(pforData->mProgress);
+                        pforData->finishedWork++;
+                        pforData->cvProgress.notify_one();
+                    });
 
                     begin = end;
                     end += chunksize;
                 }                
             }
 
-            if(end-begin > 0){
+            pq->enqueue(chunkFunctions.begin(), chunkFunctions.end());
+
+            if(selfCanParticipate && end-begin > 0){
                 loop(begin, end, chunks-1);                
             }
 
-            if(waitForCompletion){
-                //std::cerr << "Wait for completion " << startedWork << " / " << finishedWork << " / " << enqueuedWork << "\n";
-                std::unique_lock<std::mutex> ul(m);
-                if(finishedWork != enqueuedWork){
-                    //std::cerr << "Waiting\n";
-                    int waitIter = 0;
-                    cv.wait(ul, [&](){
-                        constexpr int warningThreshold = 50;
-                        constexpr int userinputThreshold = 1000;
-                        waitIter++;
-
-                        if(waitIter > warningThreshold){
-                            std::cerr << "Iter " << waitIter << ", wait for completion " << startedWork << " / " 
-                                                << finishedWork << " / " << enqueuedWork << "\n";
-                        }
-
-                        if(waitIter > userinputThreshold){
-                            int x;
-                            std::cerr << "Iter " << waitIter << ", enter number to continue\n";
-                            std::cin >> x;
-                        }
-                        
-                        return finishedWork == enqueuedWork;
-                    });
-                    //std::cerr << "No longer waiting\n";
+            auto waitUntilThreadPoolChunksAreDoneThenSignal = [pforData](){
+                if(pforData->finishedWork != pforData->enqueuedWork){
+                    std::unique_lock<std::mutex> ul(pforData->mProgress);
+                    while(pforData->finishedWork != pforData->enqueuedWork){
+                        pforData->cvProgress.wait(ul);
+                    }
                 }
+                pforData->signal();
+            };
+
+            if(waitForCompletion){
+                waitUntilThreadPoolChunksAreDoneThenSignal();
+            }else{
+                pq->enqueue(std::move(waitUntilThreadPoolChunksAreDoneThenSignal));
             }
         }
 
-        if(waitForCompletion){
-            --numRunningParallelForWithWaiting;
-        }
+        // if(waitForCompletion){
+        //     --numRunningParallelForWithWaiting;
+        // }
     }
 
     std::unique_ptr<am::parallel_queue> pq;
-    std::atomic_int numRunningParallelForWithWaiting{0};
-    std::atomic_int numUnfinishedParallelForChunks{0};
+    // std::atomic_int numRunningParallelForWithWaiting{0};
+    // std::atomic_int numUnfinishedParallelForChunks{0};
 };
 
 
