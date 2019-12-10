@@ -2549,6 +2549,11 @@ namespace gpu{
                         }
                     }
                 }
+            }else{
+                if(threadIdx.x == 0){
+                    d_correctionResultPointers.isHighQualitySubject[subjectIndex].hq(false);
+                    d_correctionResultPointers.subjectIsCorrected[subjectIndex] = false;
+                }
             }
         }
     }
@@ -4983,7 +4988,7 @@ namespace gpu{
             max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         }
 
-
+        cudaMemsetAsync(d_correctionResultPointers.isHighQualitySubject, 0, n_subjects * sizeof(AnchorHighQualityFlag), stream); CUERR;
 
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(n_subjects, max_blocks_per_device));
@@ -5207,6 +5212,10 @@ namespace gpu{
         cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_candidatesPerHQAnchorPrefixSum, 0, 0, stream);
+
+        // set number of corrected candidates per subject to 0
+        cudaMemsetAsync(d_correctionResultPointers.numCorrectedCandidates, 0, sizeof(int) * n_subjects, stream); CUERR;
+        //call_fill_kernel_async(d_correctionResultPointers.numCorrectedCandidates, n_subjects, 0, stream);
 
         //make tiles per anchor prefixsum
         // int* d_tilesPerHQAnchorPrefixSum;

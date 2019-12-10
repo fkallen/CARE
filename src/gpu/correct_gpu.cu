@@ -2666,11 +2666,11 @@ namespace gpu{
                         dataArrays.d_candidate_sequences_data.sizeInBytes(),
                         D2H,
                         streams[primary_stream_index]); CUERR;
-cudaMemcpyAsync(dataArrays.h_consensus,
-                dataArrays.d_consensus,
-                dataArrays.d_consensus.sizeInBytes(),
-                D2H,
-                streams[primary_stream_index]); CUERR;
+        cudaMemcpyAsync(dataArrays.h_consensus,
+                        dataArrays.d_consensus,
+                        dataArrays.d_consensus.sizeInBytes(),
+                        D2H,
+                        streams[primary_stream_index]); CUERR;
         cudaDeviceSynchronize(); CUERR;
 
         auto identity = [](auto i){return i;};
