@@ -50,7 +50,7 @@ namespace gpu{
         constexpr read_number parallelReads = 10000000;
         read_number numReads = numberOfReads;
         const int numIters = SDIV(numReads, parallelReads);
-        const size_t sequencepitch = getEncodedNumInts2BitHiLo(upperBoundSequenceLength) * sizeof(int);
+        const size_t sequencepitch = getEncodedNumInts2Bit(upperBoundSequenceLength) * sizeof(int);
 
         ThreadPool::ParallelForHandle pforHandle;
 
@@ -123,7 +123,7 @@ namespace gpu{
                     read_number localId = readId - readIdBegin;
                     const char *encodedsequence = (const char *)&sequenceData[localId * sequencepitch];
                     const int sequencelength = lengths[localId];
-                    std::string sequencestring = get2BitHiLoString((const unsigned int *)encodedsequence, sequencelength);
+                    std::string sequencestring = get2BitString((const unsigned int *)encodedsequence, sequencelength);
                     minhasher.insertSequenceIntoExternalTables(sequencestring, 
                                                                 readId, 
                                                                 tableIds,
@@ -580,7 +580,7 @@ namespace gpu{
 
             auto sequencehandle = readStorage.makeGatherHandleSequences();
             //auto lengthhandle = readStorage.makeGatherHandleLengths();
-            size_t sequencepitch = getEncodedNumInts2BitHiLo(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
+            size_t sequencepitch = getEncodedNumInts2Bit(readStorage.getSequenceLengthUpperBound()) * sizeof(int);
 
             const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
             std::ofstream outstream(tmpmapsFilename, std::ios::binary);

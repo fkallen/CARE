@@ -70,11 +70,13 @@ namespace gpu{
 
     //####################   KERNELS   ####################
 
-
+#if 0
     template<int tilesize>
     __global__
     void
     cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
+                const unsigned int* subjectDataHiLo,
+                const unsigned int* candidateDataHiLo,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 const int* __restrict__ candidates_per_subject_prefixsum,
@@ -187,13 +189,14 @@ namespace gpu{
             const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
 
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
-            const char* subjectptr = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedsequencepitch;
+            const unsigned int* subjectptr = (const unsigned int*)(((const char*)subjectDataHiLo) 
+                                                                        + std::size_t(subjectIndex) * encodedsequencepitch);
             //transposed
             //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
             //save subject in shared memory (in parallel, per tile)
             for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
-                subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
+                subjectBackup[identity(lane)] = subjectptr[lane];
                 //transposed
                 //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
             }
@@ -313,11 +316,15 @@ namespace gpu{
         }
     }
 
+#endif    
+
 
     template<int tilesize>
     __global__
     void
     cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel(
+                const unsigned int* subjectDataHiLo,
+                const unsigned int* candidateDataHiLoTransposed,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 const int* __restrict__ candidates_per_subject_prefixsum,
@@ -325,7 +332,7 @@ namespace gpu{
                 int n_subjects,
                 int n_candidates,
                 size_t encodedsequencepitch,
-                int max_sequence_bytes,
+                int maximumSequenceLength,
                 int min_overlap,
                 float maxErrorRate,
                 float min_overlap_ratio){
@@ -394,7 +401,7 @@ namespace gpu{
 
         //set up shared memory pointers
 
-        const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
+        const int max_sequence_ints = getEncodedNumInts2BitHiLo(maximumSequenceLength);
 
         const int tiles = (blockDim.x * gridDim.x) / tilesize;
         const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
@@ -430,13 +437,15 @@ namespace gpu{
             const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
 
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
-            const char* subjectptr = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedsequencepitch;
+
+            const unsigned int* subjectptr = (const unsigned int*)(((const char*)subjectDataHiLo) 
+                                                                        + std::size_t(subjectIndex) * encodedsequencepitch);
             //transposed
             //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
             //save subject in shared memory (in parallel, per tile)
             for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
-                subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
+                subjectBackup[identity(lane)] = subjectptr[lane];
                 //transposed
                 //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
             }
@@ -449,13 +458,13 @@ namespace gpu{
                 const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
                 //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
                 //transposed
-                const char* candidateptr = (const char*)((unsigned int*)(d_sequencePointers.candidateSequencesDataTransposed) + std::size_t(queryIndex));
+                const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
                 //save query in shared memory
                 for(int i = 0; i < max_sequence_ints; i += 1) {
                     //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
                     //transposed
-                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i * n_candidates];
+                    queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
                 }
 
                 //queryIndex != resultIndex -> reverse complement
@@ -944,7 +953,7 @@ namespace gpu{
                 bool debug){
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1118,7 +1127,7 @@ namespace gpu{
         if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
 
         auto get = [] (const char* data, int length, int index, auto trafo){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, trafo);
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, trafo);
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1368,7 +1377,7 @@ namespace gpu{
         if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1601,7 +1610,7 @@ namespace gpu{
         //if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("singlecol\n");
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
 
@@ -1832,7 +1841,7 @@ namespace gpu{
         __shared__ float avgCountPerWeight[4];
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -2044,7 +2053,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -2398,7 +2407,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -2659,7 +2668,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         constexpr char A_enc = 0x00;
@@ -2801,7 +2810,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         constexpr char A_enc = 0x00;
@@ -3233,11 +3242,11 @@ namespace gpu{
                         bool debug = false){
 
         auto getNumBytes = [] (int sequencelength){
-            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
+            return sizeof(unsigned int) * getEncodedNumInts2Bit(sequencelength);
         };
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
     	};
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -3589,7 +3598,180 @@ namespace gpu{
 
     }
 
+    template<class InputBegin, class OutputBegin, class InputTrafo, class OutputTrafo>
+    __global__
+    void convert2BitTo2BitHiloKernel(
+            const unsigned int* const __restrict__ inputdata,
+            size_t inputpitchInInts,
+            unsigned int*  const __restrict__ outputdata,
+            size_t outputpitchInInts,
+            const int* const __restrict__ sequenceLengths,
+            int numSequences,
+            InputBegin inputStartIndex,
+            OutputBegin outputStartIndex,
+            InputTrafo inputTrafo,
+            OutputTrafo outputTrafo){
 
+        auto identity = [](auto i){return i;};
+
+        for(int index = threadIdx.x + blockIdx.x * blockDim.x; index < numSequences; index += blockDim.x * gridDim.x){
+            const int sequenceLength = sequenceLengths[index];
+            const unsigned int* const in = inputdata + inputStartIndex(index);
+            unsigned int* const out = outputdata + outputStartIndex(index);            
+
+            convert2BitNewTo2BitHiLo(out,
+                in,
+                sequenceLength,
+                inputTrafo,
+                outputTrafo);
+        }        
+    }
+
+    template<class InputBegin, class OutputBegin, class InputTrafo, class OutputTrafo>
+    void callConversionKernel2BitTo2BitHiLo(
+            const unsigned int* d_inputdata,
+            size_t inputpitchInInts,
+            unsigned int* d_outputdata,
+            size_t outputpitchInInts,
+            int* d_sequenceLengths,
+            int numSequences,
+            InputBegin inputStartIndex,
+            OutputBegin outputStartIndex,
+            InputTrafo inputTrafo,
+            OutputTrafo outputTrafo,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle){
+
+        int max_blocks_per_device = 1;
+
+        constexpr int blocksize = 128;
+        constexpr size_t smem = 0;
+
+        KernelLaunchConfig kernelLaunchConfig;
+        kernelLaunchConfig.threads_per_block = blocksize;
+        kernelLaunchConfig.smem = smem;
+
+        auto iter = handle.kernelPropertiesMap.find(KernelId::Conversion2BitTo2BitHiLo);
+        if(iter == handle.kernelPropertiesMap.end()) {
+
+            std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+            #define getProp(blocksize) { \
+                    KernelLaunchConfig kernelLaunchConfig; \
+                    kernelLaunchConfig.threads_per_block = (blocksize); \
+                    kernelLaunchConfig.smem = 0; \
+                    KernelProperties kernelProperties; \
+                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                        convert2BitTo2BitHiloKernel<InputBegin, OutputBegin, InputTrafo, OutputTrafo>, \
+                                kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                    mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+            getProp(1);
+            getProp(32);
+            getProp(64);
+            getProp(96);
+            getProp(128);
+            getProp(160);
+            getProp(192);
+            getProp(224);
+            getProp(256);
+
+            const auto& kernelProperties = mymap[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+            handle.kernelPropertiesMap[KernelId::Conversion2BitTo2BitHiLo] = std::move(mymap);
+
+            #undef getProp
+        }else{
+            std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+            const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+            max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+        }
+
+        dim3 block(blocksize,1,1);
+        dim3 grid(std::min(max_blocks_per_device, SDIV(numSequences, blocksize)), 1, 1);
+
+        convert2BitTo2BitHiloKernel<<<grid, block, 0, stream>>>(
+            d_inputdata,
+            inputpitchInInts,
+            d_outputdata,
+            outputpitchInInts,
+            d_sequenceLengths,
+            numSequences,
+            inputStartIndex,
+            outputStartIndex,
+            inputTrafo,
+            outputTrafo); CUERR;
+    }
+
+
+    void callConversionKernel2BitTo2BitHiLoNN(
+            const unsigned int* d_inputdata,
+            size_t inputpitchInInts,
+            unsigned int* d_outputdata,
+            size_t outputpitchInInts,
+            int* d_sequenceLengths,
+            int numSequences,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle){
+
+        //input is not transposed, output is not transposed
+
+        auto inputStartIndex = [=] __device__ (int sequenceIndex){return sequenceIndex * inputpitchInInts;};
+        auto outputStartIndex = [=] __device__ (int sequenceIndex){return sequenceIndex * outputpitchInInts;};
+
+        auto inputTrafo = [] __device__ (auto i){return i;};
+        auto outputTrafo = [] __device__ (auto i){return i;};
+
+        callConversionKernel2BitTo2BitHiLo(
+            d_inputdata,
+            inputpitchInInts,
+            d_outputdata,
+            outputpitchInInts,
+            d_sequenceLengths,
+            numSequences,
+            inputStartIndex,
+            outputStartIndex,
+            inputTrafo,
+            outputTrafo,
+            stream,
+            handle
+        );
+    }
+
+    void callConversionKernel2BitTo2BitHiLoNT(
+        const unsigned int* d_inputdata,
+        size_t inputpitchInInts,
+        unsigned int* d_outputdata,
+        size_t outputpitchInInts,
+        int* d_sequenceLengths,
+        int numSequences,
+        cudaStream_t stream,
+        KernelLaunchHandle& handle){
+
+        //input is not transposed, output is transposed
+
+        auto inputStartIndex = [=] __device__ (int sequenceIndex){return sequenceIndex * inputpitchInInts;};
+        auto outputStartIndex = [] __device__ (int sequenceIndex){return sequenceIndex;};
+
+        auto inputTrafo = [] __device__ (auto i){return i;};
+        auto outputTrafo = [=] __device__ (auto i){return i * numSequences;};
+
+        callConversionKernel2BitTo2BitHiLo(
+            d_inputdata,
+            inputpitchInInts,
+            d_outputdata,
+            outputpitchInInts,
+            d_sequenceLengths,
+            numSequences,
+            inputStartIndex,
+            outputStartIndex,
+            inputTrafo,
+            outputTrafo,
+            stream,
+            handle
+        );
+    }
 
 
 
@@ -3609,12 +3791,53 @@ namespace gpu{
     			int n_subjects,
     			int n_queries,
                 size_t encodedsequencepitch,
-    			int max_sequence_bytes,
+    			int maximumSequenceLength,
     			int min_overlap,
     			float maxErrorRate,
     			float min_overlap_ratio,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
+
+            const int intsPerSequence2Bit = getEncodedNumInts2Bit(maximumSequenceLength);
+            const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+            const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
+
+            unsigned int* d_subjectDataHiLo = nullptr;
+            unsigned int* d_candidateDataHiLoTransposed = nullptr;
+
+            cubCachingAllocator.DeviceAllocate(
+                (void**)&d_subjectDataHiLo, 
+                sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
+                stream
+            ); CUERR;
+
+            cubCachingAllocator.DeviceAllocate(
+                (void**)&d_candidateDataHiLoTransposed, 
+                sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
+                stream
+            ); CUERR;
+
+            callConversionKernel2BitTo2BitHiLoNN(
+                (const unsigned int*)d_sequencePointers.subjectSequencesData,
+                intsPerSequence2Bit,
+                d_subjectDataHiLo,
+                intsPerSequence2BitHiLo,
+                d_sequencePointers.subjectSequencesLength,
+                n_subjects,
+                stream,
+                handle
+            );
+
+            callConversionKernel2BitTo2BitHiLoNT(
+                (const unsigned int*)d_sequencePointers.candidateSequencesData,
+                intsPerSequence2Bit,
+                d_candidateDataHiLoTransposed,
+                intsPerSequence2BitHiLo,
+                d_sequencePointers.candidateSequencesLength,
+                n_queries,
+                stream,
+                handle
+            );
 
             constexpr int tilesize = 32;
 
@@ -3673,7 +3896,7 @@ namespace gpu{
             //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
 
 
-        	const std::size_t smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2);
+        	const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
         	int max_blocks_per_device = 1;
 
@@ -3689,7 +3912,7 @@ namespace gpu{
         		#define getProp(blocksize, tilesize) { \
                 		KernelLaunchConfig kernelLaunchConfig; \
                 		kernelLaunchConfig.threads_per_block = (blocksize); \
-                		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2); \
+                		kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
                 		KernelProperties kernelProperties; \
                 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                             cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel<tilesize>, \
@@ -3719,7 +3942,9 @@ namespace gpu{
         	}
 
             #define mycall cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel<tilesize> \
-                                    	        <<<grid, block, smem, stream>>>( \
+                                                <<<grid, block, smem, stream>>>( \
+                                                d_subjectDataHiLo, \
+                                                d_candidateDataHiLoTransposed, \
                                         		d_alignmentresultpointers, \
                                                 d_sequencePointers, \
                                         		d_candidates_per_subject_prefixsum, \
@@ -3727,7 +3952,7 @@ namespace gpu{
                                         		n_subjects, \
                                         		n_queries, \
                                                 encodedsequencepitch, \
-                                        		max_sequence_bytes, \
+                                        		maximumSequenceLength, \
                                         		min_overlap, \
                                         		maxErrorRate, \
                                         		min_overlap_ratio); CUERR;
@@ -3741,6 +3966,8 @@ namespace gpu{
     	    #undef mycall
 
             cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
+            cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
+            cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
     }
 
 
