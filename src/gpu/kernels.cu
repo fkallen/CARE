@@ -3628,6 +3628,192 @@ namespace gpu{
     }
 
     template<class InputBegin, class OutputBegin, class InputTrafo, class OutputTrafo>
+    __global__
+    void convert2BitTo2BitHiloKernelFaster(
+            const unsigned int* const __restrict__ inputdata,
+            size_t inputpitchInInts, // max num ints per input sequence
+            unsigned int*  const __restrict__ outputdata,
+            size_t outputpitchInInts, // max num ints per output sequence
+            const int* const __restrict__ sequenceLengths,
+            int numSequences,
+            InputBegin inputStartIndex,
+            OutputBegin outputStartIndex,
+            InputTrafo inputTrafo,
+            OutputTrafo outputTrafo){
+
+        /* Single thread code for one sequence:
+            template<class InIndexTransformation, class OutIndexTransformation>
+            void convert2BitNewTo2BitHiLo(unsigned int* out,
+                                        const unsigned int* in,
+                                        int length,
+                                        InIndexTransformation inindextrafo,
+                                        OutIndexTransformation outindextrafo){
+
+                const int inInts = getEncodedNumInts2Bit(length);
+                const int outInts = getEncodedNumInts2BitHiLo(length);
+
+                unsigned int* const outHi = out;
+                unsigned int* const outLo = out + outindextrafo(outInts/2);
+
+                for(int i = 0; i < outInts; i++){
+                    out[outindextrafo(i)] = 0;
+                }
+
+                for(int i = 0; i < inInts; i++){
+                    const int inindex = inindextrafo(i);
+                    const int outindex = outindextrafo(i/2);
+
+                    unsigned int even16 = extractEvenBits(in[inindex]);
+                    unsigned int odd16 = extractEvenBits(in[inindex] >> 1);
+
+                    if(i % 2 == 0){
+                        outHi[outindex] = odd16;
+                        outLo[outindex] = even16;
+                    }else{
+                        outHi[outindex] = outHi[outindex] | (odd16 << 16);
+                        outLo[outindex] = outLo[outindex] | (even16 << 16) ;
+                    }
+                }
+            }
+        */
+
+        auto extractEvenBits = [](unsigned int x){
+            x = x & 0x55555555;
+            x = (x | (x >> 1)) & 0x33333333;
+            x = (x | (x >> 2)) & 0x0F0F0F0F;
+            x = (x | (x >> 4)) & 0x00FF00FF;
+            x = (x | (x >> 8)) & 0x0000FFFF;
+            return x;
+        };
+
+        //parallelize over output. 1 thread per 2 output int
+
+        const size_t numOutputPairs = (outputpitchInInts / 2) * numSequences;
+
+        size_t outputPairIndex = threadIdx.x * size_t(blockIdx.x) * blockDim.x;
+        const size_t stride = blockDim.x * size_t(gridDim.x);
+
+        for( ; outputPairIndex < numOutputPairs; outputPairIndex += stride){
+            const int sequenceIndex = outputPairIndex * 2 / outputpitchInInts;
+            const int outIndex = outputPairIndex % (outputpitchInInts / 2);
+            const int sequenceLength = sequenceLengths[sequenceIndex];
+            const int validOutputPairsForSequence = getEncodedNumInts2BitHiLo(sequenceLength) / 2;
+            if(outIndex < validOutputPairsForSequence){
+                unsigned int* const outHi = outputdata + outputStartIndex(sequenceIndex) 
+                                                       + outputTrafo(outIndex);
+                unsigned int* const outLo = outputdata + outputStartIndex(sequenceIndex) 
+                                                       + outputTrafo(outputpitchInInts / 2) 
+                                                       + outputTrafo(outIndex);
+
+                const unsigned int in0 = *(inputdata + inputStartIndex(sequenceIndex) + inputTrafo(outIndex * 2));
+                unsigned int resultHi = extractEvenBits(in0 >> 1);
+                unsigned int resultLo = extractEvenBits(in0);
+
+                //if not last output pair, or if last output pair and second input value exists, use second input value.
+                if((outIndex < validOutputPairsForSequence-1) || ((sequenceLength-1) % 32) >= 16){
+                    const unsigned int in1 = *(inputdata + inputStartIndex(sequenceIndex) + inputTrafo(outIndex * 2 + 1));
+                    const unsigned int odd16 = extractEvenBits(in1 >> 1);
+                    const unsigned int even16 = extractEvenBits(in1);
+
+                    resultHi = resultHi | (odd16 << 16);
+                    resultLo = resultLo | (even16 << 16);
+                }
+                
+                *outHi = resultHi;
+                *outLo = resultLo;
+            }
+        }    
+    }
+
+#if 1
+    template<class InputBegin, class OutputBegin, class InputTrafo, class OutputTrafo>
+    __global__
+    void convert2BitTo2BitHiloKernelFaster2(
+            const unsigned int* const __restrict__ inputdata,
+            size_t inputpitchInInts, // max num ints per input sequence
+            unsigned int*  const __restrict__ outputdata,
+            size_t outputpitchInInts, // max num ints per output sequence
+            const int* const __restrict__ sequenceLengths,
+            int numSequences,
+            InputBegin inputStartIndex,
+            OutputBegin outputStartIndex,
+            InputTrafo inputTrafo,
+            OutputTrafo outputTrafo){
+
+        auto extractEvenBits = [](unsigned int x){
+            x = x & 0x55555555;
+            x = (x | (x >> 1)) & 0x33333333;
+            x = (x | (x >> 2)) & 0x0F0F0F0F;
+            x = (x | (x >> 4)) & 0x00FF00FF;
+            x = (x | (x >> 8)) & 0x0000FFFF;
+            return x;
+        };
+
+        auto convert = [&](auto group,
+                            unsigned int* out,
+                            const unsigned int* in,
+                            int length,
+                            auto inindextrafo,
+                            auto outindextrafo){
+
+            const int inInts = getEncodedNumInts2Bit(length);
+            const int outInts = getEncodedNumInts2BitHiLo(length);
+
+            unsigned int* const outHi = out;
+            unsigned int* const outLo = out + outindextrafo(outInts/2);
+
+            for(int i = 0; i < outInts / 2; i++){
+                const int outIndex = outindextrafo(i);
+                const int inindex1 = inindextrafo(i*2);
+
+                const unsigned int data1 = in[inindex1];
+                const unsigned int even161 = extractEvenBits(data1);
+                const unsigned int odd161 = extractEvenBits(data1 >> 1);
+
+                unsigned int resultHi = odd161;
+                unsigned int resultLo = even161;
+
+                if((i < outInts / 2 - 1) || ((length-1) % 32) >= 16){
+                    const int inindex2 = inindextrafo(i*2 + 1);
+
+                    const unsigned int data2 = in[inindex2];
+                    const unsigned int even162 = extractEvenBits(data2);
+                    const unsigned int odd162 = extractEvenBits(data2 >> 1);
+
+                    resultHi = resultHi | (odd162 << 16);
+                    resultLo = resultLo | (even162 << 16) ;
+                }
+
+                outHi[outIndex] = resultHi;
+                outLo[outIndex] = resultLo;
+            }
+        };
+
+        for(int index = threadIdx.x + blockIdx.x * blockDim.x; index < numSequences; index += blockDim.x * gridDim.x){
+            const int sequenceLength = sequenceLengths[index];
+            const unsigned int* const in = inputdata + inputStartIndex(index);
+            unsigned int* const out = outputdata + outputStartIndex(index);            
+
+            convert(
+                nullptr,
+                out,
+                in,
+                sequenceLength,
+                inputTrafo,
+                outputTrafo
+            );
+
+            // convert2BitNewTo2BitHiLo(out,
+            //     in,
+            //     sequenceLength,
+            //     inputTrafo,
+            //     outputTrafo);
+        } 
+    }
+#endif 
+
+
+    template<class InputBegin, class OutputBegin, class InputTrafo, class OutputTrafo>
     void callConversionKernel2BitTo2BitHiLo(
             const unsigned int* d_inputdata,
             size_t inputpitchInInts,
@@ -3662,7 +3848,7 @@ namespace gpu{
                     kernelLaunchConfig.smem = 0; \
                     KernelProperties kernelProperties; \
                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                        convert2BitTo2BitHiloKernel<InputBegin, OutputBegin, InputTrafo, OutputTrafo>, \
+                        convert2BitTo2BitHiloKernelFaster2<InputBegin, OutputBegin, InputTrafo, OutputTrafo>, \
                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                     mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -3691,7 +3877,7 @@ namespace gpu{
         dim3 block(blocksize,1,1);
         dim3 grid(std::min(max_blocks_per_device, SDIV(numSequences, blocksize)), 1, 1);
 
-        convert2BitTo2BitHiloKernel<<<grid, block, 0, stream>>>(
+        convert2BitTo2BitHiloKernelFaster2<<<grid, block, 0, stream>>>(
             d_inputdata,
             inputpitchInInts,
             d_outputdata,
