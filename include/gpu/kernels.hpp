@@ -92,6 +92,9 @@ struct CorrectionResultPointers{
 
 enum class KernelId {
     Conversion2BitTo2BitHiLo,
+    Conversion2BitTo2BitHiLoNN,
+    Conversion2BitTo2BitHiLoNT,
+    Conversion2BitTo2BitHiLoTT,
     PopcountSHDTiled,
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
