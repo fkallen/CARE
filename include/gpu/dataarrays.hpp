@@ -230,9 +230,6 @@ struct DataArrays {
         d_subject_read_ids.resize(n_sub);
         d_candidate_read_ids.resize(n_quer);
 
-        d_subject_sequences_data_transposed.resize(n_sub * encoded_sequence_pitch);
-        d_candidate_sequences_data_transposed.resize(n_quer * encoded_sequence_pitch);
-
 		//alignment output
 
 		h_alignment_scores.resize(2*n_quer);
@@ -401,8 +398,6 @@ struct DataArrays {
 
         d_subject_sequences_data = std::move(SimpleAllocationDevice<char>{});
         d_candidate_sequences_data = std::move(SimpleAllocationDevice<char>{});
-        d_subject_sequences_data_transposed = std::move(SimpleAllocationDevice<char>{});
-        d_candidate_sequences_data_transposed = std::move(SimpleAllocationDevice<char>{});
         d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         d_candidate_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
@@ -558,8 +553,6 @@ struct DataArrays {
 
         bytes += f(d_subject_sequences_data);
         bytes += f(d_candidate_sequences_data);
-        bytes += f(d_subject_sequences_data_transposed);
-        bytes += f(d_candidate_sequences_data_transposed);
         bytes += f(d_subject_sequences_lengths);
         bytes += f(d_candidate_sequences_lengths);
         bytes += f(d_candidates_per_subject);
@@ -669,8 +662,6 @@ struct DataArrays {
 
         bytes += f(d_subject_sequences_data);
         bytes += f(d_candidate_sequences_data);
-        bytes += f(d_subject_sequences_data_transposed);
-        bytes += f(d_candidate_sequences_data_transposed);
         bytes += f(d_subject_sequences_lengths);
         bytes += f(d_candidate_sequences_lengths);
         bytes += f(d_candidates_per_subject);
@@ -736,8 +727,6 @@ struct DataArrays {
         ReadSequencesPointers pointers{
             h_subject_sequences_data.get(),
             h_candidate_sequences_data.get(),
-            nullptr,
-            nullptr,
             h_subject_sequences_lengths.get(),
             h_candidate_sequences_lengths.get(),
         };
@@ -748,8 +737,6 @@ struct DataArrays {
         ReadSequencesPointers pointers{
             d_subject_sequences_data.get(),
             d_candidate_sequences_data.get(),
-            d_subject_sequences_data_transposed.get(),
-            d_candidate_sequences_data_transposed.get(),
             d_subject_sequences_lengths.get(),
             d_candidate_sequences_lengths.get(),
         };
@@ -769,8 +756,6 @@ struct DataArrays {
 
     SimpleAllocationDevice<char> d_subject_sequences_data;
     SimpleAllocationDevice<char> d_candidate_sequences_data;
-    SimpleAllocationDevice<char> d_subject_sequences_data_transposed;
-    SimpleAllocationDevice<char> d_candidate_sequences_data_transposed;
     SimpleAllocationDevice<int> d_subject_sequences_lengths;
     SimpleAllocationDevice<int> d_candidate_sequences_lengths;
     SimpleAllocationDevice<int> d_candidates_per_subject;
