@@ -663,6 +663,93 @@ namespace care{
         return allUniqueResults;
     }
 
+
+#if 0
+std::vector<Minhasher::Result_t> 
+Minhasher::getCandidates_fromHashvalues_any_map(
+    const std::string& sequence,
+    std::uint64_t* hashValues) const noexcept{
+        static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
+        // we do not consider reads which are shorter than k
+        if(sequence.size() < unsigned(minparams.k))
+            return {};
+
+        //TIMERSTARTCPU(minhashfunc);     
+        auto hashValuesOriginal = minhashfunc(sequence);
+ 
+        //TIMERSTOPCPU(minhashfunc);
+
+        using Range_t = std::pair<const Value_t*, const Value_t*>;
+        std::vector<Range_t> ranges;
+        ranges.reserve(minparams.maps);
+
+        int maximumResultSize = 0;
+
+
+        //TIMERSTARTCPU(query);
+
+#ifdef NVTXTIMELINE
+        nvtx::push_range("map queries", 4);
+#endif
+
+        for(int map = 0; map < minparams.maps; ++map){
+            kmer_type key = hashValues[map] & key_mask;
+            auto entries_range = queryMap(map, key);
+            int n_entries = std::distance(entries_range.first, entries_range.second);
+            if(n_entries > 0){
+                maximumResultSize += n_entries;
+                ranges.emplace_back(entries_range);
+            }
+        }
+#ifdef NVTXTIMELINE
+        nvtx::pop_range("map queries");
+#endif 
+
+        //TIMERSTOPCPU(query);
+
+        //TIMERSTARTCPU(setunion);     
+#ifdef NVTXTIMELINE         
+        nvtx::push_range("setunion", 5);
+#endif
+
+#if 1
+        std::vector<Value_t> allUniqueResults(maximumResultSize);
+
+        auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
+        allUniqueResults.erase(resultEnd, allUniqueResults.end());
+#else 
+        std::unordered_set<Value_t> uniqueValues;
+        for(const auto& range : ranges){
+            uniqueValues.insert(range.first, range.second);
+        }
+        std::vector<Value_t> allUniqueResults(uniqueValues.size());
+        std::copy(uniqueValues.cbegin(), uniqueValues.cend(), allUniqueResults.begin());
+
+#endif
+        // std::vector<Value_t> allUniqueResultsPQ(maximumResultSize);
+        // auto resultEndPQ = k_way_set_union_with_priorityqueue(allUniqueResultsPQ.begin(), ranges);
+        // allUniqueResultsPQ.erase(resultEndPQ, allUniqueResultsPQ.end()); 
+
+        // assert(allUniqueResults.size() == allUniqueResultsPQ.size());
+        // assert(allUniqueResults == allUniqueResultsPQ);
+
+
+
+#ifdef NVTXTIMELINE        
+        nvtx::pop_range("setunion");
+#endif 
+
+        //TIMERSTOPCPU(setunion);
+
+        return allUniqueResults;
+    }
+#endif
+
+
+
+
+    
+
 // #############################
 
 /*
@@ -735,7 +822,7 @@ namespace care{
 
 
 	std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
         std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
@@ -761,7 +848,7 @@ namespace care{
 	}
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
+    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
         assert(minparams.k <= maximum_kmer_length);
 
         const int length = sequence.length();
