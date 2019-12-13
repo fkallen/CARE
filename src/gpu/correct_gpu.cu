@@ -1625,7 +1625,7 @@ namespace gpu{
                     batch.kernelLaunchHandle);
 
         cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-#if 0
+#if 1
         auto identity = [](auto i){return i;};
 
         cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
@@ -1692,15 +1692,15 @@ namespace gpu{
 
             if(dataArrays.n_queries > 0){
                 for(int j = 0; j < dataArrays.n_queries; j++){
-                    //std::string s; s.resize(128);
-                    //decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
-                    const char* hostptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(batch.tasks[i].candidate_read_ids[j]);
-                    std::string hostsequence = get2BitString((const unsigned int*)hostptr, 100, identity);
-                    std::string s = get2BitString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
-                    if(hostsequence != s){
-                        std::cout << "host " << hostsequence << std::endl;
-                        std::cout << "device " << s << std::endl;
-                    }
+                    std::string s; s.resize(128);
+                    decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
+                    //const char* hostptr = transFuncData.readStorage->fetchSequenceData_ptr(batch.tasks[i].candidate_read_ids[j]);
+                    //std::string hostsequence = get2BitString((const unsigned int*)hostptr, 100, identity);
+                    //std::string s = get2BitString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
+                    // if(hostsequence != s){
+                    //     std::cout << "host " << hostsequence << std::endl;
+                    //     std::cout << "device " << s << std::endl;
+                    // }
                     std::cout << "Candidate  : " << s << " " << batch.tasks[i].candidate_read_ids[j] << std::endl;
                     std::cout << "Fwd alignment: " << dataArrays.h_alignment_scores[j] << " "
                                 << dataArrays.h_alignment_overlaps[j] << " "
