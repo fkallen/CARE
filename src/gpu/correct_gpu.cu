@@ -1805,7 +1805,7 @@ namespace gpu{
         batch.setState(BatchState::RearrangeIndices, expectedState);
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-        //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
+        std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
 
     void state_rearrangeindices_func(Batch& batch){
