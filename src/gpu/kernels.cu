@@ -71,253 +71,14 @@ namespace gpu{
     //####################   KERNELS   ####################
 
 
-    template<int tilesize>
-    __global__
-    void
-    cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel(
-                AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
-                const int* __restrict__ candidates_per_subject_prefixsum,
-                const int* __restrict__ tiles_per_subject_prefixsum,
-                int n_subjects,
-                int n_candidates,
-                size_t encodedsequencepitch,
-                int max_sequence_bytes,
-                int min_overlap,
-                float maxErrorRate,
-                float min_overlap_ratio){
-
-        auto getNumBytes = [] (int sequencelength){
-            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
-        };
-
-        /*auto getSubjectPtr = [&] (int subjectIndex){
-            const char* result = subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
-            return result;
-        };
-
-        auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
-            return result;
-        };*/
-
-        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
-        };
-
-        auto no_bank_conflict_index_tile = [&](int logical_index) -> int {
-            return logical_index * tilesize;
-        };
-
-        auto no_bank_conflict_index = [](int logical_index) -> int {
-            return logical_index * blockDim.x;
-        };
-
-        auto identity = [](auto logical_index){
-            return logical_index;
-        };
-
-        auto popcount = [](auto i){return __popc(i);};
-
-        auto hammingDistanceWithShift = [&](int shift, int overlapsize, int max_errors,
-                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                    int shiftptr_size,
-                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                    auto transfunc2){
-
-            const int shiftamount = shift == 0 ? 0 : 1;
-
-            shiftBitArrayLeftBy(shiftptr_hi, shiftptr_size / 2, shiftamount, transfunc1);
-            shiftBitArrayLeftBy(shiftptr_lo, shiftptr_size / 2, shiftamount, transfunc1);
-
-            const int score = hammingdistanceHiLo(shiftptr_hi,
-                                                shiftptr_lo,
-                                                otherptr_hi,
-                                                otherptr_lo,
-                                                overlapsize,
-                                                overlapsize,
-                                                max_errors,
-                                                transfunc1,
-                                                transfunc2,
-                                                popcount);
-
-            return score;
-        };
-
-        // sizeof(char) * (max_sequence_bytes * num_tiles   // tiles share the subject
-        //                    + max_sequence_bytes * num_threads // each thread works with its own candidate
-        //                    + max_sequence_bytes * num_threads) // each thread needs memory to shift a sequence
-        extern __shared__ unsigned int sharedmemory[];
-
-        //set up shared memory pointers
-
-        const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
-
-        const int tiles = (blockDim.x * gridDim.x) / tilesize;
-        const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
-        const int localTileId = (threadIdx.x) / tilesize;
-        const int tilesPerBlock = blockDim.x / tilesize;
-        const int laneInTile = threadIdx.x % tilesize;
-        const int requiredTiles = tiles_per_subject_prefixsum[n_subjects];
-
-        unsigned int* const subjectBackupsBegin = sharedmemory; // per tile shared memory to store subject
-        unsigned int* const queryBackupsBegin = subjectBackupsBegin + max_sequence_ints * tilesPerBlock; // per thread shared memory to store query
-        unsigned int* const mySequencesBegin = queryBackupsBegin + max_sequence_ints * blockDim.x; // per thread shared memory to store shifted sequence
-
-        unsigned int* const subjectBackup = subjectBackupsBegin + max_sequence_ints * localTileId; // accesed via identity
-        unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
-        unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
-
-        for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2; logicalTileId += tiles){
-            const bool isReverseComplement = logicalTileId >= requiredTiles;
-            const int forwardTileId = isReverseComplement ? logicalTileId - requiredTiles : logicalTileId;
-
-            const int subjectIndex = thrust::distance(tiles_per_subject_prefixsum,
-                                                    thrust::lower_bound(
-                                                        thrust::seq,
-                                                        tiles_per_subject_prefixsum,
-                                                        tiles_per_subject_prefixsum + n_subjects + 1,
-                                                        forwardTileId + 1))-1;
-
-            const int candidatesBeforeThisSubject = candidates_per_subject_prefixsum[subjectIndex];
-            const int maxCandidateIndex_excl = candidates_per_subject_prefixsum[subjectIndex+1];
-            //const int tilesForThisSubject = tiles_per_subject_prefixsum[subjectIndex + 1] - tiles_per_subject_prefixsum[subjectIndex];
-            const int tileForThisSubject = forwardTileId - tiles_per_subject_prefixsum[subjectIndex];
-            const int queryIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
-            const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
-
-            const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
-            const char* subjectptr = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedsequencepitch;
-            //transposed
-            //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
-
-            //save subject in shared memory (in parallel, per tile)
-            for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
-                subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
-                //transposed
-                //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
-            }
-
-            cg::tiled_partition<tilesize>(cg::this_thread_block()).sync();
-
-
-            if(queryIndex < maxCandidateIndex_excl){
-
-                const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
-                //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
-                //transposed
-                const char* candidateptr = (const char*)((unsigned int*)(d_sequencePointers.candidateSequencesDataTransposed) + std::size_t(queryIndex));
-
-                //save query in shared memory
-                for(int i = 0; i < max_sequence_ints; i += 1) {
-                    //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
-                    //transposed
-                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i * n_candidates];
-                }
-
-                //queryIndex != resultIndex -> reverse complement
-                if(isReverseComplement) {
-                    make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
-                }
-
-                //begin SHD algorithm
-
-                const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
-                const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
-                const int totalbases = subjectbases + querybases;
-                const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
-
-
-                const unsigned int* const subjectBackup_hi = subjectBackup;
-                const unsigned int* const subjectBackup_lo = subjectBackup + identity(subjectints/2);
-                const unsigned int* const queryBackup_hi = queryBackup;
-                const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
-
-                int bestScore = totalbases;                 // score is number of mismatches
-                int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
-
-                auto handle_shift = [&](int shift, int overlapsize,
-                                            unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                            int shiftptr_size,
-                                            const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                            auto transfunc2){
-
-                    const int max_errors = int(float(overlapsize) * maxErrorRate);
-
-                    int score = hammingDistanceWithShift(shift, overlapsize, max_errors,
-                                        shiftptr_hi,shiftptr_lo, transfunc1,
-                                        shiftptr_size,
-                                        otherptr_hi, otherptr_lo, transfunc2);
-
-                    score = (score < max_errors ?
-                            score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                            : std::numeric_limits<int>::max()); // too many errors, discard
-
-                    if(score < bestScore){
-                        bestScore = score;
-                        bestShift = shift;
-                    }
-                };
-
-                //initialize threadlocal smem array with subject
-                for(int i = 0; i < max_sequence_ints; i += 1) {
-                    mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
-                }
-
-                unsigned int* mySequence_hi = mySequence;
-                unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(subjectints / 2);
-
-                for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
-                    const int overlapsize = min(subjectbases - shift, querybases);
-
-                    handle_shift(shift, overlapsize,
-                                    mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                    subjectints,
-                                    queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
-                }
-
-                //initialize threadlocal smem array with query
-                for(int i = 0; i < max_sequence_ints; i += 1) {
-                    mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
-                }
-
-                mySequence_hi = mySequence;
-                mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
-
-                for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                    const int overlapsize = min(subjectbases, querybases + shift);
-
-                    handle_shift(shift, overlapsize,
-                                    mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                    queryints,
-                                    subjectBackup_hi, subjectBackup_lo, identity);
-                }
-
-                const int queryoverlapbegin_incl = max(-bestShift, 0);
-                const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-                const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-                const int opnr = bestScore - totalbases + 2*overlapsize;
-
-                int* const alignment_scores = d_alignmentresultpointers.scores;
-                int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
-                int* const alignment_shifts = d_alignmentresultpointers.shifts;
-                int* const alignment_nOps = d_alignmentresultpointers.nOps;
-                bool* const alignment_isValid = d_alignmentresultpointers.isValid;
-
-                alignment_scores[resultIndex] = bestScore;
-                alignment_overlaps[resultIndex] = overlapsize;
-                alignment_shifts[resultIndex] = bestShift;
-                alignment_nOps[resultIndex] = opnr;
-                alignment_isValid[resultIndex] = (bestShift != -querybases);
-            }
-        }
-    }
 
 
     template<int tilesize>
     __global__
     void
     cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel(
+                const unsigned int* subjectDataHiLo,
+                const unsigned int* candidateDataHiLoTransposed,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 const int* __restrict__ candidates_per_subject_prefixsum,
@@ -325,7 +86,7 @@ namespace gpu{
                 int n_subjects,
                 int n_candidates,
                 size_t encodedsequencepitch,
-                int max_sequence_bytes,
+                int maximumSequenceLength,
                 int min_overlap,
                 float maxErrorRate,
                 float min_overlap_ratio){
@@ -394,7 +155,7 @@ namespace gpu{
 
         //set up shared memory pointers
 
-        const int max_sequence_ints = max_sequence_bytes / sizeof(unsigned int);
+        const int max_sequence_ints = getEncodedNumInts2BitHiLo(maximumSequenceLength);
 
         const int tiles = (blockDim.x * gridDim.x) / tilesize;
         const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
@@ -430,13 +191,15 @@ namespace gpu{
             const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
 
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
-            const char* subjectptr = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedsequencepitch;
+
+            const unsigned int* subjectptr = (const unsigned int*)(((const char*)subjectDataHiLo) 
+                                                                        + std::size_t(subjectIndex) * encodedsequencepitch);
             //transposed
             //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
             //save subject in shared memory (in parallel, per tile)
             for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
-                subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane];
+                subjectBackup[identity(lane)] = subjectptr[lane];
                 //transposed
                 //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
             }
@@ -449,13 +212,13 @@ namespace gpu{
                 const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
                 //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
                 //transposed
-                const char* candidateptr = (const char*)((unsigned int*)(d_sequencePointers.candidateSequencesDataTransposed) + std::size_t(queryIndex));
+                const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
                 //save query in shared memory
                 for(int i = 0; i < max_sequence_ints; i += 1) {
                     //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
                     //transposed
-                    queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i * n_candidates];
+                    queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
                 }
 
                 //queryIndex != resultIndex -> reverse complement
@@ -944,7 +707,7 @@ namespace gpu{
                 bool debug){
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1118,7 +881,7 @@ namespace gpu{
         if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
 
         auto get = [] (const char* data, int length, int index, auto trafo){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, trafo);
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, trafo);
 		};
 
 		auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1368,7 +1131,7 @@ namespace gpu{
         if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("implicit_shared\n");
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
@@ -1601,7 +1364,7 @@ namespace gpu{
         //if(debug && blockIdx.x == 0 && threadIdx.x == 0) printf("singlecol\n");
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
 
@@ -1832,7 +1595,7 @@ namespace gpu{
         __shared__ float avgCountPerWeight[4];
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -2044,7 +1807,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -2398,7 +2161,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -2659,7 +2422,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         constexpr char A_enc = 0x00;
@@ -2801,7 +2564,7 @@ namespace gpu{
 
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         constexpr char A_enc = 0x00;
@@ -3233,11 +2996,11 @@ namespace gpu{
                         bool debug = false){
 
         auto getNumBytes = [] (int sequencelength){
-            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
+            return sizeof(unsigned int) * getEncodedNumInts2Bit(sequencelength);
         };
 
         auto get = [] (const char* data, int length, int index){
-            return getEncodedNuc2BitHiLo((const unsigned int*)data, length, index, [](auto i){return i;});
+            return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
     	};
 
         auto getSubjectPtr = [&] (int subjectIndex){
@@ -3595,8 +3358,6 @@ namespace gpu{
 
 
 
-
-
     //####################   KERNEL DISPATCH   ####################
 
 
@@ -3609,12 +3370,88 @@ namespace gpu{
     			int n_subjects,
     			int n_queries,
                 size_t encodedsequencepitch,
-    			int max_sequence_bytes,
+    			int maximumSequenceLength,
     			int min_overlap,
     			float maxErrorRate,
     			float min_overlap_ratio,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
+
+            const int intsPerSequence2Bit = getEncodedNumInts2Bit(maximumSequenceLength);
+            const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
+            const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
+
+            unsigned int* d_subjectDataHiLo = nullptr;
+            unsigned int* d_candidateDataHiLoTransposed = nullptr;
+
+            cubCachingAllocator.DeviceAllocate(
+                (void**)&d_candidateDataHiLoTransposed, 
+                sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
+                stream
+            ); CUERR;
+#if 0
+            unsigned int* d_candidateDataTransposed = nullptr;
+
+            cubCachingAllocator.DeviceAllocate(
+                (void**)&d_candidateDataTransposed, 
+                sizeof(unsigned int) * intsPerSequence2Bit * n_queries, 
+                stream
+            ); CUERR;
+
+            call_transpose_kernel(d_candidateDataTransposed,
+                (const unsigned int*)d_sequencePointers.candidateSequencesData,
+                n_queries,
+                intsPerSequence2Bit,
+                intsPerSequence2Bit,
+                stream
+            );
+
+            callConversionKernel2BitTo2BitHiLoTT(
+                d_candidateDataTransposed,
+                intsPerSequence2Bit,
+                d_candidateDataHiLoTransposed,
+                intsPerSequence2BitHiLo,
+                d_sequencePointers.candidateSequencesLength,
+                n_queries,
+                stream,
+                handle
+            );
+
+            cubCachingAllocator.DeviceFree(d_candidateDataTransposed); CUERR;
+#else 
+
+            callConversionKernel2BitTo2BitHiLoNT(
+                (const unsigned int*)d_sequencePointers.candidateSequencesData,
+                intsPerSequence2Bit,
+                d_candidateDataHiLoTransposed,
+                intsPerSequence2BitHiLo,
+                d_sequencePointers.candidateSequencesLength,
+                n_queries,
+                stream,
+                handle
+            );
+
+#endif 
+
+
+            
+
+            cubCachingAllocator.DeviceAllocate(
+                (void**)&d_subjectDataHiLo, 
+                sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
+                stream
+            ); CUERR;
+
+            callConversionKernel2BitTo2BitHiLoNN(
+                (const unsigned int*)d_sequencePointers.subjectSequencesData,
+                intsPerSequence2Bit,
+                d_subjectDataHiLo,
+                intsPerSequence2BitHiLo,
+                d_sequencePointers.subjectSequencesLength,
+                n_subjects,
+                stream,
+                handle
+            );
 
             constexpr int tilesize = 32;
 
@@ -3673,7 +3510,7 @@ namespace gpu{
             //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
 
 
-        	const std::size_t smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2);
+        	const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
 
         	int max_blocks_per_device = 1;
 
@@ -3689,7 +3526,7 @@ namespace gpu{
         		#define getProp(blocksize, tilesize) { \
                 		KernelLaunchConfig kernelLaunchConfig; \
                 		kernelLaunchConfig.threads_per_block = (blocksize); \
-                		kernelLaunchConfig.smem = sizeof(char) * (max_sequence_bytes * tilesPerBlock + max_sequence_bytes * blocksize * 2); \
+                		kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
                 		KernelProperties kernelProperties; \
                 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
                             cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel<tilesize>, \
@@ -3719,7 +3556,9 @@ namespace gpu{
         	}
 
             #define mycall cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel<tilesize> \
-                                    	        <<<grid, block, smem, stream>>>( \
+                                                <<<grid, block, smem, stream>>>( \
+                                                d_subjectDataHiLo, \
+                                                d_candidateDataHiLoTransposed, \
                                         		d_alignmentresultpointers, \
                                                 d_sequencePointers, \
                                         		d_candidates_per_subject_prefixsum, \
@@ -3727,7 +3566,7 @@ namespace gpu{
                                         		n_subjects, \
                                         		n_queries, \
                                                 encodedsequencepitch, \
-                                        		max_sequence_bytes, \
+                                        		maximumSequenceLength, \
                                         		min_overlap, \
                                         		maxErrorRate, \
                                         		min_overlap_ratio); CUERR;
@@ -3741,6 +3580,8 @@ namespace gpu{
     	    #undef mycall
 
             cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
+            cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
+            cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
     }
 
 
@@ -5483,11 +5324,6 @@ namespace gpu{
 
     		#undef mycall
     }
-
-
-
-
-
 
 
 

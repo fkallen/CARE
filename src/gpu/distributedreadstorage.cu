@@ -75,7 +75,7 @@ void DistributedReadStorage::init(const std::vector<int>& deviceIds_, read_numbe
         int oldId; cudaGetDevice(&oldId); CUERR;
 
 
-        const int intsPerSequence = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound);
+        const int intsPerSequence = getEncodedNumInts2Bit(sequenceLengthUpperBound);
 
         updateMemoryLimits();
         distributedSequenceData = std::move(DistributedArray<unsigned int, read_number>(deviceIds, 
@@ -247,7 +247,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
     std::vector<Length_t> sequenceLengths;
     std::vector<char> qualityData;
 
-    const size_t encodedSequencePitch = getEncodedNumInts2BitHiLo(getSequenceLengthUpperBound()) * sizeof(int);
+    const size_t encodedSequencePitch = getEncodedNumInts2Bit(getSequenceLengthUpperBound()) * sizeof(int);
     const size_t qualityPitch = getSequenceLengthUpperBound();
 
     sequenceData.resize(encodedSequencePitch * numReads, 0);
@@ -263,7 +263,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
             const Read& r = reads[i];
 
             unsigned int* dest = (unsigned int*)&sequenceData[std::size_t(i) * encodedSequencePitch];
-            encodeSequence2BitHiLo(dest,
+            encodeSequence2Bit(dest,
                                     r.sequence.c_str(),
                                     r.sequence.length());
             sequenceLengths[i] = Length_t(r.sequence.length());
@@ -546,7 +546,7 @@ void DistributedReadStorage::saveToFile(const std::string& filename) const{
 
     {
         auto sequencehandle = makeGatherHandleSequences();
-        size_t outputpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
+        size_t outputpitch = getEncodedNumInts2Bit(sequenceLengthUpperBound) * sizeof(int);
 
         size_t totalSequenceMemory = outputpitch * getNumberOfReads();
         stream.write(reinterpret_cast<const char*>(&totalSequenceMemory), sizeof(size_t));
@@ -719,7 +719,7 @@ void DistributedReadStorage::loadFromFile(const std::string& filename, const std
     int numBatches = SDIV(loaded_numberOfReads, batchsize);
 
     {
-        size_t seqpitch = getEncodedNumInts2BitHiLo(sequenceLengthUpperBound) * sizeof(int);
+        size_t seqpitch = getEncodedNumInts2Bit(sequenceLengthUpperBound) * sizeof(int);
 
         size_t totalSequenceMemory = 1;
         stream.read(reinterpret_cast<char*>(&totalSequenceMemory), sizeof(size_t));

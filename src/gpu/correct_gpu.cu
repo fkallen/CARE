@@ -868,7 +868,7 @@ namespace gpu{
         const auto& transFuncData = *batch.transFuncData;
 
         const int maximumSequenceBytes = sizeof(unsigned int) 
-                        * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
+                        * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength);
         const auto batchsize = transFuncData.correctionOptions.batchsize;
 
         nextData.h_subject_sequences_data.resize(maximumSequenceBytes * batchsize);
@@ -958,9 +958,9 @@ namespace gpu{
                     const char* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * maximumSequenceBytes;
                     const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
 
-                    //TIMERSTARTCPU(get2BitHiLoString);
-                    task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
-                    //TIMERSTOPCPU(get2BitHiLoString);
+                    //TIMERSTARTCPU(get2BitString);
+                    task.subject_string = get2BitString((const unsigned int*)sequenceptr, sequencelength);
+                    //TIMERSTOPCPU(get2BitString);
 
                     //TIMERSTARTCPU(getCandidates);
                     task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
@@ -1059,7 +1059,7 @@ namespace gpu{
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         //std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-        const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
+        const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength);
 
         const auto batchsize = transFuncData.correctionOptions.batchsize;
 
@@ -1162,7 +1162,7 @@ namespace gpu{
                 int(batch.tasks.size()),
                 batch.initialNumberOfCandidates,
                 transFuncData.sequenceFileProperties.maxSequenceLength,
-                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
+                sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
                 transFuncData.goodAlignmentProperties.min_overlap,
                 transFuncData.goodAlignmentProperties.min_overlap_ratio,
                 transFuncData.correctionOptions.useQualityScores); CUERR;
@@ -1245,7 +1245,7 @@ namespace gpu{
 
             const auto& minhasher = transFuncData.minhasher;
 
-            const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength);
+            const int maximumSequenceBytes = sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength);
 
             int initialNumberOfCandidates = 0;
 
@@ -1268,9 +1268,9 @@ namespace gpu{
                     const char* sequenceptr = dataArrays.h_subject_sequences_data.get() + i * maximumSequenceBytes;
                     const int sequencelength = dataArrays.h_subject_sequences_lengths[i];
 
-                    //TIMERSTARTCPU(get2BitHiLoString);
-                    task.subject_string = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
-                    //TIMERSTOPCPU(get2BitHiLoString);
+                    //TIMERSTARTCPU(get2BitString);
+                    task.subject_string = get2BitString((const unsigned int*)sequenceptr, sequencelength);
+                    //TIMERSTOPCPU(get2BitString);
 
                     //TIMERSTARTCPU(getCandidates);
                     task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
@@ -1336,7 +1336,7 @@ namespace gpu{
                 dataArrays.set_problem_dimensions(int(batchptr->tasks.size()),
                             initialNumberOfCandidates,
                             transFuncData.sequenceFileProperties.maxSequenceLength,
-                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
+                            sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
                             transFuncData.goodAlignmentProperties.min_overlap,
                             transFuncData.goodAlignmentProperties.min_overlap_ratio,
                             transFuncData.correctionOptions.useQualityScores); CUERR;
@@ -1538,19 +1538,19 @@ namespace gpu{
 
         assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
 
-        call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
-                         (const int*)dataArrays.d_subject_sequences_data.get(),
-                         dataArrays.n_subjects,
-                         getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
-                         dataArrays.encoded_sequence_pitch / sizeof(int),
-                         streams[primary_stream_index]);
+        // call_transpose_kernel((int*)dataArrays.d_subject_sequences_data_transposed.get(),
+        //                  (const int*)dataArrays.d_subject_sequences_data.get(),
+        //                  dataArrays.n_subjects,
+        //                  getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
+        //                  dataArrays.encoded_sequence_pitch / sizeof(int),
+        //                  streams[primary_stream_index]);
 
-        call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
-                         (const int*)dataArrays.d_candidate_sequences_data.get(),
-                         dataArrays.n_queries,
-                         getEncodedNumInts2BitHiLo(transFuncData.sequenceFileProperties.maxSequenceLength),
-                         dataArrays.encoded_sequence_pitch / sizeof(int),
-                         streams[primary_stream_index]);
+        // call_transpose_kernel((int*)dataArrays.d_candidate_sequences_data_transposed.get(),
+        //                  (const int*)dataArrays.d_candidate_sequences_data.get(),
+        //                  dataArrays.n_queries,
+        //                  getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
+        //                  dataArrays.encoded_sequence_pitch / sizeof(int),
+        //                  streams[primary_stream_index]);
 
         cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;
 
@@ -1605,8 +1605,8 @@ namespace gpu{
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
 		std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-		//cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
-
+        //cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
+        
         call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
                     dataArrays.getDeviceAlignmentResultPointers(),
                     dataArrays.getDeviceSequencePointers(),
@@ -1616,7 +1616,7 @@ namespace gpu{
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
                     dataArrays.encoded_sequence_pitch,
-                    sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                    dataArrays.maximum_sequence_length,
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
                     transFuncData.goodAlignmentProperties.min_overlap_ratio,
@@ -1687,16 +1687,16 @@ namespace gpu{
 
         for(int i = 0; i < dataArrays.n_subjects; i++){
             std::string s; s.resize(128);
-            decode2BitHiLoSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
+            decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
             std::cout << "Subject  : " << s << " " << batch.tasks[i].readId << std::endl;
 
             if(dataArrays.n_queries > 0){
                 for(int j = 0; j < dataArrays.n_queries; j++){
                     //std::string s; s.resize(128);
-                    //decode2BitHiLoSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
+                    //decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
                     const char* hostptr = transFuncData.gpuReadStorage->fetchSequenceData_ptr(batch.tasks[i].candidate_read_ids[j]);
-                    std::string hostsequence = get2BitHiLoString((const unsigned int*)hostptr, 100, identity);
-                    std::string s = get2BitHiLoString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
+                    std::string hostsequence = get2BitString((const unsigned int*)hostptr, 100, identity);
+                    std::string s = get2BitString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
                     if(hostsequence != s){
                         std::cout << "host " << hostsequence << std::endl;
                         std::cout << "device " << s << std::endl;
@@ -2059,7 +2059,7 @@ namespace gpu{
                         transFuncData.correctionOptions.useQualityScores,
                         desiredAlignmentMaxErrorRate,
                         dataArrays.maximum_sequence_length,
-                        sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                        sizeof(unsigned int) * getEncodedNumInts2Bit(dataArrays.maximum_sequence_length),
                         dataArrays.encoded_sequence_pitch,
                         dataArrays.quality_pitch,
                         dataArrays.msa_pitch,
@@ -2132,7 +2132,7 @@ namespace gpu{
                             dataArrays.d_candidates_per_subject_prefixsum,
                             dataArrays.n_subjects,
                             dataArrays.n_queries,
-                            sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                            sizeof(unsigned int) * getEncodedNumInts2Bit(dataArrays.maximum_sequence_length),
                             dataArrays.encoded_sequence_pitch,
                             dataArrays.msa_pitch,
                             dataArrays.msa_weights_pitch,
@@ -2453,7 +2453,7 @@ namespace gpu{
                                 transFuncData.correctionOptions.useQualityScores,
                                 desiredAlignmentMaxErrorRate,
                                 dataArrays.maximum_sequence_length,
-                                sizeof(unsigned int) * getEncodedNumInts2BitHiLo(dataArrays.maximum_sequence_length),
+                                sizeof(unsigned int) * getEncodedNumInts2Bit(dataArrays.maximum_sequence_length),
                                 dataArrays.encoded_sequence_pitch,
                                 dataArrays.quality_pitch,
                                 dataArrays.msa_pitch,
@@ -2698,13 +2698,13 @@ namespace gpu{
 
                     assert(dataArrays.h_alignment_best_alignment_flags[index] != BestAlignment_t::None);
 
-                    std::string candidatestring = get2BitHiLoString((unsigned int*)candidateSequencePtr, dataArrays.h_candidate_sequences_lengths[index]);
+                    std::string candidatestring = get2BitString((unsigned int*)candidateSequencePtr, dataArrays.h_candidate_sequences_lengths[index]);
                     if(dataArrays.h_alignment_best_alignment_flags[index] == BestAlignment_t::ReverseComplement){
                         candidatestring = reverseComplementString(candidatestring.c_str(), candidatestring.length());
                     }
 
                     std::copy(candidatestring.begin(), candidatestring.end(), dst);
-                    //decode2BitHiLoSequence(dst, (const unsigned int*)candidateSequencePtr, 100, identity);
+                    //decode2BitSequence(dst, (const unsigned int*)candidateSequencePtr, 100, identity);
                     //std::cout << "Candidate: " << s << std::endl;
                 }
 
@@ -3414,7 +3414,7 @@ namespace gpu{
 
                         if(!originalReadContainsN){
                             const char* ptr = &resultData.h_candidate_sequences_data[global_candidate_index * resultData.encoded_sequence_pitch];
-                            const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
+                            const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
 
                             const int maxEdits = candidate_length / 7;
                             int edits = 0;
@@ -3703,7 +3703,7 @@ namespace gpu{
 
                         if(!originalReadContainsN){
                             const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
-                            const std::string uncorrectedCandidate = get2BitHiLoString((const unsigned int*)ptr, candidate_length);
+                            const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
 
                             const int maxEdits = candidate_length / 7;
                             int edits = 0;

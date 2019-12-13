@@ -64,8 +64,6 @@ struct MSAPointers{
 struct ReadSequencesPointers{
     char* subjectSequencesData;
     char* candidateSequencesData;
-    char* subjectSequencesDataTransposed;
-    char* candidateSequencesDataTransposed;
     int* subjectSequencesLength;
     int* candidateSequencesLength;
 };
@@ -91,6 +89,10 @@ struct CorrectionResultPointers{
 
 
 enum class KernelId {
+    Conversion2BitTo2BitHiLo,
+    Conversion2BitTo2BitHiLoNN,
+    Conversion2BitTo2BitHiLoNT,
+    Conversion2BitTo2BitHiLoTT,
     PopcountSHDTiled,
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
@@ -434,7 +436,35 @@ void call_msa_findCandidatesOfDifferentRegion_kernel_async(
 
 
 
+void callConversionKernel2BitTo2BitHiLoNN(
+            const unsigned int* d_inputdata,
+            size_t inputpitchInInts,
+            unsigned int* d_outputdata,
+            size_t outputpitchInInts,
+            int* d_sequenceLengths,
+            int numSequences,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
 
+void callConversionKernel2BitTo2BitHiLoNT(
+            const unsigned int* d_inputdata,
+            size_t inputpitchInInts,
+            unsigned int* d_outputdata,
+            size_t outputpitchInInts,
+            int* d_sequenceLengths,
+            int numSequences,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
+
+void callConversionKernel2BitTo2BitHiLoTT(
+            const unsigned int* d_inputdata,
+            size_t inputpitchInInts,
+            unsigned int* d_outputdata,
+            size_t outputpitchInInts,
+            int* d_sequenceLengths,
+            int numSequences,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);            
 
 
 
