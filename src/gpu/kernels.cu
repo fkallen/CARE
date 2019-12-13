@@ -3453,7 +3453,7 @@ namespace gpu{
                 handle
             );
 
-            constexpr int tilesize = 32;
+            constexpr int tilesize = 16;
 
             int* d_tiles_per_subject_prefixsum;
             cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;

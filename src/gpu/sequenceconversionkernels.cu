@@ -13,6 +13,142 @@ namespace cg = cooperative_groups;
 namespace care{
 namespace gpu{
 
+template<class First2Bit, class First2BitHilo, class Trafo2Bit, class Trafo2BitHilo>
+__global__
+void checkSequenceConversionKernel(const unsigned int* const __restrict__ normalData,
+        size_t normalpitchInInts, // max num ints per input sequence
+        const unsigned int*  const __restrict__ hiloData,
+        size_t hilopitchInInts, // max num ints per output sequence
+        const int* const __restrict__ sequenceLengths,
+        int numSequences,
+        First2Bit first2Bit,
+        First2BitHilo first2BitHilo,
+        Trafo2Bit trafo2Bit,
+        Trafo2BitHilo trafo2BitHilo){
+
+    constexpr char A_enc = 0x00;
+    constexpr char C_enc = 0x01;
+    constexpr char G_enc = 0x02;
+    constexpr char T_enc = 0x03;
+
+    auto to_nuc = [](char c){
+        switch(c){
+        case A_enc: return 'A';
+        case C_enc: return 'C';
+        case G_enc: return 'G';
+        case T_enc: return 'T';
+        default: assert(false); return 'F';
+        }
+    };
+
+    for(int index = threadIdx.x + blockIdx.x * blockDim.x; index < numSequences; index += blockDim.x * gridDim.x){
+        const int sequenceLength = sequenceLengths[index];
+        const unsigned int* const normalSeq = normalData + first2Bit(index);
+        const unsigned int* const hiloSeq = hiloData + first2BitHilo(index);    
+        
+        for(int p = 0; p < sequenceLength; p++){
+            char encnormal = getEncodedNuc2Bit(normalSeq, sequenceLength, p, trafo2Bit);
+            char basenormal = to_nuc(encnormal);
+            char enchilo = getEncodedNuc2BitHiLo(hiloSeq, sequenceLength, p, trafo2BitHilo);
+            char basehilo = to_nuc(enchilo);
+            if(basenormal != basehilo){
+                printf("error seq %d position %d, normal %c hilo %c\n", index, p, basenormal, basehilo);
+            }
+            assert(basenormal == basehilo);
+        }
+    }
+}   
+
+void callCheckSequenceConversionKernelNN(const unsigned int* normalData,
+        size_t normalpitchInInts,
+        const unsigned int* hiloData,
+        size_t hilopitchInInts,
+        const int* sequenceLengths,
+        int numSequences,
+        cudaStream_t stream){
+
+    auto first2Bit = [=] __device__ (auto i){return i * normalpitchInInts;};
+    auto first2BitHilo = [=] __device__ (auto i){return i * hilopitchInInts;};
+    auto trafo2Bit = [=] __device__ (auto i){return i;};
+    auto trafo2BitHilo = [=] __device__ (auto i){return i;};
+
+    const int blocksize = 128;
+    const int gridsize = 1;
+
+    checkSequenceConversionKernel<<<gridsize,blocksize, 0, stream>>>(
+        normalData,
+        normalpitchInInts,
+        hiloData,
+        hilopitchInInts,
+        sequenceLengths,
+        numSequences,
+        first2Bit,
+        first2BitHilo,
+        trafo2Bit,
+        trafo2BitHilo
+    ); CUERR;
+}
+
+void callCheckSequenceConversionKernelNT(const unsigned int* normalData,
+        size_t normalpitchInInts,
+        const unsigned int* hiloData,
+        size_t hilopitchInInts,
+        const int* sequenceLengths,
+        int numSequences,
+        cudaStream_t stream){
+
+    auto first2Bit = [=] __device__ (auto i){return i * normalpitchInInts;};
+    auto first2BitHilo = [=] __device__ (auto i){return i;};
+    auto trafo2Bit = [=] __device__ (auto i){return i;};
+    auto trafo2BitHilo = [=] __device__ (auto i){return i * numSequences;};
+
+    const int blocksize = 128;
+    const int gridsize = 1;
+
+    checkSequenceConversionKernel<<<gridsize,blocksize, 0, stream>>>(
+        normalData,
+        normalpitchInInts,
+        hiloData,
+        hilopitchInInts,
+        sequenceLengths,
+        numSequences,
+        first2Bit,
+        first2BitHilo,
+        trafo2Bit,
+        trafo2BitHilo
+    ); CUERR;
+}
+
+void callCheckSequenceConversionKernelTT(const unsigned int* normalData,
+        size_t normalpitchInInts,
+        const unsigned int* hiloData,
+        size_t hilopitchInInts,
+        const int* sequenceLengths,
+        int numSequences,
+        cudaStream_t stream){
+
+    auto first2Bit = [=] __device__ (auto i){return i;};
+    auto first2BitHilo = [=] __device__ (auto i){return i;};
+    auto trafo2Bit = [=] __device__ (auto i){return i * numSequences;};
+    auto trafo2BitHilo = [=] __device__ (auto i){return i * numSequences;};
+
+    const int blocksize = 128;
+    const int gridsize = 1;
+
+    checkSequenceConversionKernel<<<gridsize,blocksize, 0, stream>>>(
+        normalData,
+        normalpitchInInts,
+        hiloData,
+        hilopitchInInts,
+        sequenceLengths,
+        numSequences,
+        first2Bit,
+        first2BitHilo,
+        trafo2Bit,
+        trafo2BitHilo
+    ); CUERR;
+}
+
  
 template<int groupsize>
 __global__
@@ -338,6 +474,14 @@ void callConversionKernel2BitTo2BitHiLoNN(
         outputpitchInInts,
         d_sequenceLengths,
         numSequences); CUERR;
+
+    callCheckSequenceConversionKernelNN(d_inputdata,
+        inputpitchInInts,
+        d_outputdata,
+        outputpitchInInts,
+        d_sequenceLengths,
+        numSequences,
+        stream);
 }
 
 void callConversionKernel2BitTo2BitHiLoNT(
@@ -406,6 +550,14 @@ void callConversionKernel2BitTo2BitHiLoNT(
         outputpitchInInts,
         d_sequenceLengths,
         numSequences); CUERR;
+
+    callCheckSequenceConversionKernelNT(d_inputdata,
+        inputpitchInInts,
+        d_outputdata,
+        outputpitchInInts,
+        d_sequenceLengths,
+        numSequences,
+        stream);
 }
 
 void callConversionKernel2BitTo2BitHiLoTT(
@@ -474,6 +626,14 @@ void callConversionKernel2BitTo2BitHiLoTT(
         outputpitchInInts,
         d_sequenceLengths,
         numSequences); CUERR;
+
+    callCheckSequenceConversionKernelTT(d_inputdata,
+        inputpitchInInts,
+        d_outputdata,
+        outputpitchInInts,
+        d_sequenceLengths,
+        numSequences,
+        stream);
 }
 
 
