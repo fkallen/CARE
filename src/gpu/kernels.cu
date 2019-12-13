@@ -85,25 +85,12 @@ namespace gpu{
                 const int* __restrict__ tiles_per_subject_prefixsum,
                 int n_subjects,
                 int n_candidates,
-                size_t encodedsequencepitch,
                 int maximumSequenceLength,
                 int min_overlap,
                 float maxErrorRate,
                 float min_overlap_ratio){
 
-        auto getNumBytes = [] (int sequencelength){
-            return sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequencelength);
-        };
-
-        /*auto getSubjectPtr = [&] (int subjectIndex){
-            const char* result = subject_sequences_data + std::size_t(subjectIndex) * encodedsequencepitch;
-            return result;
-        };
-
-        auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = candidate_sequences_data + std::size_t(candidateIndex) * encodedsequencepitch;
-            return result;
-        };*/
+        const int maximumNumberOfIntsPerSequence = getEncodedNumInts2BitHiLo(maximumSequenceLength);
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
             reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
@@ -192,8 +179,7 @@ namespace gpu{
 
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
 
-            const unsigned int* subjectptr = (const unsigned int*)(((const char*)subjectDataHiLo) 
-                                                                        + std::size_t(subjectIndex) * encodedsequencepitch);
+            const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * maximumNumberOfIntsPerSequence;
             //transposed
             //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
@@ -210,8 +196,7 @@ namespace gpu{
             if(queryIndex < maxCandidateIndex_excl){
 
                 const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
-                //const char* candidateptr = candidate_sequences_data + std::size_t(queryIndex) * encodedsequencepitch;
-                //transposed
+
                 const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
                 //save query in shared memory
@@ -228,8 +213,8 @@ namespace gpu{
 
                 //begin SHD algorithm
 
-                const int subjectints = getNumBytes(subjectbases) / sizeof(unsigned int);
-                const int queryints = getNumBytes(querybases) / sizeof(unsigned int);
+                const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
+                const int queryints = getEncodedNumInts2BitHiLo(querybases);
                 const int totalbases = subjectbases + querybases;
                 const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
@@ -3369,7 +3354,6 @@ namespace gpu{
                 const int* d_candidates_per_subject,
     			int n_subjects,
     			int n_queries,
-                size_t encodedsequencepitch,
     			int maximumSequenceLength,
     			int min_overlap,
     			float maxErrorRate,
@@ -3565,7 +3549,6 @@ namespace gpu{
                                                 d_tiles_per_subject_prefixsum, \
                                         		n_subjects, \
                                         		n_queries, \
-                                                encodedsequencepitch, \
                                         		maximumSequenceLength, \
                                         		min_overlap, \
                                         		maxErrorRate, \

@@ -1615,7 +1615,6 @@ namespace gpu{
                     dataArrays.d_candidates_per_subject,
                     dataArrays.n_subjects,
                     dataArrays.n_queries,
-                    dataArrays.encoded_sequence_pitch,
                     dataArrays.maximum_sequence_length,
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
@@ -1625,7 +1624,7 @@ namespace gpu{
                     batch.kernelLaunchHandle);
 
         cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-#if 1
+#if 0
         auto identity = [](auto i){return i;};
 
         cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
@@ -1686,14 +1685,14 @@ namespace gpu{
         cudaDeviceSynchronize(); CUERR;
 
         for(int i = 0; i < dataArrays.n_subjects; i++){
-            std::string s; s.resize(128);
-            decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
-            std::cout << "Subject  : " << s << " " << batch.tasks[i].readId << std::endl;
+            // std::string s; s.resize(128);
+            // decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
+            // std::cout << "Subject  : " << s << " " << batch.tasks[i].readId << std::endl;
 
             if(dataArrays.n_queries > 0){
                 for(int j = 0; j < dataArrays.n_queries; j++){
-                    std::string s; s.resize(128);
-                    decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
+                    // std::string s; s.resize(128);
+                    // decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
                     //const char* hostptr = transFuncData.readStorage->fetchSequenceData_ptr(batch.tasks[i].candidate_read_ids[j]);
                     //std::string hostsequence = get2BitString((const unsigned int*)hostptr, 100, identity);
                     //std::string s = get2BitString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
@@ -1701,7 +1700,8 @@ namespace gpu{
                     //     std::cout << "host " << hostsequence << std::endl;
                     //     std::cout << "device " << s << std::endl;
                     // }
-                    std::cout << "Candidate  : " << s << " " << batch.tasks[i].candidate_read_ids[j] << std::endl;
+                    //std::cout << "Candidate  : " << s << " " << batch.tasks[i].candidate_read_ids[j] << std::endl;
+                    std::cout << "Candidate  : " << batch.tasks[i].candidate_read_ids[j] << std::endl;
                     std::cout << "Fwd alignment: " << dataArrays.h_alignment_scores[j] << " "
                                 << dataArrays.h_alignment_overlaps[j] << " "
                                 << dataArrays.h_alignment_shifts[j] << " "
@@ -1805,7 +1805,7 @@ namespace gpu{
         batch.setState(BatchState::RearrangeIndices, expectedState);
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-        std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
+        //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
 
     void state_rearrangeindices_func(Batch& batch){

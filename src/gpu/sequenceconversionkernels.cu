@@ -41,12 +41,13 @@ void checkSequenceConversionKernel(const unsigned int* const __restrict__ normal
         }
     };
 
-    for(int index = threadIdx.x + blockIdx.x * blockDim.x; index < numSequences; index += blockDim.x * gridDim.x){
+    //use one block per sequence
+    for(int index = blockIdx.x; index < numSequences; index += gridDim.x){
         const int sequenceLength = sequenceLengths[index];
         const unsigned int* const normalSeq = normalData + first2Bit(index);
         const unsigned int* const hiloSeq = hiloData + first2BitHilo(index);    
         
-        for(int p = 0; p < sequenceLength; p++){
+        for(int p = threadIdx.x; p < sequenceLength; p += blockDim.x){
             char encnormal = getEncodedNuc2Bit(normalSeq, sequenceLength, p, trafo2Bit);
             char basenormal = to_nuc(encnormal);
             char enchilo = getEncodedNuc2BitHiLo(hiloSeq, sequenceLength, p, trafo2BitHilo);
@@ -73,7 +74,7 @@ void callCheckSequenceConversionKernelNN(const unsigned int* normalData,
     auto trafo2BitHilo = [=] __device__ (auto i){return i;};
 
     const int blocksize = 128;
-    const int gridsize = 1;
+    const int gridsize = std::min(numSequences, 65535);
 
     checkSequenceConversionKernel<<<gridsize,blocksize, 0, stream>>>(
         normalData,
@@ -103,7 +104,7 @@ void callCheckSequenceConversionKernelNT(const unsigned int* normalData,
     auto trafo2BitHilo = [=] __device__ (auto i){return i * numSequences;};
 
     const int blocksize = 128;
-    const int gridsize = 1;
+    const int gridsize = std::min(numSequences, 65535);
 
     checkSequenceConversionKernel<<<gridsize,blocksize, 0, stream>>>(
         normalData,
@@ -133,9 +134,9 @@ void callCheckSequenceConversionKernelTT(const unsigned int* normalData,
     auto trafo2BitHilo = [=] __device__ (auto i){return i * numSequences;};
 
     const int blocksize = 128;
-    const int gridsize = 1;
+    const int gridsize = std::min(numSequences, 65535);
 
-    checkSequenceConversionKernel<<<gridsize,blocksize, 0, stream>>>(
+    checkSequenceConversionKernel<<<gridsize, blocksize, 0, stream>>>(
         normalData,
         normalpitchInInts,
         hiloData,
