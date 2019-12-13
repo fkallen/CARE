@@ -822,7 +822,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
 
 	std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
+    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
         std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
@@ -848,7 +848,7 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 	}
 
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
         assert(minparams.k <= maximum_kmer_length);
 
         const int length = sequence.length();
