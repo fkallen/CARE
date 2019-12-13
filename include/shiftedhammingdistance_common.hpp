@@ -8,6 +8,7 @@
 
 namespace care{
 
+#if 0
     HD_WARNING_DISABLE
     template<class IndexTransformation>
     HOSTDEVICEQUALIFIER
@@ -35,6 +36,38 @@ namespace care{
 
         array[indextrafo(size - completeInts - 1)] >>= shiftamount;
     }
+#else 
+
+    HD_WARNING_DISABLE
+    template<class IndexTransformation>
+    HOSTDEVICEQUALIFIER
+    void shiftBitArrayLeftBy(unsigned int* array, int size, int shiftamount, IndexTransformation indextrafo){
+        if(shiftamount == 0) return;
+
+        const int completeInts = shiftamount / (8 * sizeof(unsigned int));
+
+        for(int i = 0; i < size - completeInts; i += 1) {
+            array[indextrafo(i)] = array[indextrafo(completeInts + i)];
+        }
+
+        for(int i = size - completeInts; i < size; i += 1) {
+            array[indextrafo(i)] = 0;
+        }
+
+        shiftamount -= completeInts * 8 * sizeof(unsigned int);
+
+        for(int i = 0; i < size - completeInts - 1; i += 1) {
+            const unsigned int a = array[indextrafo(i)];
+            const unsigned int b = array[indextrafo(i+1)];
+
+            array[indextrafo(i)] = (a << shiftamount) | (b >> (8 * sizeof(unsigned int) - shiftamount));
+        }
+
+        array[indextrafo(size - completeInts - 1)] <<= shiftamount;
+    }
+
+
+#endif
 
     HD_WARNING_DISABLE
     template<class IndexTransformation1,
@@ -74,7 +107,7 @@ namespace care{
 
         // i == partitions - 1
 
-        const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF >> (remaining_bitcount);
+        const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
         const unsigned int hixor = lhi[indextrafoL(partitions - 1)] ^ rhi[indextrafoR(partitions - 1)];
         const unsigned int loxor = llo[indextrafoL(partitions - 1)] ^ rlo[indextrafoR(partitions - 1)];
         const unsigned int bits = hixor | loxor;
