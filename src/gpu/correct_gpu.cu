@@ -1624,7 +1624,7 @@ namespace gpu{
                     batch.kernelLaunchHandle);
 
         cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-#if 0
+#if 1
         auto identity = [](auto i){return i;};
 
         cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
