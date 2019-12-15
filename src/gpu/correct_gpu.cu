@@ -1624,7 +1624,7 @@ namespace gpu{
                     batch.kernelLaunchHandle);
 
         cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-#if 1
+#if 0
         auto identity = [](auto i){return i;};
 
         cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
@@ -1805,7 +1805,7 @@ namespace gpu{
         batch.setState(BatchState::RearrangeIndices, expectedState);
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-        std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
+        //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
 
     void state_rearrangeindices_func(Batch& batch){
