@@ -363,6 +363,9 @@ namespace gpu{
 
         TransitionFunctionData* transFuncData;
         BackgroundThread* outputThread;
+        BackgroundThread* backgroundWorker;
+
+        ThreadPool* threadPool;
 
         ThreadPool::ParallelForHandle pforHandle;
 
@@ -897,6 +900,7 @@ namespace gpu{
             nextData.stream); CUERR;
 
         transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+            batch.threadPool,
             batch.subjectSequenceGatherHandle2,
             nextData.d_subject_sequences_data.get(),
             maximumSequenceBytes,
@@ -998,7 +1002,7 @@ namespace gpu{
 
         cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers
 
-        threadpool.parallelFor(
+        batch.threadPool->parallelFor(
             nextData.pforHandle,
             0, 
             nextData.initialNumberOfAnchorIds, 
@@ -1081,6 +1085,7 @@ namespace gpu{
                         streams[primary_stream_index]); CUERR;
 
         transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+                                    batch.threadPool,
                                     batch.subjectSequenceGatherHandle2,
                                     dataArrays.d_subject_sequences_data.get(),
                                     maximumSequenceBytes,
@@ -1144,7 +1149,7 @@ namespace gpu{
             //asynchronously prepare data for next iteration
             Batch* batchptr = &batch;
             batch.nextIterationData.done = false;
-            threadpool.enqueue([batchptr](){
+            batch.backgroundWorker->enqueue([batchptr](){
                 //nvtx::push_range("makeNextIterationData",2);
                 makeNextIterationData(*batchptr, batchptr->nextIterationData);
                 //nvtx::pop_range();
@@ -1403,7 +1408,7 @@ namespace gpu{
         };
 
 #if 1
-        threadpool.parallelFor(
+        batch.threadPool->parallelFor(
             batch.pforHandle,
             0, 
             batch.initialNumberOfAnchorIds, 
@@ -1516,25 +1521,29 @@ namespace gpu{
                                         dataArrays.n_queries,            
                                         streams[primary_stream_index]);
 
-        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(batch.subjectSequenceGatherHandle2,
-                                                                         dataArrays.d_subject_sequences_data,
-                                                                         dataArrays.encoded_sequence_pitch,
-                                                                         dataArrays.h_subject_read_ids,
-                                                                         dataArrays.d_subject_read_ids,
-                                                                         dataArrays.n_subjects,
-                                                                         batch.deviceId,
-                                                                         streams[primary_stream_index],
-                                                                         transFuncData.runtimeOptions.nCorrectorThreads);
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+            batch.threadPool,
+            batch.subjectSequenceGatherHandle2,
+            dataArrays.d_subject_sequences_data,
+            dataArrays.encoded_sequence_pitch,
+            dataArrays.h_subject_read_ids,
+            dataArrays.d_subject_read_ids,
+            dataArrays.n_subjects,
+            batch.deviceId,
+            streams[primary_stream_index],
+            transFuncData.runtimeOptions.nCorrectorThreads);
 
-        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(batch.candidateSequenceGatherHandle2,
-                                                                          dataArrays.d_candidate_sequences_data,
-                                                                          dataArrays.encoded_sequence_pitch,
-                                                                          dataArrays.h_candidate_read_ids,
-                                                                          dataArrays.d_candidate_read_ids,
-                                                                          dataArrays.n_queries,
-                                                                          batch.deviceId,
-                                                                          streams[primary_stream_index],
-                                                                          transFuncData.runtimeOptions.nCorrectorThreads);
+        transFuncData.readStorage->gatherSequenceDataToGpuBufferAsync(
+            batch.threadPool,
+            batch.candidateSequenceGatherHandle2,
+            dataArrays.d_candidate_sequences_data,
+            dataArrays.encoded_sequence_pitch,
+            dataArrays.h_candidate_read_ids,
+            dataArrays.d_candidate_read_ids,
+            dataArrays.n_queries,
+            batch.deviceId,
+            streams[primary_stream_index],
+            transFuncData.runtimeOptions.nCorrectorThreads);
 
         assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
 
@@ -1624,7 +1633,7 @@ namespace gpu{
                     batch.kernelLaunchHandle);
 
         cudaEventRecord(events[alignments_finished_event_index], streams[primary_stream_index]); CUERR;
-#if 1
+#if 0
         auto identity = [](auto i){return i;};
 
         cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
@@ -1805,7 +1814,7 @@ namespace gpu{
         batch.setState(BatchState::RearrangeIndices, expectedState);
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-        std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
+        //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
 
     void state_rearrangeindices_func(Batch& batch){
@@ -1948,15 +1957,17 @@ namespace gpu{
 
 		if(transFuncData.correctionOptions.useQualityScores) {
 
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync(batch.subjectQualitiesGatherHandle2,
-                                                              dataArrays.d_subject_qualities,
-                                                              dataArrays.quality_pitch,
-                                                              dataArrays.h_subject_read_ids,
-                                                              dataArrays.d_subject_read_ids,
-                                                              dataArrays.n_subjects,
-                                                              batch.deviceId,
-                                                              streams[primary_stream_index],
-                                                              transFuncData.runtimeOptions.nCorrectorThreads);
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
+                batch.threadPool,
+                batch.subjectQualitiesGatherHandle2,
+                dataArrays.d_subject_qualities,
+                dataArrays.quality_pitch,
+                dataArrays.h_subject_read_ids,
+                dataArrays.d_subject_read_ids,
+                dataArrays.n_subjects,
+                batch.deviceId,
+                streams[primary_stream_index],
+                transFuncData.runtimeOptions.nCorrectorThreads);
 
             read_number* d_tmp_read_ids = nullptr;
             cubCachingAllocator.DeviceAllocate((void**)&d_tmp_read_ids, dataArrays.n_queries * sizeof(read_number), streams[primary_stream_index]); CUERR;
@@ -1972,15 +1983,17 @@ namespace gpu{
                 h_tmp_read_ids[i] = dataArrays.h_candidate_read_ids[dataArrays.h_indices[i]];
             }
 
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync(batch.candidateQualitiesGatherHandle2,
-                                                              dataArrays.d_candidate_qualities,
-                                                              dataArrays.quality_pitch,
-                                                              h_tmp_read_ids.data(),
-                                                              d_tmp_read_ids,
-                                                              dataArrays.h_num_indices[0],
-                                                              batch.deviceId,
-                                                              streams[primary_stream_index],
-                                                              transFuncData.runtimeOptions.nCorrectorThreads);
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
+                batch.threadPool,
+                batch.candidateQualitiesGatherHandle2,
+                dataArrays.d_candidate_qualities,
+                dataArrays.quality_pitch,
+                h_tmp_read_ids.data(),
+                d_tmp_read_ids,
+                dataArrays.h_num_indices[0],
+                batch.deviceId,
+                streams[primary_stream_index],
+                transFuncData.runtimeOptions.nCorrectorThreads);
 
             cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
 
@@ -3478,12 +3491,14 @@ namespace gpu{
             nvtx::pop_range();
         };
 
-		auto outputThreadPtr = batch.outputThread;
+        auto outputThreadPtr = batch.outputThread;
+        
+        auto batchPtr = &batch;
 
         if(!transFuncDataPtr->correctionOptions.correctCandidates){
-            threadpool.enqueue([=](){
+            batch.backgroundWorker->enqueue([&, batchPtr, resultDataPtr](){
 
-                threadpool.parallelFor(
+                batchPtr->threadPool->parallelFor(
                     resultDataPtr->pforHandle, 
                     0, 
                     int(resultDataPtr->tasks.size()), 
@@ -3496,9 +3511,9 @@ namespace gpu{
 
             });            
         }else{
-            threadpool.enqueue([=](){
+            batch.backgroundWorker->enqueue([&, batchPtr, resultDataPtr](){
 
-                threadpool.parallelFor(
+                batchPtr->threadPool->parallelFor(
                     resultDataPtr->pforHandle, 
                     0, 
                     int(resultDataPtr->tasks.size()), 
@@ -3732,11 +3747,11 @@ namespace gpu{
 
 
         if(!transFuncData.correctionOptions.correctCandidates){
-            threadpool.parallelFor(batch.pforHandle, 0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
+            batch.threadPool->parallelFor(batch.pforHandle, 0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
             });
         }else{
-            threadpool.parallelFor(batch.pforHandle, 0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
+            batch.threadPool->parallelFor(batch.pforHandle, 0, int(batch.tasks.size()), [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
                 unpackcandidates(begin, end);
             });
@@ -4140,8 +4155,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       std::cerr << "Using " << nParallelBatches << " batches of size " << batchsize << " for correction\n";
 
       std::vector<Batch> batches(nParallelBatches);
-
       BackgroundThread outputThread;
+      std::vector<BackgroundThread> backgroundWorkers(nParallelBatches);
+      const int threadPoolSize = std::max(1, runtimeOptions.threads - nParallelBatches);
+      std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
+      ThreadPool threadPool(threadPoolSize);
 
       int deviceIdIndex = 0;
 
@@ -4176,6 +4194,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
           batches[i].transFuncData = &transFuncData;
           batches[i].outputThread = &outputThread;
+          batches[i].backgroundWorker = &backgroundWorkers[i];
+          batches[i].threadPool = &threadPool;
           
           initNextIterationData(batches[i].nextIterationData, batches[i].deviceId);
 
@@ -4238,7 +4258,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       // BEGIN CORRECTION
 
 
-      outputThread.start();
+     outputThread.start();
+    for(auto& w : backgroundWorkers){
+        w.start();
+    }
 
         std::vector<std::thread> batchExecutors;
 
@@ -4275,11 +4298,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             std::this_thread::sleep_for(std::chrono::seconds{1});
         }
 
+        for(auto& w : backgroundWorkers){
+            w.stopThread(BackgroundThread::StopType::FinishAndStop);
+        }
+
         for(auto& thread : batchExecutors){
             thread.join();
         }
-
-        threadpool.wait();
+        
+        threadPool.wait();
 
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
