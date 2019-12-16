@@ -202,7 +202,6 @@ int main(int argc, char** argv){
 
     const int numThreads = parseresults["threads"].as<int>();
 
-    threadpool.setConcurrency(numThreads);//std::max(1, numThreads-1));
 	omp_set_num_threads(numThreads);
 
     care::performCorrection(minhashOptions,
