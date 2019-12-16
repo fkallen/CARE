@@ -137,6 +137,10 @@ namespace cpu{
             std::vector<char*> candidateDataPtrs;
             std::vector<char*> candidateRevcDataPtrs;
 
+            std::vector<unsigned int> subjectsequenceHiLo;
+            std::vector<unsigned int> candidateDataHiLo;
+            std::vector<unsigned int> candidateRevcDataHiLo;
+
             std::vector<SHDResult> forwardAlignments;
             std::vector<SHDResult> revcAlignments;
             std::vector<BestAlignment_t> alignmentFlags;
@@ -236,13 +240,13 @@ namespace cpu{
                 const read_number candidateId = task.candidate_read_ids[i];
                 const char* candidateptr = readStorage.fetchSequenceData_ptr(candidateId);
                 const int candidateLength = data.candidateLengths[i];
-                const int bytes = getEncodedNumInts2BitHiLo(candidateLength) * sizeof(unsigned int);
+                const int bytes = getEncodedNumInts2Bit(candidateLength) * sizeof(unsigned int);
 
                 char* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitch;
                 char* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitch;
 
                 std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
-                reverseComplement2BitHiLo((unsigned int*)(candidateRevcDataBegin),
+                reverseComplement2Bit((unsigned int*)(candidateRevcDataBegin),
                                           (const unsigned int*)(candidateptr),
                                           candidateLength);
 
@@ -536,7 +540,7 @@ namespace cpu{
             for(size_t i = 0; i < data.bestAlignments.size(); i++){
                 const char* ptr = data.bestCandidatePtrs[i];
                 const int length = data.bestCandidateLengths[i];
-                decode2BitHiLoSequence(&data.bestCandidateStrings[i * maximumSequenceLength],
+                decode2BitSequence(&data.bestCandidateStrings[i * maximumSequenceLength],
                                         (const unsigned int*)ptr,
                                         length);
             }
@@ -1164,7 +1168,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
 
 
-    const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2BitHiLo(sequenceFileProperties.maxSequenceLength);
+    const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
 
     //std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
@@ -1209,7 +1213,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 const char* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
                 const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
 
-                task.original_subject_string = get2BitHiLoString((const unsigned int*)originalsubjectptr, originalsubjectLength);
+                task.original_subject_string = get2BitString((const unsigned int*)originalsubjectptr, originalsubjectLength);
 
                 task.encodedSubjectPtr = (const unsigned int*) originalsubjectptr;
             }else{
