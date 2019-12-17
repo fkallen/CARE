@@ -83,7 +83,8 @@ public:
         isDone_{},
         busyMtx_{}, 
         isBusy_{},
-        scheduler_{ [&] { schedule(); }}
+        isWaitingForTask_{},
+        scheduler_{ [&] { schedule(); }}        
     {}
 
     //-----------------------------------------------------
@@ -96,7 +97,10 @@ public:
     {
         clear();
         //make sure that scheduler wakes up and terminates
+        std::unique_lock<std::recursive_mutex> lock(enqueueMtx_);
         active_.store(false);
+        isWaitingForTask_.notify_one();
+        lock.unlock();
         //wait for scheduler to terminate
         scheduler_.join();
     }
@@ -114,6 +118,7 @@ public:
         std::lock_guard<std::recursive_mutex> lock(enqueueMtx_);
         waiting_.push_back(t);
         hasWaiting_.store(true);
+        isWaitingForTask_.notify_one();
     }
     //-----------------------------------------------------
     void
@@ -122,6 +127,7 @@ public:
         std::lock_guard<std::recursive_mutex> lock(enqueueMtx_);
         waiting_.push_back(std::move(t));
         hasWaiting_.store(true);
+        isWaitingForTask_.notify_one();
     }
     //-----------------------------------------------------
     template<class InputIterator>
@@ -131,6 +137,7 @@ public:
         std::lock_guard<std::recursive_mutex> lock(enqueueMtx_);
         waiting_.insert(begin(waiting_), first, last);
         hasWaiting_.store(true);
+        isWaitingForTask_.notify_one();
     }
     //-----------------------------------------------------
     void
@@ -139,6 +146,7 @@ public:
         std::lock_guard<std::recursive_mutex> lock(enqueueMtx_);
         waiting_.insert(waiting_.end(), il);
         hasWaiting_.store(true);
+        isWaitingForTask_.notify_one();
     }
     //-----------------------------------------------------
     template<class... Args>
@@ -148,6 +156,7 @@ public:
         std::lock_guard<std::recursive_mutex> lock(enqueueMtx_);
         waiting_.emplace_back(std::forward<Args>(args)...);
         hasWaiting_.store(true);
+        isWaitingForTask_.notify_one();
     }
 
 
@@ -303,12 +312,10 @@ private:
             }
             else if(!empty()) {
                 try_assign_tasks();
-            }            
-            else if(running() < 1) {
-                std::lock_guard<std::recursive_mutex> lock{enqueueMtx_};
-                if(empty() && (running() < 1)) {
-                    isDone_.notify_all();
-                }
+            }
+            else{
+                std::unique_lock<std::recursive_mutex> lock{enqueueMtx_};
+                isWaitingForTask_.wait(lock, [this](){return !active_.load() || !empty();});
             }
         }
     }
@@ -325,6 +332,7 @@ private:
     std::condition_variable isDone_;
     std::mutex busyMtx_;
     std::condition_variable isBusy_;
+    std::condition_variable_any isWaitingForTask_;
     std::thread scheduler_;
 };
 
