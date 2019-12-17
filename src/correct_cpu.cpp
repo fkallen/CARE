@@ -37,7 +37,7 @@
 
 #define ENABLE_TIMING
 
-#define PRINT_MSA
+//#define PRINT_MSA
 
 namespace care{
 namespace cpu{
@@ -1277,11 +1277,11 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                                                             return flag != BestAlignment_t::None;
                                                          });
 
-            std::cerr << "taskdata.numGoodAlignmentFlags : " << taskdata.numGoodAlignmentFlags << "\n";
-            for(const auto& f : taskdata.alignmentFlags){
-                std::cerr << int(f) << " ";
-            }
-            std::cerr << "\n";
+            // std::cerr << "taskdata.numGoodAlignmentFlags : " << taskdata.numGoodAlignmentFlags << "\n";
+            // for(const auto& f : taskdata.alignmentFlags){
+            //     std::cerr << int(f) << " ";
+            // }
+            // std::cerr << "\n";
 
             #ifdef ENABLE_TIMING
             getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1480,6 +1480,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         #ifdef ENABLE_TIMING
                         msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
                         #endif
+                    }
+
+                    std::cerr << task.corrected_subject << "\n";
+                    std::cerr << task.correctedCandidates.size() << "\n";
+                    for(const auto& c : task.correctedCandidates){
+                        std::cerr << c.sequence << "\n";
                     }
 
                 }else{
