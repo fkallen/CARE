@@ -134,7 +134,7 @@ namespace cpu{
 					const int sequencelength = readStorage.fetchSequenceLength(readId);
                     std::string sequencestring;
                     sequencestring.resize(sequencelength);
-                    decode2BitHiLoSequence(&sequencestring[0], (const unsigned int*)sequenceptr, sequencelength, identity);
+                    decode2BitSequence(&sequencestring[0], (const unsigned int*)sequenceptr, sequencelength, identity);
 					//if(sequencestring != sequencestring2){
 					//	std::cout << sequencestring << '\n' << sequencestring2 << std::endl;
 					//	assert(false);
