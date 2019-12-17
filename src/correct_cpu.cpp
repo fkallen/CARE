@@ -1203,7 +1203,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         correctionTasks.clear();
         correctionTasks.resize(readIds.size());
 
-        //#pragma omp parallel for schedule(dynamic,4)
+        #pragma omp parallel for schedule(dynamic,8)
         for(size_t i = 0; i < readIds.size(); i++){
             //const int threadId = omp_get_thread_num();
 
