@@ -154,8 +154,8 @@ namespace cpu{
             std::vector<float> bestAlignmentWeights;
             std::vector<read_number> bestCandidateReadIds;
             std::vector<int> bestCandidateLengths;
-            std::vector<char> bestCandidateData;
-            std::vector<char*> bestCandidatePtrs;
+            std::vector<unsigned int> bestCandidateData;
+            std::vector<unsigned int*> bestCandidatePtrs;
 
             std::vector<char> bestCandidateQualityData;
             std::vector<char*> bestCandidateQualityPtrs;
@@ -373,7 +373,7 @@ namespace cpu{
 
         void gatherBestAlignmentData(TaskData& data,
                                   CorrectionTask& task,
-                                  size_t encodedSequencePitch){
+                                  size_t candidatePitchInInts){
 
               data.bestAlignments.clear();
               data.bestAlignmentFlags.clear();
@@ -385,12 +385,12 @@ namespace cpu{
               data.bestAlignments.resize(data.numGoodAlignmentFlags);
               data.bestAlignmentFlags.resize(data.numGoodAlignmentFlags);
               data.bestCandidateReadIds.resize(data.numGoodAlignmentFlags);
-              data.bestCandidateData.resize(data.numGoodAlignmentFlags * encodedSequencePitch);
+              data.bestCandidateData.resize(data.numGoodAlignmentFlags * candidatePitchInInts);
               data.bestCandidateLengths.resize(data.numGoodAlignmentFlags);
               data.bestCandidatePtrs.resize(data.numGoodAlignmentFlags);
 
               for(size_t i = 0; i < data.numGoodAlignmentFlags; i++){
-                  data.bestCandidatePtrs[i] = data.bestCandidateData.data() + i * encodedSequencePitch;
+                  data.bestCandidatePtrs[i] = data.bestCandidateData.data() + i * candidatePitchInInts;
               }
 
               for(size_t i = 0, insertpos = 0; i < data.alignmentFlags.size(); i++){
@@ -407,8 +407,8 @@ namespace cpu{
                       data.bestCandidateLengths[insertpos] = candidateLength;
 
                       data.bestAlignments[insertpos] = fwdAlignment;
-                      std::copy(data.candidateDataPtrs[i],
-                                data.candidateDataPtrs[i] + encodedSequencePitch,
+                      std::copy_n(data.candidateDataPtrs[i],
+                                candidatePitchInInts,
                                 data.bestCandidatePtrs[insertpos]);
                       insertpos++;
                   }else if(flag == BestAlignment_t::ReverseComplement){
@@ -417,8 +417,8 @@ namespace cpu{
                       data.bestCandidateLengths[insertpos] = candidateLength;
 
                       data.bestAlignments[insertpos] = revcAlignment;
-                      std::copy(data.candidateRevcDataPtrs[i],
-                                data.candidateRevcDataPtrs[i] + encodedSequencePitch,
+                      std::copy_n(data.candidateRevcDataPtrs[i],
+                                candidatePitchInInts,
                                 data.bestCandidatePtrs[insertpos]);
                       insertpos++;
                   }else{
@@ -429,7 +429,7 @@ namespace cpu{
 
         void filterBestAlignmentsByMismatchRatio(TaskData& data,
                   CorrectionTask& task,
-                  size_t encodedSequencePitch,
+                  size_t candidatePitchInInts,
                   const CorrectionOptions& correctionOptions,
                   const GoodAlignmentProperties& alignmentProps){
             //get indices of alignments which have a good mismatch ratio
@@ -456,8 +456,8 @@ namespace cpu{
                     data.bestCandidateReadIds[toIndex] = data.bestCandidateReadIds[fromIndex];
                     data.bestCandidateLengths[toIndex] = data.bestCandidateLengths[fromIndex];
 
-                    std::copy(data.bestCandidatePtrs[fromIndex],
-                              data.bestCandidatePtrs[fromIndex] + encodedSequencePitch,
+                    std::copy_n(data.bestCandidatePtrs[fromIndex],
+                              candidatePitchInInts,
                               data.bestCandidatePtrs[toIndex]);
                 }
 
@@ -471,7 +471,7 @@ namespace cpu{
                                            data.bestCandidateLengths.end());
                 data.bestCandidatePtrs.erase(data.bestCandidatePtrs.begin() + goodIndices.size(),
                                         data.bestCandidatePtrs.end());
-                data.bestCandidateData.erase(data.bestCandidateData.begin() + goodIndices.size() * encodedSequencePitch,
+                data.bestCandidateData.erase(data.bestCandidateData.begin() + goodIndices.size() * candidatePitchInInts,
                                         data.bestCandidateData.end());
 
                 data.bestAlignmentShifts.resize(data.bestAlignments.size());
@@ -550,10 +550,10 @@ namespace cpu{
             data.bestCandidateStrings.resize(data.bestAlignments.size() * maximumSequenceLength);
 
             for(size_t i = 0; i < data.bestAlignments.size(); i++){
-                const char* ptr = data.bestCandidatePtrs[i];
+                const unsigned int* const ptr = data.bestCandidatePtrs[i];
                 const int length = data.bestCandidateLengths[i];
                 decode2BitSequence(&data.bestCandidateStrings[i * maximumSequenceLength],
-                                        (const unsigned int*)ptr,
+                                        ptr,
                                         length);
             }
         }
@@ -605,7 +605,7 @@ namespace cpu{
         void removeCandidatesOfDifferentRegionFromMSA(TaskData& data,
                                                         CorrectionTask& task,
                                                         const CorrectionOptions& correctionOptions,
-                                                        size_t encodedSequencePitch,
+                                                        size_t candidatePitchInInts,
                                                         int maximumSequenceLength){
             constexpr int max_num_minimizations = 5;
 
@@ -658,9 +658,9 @@ namespace cpu{
                                 data.bestCandidateReadIds[cur] = data.bestCandidateReadIds[i];
                                 data.bestCandidateLengths[cur] = data.bestCandidateLengths[i];
 
-                                std::copy(data.bestCandidateData.begin() + i * encodedSequencePitch,
-                                        data.bestCandidateData.begin() + (i+1) * encodedSequencePitch,
-                                        data.bestCandidateData.begin() + cur * encodedSequencePitch);
+                                std::copy_n(data.bestCandidateData.begin() + i * candidatePitchInInts,
+                                        candidatePitchInInts,
+                                        data.bestCandidateData.begin() + cur * candidatePitchInInts);
                                 std::copy(data.bestCandidateQualityData.begin() + i * maximumSequenceLength,
                                         data.bestCandidateQualityData.begin() + (i+1) * maximumSequenceLength,
                                         data.bestCandidateQualityData.begin() + cur * maximumSequenceLength);
@@ -684,7 +684,7 @@ namespace cpu{
                         data.bestCandidateReadIds.erase(data.bestCandidateReadIds.begin() + cur, data.bestCandidateReadIds.end());
                         data.bestCandidateLengths.erase(data.bestCandidateLengths.begin() + cur, data.bestCandidateLengths.end());
 
-                        data.bestCandidateData.erase(data.bestCandidateData.begin() + cur * encodedSequencePitch, data.bestCandidateData.end());
+                        data.bestCandidateData.erase(data.bestCandidateData.begin() + cur * candidatePitchInInts, data.bestCandidateData.end());
                         data.bestCandidateQualityData.erase(data.bestCandidateQualityData.begin() + cur * maximumSequenceLength, data.bestCandidateQualityData.end());
                         data.bestCandidateStrings.erase(data.bestCandidateStrings.begin() + cur * maximumSequenceLength, data.bestCandidateStrings.end());
 
@@ -1180,7 +1180,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
 
 
-    const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+    //const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
     const int encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
 
     //std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
@@ -1189,6 +1189,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
 
     std::vector<TaskData> dataPerTask(correctionOptions.batchsize);
+    std::vector<CorrectionTask> correctionTasks;
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
@@ -1199,9 +1200,10 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             continue;
         }
 
-        std::vector<CorrectionTask> correctionTasks(readIds.size());
+        correctionTasks.clear();
+        correctionTasks.resize(readIds.size());
 
-        //#pragma omp parallel for schedule(dynamic,4)
+        #pragma omp parallel for schedule(dynamic,4)
         for(size_t i = 0; i < readIds.size(); i++){
             //const int threadId = omp_get_thread_num();
 
@@ -1296,7 +1298,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             tpa = std::chrono::system_clock::now();
             #endif
 
-            gatherBestAlignmentData(taskdata, task, encodedSequencePitch);
+            gatherBestAlignmentData(taskdata, task, encodedSequencePitchInInts);
 
             #ifdef ENABLE_TIMING
             gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1308,7 +1310,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
             filterBestAlignmentsByMismatchRatio(taskdata,
                                               task,
-                                              encodedSequencePitch,
+                                              encodedSequencePitchInInts,
                                               correctionOptions,
                                               goodAlignmentProperties);
 
@@ -1404,7 +1406,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             removeCandidatesOfDifferentRegionFromMSA(taskdata,
                                                     task,
                                                     correctionOptions,
-                                                    encodedSequencePitch,
+                                                    encodedSequencePitchInInts,
                                                     sequenceFileProperties.maxSequenceLength);
 
             #ifdef ENABLE_TIMING
@@ -1482,11 +1484,11 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         #endif
                     }
 
-                    std::cerr << task.corrected_subject << "\n";
-                    std::cerr << task.correctedCandidates.size() << "\n";
-                    for(const auto& c : task.correctedCandidates){
-                        std::cerr << c.sequence << "\n";
-                    }
+                    // std::cerr << task.corrected_subject << "\n";
+                    // std::cerr << task.correctedCandidates.size() << "\n";
+                    // for(const auto& c : task.correctedCandidates){
+                    //     std::cerr << c.sequence << "\n";
+                    // }
 
                 }else{
                     #ifdef ENABLE_TIMING
