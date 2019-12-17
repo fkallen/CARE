@@ -1184,7 +1184,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
         std::vector<CorrectionTask> correctionTasks(readIds.size());
 
-        #pragma omp parallel for schedule(dynamic,4)
+        //#pragma omp parallel for schedule(dynamic,4)
         for(size_t i = 0; i < readIds.size(); i++){
             //const int threadId = omp_get_thread_num();
 
@@ -1259,6 +1259,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                                                          [](const auto flag){
                                                             return flag != BestAlignment_t::None;
                                                          });
+
+            std::cerr << "taskdata.numGoodAlignmentFlags : " << taskdata.numGoodAlignmentFlags << "\n";
+            for(const auto& f : taskdata.alignmentFlags){
+                std::cerr << int(f) << " ";
+            }
+            std::cerr << "\n";
 
             #ifdef ENABLE_TIMING
             getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
