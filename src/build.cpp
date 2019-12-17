@@ -127,6 +127,8 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
             std::array<std::mutex, numBuffers> mutex;
             std::array<std::condition_variable, numBuffers> cv;
 
+            ThreadPool threadPool(runtimeOptions.threads);
+
             for(int i = 0; i < numBuffers; i++){
                 indicesBuffers[i].reserve(maxbuffersize);
                 readsBuffers[i].reserve(maxbuffersize);
@@ -174,7 +176,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                         canBeUsed[bufferindex] = false;
 
                         //std::cerr << "launch other thread\n";
-                        threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                        threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
                             //std::cerr << "buffer " << bufferindex << " running\n";
                             int nmodcounter = 0;
 
@@ -364,10 +366,11 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
         }else{
             result.builtType = BuiltType::Constructed;
 
-            const int oldnumthreads = omp_get_thread_num();
+            //const int oldnumthreads = omp_get_thread_num();
 
-            omp_set_num_threads(runtimeOptions.threads);
+            //omp_set_num_threads(runtimeOptions.threads);
 
+            ThreadPool threadPool(runtimeOptions.threads);
             ThreadPool::ParallelForHandle pforHandle;
 
             const std::string tmpmapsFilename = fileOptions.tempdirectory + "/tmpmaps";
@@ -458,7 +461,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
                         const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
     				    const int sequencelength = readStorage.fetchSequenceLength(readId);
-    				    std::string sequencestring = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+    				    std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
 
                         minhasher.insertSequenceIntoExternalTables(sequencestring, 
                                                                     readId, 
@@ -488,7 +491,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
                     // }
                 };
 
-                threadpool.parallelFor(
+                threadPool.parallelFor(
                     pforHandle,
                     readIdBegin,
                     readIdEnd,
@@ -563,7 +566,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
 
 
-            omp_set_num_threads(oldnumthreads);
+            //omp_set_num_threads(oldnumthreads);
         }
 
         

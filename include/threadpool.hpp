@@ -157,6 +157,10 @@ struct ThreadPool{
         : pq(std::make_unique<am::parallel_queue>()){
     }
 
+    ThreadPool(int numThreads)
+        : pq(std::make_unique<am::parallel_queue>(numThreads)){
+    }
+
     void enqueue(const task_type& t){
         pq->enqueue(t);
     }
@@ -313,9 +317,28 @@ private:
     // std::atomic_int numUnfinishedParallelForChunks{0};
 };
 
+// mainly exists because of cuda device lambda limitations
+struct ParallelForLoopExecutor{
+    ParallelForLoopExecutor(ThreadPool* tp, ThreadPool::ParallelForHandle* handle)
+        : threadPool(tp), pforHandle(handle){}
+
+    template<class Index_t, class Func>
+    void operator()(Index_t begin, Index_t end, Func&& loopbody){
+        threadPool->parallelFor(
+            *pforHandle, 
+            begin, 
+            end, 
+            std::move(loopbody)
+        );
+    }
+
+    ThreadPool* threadPool;
+    ThreadPool::ParallelForHandle* pforHandle;
+};
 
 
-extern ThreadPool threadpool;
+
+//extern ThreadPool threadpool;
 
 }
 

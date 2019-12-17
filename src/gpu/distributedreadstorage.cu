@@ -194,28 +194,32 @@ std::vector<int> DistributedReadStorage::getDeviceIds() const{
     return deviceIds;
 }
 
-void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads){
+void DistributedReadStorage::setReads(ThreadPool* threadPool,
+                                    read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads){
     assert(!isReadOnly);
 
     std::vector<read_number> indices(lastIndex_excl-firstIndex);
     std::iota(indices.begin(), indices.end(), firstIndex);
 
-    setReads(indices, reads, numReads);
+    setReads(threadPool, indices, reads, numReads);
 }
 
-void DistributedReadStorage::setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads){
+void DistributedReadStorage::setReads(ThreadPool* threadPool,
+                                    read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads){
     assert(!isReadOnly);
 
-    setReads(firstIndex, lastIndex_excl, reads.data(), int(reads.size()));
+    setReads(threadPool, firstIndex, lastIndex_excl, reads.data(), int(reads.size()));
 }
 
-void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads){
+void DistributedReadStorage::setReads(ThreadPool* threadPool,
+                                    const std::vector<read_number>& indices, const std::vector<Read>& reads){
     assert(!isReadOnly);
 
-    setReads(indices, reads.data(), int(reads.size()));
+    setReads(threadPool, indices, reads.data(), int(reads.size()));
 }
 
-void DistributedReadStorage::setReads(const std::vector<read_number>& indices, const Read* reads, int numReads){
+void DistributedReadStorage::setReads(ThreadPool* threadPool,
+                                    const std::vector<read_number>& indices, const Read* reads, int numReads){
     assert(!isReadOnly);
 
     //TIMERSTARTCPU(internalinit);
@@ -275,7 +279,7 @@ void DistributedReadStorage::setReads(const std::vector<read_number>& indices, c
 
     ThreadPool::ParallelForHandle pforHandle;
 
-    threadpool.parallelFor(pforHandle, 0, numReads, prepare);
+    threadPool->parallelFor(pforHandle, 0, numReads, prepare);
 
     //TIMERSTOPCPU(internal);
 
@@ -384,6 +388,7 @@ DistributedReadStorage::GatherHandleQualities DistributedReadStorage::makeGather
 }
 
 void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
+                            ThreadPool* threadPool,
                             const DistributedReadStorage::GatherHandleSequences& handle,
                             char* d_sequence_data,
                             size_t out_sequence_pitch,
@@ -394,7 +399,10 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
                             cudaStream_t stream,
                             int) const{
 
-    distributedSequenceData.gatherElementsInGpuMemAsync(handle,
+    ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+
+    distributedSequenceData.gatherElementsInGpuMemAsync(forLoop,
+                                                        handle,
                                                         h_readIds,
                                                         d_readIds,
                                                         nReadIds,
@@ -407,6 +415,7 @@ void DistributedReadStorage::gatherSequenceDataToGpuBufferAsync(
 
 
 void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
+                            ThreadPool* threadPool,
                             const GatherHandleQualities& handle,
                             char* d_quality_data,
                             size_t out_quality_pitch,
@@ -417,7 +426,10 @@ void DistributedReadStorage::gatherQualitiesToGpuBufferAsync(
                             cudaStream_t stream,
                             int) const{
 
-    distributedQualities.gatherElementsInGpuMemAsync(handle,
+    ParallelForLoopExecutor forLoop(threadPool, &(handle->pforHandle));
+
+    distributedQualities.gatherElementsInGpuMemAsync(forLoop, 
+                                                        handle,
                                                         h_readIds,
                                                         d_readIds,
                                                         nReadIds,
@@ -896,12 +908,14 @@ DistributedReadStorage::SavedGpuPartitionData DistributedReadStorage::saveGpuPar
         saved.sequenceDataLocation = SavedGpuPartitionData::Type::File;
     }
 
-    if(getFreeBytes() >= std::int64_t(distributedQualities.getPartitionSizeInBytes(gpuIndex))){
-        saved.qualityData = distributedQualities.writeGpuPartitionToMemory(gpuIndex);
-        saved.qualityDataLocation = SavedGpuPartitionData::Type::Memory;
-    }else{
-        distributedQualities.writeGpuPartitionToStream(gpuIndex, stream);
-        saved.qualityDataLocation = SavedGpuPartitionData::Type::File;
+    if(useQualityScores){
+        if(getFreeBytes() >= std::int64_t(distributedQualities.getPartitionSizeInBytes(gpuIndex))){
+            saved.qualityData = distributedQualities.writeGpuPartitionToMemory(gpuIndex);
+            saved.qualityDataLocation = SavedGpuPartitionData::Type::Memory;
+        }else{
+            distributedQualities.writeGpuPartitionToStream(gpuIndex, stream);
+            saved.qualityDataLocation = SavedGpuPartitionData::Type::File;
+        }
     }
 
     return saved;
@@ -922,10 +936,12 @@ void DistributedReadStorage::loadGpuPartitionData(int deviceId,
         distributedSequenceData.readGpuPartitionFromStream(gpuIndex, stream);
     }
 
-    if(saved.qualityDataLocation == SavedGpuPartitionData::Type::Memory){
-        distributedQualities.readGpuPartitionFromMemory(gpuIndex, saved.qualityData);
-    }else{
-        distributedQualities.readGpuPartitionFromStream(gpuIndex, stream);
+    if(useQualityScores){
+        if(saved.qualityDataLocation == SavedGpuPartitionData::Type::Memory){
+            distributedQualities.readGpuPartitionFromMemory(gpuIndex, saved.qualityData);
+        }else{
+            distributedQualities.readGpuPartitionFromStream(gpuIndex, stream);
+        }
     }
 }
 
@@ -936,7 +952,9 @@ void DistributedReadStorage::allocateGpuData(int deviceId) const{
     int gpuIndex = std::distance(deviceIds.begin(), it);
 
     distributedSequenceData.allocateGpuPartition(gpuIndex);
-    distributedQualities.allocateGpuPartition(gpuIndex);  
+    if(useQualityScores){
+        distributedQualities.allocateGpuPartition(gpuIndex);  
+    }
 }
 
 void DistributedReadStorage::deallocateGpuData(int deviceId) const{
@@ -946,7 +964,9 @@ void DistributedReadStorage::deallocateGpuData(int deviceId) const{
     int gpuIndex = std::distance(deviceIds.begin(), it);
 
     distributedSequenceData.deallocateGpuPartition(gpuIndex);
-    distributedQualities.deallocateGpuPartition(gpuIndex);  
+    if(useQualityScores){
+        distributedQualities.deallocateGpuPartition(gpuIndex);  
+    }
 }
 
 DistributedReadStorage::SavedGpuPartitionData DistributedReadStorage::saveGpuPartitionDataAndFreeGpuMem(

@@ -704,7 +704,9 @@ public:
         }
     }
 
-    void gatherElementsInGpuMem(const GatherHandle& handle,
+    template<class ParallelFor>
+    void gatherElementsInGpuMem(ParallelFor&& forLoop,
+                                const GatherHandle& handle,
                                 const Index_t* indices,
                                 const Index_t* d_indices,
                                 Index_t numIds,
@@ -718,14 +720,16 @@ public:
         int oldDevice = 0; cudaGetDevice(&oldDevice); CUERR;
         wrapperCudaSetDevice(deviceId); CUERR;
         cudaStreamCreate(&stream); CUERR;
-        gatherElementsInGpuMemAsync(handle, indices, d_indices, numIds, deviceId, d_result, resultPitch, stream);
+        gatherElementsInGpuMemAsync(std::forward<ParallelFor>(forLoop), handle, indices, d_indices, numIds, deviceId, d_result, resultPitch, stream);
         cudaStreamSynchronize(stream); CUERR;
         cudaStreamDestroy(stream); CUERR;
         wrapperCudaSetDevice(oldDevice); CUERR;
     }
 
     //the same GatherHandleStruct must not be used in another call until the results of the previous call are calculated
-    void gatherElementsInGpuMemAsync(const GatherHandle& handle,
+    template<class ParallelFor>
+    void gatherElementsInGpuMemAsync(ParallelFor&& forLoop,
+                                    const GatherHandle& handle,
                                     const Index_t* indices,
                                     const Index_t* d_indices,
                                     Index_t numIds,
@@ -735,7 +739,7 @@ public:
                                     cudaStream_t stream) const{
         if(numIds == 0) return;
 
-        const int numCpuThreads = care::threadpool.getConcurrency();
+        //const int numCpuThreads = care::threadpool.getConcurrency();
 
         //fastpath, if all elements of distributed array reside in a single partition
         if(singlePartitionInfo.isSinglePartition){
@@ -745,7 +749,7 @@ public:
                 auto& h_result = handle->pinnedResultData;
                 h_result.resize(numIds * numColumns);
 
-                care::threadpool.parallelFor(handle->pforHandle, 
+                forLoop( 
                     Index_t(0), 
                     numIds, 
                     [&](Index_t begin, Index_t end, int threadId){
@@ -755,8 +759,7 @@ public:
                             Value_t* destPtr = offsetPtr(h_result.get(), k);
                             std::copy_n(srcPtr, numColumns, destPtr);
                         }
-                    },
-                    numCpuThreads
+                    }
                 );
 
                 int oldDevice; cudaGetDevice(&oldDevice); CUERR;
@@ -853,11 +856,13 @@ public:
         }
 
 
-        const int threadlocoffset = SDIV(numLocations,32) * 32;
+        
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
+#if 0   
+        const int threadlocoffset = SDIV(numLocations,32) * 32;     
         std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
 
-        care::threadpool.parallelFor(handle->pforHandle, 
+        forLoop(
             Index_t(0), 
             numIds, 
             [&](Index_t begin, Index_t end, int threadId){                
@@ -866,8 +871,7 @@ public:
                     int location = getLocation(indices[i]);
                     hitsptr[location]++;
                 }
-            },
-            numCpuThreads
+            }
         );
 
         for(int k = 0; k < numCpuThreads; k++){
@@ -875,6 +879,15 @@ public:
                 hitsPerLocation[l] += hitsPerLocationPerThread[threadlocoffset * k + l];
             }
         }
+#else 
+
+    for(Index_t i = 0; i < numIds; i++){
+        int location = getLocation(indices[i]);
+        hitsPerLocation[location]++;
+    }
+
+
+#endif
 //TIMERSTOPCPU(countsHitPerLocation);
 
         if(debug){
@@ -1005,7 +1018,7 @@ public:
             const auto hitsOffset = hitsPerLocationPrefixSum[hostLocation];
             const Index_t* hostLocalIds = handle->pinnedLocalIndices.get() + hitsOffset;            
 
-            care::threadpool.parallelFor(handle->pforHandle, 
+            forLoop(
                 Index_t(0), 
                 numHits, 
                 [&](Index_t begin, Index_t end, int threadId){
@@ -1015,8 +1028,7 @@ public:
                         Value_t* destPtr = offsetPtr(handle->pinnedResultData.get(), hitsOffset + k);
                         std::copy_n(srcPtr, numColumns, destPtr);
                     }
-                },
-                numCpuThreads
+                }
             );
         }
 

@@ -44,6 +44,7 @@ namespace gpu{
                                                     int firstTableId,
                                                     std::int64_t numberOfReads,
                                                     int upperBoundSequenceLength,
+                                                    int numThreads,
                                                     SequenceProviderFunc&& getSequenceData,
                                                     SequenceLengthProviderFunc&& getSequenceLength){
 
@@ -86,6 +87,8 @@ namespace gpu{
         };
 
         ProgressThread<read_number> progressThread(numReads, showProgress, updateShowProgressInterval);
+
+        ThreadPool threadPool(numThreads);
 
         for (int iter = 0; iter < numIters; iter++){
             read_number readIdBegin = iter * parallelReads;
@@ -141,7 +144,7 @@ namespace gpu{
                 }
             };
 
-            threadpool.parallelFor(
+            threadPool.parallelFor(
                 pforHandle,
                 readIdBegin,
                 readIdEnd,
@@ -415,6 +418,8 @@ namespace gpu{
             std::array<std::mutex, numBuffers> mutex;
             std::array<std::condition_variable, numBuffers> cv;
 
+            ThreadPool threadPool(runtimeOptions.threads);
+
             for(int i = 0; i < numBuffers; i++){
                 indicesBuffers[i].reserve(maxbuffersize);
                 readsBuffers[i].reserve(maxbuffersize);
@@ -458,7 +463,7 @@ namespace gpu{
                         canBeUsed[bufferindex] = false;
 
                         //std::cerr << "launch other thread\n";
-                        threadpool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
+                        threadPool.enqueue([&, indicesBufferPtr, readsBufferPtr, bufferindex](){
                             //std::cerr << "buffer " << bufferindex << " running\n";
                             int nmodcounter = 0;
 
@@ -468,7 +473,7 @@ namespace gpu{
                                 checkRead(readId, read, nmodcounter);
                             }
 
-                            readstorage.setReads(*indicesBufferPtr, *readsBufferPtr);
+                            readstorage.setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
 
                             //TIMERSTARTCPU(clear);
                             indicesBufferPtr->clear();
@@ -507,7 +512,7 @@ namespace gpu{
                     checkRead(readId, read, nmodcounter);
                 }
 
-                readstorage.setReads(*indicesBufferPtr, *readsBufferPtr);
+                readstorage.setReads(&threadPool, *indicesBufferPtr, *readsBufferPtr);
 
                 indicesBufferPtr->clear();
                 readsBufferPtr->clear();
@@ -710,6 +715,7 @@ namespace gpu{
                                                                                     numConstructedTables,
                                                                                     readStorage.getNumberOfReads(),
                                                                                     readStorage.getSequenceLengthUpperBound(),
+                                                                                    runtimeOptions.threads,
                                                                                     getSequenceData,
                                                                                     getSequenceLength);
 

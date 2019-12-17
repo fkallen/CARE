@@ -196,8 +196,8 @@ void convert2BitTo2BitHiloKernelNN(
             const unsigned int even161 = extractEvenBits(data1);
             const unsigned int odd161 = extractEvenBits(data1 >> 1);
 
-            unsigned int resultHi = odd161;
-            unsigned int resultLo = even161;
+            unsigned int resultHi = odd161 << 16;
+            unsigned int resultLo = even161 << 16;
 
             if((i < outInts / 2 - 1) || ((length-1) % 32) >= 16){
                 const int inindex2 = inindextrafo(i*2 + 1);
@@ -206,8 +206,8 @@ void convert2BitTo2BitHiloKernelNN(
                 const unsigned int even162 = extractEvenBits(data2);
                 const unsigned int odd162 = extractEvenBits(data2 >> 1);
 
-                resultHi = resultHi | (odd162 << 16);
-                resultLo = resultLo | (even162 << 16) ;
+                resultHi = resultHi | odd162;
+                resultLo = resultLo | even162;
             }
 
             outHi[outIndex] = resultHi;
@@ -279,8 +279,8 @@ void convert2BitTo2BitHiloKernelNT(
             const unsigned int even161 = extractEvenBits(data1);
             const unsigned int odd161 = extractEvenBits(data1 >> 1);
 
-            unsigned int resultHi = odd161;
-            unsigned int resultLo = even161;
+            unsigned int resultHi = odd161 << 16;
+            unsigned int resultLo = even161 << 16;
 
             if((i < outInts / 2 - 1) || ((length-1) % 32) >= 16){
                 const int inindex2 = inindextrafo(i*2 + 1);
@@ -289,8 +289,8 @@ void convert2BitTo2BitHiloKernelNT(
                 const unsigned int even162 = extractEvenBits(data2);
                 const unsigned int odd162 = extractEvenBits(data2 >> 1);
 
-                resultHi = resultHi | (odd162 << 16);
-                resultLo = resultLo | (even162 << 16) ;
+                resultHi = resultHi | odd162;
+                resultLo = resultLo | even162;
             }
 
             outHi[outIndex] = resultHi;
@@ -364,8 +364,8 @@ void convert2BitTo2BitHiloKernelTT(
             const unsigned int even161 = extractEvenBits(data1);
             const unsigned int odd161 = extractEvenBits(data1 >> 1);
 
-            unsigned int resultHi = odd161;
-            unsigned int resultLo = even161;
+            unsigned int resultHi = odd161 << 16;
+            unsigned int resultLo = even161 << 16;
 
             if((i < outInts / 2 - 1) || ((length-1) % 32) >= 16){
                 const int inindex2 = inindextrafo(i*2 + 1);
@@ -374,8 +374,8 @@ void convert2BitTo2BitHiloKernelTT(
                 const unsigned int even162 = extractEvenBits(data2);
                 const unsigned int odd162 = extractEvenBits(data2 >> 1);
 
-                resultHi = resultHi | (odd162 << 16);
-                resultLo = resultLo | (even162 << 16) ;
+                resultHi = resultHi | odd162;
+                resultLo = resultLo | even162;
             }
 
             outHi[outIndex] = resultHi;

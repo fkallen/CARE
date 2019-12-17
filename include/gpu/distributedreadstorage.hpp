@@ -54,7 +54,7 @@ public:
 
         std::vector<SavedGpuPartitionData> gpuPartitionData;
     };
-
+    
     using Length_t = int;
 
     using GatherHandleSequences = DistributedArray<unsigned int, read_number>::GatherHandle;
@@ -139,10 +139,10 @@ public:
 
     void allocGpuMemAndLoadGpuData(std::ifstream& stream, const SavedGpuData& saved) const;
 
-    void setReads(read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
-    void setReads(read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
-    void setReads(const std::vector<read_number>& indices, const Read* reads, int numReads);
-    void setReads(const std::vector<read_number>& indices, const std::vector<Read>& reads);
+    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const Read* reads, int numReads);
+    void setReads(ThreadPool* threadPool, read_number firstIndex, read_number lastIndex_excl, const std::vector<Read>& reads);
+    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const Read* reads, int numReads);
+    void setReads(ThreadPool* threadPool, const std::vector<read_number>& indices, const std::vector<Read>& reads);
 
     void setReadContainsN(read_number readId, bool contains);
     bool readContainsN(read_number readId) const;
@@ -155,6 +155,7 @@ public:
     GatherHandleQualities makeGatherHandleQualities() const;
 
     void gatherSequenceDataToGpuBufferAsync(
+                                ThreadPool* threadPool,
                                 const GatherHandleSequences& handle,
                                 char* d_sequence_data,
                                 size_t out_sequence_pitch,
@@ -166,6 +167,7 @@ public:
                                 int numCpuThreads) const;
 
     void gatherQualitiesToGpuBufferAsync(
+                                ThreadPool* threadPool,
                                 const GatherHandleQualities& handle,
                                 char* d_quality_data,
                                 size_t out_quality_pitch,
