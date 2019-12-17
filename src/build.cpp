@@ -461,7 +461,7 @@ BuiltDataStructure<cpu::ContiguousReadStorage> build_readstorage(const FileOptio
 
                         const std::uint8_t* sequenceptr = (const std::uint8_t*)readStorage.fetchSequenceData_ptr(localId);
     				    const int sequencelength = readStorage.fetchSequenceLength(readId);
-    				    std::string sequencestring = get2BitHiLoString((const unsigned int*)sequenceptr, sequencelength);
+    				    std::string sequencestring = get2BitString((const unsigned int*)sequenceptr, sequencelength);
 
                         minhasher.insertSequenceIntoExternalTables(sequencestring, 
                                                                     readId, 

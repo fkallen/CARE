@@ -129,17 +129,19 @@ namespace cpu{
             MultipleSequenceAlignment multipleSequenceAlignment;
             MSAProperties msaProperties;
 
+            shd::CpuAlignmentHandle alignmentHandle;
+
             std::vector<unsigned int> subjectsequence;
-            std::vector<char> candidateData;
-            std::vector<char> candidateRevcData;
+            std::vector<unsigned int> candidateData;
+            std::vector<unsigned int> candidateRevcData;
             std::vector<int> candidateLengths;
             int max_candidate_length = 0;
-            std::vector<char*> candidateDataPtrs;
-            std::vector<char*> candidateRevcDataPtrs;
+            std::vector<unsigned int*> candidateDataPtrs;
+            std::vector<unsigned int*> candidateRevcDataPtrs;
 
-            std::vector<unsigned int> subjectsequenceHiLo;
-            std::vector<unsigned int> candidateDataHiLo;
-            std::vector<unsigned int> candidateRevcDataHiLo;
+            // std::vector<unsigned int> subjectsequenceHiLo;
+            // std::vector<unsigned int> candidateDataHiLo;
+            // std::vector<unsigned int> candidateRevcDataHiLo;
 
             std::vector<SHDResult> forwardAlignments;
             std::vector<SHDResult> revcAlignments;
@@ -197,7 +199,7 @@ namespace cpu{
         void getCandidateSequenceData(TaskData& data,
                                     const cpu::ContiguousReadStorage& readStorage,
                                     CorrectionTask& task,
-                                    size_t encodedSequencePitch){
+                                    size_t encodedSequencePitchInInts){
 
             const size_t numCandidates = task.candidate_read_ids.size();
 
@@ -212,9 +214,9 @@ namespace cpu{
             //max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
 
             data.candidateData.clear();
-            data.candidateData.resize(encodedSequencePitch * numCandidates, 0);
+            data.candidateData.resize(encodedSequencePitchInInts * numCandidates, 0);
             data.candidateRevcData.clear();
-            data.candidateRevcData.resize(encodedSequencePitch * numCandidates, 0);
+            data.candidateRevcData.resize(encodedSequencePitchInInts * numCandidates, 0);
             data.candidateDataPtrs.clear();
             data.candidateDataPtrs.resize(numCandidates, nullptr);
             data.candidateRevcDataPtrs.clear();
@@ -226,26 +228,26 @@ namespace cpu{
 
             for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
                 const read_number next_candidate_read_id = task.candidate_read_ids[i];
-                const char* nextsequenceptr = readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+                const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
                 __builtin_prefetch(nextsequenceptr, 0, 0);
             }
 
             for(size_t i = 0; i < numCandidates; i++){
                 if(i + prefetch_distance_sequences < numCandidates) {
                     const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
-                    const char* nextsequenceptr = readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+                    const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
                     __builtin_prefetch(nextsequenceptr, 0, 0);
                 }
 
                 const read_number candidateId = task.candidate_read_ids[i];
-                const char* candidateptr = readStorage.fetchSequenceData_ptr(candidateId);
+                const unsigned int* candidateptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(candidateId);
                 const int candidateLength = data.candidateLengths[i];
-                const int bytes = getEncodedNumInts2Bit(candidateLength) * sizeof(unsigned int);
+                const int candidateNumInts = getEncodedNumInts2Bit(candidateLength);
 
-                char* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitch;
-                char* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitch;
+                unsigned int* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitchInInts;
+                unsigned int* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitchInInts;
 
-                std::copy(candidateptr, candidateptr + bytes, candidateDataBegin);
+                std::copy_n(candidateptr, candidateNumInts, candidateDataBegin);
                 reverseComplement2Bit((unsigned int*)(candidateRevcDataBegin),
                                           (const unsigned int*)(candidateptr),
                                           candidateLength);
@@ -258,7 +260,7 @@ namespace cpu{
 
         void getCandidateAlignments(TaskData& data,
                                     CorrectionTask& task,
-                                    size_t encodedSequencePitch,
+                                    size_t candidatePitchInInts,
                                     const GoodAlignmentProperties& alignmentProps,
                                     const CorrectionOptions& correctionOptions){
 
@@ -267,25 +269,35 @@ namespace cpu{
             data.forwardAlignments.resize(numCandidates);
             data.revcAlignments.resize(numCandidates);
 
-            shd::cpu_multi_shifted_hamming_distance_popcount_new(data.forwardAlignments.begin(),
-                                                            (const char*)task.encodedSubjectPtr,
-                                                            task.original_subject_string.size(),
-                                                            data.candidateData,
-                                                            data.candidateLengths,
-                                                            encodedSequencePitch,
-                                                            alignmentProps.min_overlap,
-                                                            alignmentProps.maxErrorRate,
-                                                            alignmentProps.min_overlap_ratio);
+            shd::cpuShiftedHammingDistancePopcount2Bit(
+                data.alignmentHandle,
+                data.forwardAlignments.begin(),
+                task.encodedSubjectPtr,
+                task.original_subject_string.size(),
+                data.candidateData.data(),
+                candidatePitchInInts,
+                data.candidateLengths.data(),
+                data.candidateLengths.size(),
+                alignmentProps.min_overlap,
+                alignmentProps.maxErrorRate,
+                alignmentProps.min_overlap_ratio
+            );
 
-            shd::cpu_multi_shifted_hamming_distance_popcount_new(data.revcAlignments.begin(),
-                                                            (const char*)task.encodedSubjectPtr,
-                                                            task.original_subject_string.size(),
-                                                            data.candidateRevcData,
-                                                            data.candidateLengths,
-                                                            encodedSequencePitch,
-                                                            alignmentProps.min_overlap,
-                                                            alignmentProps.maxErrorRate,
-                                                            alignmentProps.min_overlap_ratio);
+            shd::cpuShiftedHammingDistancePopcount2Bit(
+                data.alignmentHandle,
+                data.revcAlignments.begin(),
+                task.encodedSubjectPtr,
+                task.original_subject_string.size(),
+                data.candidateRevcData.data(),
+                candidatePitchInInts,
+                data.candidateLengths.data(),
+                data.candidateLengths.size(),
+                alignmentProps.min_overlap,
+                alignmentProps.maxErrorRate,
+                alignmentProps.min_overlap_ratio
+            );
+
+
 
             // std::vector<SHDResult> newforwardalignments(numCandidates);
             // std::vector<SHDResult> newrevcalignments(numCandidates);
@@ -1169,6 +1181,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
 
     const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+    const int encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
 
     //std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
 
@@ -1246,7 +1259,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             tpa = std::chrono::system_clock::now();
             #endif
 
-            getCandidateSequenceData(taskdata, readStorage, task, encodedSequencePitch);
+            getCandidateSequenceData(taskdata, readStorage, task, encodedSequencePitchInInts);
 
             #ifdef ENABLE_TIMING
             copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
@@ -1256,7 +1269,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             tpa = std::chrono::system_clock::now();
             #endif
 
-            getCandidateAlignments(taskdata, task, encodedSequencePitch, goodAlignmentProperties, correctionOptions);
+            getCandidateAlignments(taskdata, task, encodedSequencePitchInInts, goodAlignmentProperties, correctionOptions);
 
             taskdata.numGoodAlignmentFlags = std::count_if(taskdata.alignmentFlags.begin(),
                                                          taskdata.alignmentFlags.end(),
