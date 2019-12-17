@@ -97,8 +97,10 @@ public:
     {
         clear();
         //make sure that scheduler wakes up and terminates
+        std::unique_lock<std::recursive_mutex> lock(enqueueMtx_);
         active_.store(false);
         isWaitingForTask_.notify_one();
+        lock.unlock();
         //wait for scheduler to terminate
         scheduler_.join();
     }
@@ -312,8 +314,8 @@ private:
                 try_assign_tasks();
             }
             else{
-                std::lock_guard<std::recursive_mutex> lock{enqueueMtx_};
-                isWaitingForTask_.wait(lock, [&](){return empty();});
+                std::unique_lock<std::recursive_mutex> lock{enqueueMtx_};
+                isWaitingForTask_.wait(lock, [this](){return !active_.load() || !empty();});
             }
         }
     }
@@ -330,7 +332,7 @@ private:
     std::condition_variable isDone_;
     std::mutex busyMtx_;
     std::condition_variable isBusy_;
-    std::condition_variable isWaitingForTask_;
+    std::condition_variable_any isWaitingForTask_;
     std::thread scheduler_;
 };
 
