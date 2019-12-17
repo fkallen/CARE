@@ -79,7 +79,7 @@ public:
         active_{true}, hasWaiting_{false},
         running_{0},
         waiting_{},
-        workers_(concurrency),
+        workers_(std::min(concurrency, std::thread::hardware_concurrency())),
         isDone_{},
         busyMtx_{}, 
         isBusy_{},
@@ -230,9 +230,6 @@ public:
      */
     void wait()
     {
-        //std::unique_lock<std::mutex> lock{waitMtx_};
-        //isDone_.wait(lock, [this] { return empty() && !running(); });
-
         std::unique_lock<std::recursive_mutex> enqueuelock{enqueueMtx_};
 
         int barrierCount = concurrency();
