@@ -37,7 +37,7 @@
 
 #define ENABLE_TIMING
 
-//#define PRINT_MSA
+#define PRINT_MSA
 
 namespace care{
 namespace cpu{
