@@ -362,10 +362,24 @@ namespace care{
 
     std::vector<Minhasher::Result_t> Minhasher::getCandidates_any_map(const std::string& sequence,
                                         std::uint64_t) const noexcept{
+        Minhasher::Handle handle;
+        getCandidates_any_map(handle, sequence, 0);
+
+        std::vector<Result_t> result(std::move(handle.result()));
+        return result;
+    }
+
+    void Minhasher::getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const std::string& sequence,
+            std::uint64_t) const noexcept{
+
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k))
-            return {};
+        if(sequence.size() < unsigned(minparams.k)){
+            handle.allUniqueResults.clear();
+            return;
+        }
 
         //TIMERSTARTCPU(minhashfunc);
 #ifdef NVTXTIMELINE        
@@ -377,9 +391,7 @@ namespace care{
 #endif        
         //TIMERSTOPCPU(minhashfunc);
 
-        using Range_t = std::pair<const Value_t*, const Value_t*>;
-        std::vector<Range_t> ranges;
-        ranges.reserve(minparams.maps);
+        handle.ranges.clear();
 
         int maximumResultSize = 0;
 
@@ -449,7 +461,7 @@ namespace care{
             int n_entries = std::distance(entries_range.first, entries_range.second);
             if(n_entries > 0){
                 maximumResultSize += n_entries;
-                ranges.emplace_back(entries_range);
+                handle.ranges.emplace_back(entries_range);
             }
         }
 #ifdef NVTXTIMELINE
@@ -465,10 +477,10 @@ namespace care{
 #endif
 
 #if 1
-        std::vector<Value_t> allUniqueResults(maximumResultSize);
+        handle.allUniqueResults.resize(maximumResultSize);
 
-        auto resultEnd = k_way_set_union(allUniqueResults.begin(), ranges);
-        allUniqueResults.erase(resultEnd, allUniqueResults.end());
+        auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges);
+        handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
 #else 
         std::unordered_set<Value_t> uniqueValues;
         for(const auto& range : ranges){
@@ -492,8 +504,6 @@ namespace care{
 #endif 
 
         //TIMERSTOPCPU(setunion);
-
-        return allUniqueResults;
     }
 
 

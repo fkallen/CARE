@@ -130,6 +130,7 @@ namespace cpu{
             MSAProperties msaProperties;
 
             shd::CpuAlignmentHandle alignmentHandle;
+            Minhasher::Handle minhashHandle;
 
             std::vector<unsigned int> subjectsequence;
             std::vector<unsigned int> candidateData;
@@ -176,14 +177,19 @@ namespace cpu{
         std::mutex interestingMutex;
 
 
-        void getCandidates(CorrectionTask& task,
+        void getCandidates(TaskData& data,
+                            CorrectionTask& task,
                             const Minhasher& minhasher,
                             int maxNumberOfCandidates,
                             int requiredHitsPerCandidate){
 
-            task.candidate_read_ids = minhasher.getCandidates(task.original_subject_string,
-                                                               requiredHitsPerCandidate,
-                                                               maxNumberOfCandidates);
+            minhasher.getCandidates_any_map(
+                data.minhashHandle,
+                task.original_subject_string,
+                maxNumberOfCandidates
+            );
+
+            std::swap(task.candidate_read_ids, data.minhashHandle.result());
 
             //remove our own read id from candidate list. candidate_read_ids is sorted.
             auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(),
@@ -1243,10 +1249,13 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             auto tpa = std::chrono::system_clock::now();
             #endif
 
-            getCandidates(task,
+            getCandidates(
+                taskdata,
+                task,
                 minhasher,
                 maxCandidatesPerRead,
-                correctionOptions.hits_per_candidate);
+                correctionOptions.hits_per_candidate
+            );
 
             #ifdef ENABLE_TIMING
             getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;

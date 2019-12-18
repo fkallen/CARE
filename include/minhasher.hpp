@@ -487,8 +487,14 @@ struct Minhasher {
     static constexpr int maximum_kmer_length = max_k<kmer_type>::value;
 
     struct Handle{
+        using Range_t = std::pair<const Value_t*, const Value_t*>;
+        std::vector<Range_t> ranges;
 		std::vector<Value_t> allUniqueResults;
-        std::vector<Value_t> tmp;
+        SetUnionHandle<Value_t> suHandle;
+
+        std::vector<Value_t>& result() noexcept{
+            return allUniqueResults;
+        }
 	};
 
 	// the actual maps
@@ -547,12 +553,18 @@ struct Minhasher {
                                                         Map_t::Key_t key) const noexcept;
 
 
-    std::vector<Result_t> getCandidates(const std::string& sequence,
-                                        int num_hits,
-                                        std::uint64_t max_number_candidates) const noexcept;
+    std::vector<Result_t> getCandidates(
+        const std::string& sequence,
+        int num_hits,
+        std::uint64_t max_number_candidates) const noexcept;
 
     std::vector<Result_t> getCandidates_any_map(const std::string& sequence,
                                         std::uint64_t max_number_candidates) const noexcept;
+
+    void getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const std::string& sequence,
+            std::uint64_t) const noexcept;
 
     /*
         This version of getCandidates returns only read ids which are found in at least num_hits maps
