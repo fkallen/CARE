@@ -37,6 +37,13 @@
 
 #define ENABLE_TIMING
 
+#define DO_PROFILE
+
+#ifdef DO_PROFILE
+constexpr std::int64_t num_reads_to_profile = 100000;
+#endif
+
+
 //#define PRINT_MSA
 
 namespace care{
@@ -1098,11 +1105,11 @@ void correct_cpu(const MinhashOptions& minhashOptions,
           }
       //}
 
-    #ifndef DO_PROFILE
-            cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    #else
-            cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
-    #endif
+#ifndef DO_PROFILE
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+#else
+    cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
+#endif
 
 #if 0
     NN_Correction_Classifier_Base nnClassifierBase;
@@ -1683,6 +1690,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     printme(correctWithFeaturesTimeTotal);
 
     #undef printme
+
+#ifdef DO_PROFILE
+
+    return;
+
+#endif
 
     std::cout << "Correction finished. Constructing result file." << std::endl;
 
