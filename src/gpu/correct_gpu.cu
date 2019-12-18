@@ -368,6 +368,7 @@ namespace gpu{
         ThreadPool* threadPool;
 
         ThreadPool::ParallelForHandle pforHandle;
+        std::vector<Minhasher::Handle> minhashHandles;
 
         bool isTerminated = false;
 
@@ -491,6 +492,8 @@ namespace gpu{
 
         ForestClassifier fc;// = ForestClassifier{"./forests/testforest.so"};
         //NN_Correction_Classifier nnClassifier;
+
+        std::vector<Minhasher::Handle> minhashHandles;
 	};
 
     std::string nameOf(const BatchState& state){
@@ -941,12 +944,13 @@ namespace gpu{
 
         nextData.initialNumberOfCandidates = 0;
 
-        auto maketasks = [batchptr, nextDataPtr, maximumSequenceBytes](int begin, int end){
+        auto maketasks = [batchptr, nextDataPtr, maximumSequenceBytes](int begin, int end, int threadId){
 
-            const auto& transFuncData = *(batchptr->transFuncData);
+            auto& transFuncData = *(batchptr->transFuncData);
             const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
             const auto& minhasher = transFuncData.minhasher;
+            auto& minhashHandle = batchptr->minhashHandles[threadId];
 
             int initialNumberOfCandidates = 0;
 
@@ -967,9 +971,13 @@ namespace gpu{
                     //TIMERSTOPCPU(get2BitString);
 
                     //TIMERSTARTCPU(getCandidates);
-                    task.candidate_read_ids = minhasher->getCandidates(task.subject_string,
-                                                                        hits_per_candidate,
-                                                                        transFuncData.runtimeOptions.max_candidates);
+                    minhasher->getCandidates_any_map(
+                        minhashHandle,
+                        task.subject_string,
+                        transFuncData.runtimeOptions.max_candidates
+                    );
+
+                    std::swap(task.candidate_read_ids, minhashHandle.result());
                     //TIMERSTOPCPU(getCandidates);
 
                     //TIMERSTARTCPU(lower_bound);
@@ -1006,8 +1014,8 @@ namespace gpu{
             nextData.pforHandle,
             0, 
             nextData.initialNumberOfAnchorIds, 
-            [=](auto begin, auto end, auto /*threadId*/){
-                maketasks(begin, end);
+            [=](auto begin, auto end, auto threadId){
+                maketasks(begin, end, threadId);
             }
         );
 
@@ -4196,6 +4204,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].outputThread = &outputThread;
           batches[i].backgroundWorker = &backgroundWorkers[i];
           batches[i].threadPool = &threadPool;
+          batches[i].minhashHandles.resize(threadPoolSize);
           
           initNextIterationData(batches[i].nextIterationData, batches[i].deviceId);
 
@@ -4246,6 +4255,9 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       if(transFuncData.correctionOptions.correctionType == CorrectionType::Forest){
          transFuncData.fc = ForestClassifier{fileOptions.forestfilename};
       }
+
+      transFuncData.minhashHandles.resize(threadPoolSize);
+
 
 #if 0
       NN_Correction_Classifier_Base nnClassifierBase;

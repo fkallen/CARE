@@ -205,14 +205,24 @@ std::vector<std::string> split(const std::string& str, char c){
 /*
     Performs a set union of multiple ranges into a single output range
 */
-template<class OutputIt, class Iter>
-OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>& ranges){
+template<class T>
+struct SetUnionHandle{
+    std::vector<T> buffer;
+};
+
+template<class T, class OutputIt, class Iter>
+OutputIt k_way_set_union(
+        SetUnionHandle<T>& handle,
+        OutputIt outputbegin, 
+        std::vector<std::pair<Iter,Iter>>& ranges){
+
     using OutputType = typename std::iterator_traits<OutputIt>::value_type;
     using InputType = typename std::iterator_traits<Iter>::value_type;
 
     static_assert(std::is_same<OutputType, InputType>::value, "");
+    static_assert(std::is_same<T, InputType>::value, "");
 
-    using T = InputType;
+    //using T = InputType;
 
     //handle simple cases
 
@@ -244,7 +254,8 @@ OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>
         totalElements += std::distance(range.first, range.second);
     }
 
-    std::vector<T> temp(totalElements);
+    auto& temp = handle.buffer;
+    temp.resize(totalElements);
 
     auto tempbegin = temp.begin();
     auto tempend = tempbegin;
@@ -268,6 +279,20 @@ OutputIt k_way_set_union(OutputIt outputbegin, std::vector<std::pair<Iter,Iter>>
     }
 
     return outputend;
+}
+
+template<class T, class OutputIt, class Iter>
+OutputIt k_way_set_union(
+        OutputIt outputbegin, 
+        std::vector<std::pair<Iter,Iter>>& ranges){
+
+    SetUnionHandle<T> handle;
+
+    return k_way_set_union(
+        handle,
+        outputbegin, 
+        ranges
+    );
 }
 
 
