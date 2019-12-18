@@ -185,17 +185,15 @@ namespace shd{
         auto popcount = [](auto i){return __builtin_popcount(i);};
         auto identity = [](auto i){return i;};
 
-        auto hammingDistanceWithShift = [&](int shift, int overlapsize, int max_errors,
+        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
                                             unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
                                             int shiftptr_size,
                                             const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
                                             auto transfunc2){
-
-            const int shiftamount = shift == 0 ? 0 : 1;
-
-            shiftBitArrayLeftBy(shiftptr_hi, shiftptr_size / 2, shiftamount, transfunc1);
-            shiftBitArrayLeftBy(shiftptr_lo, shiftptr_size / 2, shiftamount, transfunc1);
-
+            if(doShift){
+                shiftBitArrayLeftBy<1>(shiftptr_hi, shiftptr_size / 2, transfunc1);
+                shiftBitArrayLeftBy<1>(shiftptr_lo, shiftptr_size / 2, transfunc1);
+            }
             const int score = hammingdistanceHiLo(shiftptr_hi,
                                                     shiftptr_lo,
                                                     otherptr_hi,
@@ -242,7 +240,7 @@ namespace shd{
 
             if(max_errors_excl > 0){
 
-                const int mismatches = hammingDistanceWithShift(shift, overlapsize, max_errors_excl,
+                const int mismatches = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
                                                         shiftptr_hi,shiftptr_lo, transfunc1,
                                                         shiftptr_size,
                                                         otherptr_hi, otherptr_lo, transfunc2);
