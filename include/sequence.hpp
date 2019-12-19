@@ -274,7 +274,7 @@ namespace care{
         const int nInts = getEncodedNumInts2BitHiLo(sequenceLength);
 
         for(int i = 0; i < nInts; i++){
-            out[i] = 0;
+            out[indextrafo(i)] = 0;
         }
 
         unsigned int* const hi = out;
