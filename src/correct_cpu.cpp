@@ -1191,7 +1191,27 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     //     std::cerr << "Looking for no interesting read id\n";
     // }
 
+    auto showProgress = [&](auto totalCount, auto seconds){
+        if(runtimeOptions.showProgress){
 
+            printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                    totalCount, sequenceFileProperties.nReads,
+                    int(seconds / 3600),
+                    int(seconds / 60) % 60,
+                    int(seconds) % 60);
+            std::cout.flush();
+        }
+
+        if(totalCount == sequenceFileProperties.nReads){
+            std::cerr << '\n';
+        }
+    };
+
+    auto updateShowProgressInterval = [](auto duration){
+        return duration;
+    };
+
+    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
     //const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
     const int encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
@@ -1209,43 +1229,30 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    while(!(readIdGenerator.empty())){
+    #pragma omp parallel
+    {
+        const int threadId = omp_get_thread_num();
+        auto& correctionTasks = correctionTasksPerThread[threadId];
+        auto& dataPerTask = dataPerTaskPerThread[threadId];
 
-        std::vector<read_number> readIds = readIdGenerator.next_n(correctionOptions.batchsize);
-        if(readIds.empty()){
-            continue;
-        }
+        while(!(readIdGenerator.empty())){
 
-        // correctionTasks.clear();
-        // correctionTasks.resize(readIds.size());
-
-        #pragma omp parallel
-        {
-            const int threadId = omp_get_thread_num();
-            auto& correctionTasks = correctionTasksPerThread[threadId];
-            auto& dataPerTask = dataPerTaskPerThread[threadId];
-
-            const int minElementsPerThread = readIds.size() / numThreads;
-            const int remainingElements = readIds.size() % numThreads;
-
-            const int firstIndexForThread = threadId * minElementsPerThread 
-                                                + (threadId < remainingElements ? threadId : remainingElements);
-            const int lastIndexForThread = (threadId + 1) * minElementsPerThread 
-                                                + ((threadId + 1) < remainingElements ? (threadId + 1)  : remainingElements);
-            const int chunksize = lastIndexForThread - firstIndexForThread;
+            std::vector<read_number> readIds = readIdGenerator.next_n(correctionOptions.batchsize);
+            if(readIds.empty()){
+                continue;
+            }
             
-            correctionTasks.resize(chunksize);
-            dataPerTask.resize(chunksize);
+            correctionTasks.resize(readIds.size());
+            dataPerTask.resize(readIds.size());
             
-            for(int i = firstIndexForThread, iteration = 0; i < lastIndexForThread; i++, iteration++){
-                //const int threadId = omp_get_thread_num();
+            for(int i = 0; i < int(readIds.size());i++){
 
                 const read_number readId = readIds[i];
 
-                auto& task = correctionTasks[iteration];
+                auto& task = correctionTasks[i];
                 task = CorrectionTask(readId);
 
-                auto& taskdata = dataPerTask[iteration];
+                auto& taskdata = dataPerTask[i];
                 task.taskDataPtr = &taskdata;
 
                 //bool ok = false;
@@ -1553,38 +1560,38 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                                                 readStorage,
                                                 correctionStatusFlagsPerRead.data(),
                                                 sequenceFileProperties);
-            }    
-        } // parallel loop end
+
+                
+            } //reads in batch loop end 
 
 
+            if(correctionOptions.extractFeatures){
+                std::cerr << "extractFeatures not implemented\n";
+                /*for(const auto& correctionTasks : correctionTasksPerThread){
+                        for(size_t i = 0; i < correctionTasks.size(); i++){
+                            auto& task = correctionTasks[i];
+                            auto& taskdata = *task.taskDataPtr;
 
-        if(correctionOptions.extractFeatures){
-            for(const auto& correctionTasks : correctionTasksPerThread){
-                for(size_t i = 0; i < correctionTasks.size(); i++){
-                    auto& task = correctionTasks[i];
-                    auto& taskdata = *task.taskDataPtr;
-
-                    if(task.active){
-                        for(const auto& msafeature : taskdata.msaforestfeatures){
-                            featurestream << task.readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
-                            featurestream << msafeature << '\n';
+                            if(task.active){
+                                for(const auto& msafeature : taskdata.msaforestfeatures){
+                                    featurestream << task.readId << '\t' << msafeature.position << '\t' << msafeature.consensus << '\n';
+                                    featurestream << msafeature << '\n';
+                                }
+                            }
                         }
-                    }
-                }
-            }
-        }else{
-            //collect results of batch into a single buffer, then write results to file in another thread
-            std::vector<TempCorrectedSequence> anchorcorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedanchorcorrections;
-            anchorcorrections.reserve(readIds.size());
-            encodedanchorcorrections.reserve(readIds.size());
+                }*/
+            }else{
+                //collect results of batch into a single buffer, then write results to file in another thread
+                std::vector<TempCorrectedSequence> anchorcorrections;
+                std::vector<EncodedTempCorrectedSequence> encodedanchorcorrections;
+                anchorcorrections.reserve(readIds.size());
+                encodedanchorcorrections.reserve(readIds.size());
 
-            std::vector<std::vector<TempCorrectedSequence>> candidatecorrectionsPerTask;
-            std::vector<std::vector<EncodedTempCorrectedSequence>> encodedcandidatecorrectionsPerTask;
-            candidatecorrectionsPerTask.reserve(readIds.size());
-            encodedcandidatecorrectionsPerTask.reserve(readIds.size());
+                std::vector<std::vector<TempCorrectedSequence>> candidatecorrectionsPerTask;
+                std::vector<std::vector<EncodedTempCorrectedSequence>> encodedcandidatecorrectionsPerTask;
+                candidatecorrectionsPerTask.reserve(readIds.size());
+                encodedcandidatecorrectionsPerTask.reserve(readIds.size());
 
-            for(const auto& correctionTasks : correctionTasksPerThread){
                 for(size_t i = 0; i < correctionTasks.size(); i++){
                     auto& task = correctionTasks[i];
                     auto& taskdata = *task.taskDataPtr;
@@ -1606,62 +1613,46 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                         } 
                     }
                 }
-            }
 
-            auto outputfunction = [&,
-                                   anchorcorrections = std::move(anchorcorrections),
-                                   candidatecorrectionsPerTask = std::move(candidatecorrectionsPerTask),
-                                   encodedanchorcorrections = std::move(encodedanchorcorrections),
-                                   encodedcandidatecorrectionsPerTask = std::move(encodedcandidatecorrectionsPerTask)
-                                   ](){
-                for(int i = 0; i < int(anchorcorrections.size()); i++){
-                    saveCorrectedSequence(anchorcorrections[i], encodedanchorcorrections[i]);
-                }
-
-                for(int i = 0; i < (candidatecorrectionsPerTask.size()); i++){
-                    for(int j = 0; j < (candidatecorrectionsPerTask[i].size()); j++){
-                        saveCorrectedSequence(candidatecorrectionsPerTask[i][j], encodedcandidatecorrectionsPerTask[i][j]);
+                auto outputfunction = [&,
+                                    anchorcorrections = std::move(anchorcorrections),
+                                    candidatecorrectionsPerTask = std::move(candidatecorrectionsPerTask),
+                                    encodedanchorcorrections = std::move(encodedanchorcorrections),
+                                    encodedcandidatecorrectionsPerTask = std::move(encodedcandidatecorrectionsPerTask)
+                                    ](){
+                    for(int i = 0; i < int(anchorcorrections.size()); i++){
+                        saveCorrectedSequence(anchorcorrections[i], encodedanchorcorrections[i]);
                     }
-                }
-            };
 
-            outputThread.enqueue(std::move(outputfunction));
-        }
+                    for(int i = 0; i < (candidatecorrectionsPerTask.size()); i++){
+                        for(int j = 0; j < (candidatecorrectionsPerTask[i].size()); j++){
+                            saveCorrectedSequence(candidatecorrectionsPerTask[i][j], encodedcandidatecorrectionsPerTask[i][j]);
+                        }
+                    }
+                };
 
-
-
-        if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
-            const auto now = std::chrono::system_clock::now();
-            runtime = now - timepoint_begin;
-            //std::cerr << std::chrono::duration_cast<std::chrono::seconds>(runtime-previousProgressTime).count() << "\n";
-            if(std::chrono::duration_cast<std::chrono::seconds>(runtime-previousProgressTime).count() >= 1){
-
-                printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                        readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
-                        int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                        int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                        int(runtime.count()) % 60);
-                std::cout.flush();
-                previousProgressTime = runtime;
+                outputThread.enqueue(std::move(outputfunction));
             }
 
-            //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-        }
+            progressThread.addProgress(readIds.size()); 
+        } //while unprocessed reads exist loop end   
 
 
-    } // end batch processing
+    } // parallel end
 
-    if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
-        const auto now = std::chrono::system_clock::now();
-        runtime = now - timepoint_begin;
+    progressThread.finished();
 
-        printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\n",
-                readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
-                int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                int(runtime.count()) % 60);
-        //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-    }
+    // if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
+    //     const auto now = std::chrono::system_clock::now();
+    //     runtime = now - timepoint_begin;
+
+    //     printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\n",
+    //             readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+    //             int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+    //             int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+    //             int(runtime.count()) % 60);
+    //     //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
+    // }
 
     outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
