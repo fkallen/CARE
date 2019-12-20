@@ -138,6 +138,7 @@ namespace cpu{
 
             shd::CpuAlignmentHandle alignmentHandle;
             Minhasher::Handle minhashHandle;
+            ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
             std::vector<unsigned int> subjectsequence;
             std::vector<unsigned int> candidateData;
@@ -174,6 +175,139 @@ namespace cpu{
 
             std::vector<int> indicesOfCandidatesEqualToSubject;
         };
+
+
+
+        struct ThreadData{
+            std::vector<read_number> subjectReadIds;
+            std::vector<read_number> candidateReadIds;
+            std::vector<unsigned int> subjectSequencesData;
+            std::vector<unsigned int> candidateSequencesData;
+            std::vector<unsigned int> candidateSequencesRevcData;
+            std::vector<int> subjectSequencesLengths;
+            std::vector<int> candidateSequencesLengths;
+            std::vector<char> subjectQualities;
+            std::vector<char> candidateQualities;
+
+            std::vector<read_number> tempReadIds;
+            std::vector<int> permutationIndices;
+        };
+
+        void getSubjectSequencesData(
+                ThreadData& threadData,
+                const cpu::ContiguousReadStorage& readStorage,
+                size_t encodedSequencePitchInInts){
+
+            const int numSubjects = threadData.subjectReadIds.size();
+
+            threadData.subjectSequencesData.resize(encodedSequencePitchInInts * numSubjects);
+            threadData.subjectSequencesLengths.resize(numSubjects);
+
+            for(int i = 0; i < numSubjects; i++){
+                const read_number subjectId = threadData.subjectReadIds[i];
+                const int length = readStorage.fetchSequenceLength(subjectId);
+                threadData.subjectSequencesLengths[i] = length;
+            }
+
+
+            constexpr size_t prefetch_distance_sequences = 4;
+
+            for(size_t i = 0; i < numSubjects && i < prefetch_distance_sequences; ++i) {
+                const read_number nextSubjectReadId = threadData.subjectReadIds[i];
+                const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(nextSubjectReadId);
+                __builtin_prefetch(nextsequenceptr, 0, 0);
+            }
+
+            for(size_t i = 0; i < numSubjects; i++){
+                if(i + prefetch_distance_sequences < numSubjects) {
+                    const read_number nextSubjectReadId = threadData.subjectReadIds[i];
+                    const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(nextSubjectReadId);
+                    __builtin_prefetch(nextsequenceptr, 0, 0);
+                }
+
+                const read_number subjectReadId = threadData.subjectReadIds[i];
+                const unsigned int* subjectPtr = (const unsigned int*)readStorage.fetchSequenceData_ptr(subjectReadId);
+                const int subjectLength = threadData.subjectSequencesLengths[i];
+                const int subjectNumInts = getEncodedNumInts2Bit(subjectLength);
+
+                unsigned int* const subjectDataBegin = threadData.candidateSequencesData.data() + i * encodedSequencePitchInInts;
+
+                std::copy_n(subjectPtr, subjectNumInts, subjectDataBegin);
+            }
+
+
+        }
+
+        void getCandidateSequencesData(
+                ThreadData& threadData,
+                const cpu::ContiguousReadStorage& readStorage,
+                size_t encodedSequencePitchInInts){
+
+            const int numCandidates = threadData.candidateReadIds.size();
+
+            threadData.candidateSequencesData.resize(encodedSequencePitchInInts * numCandidates);
+            threadData.candidateSequencesLengths.resize(numCandidates);
+            threadData.tempReadIds.resize(numCandidates);
+            threadData.permutationIndices.resize(numCandidates);
+
+            std::iota(
+                threadData.permutationIndices.begin(), 
+                threadData.permutationIndices.end(), 
+                0
+            );
+            std::sort(
+                threadData.permutationIndices.begin(), 
+                threadData.permutationIndices.end(),
+                [&](const auto& l, const auto& r){
+                    return threadData.candidateReadIds[l] < threadData.candidateReadIds[r];
+                }
+            );
+
+            for(int i = 0; i < numCandidates; i++){
+                const int index = threadData.permutationIndices[i];
+                const read_number candidateId = threadData.candidateReadIds[index];
+                const int candidateLength = readStorage.fetchSequenceLength(candidateId);
+                threadData.candidateSequencesLengths[i] = candidateLength;
+            }
+
+
+            constexpr size_t prefetch_distance_sequences = 4;
+
+            for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
+                const read_number next_candidate_read_id = threadData.candidateReadIds[threadData.permutationIndices[i]];
+                const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+                __builtin_prefetch(nextsequenceptr, 0, 0);
+            }
+
+            for(size_t i = 0; i < numCandidates; i++){
+                if(i + prefetch_distance_sequences < numCandidates) {
+                    const read_number next_candidate_read_id = threadData.candidateReadIds[threadData.permutationIndices[i+prefetch_distance_sequences]];
+                    const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+                    __builtin_prefetch(nextsequenceptr, 0, 0);
+                }
+
+                const int index = threadData.permutationIndices[i+prefetch_distance_sequences];
+                const read_number candidateId = threadData.candidateReadIds[index];
+                const unsigned int* candidateptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(candidateId);
+                const int candidateLength = threadData.candidateSequencesLengths[index];
+                const int candidateNumInts = getEncodedNumInts2Bit(candidateLength);
+
+                unsigned int* const candidateDataBegin = threadData.candidateSequencesData.data() + index * encodedSequencePitchInInts;
+                unsigned int* const candidateRevcDataBegin = threadData.candidateSequencesRevcData.data() + index * encodedSequencePitchInInts;
+
+                std::copy_n(candidateptr, candidateNumInts, candidateDataBegin);
+                reverseComplement2Bit(candidateRevcDataBegin,
+                                       candidateDataBegin,
+                                        candidateLength);
+
+                //data.candidateDataPtrs[i] = candidateDataBegin;
+                //data.candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+            }
+
+
+        }
+
+
 
         struct InterestingStruct{
             read_number readId;
@@ -214,17 +348,15 @@ namespace cpu{
                                     CorrectionTask& task,
                                     size_t encodedSequencePitchInInts){
 
-            const size_t numCandidates = task.candidate_read_ids.size();
+            const int numCandidates = task.candidate_read_ids.size();
 
             data.candidateLengths.clear();
-            data.candidateLengths.reserve(numCandidates);
+            data.candidateLengths.resize(numCandidates);
 
-            for(const read_number candidateId : task.candidate_read_ids){
-                const int candidateLength = readStorage.fetchSequenceLength(candidateId);
-                data.candidateLengths.emplace_back(candidateLength);
-            }
-
-            //max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
+            // for(const read_number candidateId : task.candidate_read_ids){
+            //     const int candidateLength = readStorage.fetchSequenceLength(candidateId);
+            //     data.candidateLengths.emplace_back(candidateLength);
+            // }
 
             data.candidateData.clear();
             data.candidateData.resize(encodedSequencePitchInInts * numCandidates, 0);
@@ -237,36 +369,65 @@ namespace cpu{
 
             //copy candidate data and reverse complements into buffer
 
-            constexpr size_t prefetch_distance_sequences = 4;
+            // constexpr size_t prefetch_distance_sequences = 4;
 
-            for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
-                const read_number next_candidate_read_id = task.candidate_read_ids[i];
-                const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
-                __builtin_prefetch(nextsequenceptr, 0, 0);
-            }
+            // for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
+            //     const read_number next_candidate_read_id = task.candidate_read_ids[i];
+            //     const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+            //     __builtin_prefetch(nextsequenceptr, 0, 0);
+            // }
 
-            for(size_t i = 0; i < numCandidates; i++){
-                if(i + prefetch_distance_sequences < numCandidates) {
-                    const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
-                    const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
-                    __builtin_prefetch(nextsequenceptr, 0, 0);
-                }
+            // for(size_t i = 0; i < numCandidates; i++){
+            //     if(i + prefetch_distance_sequences < numCandidates) {
+            //         const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
+            //         const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+            //         __builtin_prefetch(nextsequenceptr, 0, 0);
+            //     }
 
-                const read_number candidateId = task.candidate_read_ids[i];
-                const unsigned int* candidateptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(candidateId);
-                const int candidateLength = data.candidateLengths[i];
-                const int candidateNumInts = getEncodedNumInts2Bit(candidateLength);
+            //     const read_number candidateId = task.candidate_read_ids[i];
+            //     const unsigned int* candidateptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(candidateId);
+            //     const int candidateLength = data.candidateLengths[i];
+            //     const int candidateNumInts = getEncodedNumInts2Bit(candidateLength);
 
-                unsigned int* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitchInInts;
-                unsigned int* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitchInInts;
+            //     unsigned int* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitchInInts;
+            //     unsigned int* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitchInInts;
 
-                std::copy_n(candidateptr, candidateNumInts, candidateDataBegin);
-                reverseComplement2Bit((unsigned int*)(candidateRevcDataBegin),
-                                          (const unsigned int*)(candidateptr),
-                                          candidateLength);
+            //     std::copy_n(candidateptr, candidateNumInts, candidateDataBegin);
+            //     reverseComplement2Bit((unsigned int*)(candidateRevcDataBegin),
+            //                               (const unsigned int*)(candidateptr),
+            //                               candidateLength);
 
-                data.candidateDataPtrs[i] = candidateDataBegin;
-                data.candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+            //     data.candidateDataPtrs[i] = candidateDataBegin;
+            //     data.candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+            // }
+
+            readStorage.gatherSequenceLengths(
+                data.readStorageGatherHandle,
+                task.candidate_read_ids.data(),
+                numCandidates,
+                data.candidateLengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                data.readStorageGatherHandle,
+                task.candidate_read_ids.data(),
+                numCandidates,
+                data.candidateData.data(),
+                encodedSequencePitchInInts
+            );
+
+            for(int i = 0; i < numCandidates; i++){
+                unsigned int* const seqPtr = data.candidateData.data() + std::size_t(encodedSequencePitchInInts) * i;
+                unsigned int* const seqrevcPtr = data.candidateRevcData.data() + std::size_t(encodedSequencePitchInInts) * i;
+
+                reverseComplement2Bit(
+                    seqrevcPtr,  
+                    seqPtr,
+                    data.candidateLengths[i]
+                );
+
+                data.candidateDataPtrs[i] = seqPtr;
+                data.candidateRevcDataPtrs[i] = seqrevcPtr;
             }
         }
 
@@ -1265,12 +1426,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 // unlock(readId);
                 bool ok = true;
                 if(ok){
-                    const char* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
+                    const unsigned int* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
                     const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
 
-                    task.original_subject_string = get2BitString((const unsigned int*)originalsubjectptr, originalsubjectLength);
+                    task.original_subject_string = get2BitString(originalsubjectptr, originalsubjectLength);
 
-                    task.encodedSubjectPtr = (const unsigned int*) originalsubjectptr;
+                    task.encodedSubjectPtr = originalsubjectptr;
                 }else{
                     task.active = false;
                 }
