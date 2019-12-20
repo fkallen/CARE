@@ -749,38 +749,38 @@ std::vector<CorrectedCandidate> getCorrectedCandidates(const char* consensus,
             && queryColumnsBegin_incl <= subjectColumnsBegin_incl + new_columns_to_correct
             && queryColumnsEnd_excl <= subjectColumnsEnd_excl + new_columns_to_correct){
 
-            float newColMinSupport = 1.0f;
-            int newColMinCov = std::numeric_limits<int>::max();
+            // float newColMinSupport = 1.0f;
+            // int newColMinCov = std::numeric_limits<int>::max();
 
-            //check new columns left of subject
-            for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
-                columnindex < subjectColumnsBegin_incl;
-                columnindex++){
+            // //check new columns left of subject
+            // for(int columnindex = subjectColumnsBegin_incl - new_columns_to_correct;
+            //     columnindex < subjectColumnsBegin_incl;
+            //     columnindex++){
 
-                assert(columnindex < nColumns);
+            //     assert(columnindex < nColumns);
 
-                if(queryColumnsBegin_incl <= columnindex){
-                    newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-                    newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-                }
-            }
-            //check new columns right of subject
-            for(int columnindex = subjectColumnsEnd_excl;
-                columnindex < subjectColumnsEnd_excl + new_columns_to_correct
-                && columnindex < nColumns;
-                columnindex++){
+            //     if(queryColumnsBegin_incl <= columnindex){
+            //         newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
+            //         newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+            //     }
+            // }
+            // //check new columns right of subject
+            // for(int columnindex = subjectColumnsEnd_excl;
+            //     columnindex < subjectColumnsEnd_excl + new_columns_to_correct
+            //     && columnindex < nColumns;
+            //     columnindex++){
 
-                newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
-                newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
-            }
+            //     newColMinSupport = support[columnindex] < newColMinSupport ? support[columnindex] : newColMinSupport;
+            //     newColMinCov = coverage[columnindex] < newColMinCov ? coverage[columnindex] : newColMinCov;
+            // }
 
-            if(newColMinSupport >= min_support_threshold
-                && newColMinCov >= min_coverage_threshold){
+            // if(newColMinSupport >= min_support_threshold
+            //     && newColMinCov >= min_coverage_threshold){
 
                 std::string correctedString(&consensus[queryColumnsBegin_incl], &consensus[queryColumnsEnd_excl]);
 
                 result.emplace_back(candidate_index, candidateShifts[candidate_index], std::move(correctedString));
-            }
+            //}
         }
     }
 
