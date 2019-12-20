@@ -174,9 +174,33 @@ namespace cpu{
 
 
 
-        struct ThreadData{
+        struct BatchTask{
+            bool active;
+            int numCandidates;
+            int subjectSequenceLength;
+            read_number subjectReadId;
+            read_number* candidateReadIds;
+            read_number* bestCandidateReadIds;
+            int* candidateSequencesLengths; 
+            unsigned int* subjectSequenceData;
+            unsigned int* candidateSequencesData;
+            unsigned int* candidateSequencesRevcData;
+            char* subjectQualities;
+            char* candidateQualities;
+            char* decodedSubjectSequence;
+
+            void reset(){
+                active = false;
+                subjectReadId = std::numeric_limits<read_number>::max();
+            }
+            
+        };
+
+        struct BatchData{
+        // data for all batch tasks within batch
             std::vector<read_number> subjectReadIds;
             std::vector<read_number> candidateReadIds;
+            std::vector<read_number> filteredCandidateReadIds;
             std::vector<unsigned int> subjectSequencesData;
             std::vector<unsigned int> candidateSequencesData;
             std::vector<unsigned int> candidateSequencesRevcData;
@@ -184,7 +208,48 @@ namespace cpu{
             std::vector<int> candidateSequencesLengths;
             std::vector<char> subjectQualities;
             std::vector<char> candidateQualities;
+
+            std::vector<char> decodedSubjectSequences;
+
+            std::vector<int> candidatesPerSubject;
+            std::vector<int> candidatesPerSubjectPrefixSum;
+        // ------------------------------------------------
+            std::vector<BatchTask> batchTasks;
+
+            ContiguousReadStorage::GatherHandle readStorageGatherHandle;
+            Minhasher::Handle minhashHandle;
+
+            int encodedSequencePitchInInts = 0;
+            int decodedSequencePitchInBytes = 0;
+            int qualityPitchInBytes = 0;
         };
+
+        void makeBatchTasks(BatchData& data){
+            const int numSubjects = data.subjectReadIds.size();
+
+            data.batchTasks.resize(numSubjects);
+
+            for(int i = 0; i < numSubjects; i++){
+                auto& task = data.batchTasks[i];
+                const int offset = data.candidatesPerSubjectPrefixSum[i];
+
+                task.reset();
+
+                task.active = true;
+                task.numCandidates = data.candidatesPerSubject[i];
+                task.subjectSequenceLength = data.subjectSequencesLengths[i];
+                task.subjectReadId = data.subjectReadIds[i];
+                task.candidateReadIds = data.candidateReadIds.data() + offset;
+                //read_number* bestCandidateReadIds;
+                task.candidateSequencesLengths = data.candidateSequencesLengths.data() + offset; 
+                task.subjectSequenceData = data.subjectSequencesData.data() + size_t(i) * data.encodedSequencePitchInInts;
+                task.candidateSequencesData = data.candidateSequencesData.data() + size_t(offset) * data.encodedSequencePitchInInts;
+                task.candidateSequencesRevcData = data.candidateSequencesRevcData.data() + size_t(offset) * data.encodedSequencePitchInInts;
+                task.subjectQualities = data.subjectQualities.data() + size_t(offset) * data.encodedSequencePitchInInts;
+                task.candidateQualities = data.candidateQualities.data() + size_t(offset) * data.qualityPitchInBytes;
+                task.decodedSubjectSequence = data.decodedSubjectSequences.data() + size_t(i) * data.decodedSequencePitchInBytes;
+            }
+        }
 
         struct InterestingStruct{
             read_number readId;
@@ -193,6 +258,135 @@ namespace cpu{
 
         std::vector<read_number> interestingReadIds;
         std::mutex interestingMutex;
+
+
+        void getSubjectSequenceData(BatchData& data,
+                                    const cpu::ContiguousReadStorage& readStorage){
+
+            const int numSubjects = data.subjectReadIds.size();
+
+            data.subjectSequencesLengths.clear();
+            data.subjectSequencesLengths.resize(numSubjects);
+            data.subjectSequencesData.clear();
+            data.subjectSequencesData.resize(data.encodedSequencePitchInInts * numSubjects, 0);
+
+            readStorage.gatherSequenceLengths(
+                data.readStorageGatherHandle,
+                data.subjectReadIds.data(),
+                numSubjects,
+                data.subjectSequencesLengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                data.readStorageGatherHandle,
+                data.subjectReadIds.data(),
+                numSubjects,
+                data.subjectSequencesData.data(),
+                data.encodedSequencePitchInInts
+            );
+        }
+
+        void determineCandidateReadIds(BatchData& data,
+                                        const Minhasher& minhasher,
+                                        int requiredHitsPerCandidate){
+
+            const int numSubjects = data.subjectReadIds.size();
+
+            data.decodedSubjectSequences.clear();
+            data.decodedSubjectSequences.resize(numSubjects * data.decodedSequencePitchInBytes);
+
+            data.candidatesPerSubject.resize(numSubjects);
+            data.candidatesPerSubjectPrefixSum.resize(numSubjects+1);
+
+            data.candidateReadIds.clear();
+
+            for(int i = 0; i < numSubjects; i++){
+                const read_number readId = data.subjectReadIds[i];
+                const int length = data.subjectSequencesLengths[i];
+                char* const decodedBegin = &data.decodedSubjectSequences[i * data.decodedSequencePitchInBytes];
+
+                decode2BitSequence(decodedBegin,
+                                    &data.subjectSequencesData[i * data.encodedSequencePitchInInts],
+                                    length);
+                //TODO modify minhasher to work with char ptr + size instead of string
+                std::string sequence(decodedBegin, length);
+
+                minhasher.getCandidates_any_map(
+                    data.minhashHandle,
+                    sequence,
+                    0
+                );
+
+                auto readIdPos = std::lower_bound(data.minhashHandle.result().begin(),
+                                                data.minhashHandle.result().end(),
+                                                readId);
+
+                if(readIdPos != data.minhashHandle.result().end() && *readIdPos == readId){
+                    data.minhashHandle.result().erase(readIdPos);
+                }
+
+                data.candidateReadIds.insert(
+                    data.candidateReadIds.end(),
+                    data.minhashHandle.result().begin(),
+                    data.minhashHandle.result().end()
+                );
+
+                data.candidatesPerSubject[i] = std::distance(data.minhashHandle.result().begin(), data.minhashHandle.result().end());
+            }
+
+            std::partial_sum(
+                data.candidatesPerSubject.begin(),
+                data.candidatesPerSubject.end(),
+                data.candidatesPerSubjectPrefixSum.begin() + 1
+            );
+
+            data.candidatesPerSubjectPrefixSum[0] = 0;
+        }
+
+        void getCandidateSequenceData(BatchData& data,
+                                    const cpu::ContiguousReadStorage& readStorage){
+
+            const int numCandidates = data.candidateReadIds.size();
+
+            data.candidateSequencesLengths.resize(numCandidates);
+
+            data.candidateSequencesData.clear();
+            data.candidateSequencesData.resize(data.encodedSequencePitchInInts * numCandidates, 0);
+            data.candidateSequencesRevcData.clear();
+            data.candidateSequencesRevcData.resize(data.encodedSequencePitchInInts * numCandidates, 0);
+
+            readStorage.gatherSequenceLengths(
+                data.readStorageGatherHandle,
+                data.candidateReadIds.data(),
+                numCandidates,
+                data.candidateSequencesLengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                data.readStorageGatherHandle,
+                data.candidateReadIds.data(),
+                numCandidates,
+                data.candidateSequencesData.data(),
+                data.encodedSequencePitchInInts
+            );
+
+            for(int i = 0; i < numCandidates; i++){
+                const unsigned int* const seqPtr = data.candidateSequencesData.data() 
+                                                    + std::size_t(data.encodedSequencePitchInInts) * i;
+                unsigned int* const seqrevcPtr = data.candidateSequencesRevcData.data() 
+                                                    + std::size_t(data.encodedSequencePitchInInts) * i;
+
+                reverseComplement2Bit(
+                    seqrevcPtr,  
+                    seqPtr,
+                    data.candidateSequencesLengths[i]
+                );
+            }
+        }
+
+
+
+        // ############################
 
 
         void getCandidates(TaskData& data,
