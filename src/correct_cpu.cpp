@@ -177,21 +177,30 @@ namespace cpu{
         struct BatchTask{
             bool active;
             int numCandidates;
+            int numGoodAlignmentFlags;
+            int numFilteredCandidates;
             int subjectSequenceLength;
             read_number subjectReadId;
             read_number* candidateReadIds;
-            read_number* bestCandidateReadIds;
             int* candidateSequencesLengths; 
             unsigned int* subjectSequenceData;
             unsigned int* candidateSequencesData;
             unsigned int* candidateSequencesRevcData;
             char* subjectQualities;
-            char* candidateQualities;
             char* decodedSubjectSequence;
 
+            SHDResult* bestAlignments;
+            BestAlignment_t* bestAlignmentFlags;
+            int*bestAlignmentShifts;
+            float* bestAlignmentWeights;
+            read_number* bestCandidateReadIds;
+            int* bestCandidateLengths;
+            unsigned int* bestCandidateData;
+            char* bestCandidateQualities;
+
             void reset(){
-                active = false;
-                subjectReadId = std::numeric_limits<read_number>::max();
+                // active = false;
+                // subjectReadId = std::numeric_limits<read_number>::max();
             }
             
         };
@@ -200,7 +209,6 @@ namespace cpu{
         // data for all batch tasks within batch
             std::vector<read_number> subjectReadIds;
             std::vector<read_number> candidateReadIds;
-            std::vector<read_number> filteredCandidateReadIds;
             std::vector<unsigned int> subjectSequencesData;
             std::vector<unsigned int> candidateSequencesData;
             std::vector<unsigned int> candidateSequencesRevcData;
@@ -211,13 +219,32 @@ namespace cpu{
 
             std::vector<char> decodedSubjectSequences;
 
+            std::vector<SHDResult> bestAlignments;
+            std::vector<BestAlignment_t> bestAlignmentFlags;
+            std::vector<int> bestAlignmentShifts;
+            std::vector<float> bestAlignmentWeights;
+
             std::vector<int> candidatesPerSubject;
             std::vector<int> candidatesPerSubjectPrefixSum;
+            std::vector<read_number> filteredReadIds;
+        // data used by a single batch task. is shared by all tasks within batch -> no interleaved access
+            std::vector<SHDResult> forwardAlignments;
+            std::vector<SHDResult> revcAlignments;
+            std::vector<BestAlignment_t> alignmentFlags;
+            std::vector<int> filterIndices;
+            std::vector<char> decodedCandidateSequences;
+
+            std::vector<MSAFeature> msaforestfeatures;
+
+            std::vector<int> indicesOfCandidatesEqualToSubject;
+
+
         // ------------------------------------------------
             std::vector<BatchTask> batchTasks;
 
             ContiguousReadStorage::GatherHandle readStorageGatherHandle;
             Minhasher::Handle minhashHandle;
+            shd::CpuAlignmentHandle alignmentHandle;
 
             int encodedSequencePitchInInts = 0;
             int decodedSequencePitchInBytes = 0;
@@ -240,14 +267,20 @@ namespace cpu{
                 task.subjectSequenceLength = data.subjectSequencesLengths[i];
                 task.subjectReadId = data.subjectReadIds[i];
                 task.candidateReadIds = data.candidateReadIds.data() + offset;
-                //read_number* bestCandidateReadIds;
                 task.candidateSequencesLengths = data.candidateSequencesLengths.data() + offset; 
                 task.subjectSequenceData = data.subjectSequencesData.data() + size_t(i) * data.encodedSequencePitchInInts;
                 task.candidateSequencesData = data.candidateSequencesData.data() + size_t(offset) * data.encodedSequencePitchInInts;
                 task.candidateSequencesRevcData = data.candidateSequencesRevcData.data() + size_t(offset) * data.encodedSequencePitchInInts;
-                task.subjectQualities = data.subjectQualities.data() + size_t(offset) * data.encodedSequencePitchInInts;
-                task.candidateQualities = data.candidateQualities.data() + size_t(offset) * data.qualityPitchInBytes;
+
                 task.decodedSubjectSequence = data.decodedSubjectSequences.data() + size_t(i) * data.decodedSequencePitchInBytes;
+
+                task.bestAlignments = data.bestAlignments.data() + offset;
+                task.bestAlignmentFlags = data.bestAlignmentFlags.data() + offset;
+                task.bestAlignmentShifts = data.bestAlignmentShifts.data() + offset;
+                task.bestAlignmentWeights = data.bestAlignmentWeights.data() + offset;
+                task.bestCandidateReadIds = task.candidateReadIds;
+                task.bestCandidateLengths = task.candidateSequencesLengths;
+                task.bestCandidateData = task.candidateReadIds;                               
             }
         }
 
@@ -284,6 +317,8 @@ namespace cpu{
                 data.subjectSequencesData.data(),
                 data.encodedSequencePitchInInts
             );
+
+            data.subjectQualities.resize(size_t(data.qualityPitchInBytes) * numSubjects);
         }
 
         void determineCandidateReadIds(BatchData& data,
@@ -299,6 +334,8 @@ namespace cpu{
             data.candidatesPerSubjectPrefixSum.resize(numSubjects+1);
 
             data.candidateReadIds.clear();
+
+            int maxCandidatesPerSubject = 0;
 
             for(int i = 0; i < numSubjects; i++){
                 const read_number readId = data.subjectReadIds[i];
@@ -331,8 +368,16 @@ namespace cpu{
                     data.minhashHandle.result().end()
                 );
 
-                data.candidatesPerSubject[i] = std::distance(data.minhashHandle.result().begin(), data.minhashHandle.result().end());
+                const int candidatesPerSubject = std::distance(data.minhashHandle.result().begin(), data.minhashHandle.result().end());
+                maxCandidatesPerSubject = std::max(maxCandidatesPerSubject, candidatesPerSubject);
+                data.candidatesPerSubject[i] = candidatesPerSubject;
             }
+
+            data.forwardAlignments.resize(maxCandidatesPerSubject);
+            data.revcAlignments.resize(maxCandidatesPerSubject);
+            data.alignmentFlags.resize(maxCandidatesPerSubject);
+            data.decodedCandidateSequences.resize(size_t(data.decodedSequencePitchInBytes) * maxCandidatesPerSubject);
+            data.filterIndices.resize(maxCandidatesPerSubject);
 
             std::partial_sum(
                 data.candidatesPerSubject.begin(),
@@ -341,19 +386,31 @@ namespace cpu{
             );
 
             data.candidatesPerSubjectPrefixSum[0] = 0;
+
+            const int totalNumCandidates = data.candidatesPerSubjectPrefixSum.back();
+
+            
+            data.candidateQualities.resize(size_t(data.qualityPitchInBytes) * totalNumCandidates);
+            data.bestAlignments.resize(totalNumCandidates);
+            data.bestAlignmentFlags.resize(totalNumCandidates);
+            data.bestAlignmentShifts.resize(totalNumCandidates);
+            data.bestAlignmentWeights.resize(totalNumCandidates);
+
+            data.filteredReadIds.resize(totalNumCandidates);
+
         }
 
         void getCandidateSequenceData(BatchData& data,
                                     const cpu::ContiguousReadStorage& readStorage){
 
-            const int numCandidates = data.candidateReadIds.size();
+            const int numCandidates = data.candidatesPerSubjectPrefixSum.back();
 
             data.candidateSequencesLengths.resize(numCandidates);
 
             data.candidateSequencesData.clear();
-            data.candidateSequencesData.resize(data.encodedSequencePitchInInts * numCandidates, 0);
+            data.candidateSequencesData.resize(size_t(data.encodedSequencePitchInInts) * numCandidates, 0);
             data.candidateSequencesRevcData.clear();
-            data.candidateSequencesRevcData.resize(data.encodedSequencePitchInInts * numCandidates, 0);
+            data.candidateSequencesRevcData.resize(size_t(data.encodedSequencePitchInInts) * numCandidates, 0);
 
             readStorage.gatherSequenceLengths(
                 data.readStorageGatherHandle,
@@ -381,6 +438,260 @@ namespace cpu{
                     seqPtr,
                     data.candidateSequencesLengths[i]
                 );
+            }
+        }
+
+        void getCandidateAlignments(BatchData& data,
+                                    BatchTask& task,
+                                    const GoodAlignmentProperties& alignmentProps,
+                                    const CorrectionOptions& correctionOptions){
+
+            shd::cpuShiftedHammingDistancePopcount2Bit(
+                data.alignmentHandle,
+                data.forwardAlignments.begin(),
+                task.subjectSequenceData,
+                task.subjectSequenceLength,
+                task.candidateSequencesData,
+                data.encodedSequencePitchInInts,
+                task.candidateSequencesLengths,
+                task.numCandidates,
+                alignmentProps.min_overlap,
+                alignmentProps.maxErrorRate,
+                alignmentProps.min_overlap_ratio
+            );
+
+            shd::cpuShiftedHammingDistancePopcount2Bit(
+                data.alignmentHandle,
+                data.revcAlignments.begin(),
+                task.subjectSequenceData,
+                task.subjectSequenceLength,
+                task.candidateSequencesRevcData,
+                data.encodedSequencePitchInInts,
+                task.candidateSequencesLengths,
+                task.numCandidates,
+                alignmentProps.min_overlap,
+                alignmentProps.maxErrorRate,
+                alignmentProps.min_overlap_ratio
+            );
+
+            //decide whether to keep forward or reverse complement
+
+            findBestAlignmentDirection(
+                data.alignmentFlags.begin(),
+                data.forwardAlignments.data(),
+                data.revcAlignments.data(),
+                task.numCandidates,
+                task.subjectSequenceLength,
+                task.candidateSequencesLengths,
+                alignmentProps.min_overlap,
+                correctionOptions.estimatedErrorrate,
+                alignmentProps.min_overlap_ratio
+            );
+
+            task.numGoodAlignmentFlags = std::count_if(
+                data.alignmentFlags.begin(),
+                data.alignmentFlags.end(),
+                [](const auto flag){
+                    return flag != BestAlignment_t::None;
+                }
+            );
+
+            if(task.numGoodAlignmentFlags == 0){
+                task.active = false;
+            }
+        }
+
+        void gatherBestAlignmentData(BatchData& data,
+                                  BatchTask& task){
+
+            task.numFilteredCandidates = 0;
+
+            for(size_t i = 0, insertpos = 0; i < data.alignmentFlags.size(); i++){
+
+                const BestAlignment_t flag = data.alignmentFlags[i];
+                const auto& fwdAlignment = data.forwardAlignments[i];
+                const auto& revcAlignment = data.revcAlignments[i];
+                const read_number candidateId = task.candidateReadIds[i];
+                const int candidateLength = task.candidateSequencesLengths[i];
+
+                if(flag == BestAlignment_t::Forward){
+                    task.bestAlignmentFlags[insertpos] = flag;
+                    task.bestCandidateReadIds[insertpos] = candidateId;
+                    task.bestCandidateLengths[insertpos] = candidateLength;
+
+                    task.bestAlignments[insertpos] = fwdAlignment;
+                    std::copy_n(
+                        task.candidateSequencesData + i * size_t(data.encodedSequencePitchInInts),
+                        data.encodedSequencePitchInInts,
+                        task.bestCandidateData + insertpos * size_t(data.encodedSequencePitchInInts)
+                    );
+
+                    insertpos++;
+                    task.numFilteredCandidates++;
+
+                }else if(flag == BestAlignment_t::ReverseComplement){
+                    task.bestAlignmentFlags[insertpos] = flag;
+                    task.bestCandidateReadIds[insertpos] = candidateId;
+                    task.bestCandidateLengths[insertpos] = candidateLength;
+
+                    task.bestAlignments[insertpos] = revcAlignment;
+                    std::copy_n(
+                        task.candidateSequencesRevcData + i * size_t(data.encodedSequencePitchInInts),
+                        data.encodedSequencePitchInInts,
+                        task.bestCandidateData + insertpos * size_t(data.encodedSequencePitchInInts)
+                    );
+
+                    insertpos++;
+                    task.numFilteredCandidates++;
+
+                }else{
+                    ;//BestAlignment_t::None discard alignment
+                }
+            }
+        }
+
+        void filterBestAlignmentsByMismatchRatio(BatchData& data,
+                  BatchTask& task,
+                  const CorrectionOptions& correctionOptions,
+                  const GoodAlignmentProperties& alignmentProps){
+            //get indices of alignments which have a good mismatch ratio
+
+            auto filterIndicesEnd = filterAlignmentsByMismatchRatio(
+                data.filterIndices.begin(),
+                task.bestAlignments,
+                task.numFilteredCandidates,
+                correctionOptions.estimatedErrorrate,
+                correctionOptions.estimatedCoverage,
+                correctionOptions.m_coverage,
+                [hpc = correctionOptions.hits_per_candidate](){
+                return hpc > 1;
+                }
+            );
+
+            task.numFilteredCandidates = std::distance(data.filterIndices.begin(), filterIndicesEnd);
+
+            if(task.numFilteredCandidates == 0){
+                task.active = false; //no good mismatch ratio
+            }else{
+                //compaction. keep only data at positions given by filterIndices
+
+                for(int i = 0; i < task.numFilteredCandidates; i++){
+                    const int fromIndex = data.filterIndices[i];
+                    const int toIndex = i;
+
+                    task.bestAlignments[toIndex] = task.bestAlignments[fromIndex];
+                    task.bestAlignmentFlags[toIndex] = task.bestAlignmentFlags[fromIndex];
+                    task.bestCandidateReadIds[toIndex] = task.bestCandidateReadIds[fromIndex];
+                    task.bestCandidateLengths[toIndex] = task.bestCandidateLengths[fromIndex];
+
+                    std::copy_n(
+                        task.bestCandidateData + fromIndex * size_t(data.encodedSequencePitchInInts),
+                        data.encodedSequencePitchInInts,
+                        task.bestCandidateData + toIndex * size_t(data.encodedSequencePitchInInts)
+                    );
+                }
+
+                auto calculateOverlapWeight = [](int anchorlength, int nOps, int overlapsize){
+                    constexpr float maxErrorPercentInOverlap = 0.2f;
+
+                    return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
+                };
+
+                for(size_t i = 0; i < task.numFilteredCandidates; i++){
+                    task.bestAlignmentShifts[i] = task.bestAlignments[i].shift;
+
+                    task.bestAlignmentWeights[i] = calculateOverlapWeight(
+                        task.subjectSequenceLength, 
+                        task.bestAlignments[i].nOps, 
+                        task.bestAlignments[i].overlap
+                    );
+                }
+            }
+        }
+
+        void removeInactiveTasks(BatchData& data){
+
+            const int numSubjects = data.batchTasks.size();
+
+            int numRemainingSubjects = 0;
+            for(int i = 0; i < numSubjects; i++){
+                const auto& task = data.batchTasks[i];
+                if(!task.active){
+                    data.batchTasks[numRemainingSubjects] = task;
+                    data.candidatesPerSubject[numRemainingSubjects] = task.numFilteredCandidates;
+                    numRemainingSubjects++;
+                }
+            }
+
+            data.batchTasks.erase(
+                data.batchTasks.begin() + numRemainingSubjects,
+                data.batchTasks.end()
+            );
+
+            std::partial_sum(
+                data.candidatesPerSubject.begin(),
+                data.candidatesPerSubject.begin() + numRemainingSubjects,
+                data.candidatesPerSubjectPrefixSum.begin() + 1
+            );
+
+            for(int i = 0; i < numRemainingSubjects; i++){
+                auto& task = data.batchTasks[i];
+                const size_t offset = data.candidatesPerSubjectPrefixSum[i];
+                task.subjectQualities = data.subjectQualities.data() + size_t(i) * data.qualityPitchInBytes;
+                task.bestCandidateQualities = data.candidateQualities.data() + offset * data.qualityPitchInBytes;
+            }            
+        }
+
+
+        void getQualities(BatchData& data,
+                          const cpu::ContiguousReadStorage& readStorage){
+
+            const int numSubjects = data.batchTasks.size();
+
+            // get qualities subjects
+
+            for(int i = 0; i < numSubjects; i++){
+                data.filteredReadIds[i] = data.batchTasks[i].subjectReadId;
+            }
+
+            readStorage.gatherSequenceQualities(
+                data.readStorageGatherHandle,
+                data.filteredReadIds.data(),
+                numSubjects,
+                data.subjectQualities.data(),
+                data.qualityPitchInBytes
+            );
+
+            // get qualities of candidates
+
+            const int numCandidates = data.candidatesPerSubjectPrefixSum.back();
+            for(int i = 0; i < numSubjects; i++){
+                std::copy_n(
+                    data.batchTasks[i].candidateReadIds,
+                    data.batchTasks[i].numFilteredCandidates,
+                    data.filteredReadIds.begin() + data.candidatesPerSubjectPrefixSum[i]
+                );                
+            }
+
+            readStorage.gatherSequenceQualities(
+                data.readStorageGatherHandle,
+                data.filteredReadIds.data(),
+                numCandidates,
+                data.candidateQualities.data(),
+                data.qualityPitchInBytes
+            );
+            
+            //reverse quality scores
+            for(int i = 0; i < numSubjects; i++){
+                auto& task = data.batchTasks[i];
+                for(int c = 0; c < task.numFilteredCandidates; c++){
+                    if(task.bestAlignmentFlags[c] == BestAlignment_t::ReverseComplement){
+                        std::reverse(
+                            task.bestCandidateQualities + c * size_t(data.qualityPitchInBytes),
+                            task.bestCandidateQualities + (c+1) * size_t(data.qualityPitchInBytes)
+                        );
+                    }
+                }             
             }
         }
 
@@ -532,69 +843,6 @@ namespace cpu{
                 alignmentProps.maxErrorRate,
                 alignmentProps.min_overlap_ratio
             );
-
-
-
-            // std::vector<SHDResult> newforwardalignments(numCandidates);
-            // std::vector<SHDResult> newrevcalignments(numCandidates);
-
-            // shd::cpu_multi_shifted_hamming_distance_popcount_new(newforwardalignments.begin(),
-            //                                                 (const char*)task.encodedSubjectPtr,
-            //                                                 task.original_subject_string.size(),
-            //                                                 data.candidateData,
-            //                                                 data.candidateLengths,
-            //                                                 encodedSequencePitch,
-            //                                                 alignmentProps.min_overlap,
-            //                                                 alignmentProps.maxErrorRate,
-            //                                                 alignmentProps.min_overlap_ratio);
-
-            // shd::cpu_multi_shifted_hamming_distance_popcount_new(newrevcalignments.begin(),
-            //                                                 (const char*)task.encodedSubjectPtr,
-            //                                                 task.original_subject_string.size(),
-            //                                                 data.candidateRevcData,
-            //                                                 data.candidateLengths,
-            //                                                 encodedSequencePitch,
-            //                                                 alignmentProps.min_overlap,
-            //                                                 alignmentProps.maxErrorRate,
-            //                                                 alignmentProps.min_overlap_ratio);
-
-            // for(int i = 0; i < numCandidates; i++){
-            //     if(data.forwardAlignments[i] != newforwardalignments[i]){
-            //         std::cerr << "error task " << task.readId << " forward candidate " << i << '\n';
-            //         std::cerr << "old\n";
-            //         std::cerr << data.forwardAlignments[i].score << "\n";
-            //         std::cerr << data.forwardAlignments[i].overlap << "\n";
-            //         std::cerr << data.forwardAlignments[i].shift << "\n";
-            //         std::cerr << data.forwardAlignments[i].nOps << "\n";
-            //         std::cerr << data.forwardAlignments[i].isValid << "\n";
-            //         std::cerr << "new\n";
-            //         std::cerr << newforwardalignments[i].score << "\n";
-            //         std::cerr << newforwardalignments[i].overlap << "\n";
-            //         std::cerr << newforwardalignments[i].shift << "\n";
-            //         std::cerr << newforwardalignments[i].nOps << "\n";
-            //         std::cerr << newforwardalignments[i].isValid << "\n";
-            //         std::exit(0);
-            //     }
-            // }
-
-            // for(int i = 0; i < numCandidates; i++){
-            //     if(data.revcAlignments[i] != newrevcalignments[i]){
-            //         std::cerr << "error task " << task.readId << " revc candidate " << i << '\n';
-            //         std::cerr << "old\n";
-            //         std::cerr << data.revcAlignments[i].score << "\n";
-            //         std::cerr << data.revcAlignments[i].overlap << "\n";
-            //         std::cerr << data.revcAlignments[i].shift << "\n";
-            //         std::cerr << data.revcAlignments[i].nOps << "\n";
-            //         std::cerr << data.revcAlignments[i].isValid << "\n";
-            //         std::cerr << "new\n";
-            //         std::cerr << newrevcalignments[i].score << "\n";
-            //         std::cerr << newrevcalignments[i].overlap << "\n";
-            //         std::cerr << newrevcalignments[i].shift << "\n";
-            //         std::cerr << newrevcalignments[i].nOps << "\n";
-            //         std::cerr << newrevcalignments[i].isValid << "\n";
-            //         std::exit(0);
-            //     }
-            // }
 
             //decide whether to keep forward or reverse complement
             data.alignmentFlags = findBestAlignmentDirection(data.forwardAlignments,
