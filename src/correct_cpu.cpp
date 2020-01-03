@@ -474,6 +474,10 @@ namespace cpu{
                                     const GoodAlignmentProperties& alignmentProps,
                                     const CorrectionOptions& correctionOptions){
 
+            for(int i = 0; i < task.numCandidates; i++){
+                assert(task.candidateSequencesLengths[i] == 100);
+            }
+
             shd::cpuShiftedHammingDistancePopcount2Bit(
                 data.alignmentHandle,
                 data.forwardAlignments.begin(),
@@ -518,7 +522,7 @@ namespace cpu{
 
             task.numGoodAlignmentFlags = std::count_if(
                 data.alignmentFlags.begin(),
-                data.alignmentFlags.end(),
+                data.alignmentFlags.begin() + task.numCandidates,
                 [](const auto flag){
                     return flag != BestAlignment_t::None;
                 }
@@ -534,7 +538,7 @@ namespace cpu{
 
             task.numFilteredCandidates = 0;
 
-            for(size_t i = 0, insertpos = 0; i < data.alignmentFlags.size(); i++){
+            for(int i = 0, insertpos = 0; i < task.numCandidates; i++){
 
                 const BestAlignment_t flag = data.alignmentFlags[i];
                 const auto& fwdAlignment = data.forwardAlignments[i];
@@ -1108,6 +1112,531 @@ namespace cpu{
                 data.outputData.encodedCandidateCorrections.emplace_back(tmp.encode());
             }
         }
+
+
+void correct_cpu(const MinhashOptions& minhashOptions,
+                  const AlignmentOptions& alignmentOptions,
+                  const GoodAlignmentProperties& goodAlignmentProperties,
+                  const CorrectionOptions& correctionOptions,
+                  const RuntimeOptions& runtimeOptions,
+                  const FileOptions& fileOptions,
+                  const SequenceFileProperties& sequenceFileProperties,
+                  Minhasher& minhasher,
+                  cpu::ContiguousReadStorage& readStorage,
+                  std::uint64_t maxCandidatesPerRead){
+
+    int oldNumOMPThreads = 1;
+    #pragma omp parallel
+    {
+        #pragma omp single
+        oldNumOMPThreads = omp_get_num_threads();
+    }
+
+    omp_set_num_threads(runtimeOptions.nCorrectorThreads);
+
+    std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
+    std::vector<std::string> featureTmpFiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_features"};
+
+    // std::ofstream outputstream;
+
+    // outputstream = std::move(std::ofstream(tmpfiles[0]));
+    // if(!outputstream){
+    //     throw std::runtime_error("Could not open output file " + tmpfiles[0]);
+    // }
+
+    const std::size_t availableMemory = getAvailableMemoryInKB();
+    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(2) << 30);
+
+    auto heapusageOfTCS = [](const auto& x){
+        return x.data.capacity();
+    };
+
+    MemoryFile<EncodedTempCorrectedSequence> partialResults(memoryForPartialResults, tmpfiles[0], heapusageOfTCS);
+
+    std::ofstream featurestream;
+      //if(correctionOptions.extractFeatures){
+          featurestream = std::move(std::ofstream(featureTmpFiles[0]));
+          if(!featurestream && correctionOptions.extractFeatures){
+              throw std::runtime_error("Could not open output feature file");
+          }
+      //}
+
+#ifndef DO_PROFILE
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+#else
+    cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
+#endif
+
+#if 0
+    NN_Correction_Classifier_Base nnClassifierBase;
+    NN_Correction_Classifier nnClassifier;
+    if(correctionOptions.correctionType == CorrectionType::Convnet){
+        nnClassifierBase = std::move(NN_Correction_Classifier_Base{"./nn_sources", fileOptions.nnmodelfilename});
+        nnClassifier = std::move(NN_Correction_Classifier{&nnClassifierBase});
+    }
+#endif 
+
+    ForestClassifier forestClassifier;
+    if(correctionOptions.correctionType == CorrectionType::Forest){
+        forestClassifier = std::move(ForestClassifier{fileOptions.forestfilename});
+    }
+
+    auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
+          //std::unique_lock<std::mutex> l(outputstreammutex);
+          if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
+              //outputstream << tmp << '\n';
+              partialResults.storeElement(std::move(encoded));
+          }
+      };
+
+    std::vector<std::uint8_t> correctionStatusFlagsPerRead;
+    std::size_t nLocksForProcessedFlags = runtimeOptions.nCorrectorThreads * 1000;
+    std::unique_ptr<std::mutex[]> locksForProcessedFlags(new std::mutex[nLocksForProcessedFlags]);
+
+    correctionStatusFlagsPerRead.resize(sequenceFileProperties.nReads, 0);
+
+    std::cerr << "correctionStatusFlagsPerRead bytes: " << correctionStatusFlagsPerRead.size() / 1024. / 1024. << " MB\n";
+
+    auto lock = [&](read_number readId){
+        read_number index = readId % nLocksForProcessedFlags;
+        locksForProcessedFlags[index].lock();
+    };
+
+    auto unlock = [&](read_number readId){
+        read_number index = readId % nLocksForProcessedFlags;
+        locksForProcessedFlags[index].unlock();
+    };
+
+    std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
+    std::chrono::duration<double> runtime = std::chrono::seconds(0);
+    std::chrono::duration<double> previousProgressTime = std::chrono::seconds(0);
+    std::chrono::duration<double> getSubjectSequenceDataTimeTotal{0};
+    std::chrono::duration<double> getCandidatesTimeTotal{0};
+    std::chrono::duration<double> copyCandidateDataToBufferTimeTotal{0};
+    std::chrono::duration<double> getAlignmentsTimeTotal{0};
+    std::chrono::duration<double> findBestAlignmentDirectionTimeTotal{0};
+    std::chrono::duration<double> gatherBestAlignmentDataTimeTotal{0};
+    std::chrono::duration<double> mismatchRatioFilteringTimeTotal{0};
+    std::chrono::duration<double> compactBestAlignmentDataTimeTotal{0};
+    std::chrono::duration<double> fetchQualitiesTimeTotal{0};
+    std::chrono::duration<double> makeCandidateStringsTimeTotal{0};
+    std::chrono::duration<double> msaAddSequencesTimeTotal{0};
+    std::chrono::duration<double> msaFindConsensusTimeTotal{0};
+    std::chrono::duration<double> msaMinimizationTimeTotal{0};
+    std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
+    std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
+    std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
+
+    BackgroundThread outputThread(true);
+
+
+    // std::ifstream interestingstream("interestingIds.txt");
+    // if(interestingstream){
+    //     std::string line;
+    //     while(std::getline(interestingstream, line)){
+    //         auto tokens = split(line, ' ');
+    //         if(!tokens.empty()){
+    //             read_number n = std::stoull(tokens[0]);
+    //             interestingReadIds.emplace_back(n);
+    //         }
+    //     }
+    //     auto it = std::unique(interestingReadIds.begin(), interestingReadIds.end());
+    //     interestingReadIds.erase(it, interestingReadIds.end());
+
+    //     std::cerr << "Looking for " << interestingReadIds.size() << " interesting read ids\n";
+    // }else{
+    //     std::cerr << "Looking for no interesting read id\n";
+    // }
+
+    auto showProgress = [&](auto totalCount, auto seconds){
+        if(runtimeOptions.showProgress){
+
+            printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                    totalCount, sequenceFileProperties.nReads,
+                    int(seconds / 3600),
+                    int(seconds / 60) % 60,
+                    int(seconds) % 60);
+            std::cout.flush();
+        }
+
+        if(totalCount == sequenceFileProperties.nReads){
+            std::cerr << '\n';
+        }
+    };
+
+    auto updateShowProgressInterval = [](auto duration){
+        return duration;
+    };
+
+    ProgressThread<read_number> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+
+    //const int encodedSequencePitch = sizeof(unsigned int) * getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+    //const int encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+
+    //std::chrono::time_point<std::chrono::system_clock> tpa, tpb, tpc, tpd;
+
+    const int numThreads = runtimeOptions.nCorrectorThreads;
+
+
+    //std::vector<TaskData> dataPerTask(correctionOptions.batchsize);
+    //std::vector<CorrectionTask> correctionTasks;
+
+    std::vector<std::vector<CorrectionTask>> correctionTasksPerThread(numThreads);
+    std::vector<std::vector<TaskData>> dataPerTaskPerThread(numThreads);
+
+    //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
+
+    #pragma omp parallel
+    {
+        const int threadId = omp_get_thread_num();
+
+        BatchData batchData;
+        batchData.subjectReadIds.resize(correctionOptions.batchsize);
+        batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+        batchData.decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
+        batchData.qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+
+        while(!(readIdGenerator.empty())){
+
+            auto readIdsEnd = readIdGenerator.next_n_into_buffer(
+                correctionOptions.batchsize, 
+                batchData.subjectReadIds.begin()
+            );
+            batchData.subjectReadIds.erase(readIdsEnd, batchData.subjectReadIds.end());
+
+            if(batchData.subjectReadIds.empty()){
+                continue;
+            }
+
+            #ifdef ENABLE_TIMING
+            auto tpa = std::chrono::system_clock::now();
+            #endif
+
+            getSubjectSequenceData(batchData, readStorage);
+
+            #ifdef ENABLE_TIMING
+            getSubjectSequenceDataTimeTotal += std::chrono::system_clock::now() - tpa;
+            #endif
+
+            #ifdef ENABLE_TIMING
+            tpa = std::chrono::system_clock::now();
+            #endif
+
+            determineCandidateReadIds(batchData, minhasher, correctionOptions.hits_per_candidate);
+
+            #ifdef ENABLE_TIMING
+            getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+            #endif
+
+            #ifdef ENABLE_TIMING
+            tpa = std::chrono::system_clock::now();
+            #endif
+
+            getCandidateSequenceData(batchData, readStorage);
+
+            #ifdef ENABLE_TIMING
+            copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
+            #endif
+
+            makeBatchTasks(batchData);
+
+            for(auto& batchTask : batchData.batchTasks){
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                getCandidateAlignments(
+                    batchData,
+                    batchTask,
+                    goodAlignmentProperties,
+                    correctionOptions
+                );
+
+                #ifdef ENABLE_TIMING
+                getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                gatherBestAlignmentData(batchData, batchTask);
+
+                #ifdef ENABLE_TIMING
+                gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                filterBestAlignmentsByMismatchRatio(
+                    batchData,
+                    batchTask,
+                    correctionOptions,
+                    goodAlignmentProperties
+                );
+
+                #ifdef ENABLE_TIMING
+                mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+            }
+
+            removeInactiveTasks(batchData);
+
+            if(correctionOptions.useQualityScores){
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                getQualities(batchData, readStorage);
+
+                #ifdef ENABLE_TIMING
+                fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+            }
+
+            assert(correctionOptions.correctionType == CorrectionType::Classic);
+
+            for(auto& batchTask : batchData.batchTasks){
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                makeCandidateStrings(batchData, batchTask);
+
+                #ifdef ENABLE_TIMING
+                makeCandidateStringsTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                buildMultipleSequenceAlignment(batchData, batchTask, correctionOptions);
+
+                #ifdef ENABLE_TIMING
+                msaFindConsensusTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                removeCandidatesOfDifferentRegionFromMSA(batchData, batchTask, correctionOptions);
+
+                #ifdef ENABLE_TIMING
+                msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+                #ifdef ENABLE_TIMING
+                tpa = std::chrono::system_clock::now();
+                #endif
+
+                correctSubject(batchData, batchTask, correctionOptions);
+
+                #ifdef ENABLE_TIMING
+                msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
+                #endif
+
+                setCorrectionStatusFlags(batchData, batchTask, correctionStatusFlagsPerRead.data());
+
+                if(batchTask.msaProperties.isHQ){
+
+                    #ifdef ENABLE_TIMING
+                    tpa = std::chrono::system_clock::now();
+                    #endif
+
+                    correctCandidates(batchData, batchTask, correctionOptions);
+
+                    #ifdef ENABLE_TIMING
+                    msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+                    #endif
+
+                }
+            }
+
+            makeOutputData(batchData, readStorage, correctionStatusFlagsPerRead.data());
+
+            encodeOutputData(batchData);
+
+            auto outputfunction = [&, outputData = std::move(batchData.outputData)](){
+                for(int i = 0; i < int(outputData.anchorCorrections.size()); i++){
+                    saveCorrectedSequence(
+                        outputData.anchorCorrections[i], 
+                        outputData.encodedAnchorCorrections[i]
+                    );
+                }
+
+                for(int i = 0; i < int(outputData.candidateCorrections.size()); i++){
+                    saveCorrectedSequence(
+                        outputData.candidateCorrections[i], 
+                        outputData.encodedCandidateCorrections[i]
+                    );
+                }
+            };
+
+            outputThread.enqueue(std::move(outputfunction));
+
+            progressThread.addProgress(batchData.subjectReadIds.size()); 
+        } //while unprocessed reads exist loop end   
+
+
+    } // parallel end
+
+    progressThread.finished();
+
+    // if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
+    //     const auto now = std::chrono::system_clock::now();
+    //     runtime = now - timepoint_begin;
+
+    //     printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\n",
+    //             readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
+    //             int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+    //             int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+    //             int(runtime.count()) % 60);
+    //     //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
+    // }
+
+    outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+    featurestream.flush();
+    //outputstream.flush();
+    partialResults.flush();
+
+    minhasher.destroy();
+    readStorage.destroy();
+
+
+    std::chrono::duration<double> totalDuration = getSubjectSequenceDataTimeTotal
+                                                + getCandidatesTimeTotal
+                                                + copyCandidateDataToBufferTimeTotal
+                                                + getAlignmentsTimeTotal
+                                                + findBestAlignmentDirectionTimeTotal
+                                                + gatherBestAlignmentDataTimeTotal
+                                                + mismatchRatioFilteringTimeTotal
+                                                + compactBestAlignmentDataTimeTotal
+                                                + fetchQualitiesTimeTotal
+                                                + makeCandidateStringsTimeTotal
+                                                + msaAddSequencesTimeTotal
+                                                + msaFindConsensusTimeTotal
+                                                + msaMinimizationTimeTotal
+                                                + msaCorrectSubjectTimeTotal
+                                                + msaCorrectCandidatesTimeTotal
+                                                + correctWithFeaturesTimeTotal;
+
+    auto printDuration = [&](const auto& name, const auto& duration){
+        std::cout << "# elapsed time ("<< name << "): "
+                  << duration.count()  << " s. "
+                  << (100.0 * duration / totalDuration) << " %."<< std::endl;
+    };
+
+    #define printme(x) printDuration((#x),(x));
+
+    printme(getSubjectSequenceDataTimeTotal);
+    printme(getCandidatesTimeTotal);
+    printme(copyCandidateDataToBufferTimeTotal);
+    printme(getAlignmentsTimeTotal);
+    printme(findBestAlignmentDirectionTimeTotal);
+    printme(gatherBestAlignmentDataTimeTotal);
+    printme(mismatchRatioFilteringTimeTotal);
+    printme(compactBestAlignmentDataTimeTotal);
+    printme(fetchQualitiesTimeTotal);
+    printme(makeCandidateStringsTimeTotal);
+    printme(msaAddSequencesTimeTotal);
+    printme(msaFindConsensusTimeTotal);
+    printme(msaMinimizationTimeTotal);
+    printme(msaCorrectSubjectTimeTotal);
+    printme(msaCorrectCandidatesTimeTotal);
+    printme(correctWithFeaturesTimeTotal);
+
+    #undef printme
+
+#ifdef DO_PROFILE
+
+    return;
+
+#endif
+
+    std::cout << "Correction finished. Constructing result file." << std::endl;
+
+    if(!correctionOptions.extractFeatures){
+
+        std::cout << "begin merging reads" << std::endl;
+
+        TIMERSTARTCPU(merge);
+
+        mergeResultFiles(
+                        fileOptions.tempdirectory,
+                        sequenceFileProperties.nReads, 
+                        fileOptions.inputfile, 
+                        fileOptions.format, 
+                        partialResults, 
+                        fileOptions.outputfile, 
+                        false);
+
+        TIMERSTOPCPU(merge);
+
+        std::cout << "end merging reads" << std::endl;
+
+    }
+
+    deleteFiles(tmpfiles);
+
+    std::vector<std::string> featureFiles(tmpfiles);
+    for(auto& s : featureFiles)
+        s = s + "_features";
+
+      //concatenate feature files one file
+
+      if(correctionOptions.extractFeatures){
+          std::cout << "begin merging features" << std::endl;
+
+          std::stringstream commandbuilder;
+
+          commandbuilder << "cat";
+
+          for(const auto& featureFile : featureTmpFiles){
+              commandbuilder << " \"" << featureFile << "\"";
+          }
+
+          commandbuilder << " > \"" << fileOptions.outputfile << "_features\"";
+
+          const std::string command = commandbuilder.str();
+          TIMERSTARTCPU(concat_feature_files);
+          int r1 = std::system(command.c_str());
+          TIMERSTOPCPU(concat_feature_files);
+
+          if(r1 != 0){
+              std::cerr << "Warning. Feature files could not be concatenated!\n";
+              std::cerr << "This command returned a non-zero error value: \n";
+              std::cerr << command +  '\n';
+              std::cerr << "Please concatenate the following files manually\n";
+              for(const auto& s : featureTmpFiles)
+                  std::cerr << s << '\n';
+          }else{
+              deleteFiles(featureTmpFiles);
+          }
+
+          std::cout << "end merging features" << std::endl;
+      }else{
+          deleteFiles(featureTmpFiles);
+      }
+
+    std::cout << "end merge" << std::endl;
+
+    omp_set_num_threads(oldNumOMPThreads);
+}
+
+
+
+
+
+
+
 
 
         // ############################
@@ -1947,7 +2476,7 @@ namespace cpu{
         }
 
 
-void correct_cpu(const MinhashOptions& minhashOptions,
+void correct_cpu_old(const MinhashOptions& minhashOptions,
                   const AlignmentOptions& alignmentOptions,
                   const GoodAlignmentProperties& goodAlignmentProperties,
                   const CorrectionOptions& correctionOptions,
