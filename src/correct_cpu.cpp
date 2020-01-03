@@ -188,6 +188,7 @@ namespace cpu{
             unsigned int* candidateSequencesRevcData;
             char* subjectQualities;
             char* decodedSubjectSequence;
+            
 
             SHDResult* bestAlignments;
             BestAlignment_t* bestAlignmentFlags;
@@ -197,6 +198,8 @@ namespace cpu{
             int* bestCandidateLengths;
             unsigned int* bestCandidateData;
             char* bestCandidateQualities;
+
+            MSAProperties msaProperties;
 
             void reset(){
                 // active = false;
@@ -234,6 +237,10 @@ namespace cpu{
             std::vector<int> filterIndices;
             std::vector<char> decodedCandidateSequences;
 
+            std::vector<int> tmpnOps;
+            std::vector<int> tmpoverlaps;
+
+
             std::vector<MSAFeature> msaforestfeatures;
 
             std::vector<int> indicesOfCandidatesEqualToSubject;
@@ -245,6 +252,8 @@ namespace cpu{
             ContiguousReadStorage::GatherHandle readStorageGatherHandle;
             Minhasher::Handle minhashHandle;
             shd::CpuAlignmentHandle alignmentHandle;
+
+            MultipleSequenceAlignment multipleSequenceAlignment;
 
             int encodedSequencePitchInInts = 0;
             int decodedSequencePitchInBytes = 0;
@@ -378,6 +387,9 @@ namespace cpu{
             data.alignmentFlags.resize(maxCandidatesPerSubject);
             data.decodedCandidateSequences.resize(size_t(data.decodedSequencePitchInBytes) * maxCandidatesPerSubject);
             data.filterIndices.resize(maxCandidatesPerSubject);
+
+            data.tmpnOps.resize(maxCandidatesPerSubject);
+            data.tmpoverlaps.resize(maxCandidatesPerSubject);
 
             std::partial_sum(
                 data.candidatesPerSubject.begin(),
@@ -597,7 +609,7 @@ namespace cpu{
                     return 1.0f - sqrtf(nOps / (overlapsize * maxErrorPercentInOverlap));
                 };
 
-                for(size_t i = 0; i < task.numFilteredCandidates; i++){
+                for(int i = 0; i < task.numFilteredCandidates; i++){
                     task.bestAlignmentShifts[i] = task.bestAlignments[i].shift;
 
                     task.bestAlignmentWeights[i] = calculateOverlapWeight(
@@ -692,6 +704,156 @@ namespace cpu{
                         );
                     }
                 }             
+            }
+        }
+
+        void makeCandidateStrings(BatchData& data,
+                  BatchTask& task){
+
+            const size_t decodedpitch = data.decodedSequencePitchInBytes;
+            const size_t encodedpitch = data.encodedSequencePitchInInts;
+
+            for(int i = 0; i < task.numFilteredCandidates; i++){
+                const unsigned int* const srcptr = task.bestCandidateData + i * encodedpitch;
+                char* const destptr = data.decodedCandidateSequences.data() + i * decodedpitch;
+                const int length = task.bestCandidateLengths[i];
+
+                decode2BitSequence(
+                    destptr,
+                    srcptr,
+                    length
+                );
+            }
+        }
+
+        void buildMultipleSequenceAlignment(
+                BatchData& data,
+                BatchTask& task,
+                const CorrectionOptions& correctionOptions){
+
+
+            const char* const candidateQualityPtr = correctionOptions.useQualityScores ?
+                                                    task.bestCandidateQualities
+                                                    : nullptr;
+
+            data.multipleSequenceAlignment.build(task.decodedSubjectSequence,
+                                            task.subjectSequenceLength,
+                                            data.decodedCandidateSequences.data(),
+                                            task.bestCandidateLengths,
+                                            task.numFilteredCandidates,
+                                            task.bestAlignmentShifts,
+                                            task.bestAlignmentWeights,
+                                            task.subjectQualities,
+                                            candidateQualityPtr,
+                                            data.decodedSequencePitchInBytes,
+                                            data.qualityPitchInBytes,
+                                            correctionOptions.useQualityScores);
+        }
+
+
+
+        void removeCandidatesOfDifferentRegionFromMSA(
+                BatchData& data,
+                BatchTask& task,
+                const CorrectionOptions& correctionOptions){
+
+            constexpr int max_num_minimizations = 5;
+
+            auto findCandidatesLambda = [&](){
+                return findCandidatesOfDifferentRegion(task.decodedSubjectSequence,
+                                                        task.subjectSequenceLength,
+                                                        data.decodedCandidateSequences.data(),
+                                                        task.bestCandidateLengths,
+                                                        task.numFilteredCandidates,
+                                                        data.decodedSequencePitchInBytes,
+                                                        data.multipleSequenceAlignment.consensus.data(),
+                                                        data.multipleSequenceAlignment.countsA.data(),
+                                                        data.multipleSequenceAlignment.countsC.data(),
+                                                        data.multipleSequenceAlignment.countsG.data(),
+                                                        data.multipleSequenceAlignment.countsT.data(),
+                                                        data.multipleSequenceAlignment.weightsA.data(),
+                                                        data.multipleSequenceAlignment.weightsC.data(),
+                                                        data.multipleSequenceAlignment.weightsG.data(),
+                                                        data.multipleSequenceAlignment.weightsT.data(),
+                                                        data.tmpnOps.data(), 
+                                                        data.tmpoverlaps.data(),
+                                                        data.multipleSequenceAlignment.subjectColumnsBegin_incl,
+                                                        data.multipleSequenceAlignment.subjectColumnsEnd_excl,
+                                                        task.bestAlignmentShifts,
+                                                        correctionOptions.estimatedCoverage);
+            };
+
+            auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
+
+                if(minimizationResult.performedMinimization){
+                    assert(minimizationResult.differentRegionCandidate.size() == data.bestAlignments.size());
+
+                    //bool anyRemoved = false;
+                    size_t cur = 0;
+                    for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
+                        if(!minimizationResult.differentRegionCandidate[i]){
+
+                            task.bestAlignments[cur] = task.bestAlignments[i];
+                            task.bestAlignmentShifts[cur] = task.bestAlignmentShifts[i];
+                            task.bestAlignmentWeights[cur] = task.bestAlignmentWeights[i];
+                            task.bestAlignmentFlags[cur] = task.bestAlignmentFlags[i];
+                            task.bestCandidateReadIds[cur] = task.bestCandidateReadIds[i];
+                            task.bestCandidateLengths[cur] = task.bestCandidateLengths[i];
+
+                            std::copy_n(
+                                task.bestCandidateData + i * data.encodedSequencePitchInInts,
+                                data.encodedSequencePitchInInts,
+                                task.bestCandidateData + cur * data.encodedSequencePitchInInts
+                            );
+                            std::copy_n(
+                                task.bestCandidateQualities + i * data.qualityPitchInBytes,
+                                data.qualityPitchInBytes,
+                                task.bestCandidateQualities + cur * data.qualityPitchInBytes
+                            );
+                            std::copy_n(
+                                data.decodedCandidateSequences.begin() + i * data.decodedSequencePitchInBytes,
+                                data.decodedSequencePitchInBytes,
+                                data.decodedCandidateSequences.begin() + cur * data.decodedSequencePitchInBytes
+                            );
+
+                            data.tmpnOps[cur] = data.tmpnOps[i];
+                            data.tmpoverlaps[cur] = data.tmpoverlaps[i];
+
+                            cur++;
+
+                        }else{
+                            //anyRemoved = true;
+                        }
+                    }
+
+                    task.numFilteredCandidates = cur;
+
+                    //assert(anyRemoved);
+
+                    //build minimized multiple sequence alignment
+
+                    buildMultipleSequenceAlignment(
+                        data,
+                        task,
+                        correctionOptions
+                    );
+                }
+            };
+
+            if(max_num_minimizations > 0){                
+
+                for(int i = 0; i < task.numFilteredCandidates; i++){
+                    data.tmpnOps[i] = task.bestAlignments[i].nOps;
+                    data.tmpoverlaps[i] = task.bestAlignments[i].overlap;
+                }
+
+                for(int numIterations = 0; numIterations < max_num_minimizations; numIterations++){
+                    const auto minimizationResult = findCandidatesLambda();
+                    removeCandidatesOfDifferentRegion(minimizationResult);
+                    if(!minimizationResult.performedMinimization){
+                        break;
+                    }
+                }
             }
         }
 
