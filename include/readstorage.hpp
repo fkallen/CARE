@@ -459,7 +459,7 @@ public:
             );
         }
 
-        void gatherSequenceDataSpecial(
+        void gatherSequenceQualitiesSpecial(
                 GatherHandle& handle,
                 const read_number* readIds,
                 int numReadIds,
