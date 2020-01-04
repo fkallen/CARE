@@ -300,7 +300,7 @@ namespace cpu{
                 task.bestAlignmentWeights = data.bestAlignmentWeights.data() + offset;
                 task.bestCandidateReadIds = task.candidateReadIds;
                 task.bestCandidateLengths = task.candidateSequencesLengths;
-                task.bestCandidateData = task.candidateReadIds;                               
+                task.bestCandidateData = task.candidateSequencesData;                               
             }
         }
 
@@ -610,6 +610,8 @@ namespace cpu{
                 for(int i = 0; i < task.numFilteredCandidates; i++){
                     const int fromIndex = data.filterIndices[i];
                     const int toIndex = i;
+                    
+                    std::cerr << "goodIndices[" << i << "]=" << fromIndex << "\n";
 
                     task.bestAlignments[toIndex] = task.bestAlignments[fromIndex];
                     task.bestAlignmentFlags[toIndex] = task.bestAlignmentFlags[fromIndex];
@@ -648,7 +650,7 @@ namespace cpu{
             int numRemainingSubjects = 0;
             for(int i = 0; i < numSubjects; i++){
                 const auto& task = data.batchTasks[i];
-                if(!task.active){
+                if(task.active){
                     data.batchTasks[numRemainingSubjects] = task;
                     data.candidatesPerSubject[numRemainingSubjects] = task.numFilteredCandidates;
                     numRemainingSubjects++;
@@ -933,6 +935,8 @@ namespace cpu{
             // }
 
             task.msaProperties.isHQ = task.subjectCorrection.isHQ;
+            
+            std::cerr << "corrected ? " << task.subjectCorrection.isCorrected << ", " << task.subjectCorrection.correctedSequence << "\n";
 
             // if(correctionResult.isCorrected){
             //     task.corrected_subject = std::move(correctionResult.correctedSequence);
@@ -1162,7 +1166,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(10/*sequenceFileProperties.nReads*/);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1286,7 +1290,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    #pragma omp parallel
+    //#pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
 
