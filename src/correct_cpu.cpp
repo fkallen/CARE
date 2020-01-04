@@ -486,6 +486,8 @@ namespace cpu{
                 for(size_t i = 0; i < goodIndices.size(); i++){
                     const int fromIndex = goodIndices[i];
                     const int toIndex = i;
+                    
+                    std::cerr << "goodIndices[" << i << "]=" << fromIndex << "\n";
 
                     data.bestAlignments[toIndex] = data.bestAlignments[fromIndex];
                     data.bestAlignmentFlags[toIndex] = data.bestAlignmentFlags[fromIndex];
@@ -529,6 +531,8 @@ namespace cpu{
                                                                         data.bestAlignments[i].overlap);
                 }
             }
+            
+            
         }
 
 
@@ -862,6 +866,8 @@ namespace cpu{
             }
 
             data.msaProperties.isHQ = correctionResult.isHQ;
+            
+            std::cerr << "corrected ? " << correctionResult.isCorrected << ", " << correctionResult.correctedSequence << "\n";
 
             if(correctionResult.isCorrected){
                 task.corrected_subject = std::move(correctionResult.correctedSequence);
@@ -1140,10 +1146,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(10);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
+
 
 #if 0
     NN_Correction_Classifier_Base nnClassifierBase;
@@ -1263,7 +1271,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    #pragma omp parallel
+    //#pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
         auto& correctionTasks = correctionTasksPerThread[threadId];
