@@ -1056,7 +1056,7 @@ namespace cpu{
                     tmp.readId = task.subjectReadId;
                     tmp.sequence = std::move(correctedSequenceString); 
                     
-                    std::cerr << "subject " << tmp << "\n";
+                    //std::cerr << "subject " << tmp << "\n";
                     
                     data.outputData.anchorCorrections.emplace_back(std::move(tmp));
                 }
@@ -1117,7 +1117,7 @@ namespace cpu{
                             tmp.useEdits = false;
                         }
                         
-                        std::cerr << "candidate " << tmp << "\n";
+                        //std::cerr << "candidate " << tmp << "\n";
                         
                         data.outputData.candidateCorrections.emplace_back(std::move(tmp));
                     }
@@ -1316,7 +1316,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(100/*sequenceFileProperties.nReads*/);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1440,7 +1440,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    //#pragma omp parallel
+    #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
 
