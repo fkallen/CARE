@@ -487,7 +487,7 @@ namespace cpu{
                     const int fromIndex = goodIndices[i];
                     const int toIndex = i;
                     
-                    std::cerr << "goodIndices[" << i << "]=" << fromIndex << "\n";
+                    //std::cerr << "goodIndices[" << i << "]=" << fromIndex << "\n";
 
                     data.bestAlignments[toIndex] = data.bestAlignments[fromIndex];
                     data.bestAlignmentFlags[toIndex] = data.bestAlignmentFlags[fromIndex];
@@ -607,6 +607,16 @@ namespace cpu{
                                         ptr,
                                         length);
             }
+            
+            if(task.readId == 1){
+                for(int i = 0; i < int(data.bestAlignments.size()); i++){
+                    std::cerr << data.bestCandidateReadIds[i] << " : ";
+                    for(int k = 0; k < data.bestCandidateLengths[i]; k++){
+                        std::cerr << data.bestCandidateStrings[i * maximumSequenceLength + k];
+                    }
+                    std::cerr << "\n";
+                }                
+            }
         }
 
         void getIndicesOfCandidatesEqualToSubject(TaskData& data,
@@ -699,8 +709,16 @@ namespace cpu{
 
                         bool anyRemoved = false;
                         size_t cur = 0;
+                        if(task.readId == 1){
+                            std::cerr << "------\n";
+                        }
+                        
                         for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
                             if(!minimizationResult.differentRegionCandidate[i]){
+                                
+                                if(task.readId == 1){
+                                    std::cerr << "keep " << i << "\n";                
+                                }
 
                                 data.bestAlignments[cur] = data.bestAlignments[i];
                                 data.bestAlignmentShifts[cur] = data.bestAlignmentShifts[i];
@@ -724,6 +742,10 @@ namespace cpu{
                             }else{
                                 anyRemoved = true;
                             }
+                        }
+                        
+                        if(task.readId == 1){
+                            std::cerr << "------\n";
                         }
 
                         //assert(anyRemoved);
@@ -867,7 +889,9 @@ namespace cpu{
 
             data.msaProperties.isHQ = correctionResult.isHQ;
             
-            std::cerr << "corrected ? " << correctionResult.isCorrected << ", " << correctionResult.correctedSequence << "\n";
+            if(task.readId == 1){
+                std::cerr << "corrected ? " << correctionResult.isCorrected << ", " << correctionResult.correctedSequence << "\n";
+            }
 
             if(correctionResult.isCorrected){
                 task.corrected_subject = std::move(correctionResult.correctedSequence);
