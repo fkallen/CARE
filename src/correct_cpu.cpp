@@ -744,6 +744,16 @@ namespace cpu{
                     length
                 );
             }
+            
+            /*if(task.subjectReadId == 1)*/{
+                for(int i = 0; i < task.numFilteredCandidates; i++){
+                    std::cerr << task.bestCandidateReadIds[i] << " : ";
+                    for(int k = 0; k < task.bestCandidateLengths[i]; k++){
+                        std::cerr << data.decodedCandidateSequences[i * decodedpitch + k];
+                    }
+                    std::cerr << "\n";
+                }                
+            }
         }
 
         void buildMultipleSequenceAlignment(
@@ -807,11 +817,19 @@ namespace cpu{
 
                 if(minimizationResult.performedMinimization){
                     assert(minimizationResult.differentRegionCandidate.size() == task.numFilteredCandidates);
+                    
+                    /*if(task.subjectReadId == 1)*/{
+                        std::cerr << "------\n";
+                    }
 
                     //bool anyRemoved = false;
                     size_t cur = 0;
                     for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
                         if(!minimizationResult.differentRegionCandidate[i]){
+                            
+                            /*if(task.subjectReadId == 1)*/{
+                                std::cerr << "keep " << i << "\n";                
+                            }
 
                             task.bestAlignments[cur] = task.bestAlignments[i];
                             task.bestAlignmentShifts[cur] = task.bestAlignmentShifts[i];
@@ -844,6 +862,10 @@ namespace cpu{
                         }else{
                             //anyRemoved = true;
                         }
+                    }
+                    
+                    /*if(task.subjectReadId == 1)*/{
+                        std::cerr << "------\n";
                     }
 
                     task.numFilteredCandidates = cur;
@@ -933,6 +955,10 @@ namespace cpu{
             // }
 
             task.msaProperties.isHQ = task.subjectCorrection.isHQ;
+            
+            /*if(task.subjectReadId == 1)*/{
+                std::cerr << "corrected ? " << task.subjectCorrection.isCorrected << ", " << task.subjectCorrection.correctedSequence << "\n";
+            }
 
             // if(correctionResult.isCorrected){
             //     task.corrected_subject = std::move(correctionResult.correctedSequence);
@@ -961,6 +987,25 @@ namespace cpu{
                 correctionOptions.m_coverage,
                 correctionOptions.new_columns_to_correct
             );
+            
+            /*if(task.subjectReadId == 1)*/{
+                for(const auto& correctedCandidate : task.candidateCorrections){
+                    const read_number candidateId = task.bestCandidateReadIds[correctedCandidate.index];
+                    
+                    if(task.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                        std::cerr << candidateId << " " << correctedCandidate.sequence << "\n";
+                    }else{
+                        std::string fwd;
+                        fwd.resize(correctedCandidate.sequence.length());
+                        reverseComplementString(
+                            &fwd[0], 
+                            correctedCandidate.sequence.c_str(), 
+                                                correctedCandidate.sequence.length()
+                        );
+                        std::cerr << "revc " << candidateId << " " << fwd << "\n";
+                    }
+                }
+            }
         }
 
         void setCorrectionStatusFlags( 
@@ -1162,7 +1207,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000/*sequenceFileProperties.nReads*/);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1286,7 +1331,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    #pragma omp parallel
+    //#pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
 
@@ -2271,6 +2316,8 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                                                             correctionOptions.estimatedCoverage,
                                                             correctionOptions.m_coverage,
                                                             correctionOptions.new_columns_to_correct);
+            
+            
         }
 
         void correctSubjectWithForest(TaskData& data,
