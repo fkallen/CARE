@@ -1077,6 +1077,8 @@ namespace cpu{
                     tmp.readId = task.readId;
                     tmp.sequence = std::move(task.corrected_subject);
                     tmp.uncorrectedPositionsNoConsensus = task.uncorrectedPositionsNoConsensus;
+                    
+                    std::cerr << "subject " << tmp << "\n";
                 }
 
                 task.candidatesoutput.reserve(task.correctedCandidates.size());
@@ -1133,6 +1135,8 @@ namespace cpu{
                         }else{
                             tmp.useEdits = false;
                         }
+                        
+                        std::cerr << "candidate " << tmp << "\n";
 
                         task.candidatesoutput.emplace_back(std::move(tmp));
                     }
@@ -1189,7 +1193,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100/*sequenceFileProperties.nReads*/);
     //cpu::RangeGenerator<read_number> readIdGenerator(1000);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
@@ -1314,7 +1318,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    #pragma omp parallel
+    //#pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
         auto& correctionTasks = correctionTasksPerThread[threadId];
