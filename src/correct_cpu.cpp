@@ -2805,7 +2805,7 @@ void correct_cpu_old(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    #pragma omp parallel
+    //#pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
         auto& correctionTasks = correctionTasksPerThread[threadId];
