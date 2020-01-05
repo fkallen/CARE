@@ -610,8 +610,6 @@ namespace cpu{
                 for(int i = 0; i < task.numFilteredCandidates; i++){
                     const int fromIndex = data.filterIndices[i];
                     const int toIndex = i;
-                    
-                    std::cerr << "goodIndices[" << i << "]=" << fromIndex << "\n";
 
                     task.bestAlignments[toIndex] = task.bestAlignments[fromIndex];
                     task.bestAlignmentFlags[toIndex] = task.bestAlignmentFlags[fromIndex];
@@ -808,7 +806,7 @@ namespace cpu{
             auto removeCandidatesOfDifferentRegion = [&](const auto& minimizationResult){
 
                 if(minimizationResult.performedMinimization){
-                    assert(minimizationResult.differentRegionCandidate.size() == data.bestAlignments.size());
+                    assert(minimizationResult.differentRegionCandidate.size() == task.numFilteredCandidates);
 
                     //bool anyRemoved = false;
                     size_t cur = 0;
@@ -935,8 +933,6 @@ namespace cpu{
             // }
 
             task.msaProperties.isHQ = task.subjectCorrection.isHQ;
-            
-            std::cerr << "corrected ? " << task.subjectCorrection.isCorrected << ", " << task.subjectCorrection.correctedSequence << "\n";
 
             // if(correctionResult.isCorrected){
             //     task.corrected_subject = std::move(correctionResult.correctedSequence);
@@ -1166,7 +1162,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(10/*sequenceFileProperties.nReads*/);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1290,7 +1286,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-    //#pragma omp parallel
+    #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
 
