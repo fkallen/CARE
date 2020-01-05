@@ -608,7 +608,7 @@ namespace cpu{
                                         length);
             }
             
-            if(task.readId == 1){
+            /*if(task.readId == 1)*/{
                 for(int i = 0; i < int(data.bestAlignments.size()); i++){
                     std::cerr << data.bestCandidateReadIds[i] << " : ";
                     for(int k = 0; k < data.bestCandidateLengths[i]; k++){
@@ -709,14 +709,14 @@ namespace cpu{
 
                         bool anyRemoved = false;
                         size_t cur = 0;
-                        if(task.readId == 1){
+                        /*if(task.readId == 1)*/{
                             std::cerr << "------\n";
                         }
                         
                         for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
                             if(!minimizationResult.differentRegionCandidate[i]){
                                 
-                                if(task.readId == 1){
+                                /*if(task.readId == 1)*/{
                                     std::cerr << "keep " << i << "\n";                
                                 }
 
@@ -744,7 +744,7 @@ namespace cpu{
                             }
                         }
                         
-                        if(task.readId == 1){
+                        /*if(task.readId == 1)*/{
                             std::cerr << "------\n";
                         }
 
@@ -889,7 +889,7 @@ namespace cpu{
 
             data.msaProperties.isHQ = correctionResult.isHQ;
             
-            if(task.readId == 1){
+            /*if(task.readId == 1)*/{
                 std::cerr << "corrected ? " << correctionResult.isCorrected << ", " << correctionResult.correctedSequence << "\n";
             }
 
@@ -917,6 +917,25 @@ namespace cpu{
                                                             correctionOptions.estimatedCoverage,
                                                             correctionOptions.m_coverage,
                                                             correctionOptions.new_columns_to_correct);
+            
+            /*if(task.readId == 1)*/{
+                for(const auto& correctedCandidate : task.correctedCandidates){
+                    const read_number candidateId = data.bestCandidateReadIds[correctedCandidate.index];
+                    
+                    if(data.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                        std::cerr << candidateId << " " << correctedCandidate.sequence << "\n";
+                    }else{
+                        std::string fwd;
+                        fwd.resize(correctedCandidate.sequence.length());
+                        reverseComplementString(
+                            &fwd[0], 
+                            correctedCandidate.sequence.c_str(), 
+                                                correctedCandidate.sequence.length()
+                        );
+                        std::cerr << "revc " << candidateId << " " << fwd << "\n";
+                    }
+                }
+            }
         }
 
         void correctSubjectWithForest(TaskData& data,
@@ -1171,7 +1190,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
 #ifndef DO_PROFILE
     //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(10);
+    cpu::RangeGenerator<read_number> readIdGenerator(1000);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
