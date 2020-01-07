@@ -1316,7 +1316,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+    cpu::RangeGenerator<read_number> readIdGenerator(100/*sequenceFileProperties.nReads*/);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1338,7 +1338,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              //outputstream << tmp << '\n';
+              std::cerr << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
           }
       };
