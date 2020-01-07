@@ -91,6 +91,15 @@ struct CorrectionResult{
     std::vector<int> uncorrectedPositionsNoConsensus;
     std::vector<float> bestAlignmentWeightOfConsensusBase;
     std::vector<float> bestAlignmentWeightOfAnchorBase;
+
+    void reset(){
+        isCorrected = false;
+        isHQ = false;
+        correctedSequence.clear();
+        uncorrectedPositionsNoConsensus.clear();
+        bestAlignmentWeightOfConsensusBase.clear();
+        bestAlignmentWeightOfAnchorBase.clear();
+    }
 };
 
 struct CorrectedCandidate{

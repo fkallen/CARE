@@ -204,8 +204,11 @@ namespace cpu{
             MSAProperties msaProperties;
 
             void reset(){
-                // active = false;
-                // subjectReadId = std::numeric_limits<read_number>::max();
+                active = false;
+                subjectReadId = std::numeric_limits<read_number>::max();
+                subjectCorrection.reset();
+                candidateCorrections.clear();
+                msaProperties = MSAProperties{};
             }
             
         };
@@ -1316,7 +1319,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    cpu::RangeGenerator<read_number> readIdGenerator(100/*sequenceFileProperties.nReads*/);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1337,9 +1340,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
-          std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
+          //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              std::cerr << tmp.readId << " " << tmp << '\n';
+              //std::cerr << tmp.readId << " " << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
           }
       };
