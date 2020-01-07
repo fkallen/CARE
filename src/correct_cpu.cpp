@@ -1337,8 +1337,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
+          std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              std::cerr << tmp << '\n';
+              std::cerr << tmp.readId << " " << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
           }
       };
