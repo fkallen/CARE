@@ -177,14 +177,14 @@ binKeySplitIntoSortedChunks(const std::vector<std::string>& infilenames,
 
         //handle item which did not fit into buffer in previous iteration
         if(!itemProcessed){
-            buffer.emplace_back(std::move(item));
             usedHeapMemory += getHeapUsage(item);
+            buffer.emplace_back(std::move(item));
             itemProcessed = true;
         }
 
         while(bool(istream >> item)){
-            buffer.emplace_back(std::move(item));
             usedHeapMemory += getHeapUsage(item);
+            buffer.emplace_back(std::move(item));
 
             //TIMERSTARTCPU(readingbatch);
             while(bool(istream >> item)){
