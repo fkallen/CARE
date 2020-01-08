@@ -426,10 +426,6 @@ namespace cpu{
                                     const GoodAlignmentProperties& alignmentProps,
                                     const CorrectionOptions& correctionOptions){
 
-            for(int i = 0; i < task.numCandidates; i++){
-                assert(task.candidateSequencesLengths[i] == 100);
-            }
-
             shd::cpuShiftedHammingDistancePopcount2Bit(
                 data.alignmentHandle,
                 data.forwardAlignments.begin(),
