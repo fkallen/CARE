@@ -1447,8 +1447,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         } //while unprocessed reads exist loop end   
 
         #pragma omp critical
-
-        timingsOfAllThreads += batchData.timings;
+        {
+            timingsOfAllThreads += batchData.timings;
+        }
 
 
     } // parallel end
@@ -1469,12 +1470,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
 
     auto printDuration = [&](const auto& name, const auto& duration){
-        std::cout << "# elapsed time ("<< name << "): "
-                  << duration.count()  << " s. "
-                  << (100.0 * duration / totalDurationOfThreads) << " %."<< std::endl;
+        std::cout << "# average time per thread ("<< name << "): "
+                  << duration.count() / numThreads  << " s. "
+                  << (100.0 * duration.count() / totalDurationOfThreads.count()) << " %."<< std::endl;
     };
 
-    #define printme(x) printDuration((#x),timingsOfAllThreads.x);
+    #define printme(x) printDuration((#x), timingsOfAllThreads.x);
 
     printme(getSubjectSequenceDataTimeTotal);
     printme(getCandidatesTimeTotal);
