@@ -55,165 +55,63 @@ namespace cpu{
 
         constexpr bool useSortedIdsForGather = false;
 
-        struct TaskData;
 
-        struct CorrectionTask{
-            CorrectionTask(){}
+        struct TimeMeasurements{
+            std::chrono::duration<double> getSubjectSequenceDataTimeTotal{0};
+            std::chrono::duration<double> getCandidatesTimeTotal{0};
+            std::chrono::duration<double> copyCandidateDataToBufferTimeTotal{0};
+            std::chrono::duration<double> getAlignmentsTimeTotal{0};
+            std::chrono::duration<double> findBestAlignmentDirectionTimeTotal{0};
+            std::chrono::duration<double> gatherBestAlignmentDataTimeTotal{0};
+            std::chrono::duration<double> mismatchRatioFilteringTimeTotal{0};
+            std::chrono::duration<double> compactBestAlignmentDataTimeTotal{0};
+            std::chrono::duration<double> fetchQualitiesTimeTotal{0};
+            std::chrono::duration<double> makeCandidateStringsTimeTotal{0};
+            std::chrono::duration<double> msaAddSequencesTimeTotal{0};
+            std::chrono::duration<double> msaFindConsensusTimeTotal{0};
+            std::chrono::duration<double> msaMinimizationTimeTotal{0};
+            std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
+            std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
 
-            CorrectionTask(read_number readId)
-                :   active(true),
-                    corrected(false),
-                    readId(readId)
-                    {}
+            TimeMeasurements& operator+=(TimeMeasurements& rhs) noexcept{
+                getSubjectSequenceDataTimeTotal += rhs.getSubjectSequenceDataTimeTotal;
+                getCandidatesTimeTotal += rhs.getCandidatesTimeTotal;
+                copyCandidateDataToBufferTimeTotal += rhs.copyCandidateDataToBufferTimeTotal;
+                getAlignmentsTimeTotal += rhs.getAlignmentsTimeTotal;
+                findBestAlignmentDirectionTimeTotal += rhs.findBestAlignmentDirectionTimeTotal;
+                gatherBestAlignmentDataTimeTotal += rhs.gatherBestAlignmentDataTimeTotal;
+                mismatchRatioFilteringTimeTotal += rhs.mismatchRatioFilteringTimeTotal;
+                compactBestAlignmentDataTimeTotal += rhs.compactBestAlignmentDataTimeTotal;
+                fetchQualitiesTimeTotal += rhs.fetchQualitiesTimeTotal;
+                makeCandidateStringsTimeTotal += rhs.makeCandidateStringsTimeTotal;
+                msaAddSequencesTimeTotal += rhs.msaAddSequencesTimeTotal;
+                msaFindConsensusTimeTotal += rhs.msaFindConsensusTimeTotal;
+                msaMinimizationTimeTotal += rhs.msaMinimizationTimeTotal;
+                msaCorrectSubjectTimeTotal += rhs.msaCorrectSubjectTimeTotal;
+                msaCorrectCandidatesTimeTotal += rhs.msaCorrectCandidatesTimeTotal;
 
-            CorrectionTask(const CorrectionTask& other)
-                : active(other.active),
-                corrected(other.corrected),
-                readId(other.readId),
-                encodedSubjectPtr(other.encodedSubjectPtr),
-                subjectQualityPtr(other.subjectQualityPtr),
-                taskDataPtr(other.taskDataPtr),
-                original_subject_string(other.original_subject_string),
-                corrected_subject(other.corrected_subject),
-                correctedCandidates(other.correctedCandidates),
-                candidate_read_ids(other.candidate_read_ids),
-                corrected_candidates_shifts(other.corrected_candidates_shifts),
-                uncorrectedPositionsNoConsensus(other.uncorrectedPositionsNoConsensus),
-                anchoroutput(other.anchoroutput),
-                candidatesoutput(other.candidatesoutput){
-
-            }
-
-            CorrectionTask(CorrectionTask&& other){
-                operator=(other);
-            }
-
-            CorrectionTask& operator=(const CorrectionTask& other){
-                CorrectionTask tmp(other);
-                swap(*this, tmp);
                 return *this;
             }
 
-            CorrectionTask& operator=(CorrectionTask&& other){
-                swap(*this, other);
-                return *this;
+            std::chrono::duration<double> getSumOfDurations() const noexcept{
+                std::chrono::duration<double> sum = getSubjectSequenceDataTimeTotal
+                                                + getCandidatesTimeTotal
+                                                + copyCandidateDataToBufferTimeTotal
+                                                + getAlignmentsTimeTotal
+                                                + findBestAlignmentDirectionTimeTotal
+                                                + gatherBestAlignmentDataTimeTotal
+                                                + mismatchRatioFilteringTimeTotal
+                                                + compactBestAlignmentDataTimeTotal
+                                                + fetchQualitiesTimeTotal
+                                                + makeCandidateStringsTimeTotal
+                                                + msaAddSequencesTimeTotal
+                                                + msaFindConsensusTimeTotal
+                                                + msaMinimizationTimeTotal
+                                                + msaCorrectSubjectTimeTotal
+                                                + msaCorrectCandidatesTimeTotal;
+                return sum;
             }
-
-            friend void swap(CorrectionTask& l, CorrectionTask& r) noexcept{
-                using std::swap;
-
-                swap(l.active, r.active);
-                swap(l.corrected, r.corrected);
-                swap(l.readId, r.readId);
-                swap(l.encodedSubjectPtr, r.encodedSubjectPtr);
-                swap(l.subjectQualityPtr, r.subjectQualityPtr);
-                swap(l.taskDataPtr, r.taskDataPtr);
-                swap(l.original_subject_string, r.original_subject_string);
-                swap(l.corrected_subject, r.corrected_subject);
-                swap(l.correctedCandidates, r.correctedCandidates);
-                swap(l.candidate_read_ids, r.candidate_read_ids);
-                swap(l.corrected_candidates_shifts, r.corrected_candidates_shifts);
-                swap(l.uncorrectedPositionsNoConsensus, r.uncorrectedPositionsNoConsensus);
-                swap(l.anchoroutput, r.anchoroutput);
-                swap(l.candidatesoutput, r.candidatesoutput);
-            }
-
-            bool active;
-            bool corrected;
-            read_number readId;
-            const unsigned int* encodedSubjectPtr;
-            const char* subjectQualityPtr;
-            TaskData* taskDataPtr;
-            std::string original_subject_string;
-            std::string corrected_subject;
-            std::vector<CorrectedCandidate> correctedCandidates;
-            std::vector<read_number> candidate_read_ids;
-            std::vector<int> corrected_candidates_shifts;
-            std::vector<int> uncorrectedPositionsNoConsensus;
-            TempCorrectedSequence anchoroutput;
-            std::vector<TempCorrectedSequence> candidatesoutput;
-        };
-
-        struct TaskData{
-            MultipleSequenceAlignment multipleSequenceAlignment;
-            MSAProperties msaProperties;
-
-            shd::CpuAlignmentHandle alignmentHandle;
-            Minhasher::Handle minhashHandle;
-            ContiguousReadStorage::GatherHandle readStorageGatherHandle;
-
-            std::vector<unsigned int> subjectsequence;
-            std::vector<unsigned int> candidateData;
-            std::vector<unsigned int> candidateRevcData;
-            std::vector<int> candidateLengths;
-            int max_candidate_length = 0;
-
-            // std::vector<unsigned int> subjectsequenceHiLo;
-            // std::vector<unsigned int> candidateDataHiLo;
-            // std::vector<unsigned int> candidateRevcDataHiLo;
-
-            std::vector<SHDResult> forwardAlignments;
-            std::vector<SHDResult> revcAlignments;
-            std::vector<BestAlignment_t> alignmentFlags;
-            size_t numGoodAlignmentFlags;
-
-            std::vector<SHDResult> bestAlignments;
-            std::vector<BestAlignment_t> bestAlignmentFlags;
-            std::vector<int> bestAlignmentShifts;
-            std::vector<float> bestAlignmentWeights;
-            std::vector<read_number> bestCandidateReadIds;
-            std::vector<int> bestCandidateLengths;
-            std::vector<unsigned int> bestCandidateData;
-
-            std::vector<char> bestCandidateQualityData;
-            //std::vector<std::string> bestCandidateStrings;
-            std::vector<char> bestCandidateStrings;
-
-            std::vector<MSAFeature> msaforestfeatures;
-
-            std::vector<int> indicesOfCandidatesEqualToSubject;
-        };
-
-
-
-        struct BatchTask{
-            bool active;
-            int numCandidates;
-            int numGoodAlignmentFlags;
-            int numFilteredCandidates;
-            int subjectSequenceLength;
-            read_number subjectReadId;
-            read_number* candidateReadIds;
-            int* candidateSequencesLengths; 
-            unsigned int* subjectSequenceData;
-            unsigned int* candidateSequencesData;
-            unsigned int* candidateSequencesRevcData;
-            char* subjectQualities;
-            char* decodedSubjectSequence;
-            
-
-            SHDResult* bestAlignments;
-            BestAlignment_t* bestAlignmentFlags;
-            int*bestAlignmentShifts;
-            float* bestAlignmentWeights;
-            read_number* bestCandidateReadIds;
-            int* bestCandidateLengths;
-            unsigned int* bestCandidateData;
-            char* bestCandidateQualities;
-
-            CorrectionResult subjectCorrection;
-            std::vector<CorrectedCandidate> candidateCorrections;
-            MSAProperties msaProperties;
-
-            void reset(){
-                active = false;
-                subjectReadId = std::numeric_limits<read_number>::max();
-                subjectCorrection.reset();
-                candidateCorrections.clear();
-                msaProperties = MSAProperties{};
-            }
-            
-        };
+        };        
 
         struct BatchData{
             struct OutputData{
@@ -221,6 +119,44 @@ namespace cpu{
                 std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
                 std::vector<TempCorrectedSequence> candidateCorrections;
                 std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+            };
+
+            struct Task{
+                bool active;
+                int numCandidates;
+                int numGoodAlignmentFlags;
+                int numFilteredCandidates;
+                int subjectSequenceLength;
+                read_number subjectReadId;
+                read_number* candidateReadIds;
+                int* candidateSequencesLengths; 
+                unsigned int* subjectSequenceData;
+                unsigned int* candidateSequencesData;
+                unsigned int* candidateSequencesRevcData;
+                char* subjectQualities;
+                char* decodedSubjectSequence;
+                
+
+                SHDResult* bestAlignments;
+                BestAlignment_t* bestAlignmentFlags;
+                int*bestAlignmentShifts;
+                float* bestAlignmentWeights;
+                read_number* bestCandidateReadIds;
+                int* bestCandidateLengths;
+                unsigned int* bestCandidateData;
+                char* bestCandidateQualities;
+
+                CorrectionResult subjectCorrection;
+                std::vector<CorrectedCandidate> candidateCorrections;
+                MSAProperties msaProperties;
+
+                void reset(){
+                    active = false;
+                    subjectReadId = std::numeric_limits<read_number>::max();
+                    subjectCorrection.reset();
+                    candidateCorrections.clear();
+                    msaProperties = MSAProperties{};
+                }            
             };
 
         // data for all batch tasks within batch
@@ -263,13 +199,15 @@ namespace cpu{
 
 
         // ------------------------------------------------
-            std::vector<BatchTask> batchTasks;
+            std::vector<Task> batchTasks;
 
             ContiguousReadStorage::GatherHandle readStorageGatherHandle;
             Minhasher::Handle minhashHandle;
             shd::CpuAlignmentHandle alignmentHandle;
 
             MultipleSequenceAlignment multipleSequenceAlignment;
+
+            TimeMeasurements timings;
 
             int encodedSequencePitchInInts = 0;
             int decodedSequencePitchInBytes = 0;
@@ -309,13 +247,13 @@ namespace cpu{
             }
         }
 
-        struct InterestingStruct{
-            read_number readId;
-            std::vector<int> positions;
-        };
+        // struct InterestingStruct{
+        //     read_number readId;
+        //     std::vector<int> positions;
+        // };
 
-        std::vector<read_number> interestingReadIds;
-        std::mutex interestingMutex;
+        // std::vector<read_number> interestingReadIds;
+        // std::mutex interestingMutex;
 
 
         void getSubjectSequenceData(BatchData& data,
@@ -484,7 +422,7 @@ namespace cpu{
         }
 
         void getCandidateAlignments(BatchData& data,
-                                    BatchTask& task,
+                                    BatchData::Task& task,
                                     const GoodAlignmentProperties& alignmentProps,
                                     const CorrectionOptions& correctionOptions){
 
@@ -548,7 +486,7 @@ namespace cpu{
         }
 
         void gatherBestAlignmentData(BatchData& data,
-                                  BatchTask& task){
+                                  BatchData::Task& task){
 
             task.numFilteredCandidates = 0;
 
@@ -597,7 +535,7 @@ namespace cpu{
         }
 
         void filterBestAlignmentsByMismatchRatio(BatchData& data,
-                  BatchTask& task,
+                  BatchData::Task& task,
                   const CorrectionOptions& correctionOptions,
                   const GoodAlignmentProperties& alignmentProps){
             //get indices of alignments which have a good mismatch ratio
@@ -752,7 +690,7 @@ namespace cpu{
         }
 
         void makeCandidateStrings(BatchData& data,
-                  BatchTask& task){
+                  BatchData::Task& task){
 
             const size_t decodedpitch = data.decodedSequencePitchInBytes;
             const size_t encodedpitch = data.encodedSequencePitchInInts;
@@ -782,7 +720,7 @@ namespace cpu{
 
         void buildMultipleSequenceAlignment(
                 BatchData& data,
-                BatchTask& task,
+                BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
 
 
@@ -808,7 +746,7 @@ namespace cpu{
 
         void removeCandidatesOfDifferentRegionFromMSA(
                 BatchData& data,
-                BatchTask& task,
+                BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
 
             constexpr int max_num_minimizations = 5;
@@ -925,7 +863,7 @@ namespace cpu{
 
         void correctSubject(
                 BatchData& data,
-                BatchTask& task,
+                BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
 
             const int subjectColumnsBegin_incl = data.multipleSequenceAlignment.subjectColumnsBegin_incl;
@@ -993,7 +931,7 @@ namespace cpu{
 
         void correctCandidates(
                 BatchData& data,
-                BatchTask& task,
+                BatchData::Task& task,
                 const CorrectionOptions& correctionOptions){
 
             task.candidateCorrections = getCorrectedCandidatesNew(
@@ -1034,7 +972,7 @@ namespace cpu{
 
         void setCorrectionStatusFlags( 
                     BatchData& data,
-                    BatchTask& task,
+                    BatchData::Task& task,
                     std::uint8_t* correctionStatusFlagsPerRead){
             if(task.active){
                 if(task.subjectCorrection.isCorrected){
@@ -1049,7 +987,7 @@ namespace cpu{
         
         void makeOutputDataOfTask(
                 BatchData& data,
-                BatchTask& task,
+                BatchData::Task& task,
                 const cpu::ContiguousReadStorage& readStorage,
                 const std::uint8_t* correctionStatusFlagsPerRead){            
                
@@ -1260,27 +1198,10 @@ void correct_cpu(const MinhashOptions& minhashOptions,
         locksForProcessedFlags[index].unlock();
     };
 
-    std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
-    std::chrono::duration<double> runtime = std::chrono::seconds(0);
-    std::chrono::duration<double> previousProgressTime = std::chrono::seconds(0);
-    std::chrono::duration<double> getSubjectSequenceDataTimeTotal{0};
-    std::chrono::duration<double> getCandidatesTimeTotal{0};
-    std::chrono::duration<double> copyCandidateDataToBufferTimeTotal{0};
-    std::chrono::duration<double> getAlignmentsTimeTotal{0};
-    std::chrono::duration<double> findBestAlignmentDirectionTimeTotal{0};
-    std::chrono::duration<double> gatherBestAlignmentDataTimeTotal{0};
-    std::chrono::duration<double> mismatchRatioFilteringTimeTotal{0};
-    std::chrono::duration<double> compactBestAlignmentDataTimeTotal{0};
-    std::chrono::duration<double> fetchQualitiesTimeTotal{0};
-    std::chrono::duration<double> makeCandidateStringsTimeTotal{0};
-    std::chrono::duration<double> msaAddSequencesTimeTotal{0};
-    std::chrono::duration<double> msaFindConsensusTimeTotal{0};
-    std::chrono::duration<double> msaMinimizationTimeTotal{0};
-    std::chrono::duration<double> msaCorrectSubjectTimeTotal{0};
-    std::chrono::duration<double> msaCorrectCandidatesTimeTotal{0};
-    std::chrono::duration<double> correctWithFeaturesTimeTotal{0};
 
     BackgroundThread outputThread(true);
+
+    TimeMeasurements timingsOfAllThreads;
 
 
     // std::ifstream interestingstream("interestingIds.txt");
@@ -1325,9 +1246,6 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     const int numThreads = runtimeOptions.nCorrectorThreads;
 
-    std::vector<std::vector<CorrectionTask>> correctionTasksPerThread(numThreads);
-    std::vector<std::vector<TaskData>> dataPerTaskPerThread(numThreads);
-
     #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
@@ -1357,7 +1275,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             getSubjectSequenceData(batchData, readStorage);
 
             #ifdef ENABLE_TIMING
-            getSubjectSequenceDataTimeTotal += std::chrono::system_clock::now() - tpa;
+            batchData.timings.getSubjectSequenceDataTimeTotal += std::chrono::system_clock::now() - tpa;
             #endif
 
             #ifdef ENABLE_TIMING
@@ -1367,7 +1285,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             determineCandidateReadIds(batchData, minhasher, correctionOptions.hits_per_candidate);
 
             #ifdef ENABLE_TIMING
-            getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+            batchData.timings.getCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
             #endif
 
             #ifdef ENABLE_TIMING
@@ -1377,7 +1295,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             getCandidateSequenceData(batchData, readStorage);
 
             #ifdef ENABLE_TIMING
-            copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
+            batchData.timings.copyCandidateDataToBufferTimeTotal += std::chrono::system_clock::now() - tpa;
             #endif
 
             makeBatchTasks(batchData);
@@ -1395,7 +1313,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 );
 
                 #ifdef ENABLE_TIMING
-                getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.getAlignmentsTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
                 #ifdef ENABLE_TIMING
@@ -1405,7 +1323,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 gatherBestAlignmentData(batchData, batchTask);
 
                 #ifdef ENABLE_TIMING
-                gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.gatherBestAlignmentDataTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
                 #ifdef ENABLE_TIMING
@@ -1420,7 +1338,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 );
 
                 #ifdef ENABLE_TIMING
-                mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.mismatchRatioFilteringTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
             }
 
@@ -1435,7 +1353,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 getQualities(batchData, readStorage);
 
                 #ifdef ENABLE_TIMING
-                fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.fetchQualitiesTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
             }
@@ -1451,7 +1369,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 makeCandidateStrings(batchData, batchTask);
 
                 #ifdef ENABLE_TIMING
-                makeCandidateStringsTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.makeCandidateStringsTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
                 #ifdef ENABLE_TIMING
@@ -1461,7 +1379,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 buildMultipleSequenceAlignment(batchData, batchTask, correctionOptions);
 
                 #ifdef ENABLE_TIMING
-                msaFindConsensusTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.msaFindConsensusTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
                 #ifdef ENABLE_TIMING
@@ -1471,7 +1389,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 removeCandidatesOfDifferentRegionFromMSA(batchData, batchTask, correctionOptions);
 
                 #ifdef ENABLE_TIMING
-                msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.msaMinimizationTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
                 #ifdef ENABLE_TIMING
@@ -1481,7 +1399,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 correctSubject(batchData, batchTask, correctionOptions);
 
                 #ifdef ENABLE_TIMING
-                msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
+                batchData.timings.msaCorrectSubjectTimeTotal += std::chrono::system_clock::now() - tpa;
                 #endif
 
                 setCorrectionStatusFlags(batchData, batchTask, correctionStatusFlagsPerRead.data());
@@ -1495,7 +1413,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                     correctCandidates(batchData, batchTask, correctionOptions);
 
                     #ifdef ENABLE_TIMING
-                    msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
+                    batchData.timings.msaCorrectCandidatesTimeTotal += std::chrono::system_clock::now() - tpa;
                     #endif
 
                 }
@@ -1528,6 +1446,10 @@ void correct_cpu(const MinhashOptions& minhashOptions,
             progressThread.addProgress(batchData.subjectReadIds.size()); 
         } //while unprocessed reads exist loop end   
 
+        #pragma omp critical
+
+        timingsOfAllThreads += batchData.timings;
+
 
     } // parallel end
 
@@ -1542,31 +1464,17 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     minhasher.destroy();
     readStorage.destroy();
 
+    #ifdef ENABLE_TIMING
 
-    std::chrono::duration<double> totalDuration = getSubjectSequenceDataTimeTotal
-                                                + getCandidatesTimeTotal
-                                                + copyCandidateDataToBufferTimeTotal
-                                                + getAlignmentsTimeTotal
-                                                + findBestAlignmentDirectionTimeTotal
-                                                + gatherBestAlignmentDataTimeTotal
-                                                + mismatchRatioFilteringTimeTotal
-                                                + compactBestAlignmentDataTimeTotal
-                                                + fetchQualitiesTimeTotal
-                                                + makeCandidateStringsTimeTotal
-                                                + msaAddSequencesTimeTotal
-                                                + msaFindConsensusTimeTotal
-                                                + msaMinimizationTimeTotal
-                                                + msaCorrectSubjectTimeTotal
-                                                + msaCorrectCandidatesTimeTotal
-                                                + correctWithFeaturesTimeTotal;
+    auto totalDurationOfThreads = timingsOfAllThreads.getSumOfDurations();
 
     auto printDuration = [&](const auto& name, const auto& duration){
         std::cout << "# elapsed time ("<< name << "): "
                   << duration.count()  << " s. "
-                  << (100.0 * duration / totalDuration) << " %."<< std::endl;
+                  << (100.0 * duration / totalDurationOfThreads) << " %."<< std::endl;
     };
 
-    #define printme(x) printDuration((#x),(x));
+    #define printme(x) printDuration((#x),timingsOfAllThreads.x);
 
     printme(getSubjectSequenceDataTimeTotal);
     printme(getCandidatesTimeTotal);
@@ -1583,9 +1491,10 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     printme(msaMinimizationTimeTotal);
     printme(msaCorrectSubjectTimeTotal);
     printme(msaCorrectCandidatesTimeTotal);
-    printme(correctWithFeaturesTimeTotal);
 
     #undef printme
+
+    #endif
 
 #ifdef DO_PROFILE
 
