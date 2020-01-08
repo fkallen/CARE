@@ -2372,7 +2372,8 @@ namespace gpu{
             bool result = newColMinSupport >= min_support_threshold
                             && newColMinCov >= min_coverage_threshold;
 
-            return result;
+            //return result;
+            return true;
         }else{
             return false;
         }

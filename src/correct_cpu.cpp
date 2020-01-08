@@ -138,14 +138,13 @@ namespace cpu{
 
             shd::CpuAlignmentHandle alignmentHandle;
             Minhasher::Handle minhashHandle;
+            ContiguousReadStorage::GatherHandle readStorageGatherHandle;
 
             std::vector<unsigned int> subjectsequence;
             std::vector<unsigned int> candidateData;
             std::vector<unsigned int> candidateRevcData;
             std::vector<int> candidateLengths;
             int max_candidate_length = 0;
-            std::vector<unsigned int*> candidateDataPtrs;
-            std::vector<unsigned int*> candidateRevcDataPtrs;
 
             // std::vector<unsigned int> subjectsequenceHiLo;
             // std::vector<unsigned int> candidateDataHiLo;
@@ -163,16 +162,28 @@ namespace cpu{
             std::vector<read_number> bestCandidateReadIds;
             std::vector<int> bestCandidateLengths;
             std::vector<unsigned int> bestCandidateData;
-            std::vector<unsigned int*> bestCandidatePtrs;
 
             std::vector<char> bestCandidateQualityData;
-            std::vector<char*> bestCandidateQualityPtrs;
             //std::vector<std::string> bestCandidateStrings;
             std::vector<char> bestCandidateStrings;
 
             std::vector<MSAFeature> msaforestfeatures;
 
             std::vector<int> indicesOfCandidatesEqualToSubject;
+        };
+
+
+
+        struct ThreadData{
+            std::vector<read_number> subjectReadIds;
+            std::vector<read_number> candidateReadIds;
+            std::vector<unsigned int> subjectSequencesData;
+            std::vector<unsigned int> candidateSequencesData;
+            std::vector<unsigned int> candidateSequencesRevcData;
+            std::vector<int> subjectSequencesLengths;
+            std::vector<int> candidateSequencesLengths;
+            std::vector<char> subjectQualities;
+            std::vector<char> candidateQualities;
         };
 
         struct InterestingStruct{
@@ -214,59 +225,77 @@ namespace cpu{
                                     CorrectionTask& task,
                                     size_t encodedSequencePitchInInts){
 
-            const size_t numCandidates = task.candidate_read_ids.size();
+            const int numCandidates = task.candidate_read_ids.size();
 
             data.candidateLengths.clear();
-            data.candidateLengths.reserve(numCandidates);
+            data.candidateLengths.resize(numCandidates);
 
-            for(const read_number candidateId : task.candidate_read_ids){
-                const int candidateLength = readStorage.fetchSequenceLength(candidateId);
-                data.candidateLengths.emplace_back(candidateLength);
-            }
-
-            //max_candidate_bytes = Sequence_t::getNumBytes(max_candidate_length);
+            // for(const read_number candidateId : task.candidate_read_ids){
+            //     const int candidateLength = readStorage.fetchSequenceLength(candidateId);
+            //     data.candidateLengths.emplace_back(candidateLength);
+            // }
 
             data.candidateData.clear();
             data.candidateData.resize(encodedSequencePitchInInts * numCandidates, 0);
             data.candidateRevcData.clear();
             data.candidateRevcData.resize(encodedSequencePitchInInts * numCandidates, 0);
-            data.candidateDataPtrs.clear();
-            data.candidateDataPtrs.resize(numCandidates, nullptr);
-            data.candidateRevcDataPtrs.clear();
-            data.candidateRevcDataPtrs.resize(numCandidates, nullptr);
 
             //copy candidate data and reverse complements into buffer
 
-            constexpr size_t prefetch_distance_sequences = 4;
+            // constexpr size_t prefetch_distance_sequences = 4;
 
-            for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
-                const read_number next_candidate_read_id = task.candidate_read_ids[i];
-                const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
-                __builtin_prefetch(nextsequenceptr, 0, 0);
-            }
+            // for(size_t i = 0; i < numCandidates && i < prefetch_distance_sequences; ++i) {
+            //     const read_number next_candidate_read_id = task.candidate_read_ids[i];
+            //     const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+            //     __builtin_prefetch(nextsequenceptr, 0, 0);
+            // }
 
-            for(size_t i = 0; i < numCandidates; i++){
-                if(i + prefetch_distance_sequences < numCandidates) {
-                    const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
-                    const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
-                    __builtin_prefetch(nextsequenceptr, 0, 0);
-                }
+            // for(size_t i = 0; i < numCandidates; i++){
+            //     if(i + prefetch_distance_sequences < numCandidates) {
+            //         const read_number next_candidate_read_id = task.candidate_read_ids[i + prefetch_distance_sequences];
+            //         const unsigned int* nextsequenceptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(next_candidate_read_id);
+            //         __builtin_prefetch(nextsequenceptr, 0, 0);
+            //     }
 
-                const read_number candidateId = task.candidate_read_ids[i];
-                const unsigned int* candidateptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(candidateId);
-                const int candidateLength = data.candidateLengths[i];
-                const int candidateNumInts = getEncodedNumInts2Bit(candidateLength);
+            //     const read_number candidateId = task.candidate_read_ids[i];
+            //     const unsigned int* candidateptr = (const unsigned int*)readStorage.fetchSequenceData_ptr(candidateId);
+            //     const int candidateLength = data.candidateLengths[i];
+            //     const int candidateNumInts = getEncodedNumInts2Bit(candidateLength);
 
-                unsigned int* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitchInInts;
-                unsigned int* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitchInInts;
+            //     unsigned int* const candidateDataBegin = data.candidateData.data() + i * encodedSequencePitchInInts;
+            //     unsigned int* const candidateRevcDataBegin = data.candidateRevcData.data() + i * encodedSequencePitchInInts;
 
-                std::copy_n(candidateptr, candidateNumInts, candidateDataBegin);
-                reverseComplement2Bit((unsigned int*)(candidateRevcDataBegin),
-                                          (const unsigned int*)(candidateptr),
-                                          candidateLength);
+            //     std::copy_n(candidateptr, candidateNumInts, candidateDataBegin);
+            //     reverseComplement2Bit((unsigned int*)(candidateRevcDataBegin),
+            //                               (const unsigned int*)(candidateptr),
+            //                               candidateLength);
 
-                data.candidateDataPtrs[i] = candidateDataBegin;
-                data.candidateRevcDataPtrs[i] = candidateRevcDataBegin;
+            // }
+
+            readStorage.gatherSequenceLengths(
+                data.readStorageGatherHandle,
+                task.candidate_read_ids.data(),
+                numCandidates,
+                data.candidateLengths.data()
+            );
+
+            readStorage.gatherSequenceData(
+                data.readStorageGatherHandle,
+                task.candidate_read_ids.data(),
+                numCandidates,
+                data.candidateData.data(),
+                encodedSequencePitchInInts
+            );
+
+            for(int i = 0; i < numCandidates; i++){
+                unsigned int* const seqPtr = data.candidateData.data() + std::size_t(encodedSequencePitchInInts) * i;
+                unsigned int* const seqrevcPtr = data.candidateRevcData.data() + std::size_t(encodedSequencePitchInInts) * i;
+
+                reverseComplement2Bit(
+                    seqrevcPtr,  
+                    seqPtr,
+                    data.candidateLengths[i]
+                );
             }
         }
 
@@ -393,18 +422,12 @@ namespace cpu{
               data.bestCandidateReadIds.clear();
               data.bestCandidateData.clear();
               data.bestCandidateLengths.clear();
-              data.bestCandidatePtrs.clear();
 
               data.bestAlignments.resize(data.numGoodAlignmentFlags);
               data.bestAlignmentFlags.resize(data.numGoodAlignmentFlags);
               data.bestCandidateReadIds.resize(data.numGoodAlignmentFlags);
               data.bestCandidateData.resize(data.numGoodAlignmentFlags * candidatePitchInInts);
               data.bestCandidateLengths.resize(data.numGoodAlignmentFlags);
-              data.bestCandidatePtrs.resize(data.numGoodAlignmentFlags);
-
-              for(size_t i = 0; i < data.numGoodAlignmentFlags; i++){
-                  data.bestCandidatePtrs[i] = data.bestCandidateData.data() + i * candidatePitchInInts;
-              }
 
               for(size_t i = 0, insertpos = 0; i < data.alignmentFlags.size(); i++){
 
@@ -420,9 +443,9 @@ namespace cpu{
                       data.bestCandidateLengths[insertpos] = candidateLength;
 
                       data.bestAlignments[insertpos] = fwdAlignment;
-                      std::copy_n(data.candidateDataPtrs[i],
+                      std::copy_n(data.candidateData.data() + i * candidatePitchInInts,
                                 candidatePitchInInts,
-                                data.bestCandidatePtrs[insertpos]);
+                                data.bestCandidateData.data() + insertpos * candidatePitchInInts);
                       insertpos++;
                   }else if(flag == BestAlignment_t::ReverseComplement){
                       data.bestAlignmentFlags[insertpos] = flag;
@@ -430,9 +453,9 @@ namespace cpu{
                       data.bestCandidateLengths[insertpos] = candidateLength;
 
                       data.bestAlignments[insertpos] = revcAlignment;
-                      std::copy_n(data.candidateRevcDataPtrs[i],
+                      std::copy_n(data.candidateRevcData.data() + i * candidatePitchInInts,
                                 candidatePitchInInts,
-                                data.bestCandidatePtrs[insertpos]);
+                                data.bestCandidateData.data() + insertpos * candidatePitchInInts);
                       insertpos++;
                   }else{
                       ;//BestAlignment_t::None discard alignment
@@ -463,15 +486,17 @@ namespace cpu{
                 for(size_t i = 0; i < goodIndices.size(); i++){
                     const int fromIndex = goodIndices[i];
                     const int toIndex = i;
+                    
+                    //std::cerr << "goodIndices[" << i << "]=" << fromIndex << "\n";
 
                     data.bestAlignments[toIndex] = data.bestAlignments[fromIndex];
                     data.bestAlignmentFlags[toIndex] = data.bestAlignmentFlags[fromIndex];
                     data.bestCandidateReadIds[toIndex] = data.bestCandidateReadIds[fromIndex];
                     data.bestCandidateLengths[toIndex] = data.bestCandidateLengths[fromIndex];
 
-                    std::copy_n(data.bestCandidatePtrs[fromIndex],
+                    std::copy_n(data.bestCandidateData.data() + fromIndex * candidatePitchInInts,
                               candidatePitchInInts,
-                              data.bestCandidatePtrs[toIndex]);
+                              data.bestCandidateData.data() + toIndex * candidatePitchInInts);
                 }
 
                 data.bestAlignments.erase(data.bestAlignments.begin() + goodIndices.size(),
@@ -482,8 +507,6 @@ namespace cpu{
                                            data.bestCandidateReadIds.end());
                 data.bestCandidateLengths.erase(data.bestCandidateLengths.begin() + goodIndices.size(),
                                            data.bestCandidateLengths.end());
-                data.bestCandidatePtrs.erase(data.bestCandidatePtrs.begin() + goodIndices.size(),
-                                        data.bestCandidatePtrs.end());
                 data.bestCandidateData.erase(data.bestCandidateData.begin() + goodIndices.size() * candidatePitchInInts,
                                         data.bestCandidateData.end());
 
@@ -508,6 +531,8 @@ namespace cpu{
                                                                         data.bestAlignments[i].overlap);
                 }
             }
+            
+            
         }
 
 
@@ -522,52 +547,75 @@ namespace cpu{
             data.bestCandidateQualityData.clear();
             data.bestCandidateQualityData.resize(maximumSequenceLength * data.bestAlignments.size());
 
-            data.bestCandidateQualityPtrs.clear();
-            data.bestCandidateQualityPtrs.resize(data.bestAlignments.size());
+            // constexpr size_t prefetch_distance_qualities = 4;
 
-            constexpr size_t prefetch_distance_qualities = 4;
+            // for(size_t i = 0; i < data.bestAlignments.size() && i < prefetch_distance_qualities; ++i) {
+            //     const read_number next_candidate_read_id = data.bestCandidateReadIds[i];
+            //     const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
+            //     __builtin_prefetch(nextqualityptr, 0, 0);
+            // }
 
-            for(size_t i = 0; i < data.bestAlignments.size() && i < prefetch_distance_qualities; ++i) {
-                const read_number next_candidate_read_id = data.bestCandidateReadIds[i];
-                const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
-                __builtin_prefetch(nextqualityptr, 0, 0);
-            }
+            // for(size_t i = 0; i < data.bestAlignments.size(); i++){
+            //     if(i + prefetch_distance_qualities < data.bestAlignments.size()) {
+            //         const read_number next_candidate_read_id = data.bestCandidateReadIds[i + prefetch_distance_qualities];
+            //         const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
+            //         __builtin_prefetch(nextqualityptr, 0, 0);
+            //     }
+            //     const char* qualityptr = readStorage.fetchQuality_ptr(data.bestCandidateReadIds[i]);
+            //     const int length = data.bestCandidateLengths[i];
+            //     const BestAlignment_t flag = data.bestAlignmentFlags[i];
 
-            for(size_t i = 0; i < data.bestAlignments.size(); i++){
-                if(i + prefetch_distance_qualities < data.bestAlignments.size()) {
-                    const read_number next_candidate_read_id = data.bestCandidateReadIds[i + prefetch_distance_qualities];
-                    const char* nextqualityptr = readStorage.fetchQuality_ptr(next_candidate_read_id);
-                    __builtin_prefetch(nextqualityptr, 0, 0);
+            //     if(flag == BestAlignment_t::Forward){
+            //         std::copy(qualityptr, qualityptr + length, &data.bestCandidateQualityData[maximumSequenceLength * i]);
+            //     }else{
+            //         std::reverse_copy(qualityptr, qualityptr + length, &data.bestCandidateQualityData[maximumSequenceLength * i]);
+            //     }
+            // }
+
+            const int numGoodCandidates = data.bestAlignments.size();
+
+            readStorage.gatherSequenceQualities(
+                data.readStorageGatherHandle,
+                data.bestCandidateReadIds.data(),
+                numGoodCandidates,
+                data.bestCandidateQualityData.data(),
+                maximumSequenceLength
+            );
+
+            for(int i = 0; i < numGoodCandidates; i++){
+                if(data.bestAlignmentFlags[i] == BestAlignment_t::ReverseComplement){
+                    std::reverse(
+                        &data.bestCandidateQualityData[maximumSequenceLength * i],
+                        &data.bestCandidateQualityData[maximumSequenceLength * (i+1)]
+                    );
                 }
-                const char* qualityptr = readStorage.fetchQuality_ptr(data.bestCandidateReadIds[i]);
-                const int length = data.bestCandidateLengths[i];
-                const BestAlignment_t flag = data.bestAlignmentFlags[i];
-
-                if(flag == BestAlignment_t::Forward){
-                    std::copy(qualityptr, qualityptr + length, &data.bestCandidateQualityData[maximumSequenceLength * i]);
-                }else{
-                    std::reverse_copy(qualityptr, qualityptr + length, &data.bestCandidateQualityData[maximumSequenceLength * i]);
-                }
-            }
-
-            for(size_t i = 0; i < data.bestAlignments.size(); i++){
-                data.bestCandidateQualityPtrs[i] = data.bestCandidateQualityData.data() + i * maximumSequenceLength;
             }
         }
 
 
         void makeCandidateStrings(TaskData& data,
                                     CorrectionTask& task,
+                                    size_t candidatePitchInInts,
                                     int maximumSequenceLength){
             data.bestCandidateStrings.clear();
             data.bestCandidateStrings.resize(data.bestAlignments.size() * maximumSequenceLength);
 
             for(size_t i = 0; i < data.bestAlignments.size(); i++){
-                const unsigned int* const ptr = data.bestCandidatePtrs[i];
+                const unsigned int* const ptr = data.bestCandidateData.data() + i * candidatePitchInInts;
                 const int length = data.bestCandidateLengths[i];
                 decode2BitSequence(&data.bestCandidateStrings[i * maximumSequenceLength],
                                         ptr,
                                         length);
+            }
+            
+            if(0) /*if(task.readId == 1)*/{
+                for(int i = 0; i < int(data.bestAlignments.size()); i++){
+                    std::cerr << data.bestCandidateReadIds[i] << " : ";
+                    for(int k = 0; k < data.bestCandidateLengths[i]; k++){
+                        std::cerr << data.bestCandidateStrings[i * maximumSequenceLength + k];
+                    }
+                    std::cerr << "\n";
+                }                
             }
         }
 
@@ -661,8 +709,16 @@ namespace cpu{
 
                         bool anyRemoved = false;
                         size_t cur = 0;
+                        if(0) /*if(task.readId == 1)*/{
+                            std::cerr << "------\n";
+                        }
+                        
                         for(size_t i = 0; i < minimizationResult.differentRegionCandidate.size(); i++){
                             if(!minimizationResult.differentRegionCandidate[i]){
+                                
+                                if(0) /*if(task.readId == 1)*/{
+                                    std::cerr << "keep " << i << "\n";                
+                                }
 
                                 data.bestAlignments[cur] = data.bestAlignments[i];
                                 data.bestAlignmentShifts[cur] = data.bestAlignmentShifts[i];
@@ -686,6 +742,10 @@ namespace cpu{
                             }else{
                                 anyRemoved = true;
                             }
+                        }
+                        
+                        if(0) /*if(task.readId == 1)*/{
+                            std::cerr << "------\n";
                         }
 
                         //assert(anyRemoved);
@@ -828,6 +888,10 @@ namespace cpu{
             }
 
             data.msaProperties.isHQ = correctionResult.isHQ;
+            
+            if(0) /*if(task.readId == 1)*/{
+                std::cerr << "corrected ? " << correctionResult.isCorrected << ", " << correctionResult.correctedSequence << "\n";
+            }
 
             if(correctionResult.isCorrected){
                 task.corrected_subject = std::move(correctionResult.correctedSequence);
@@ -853,6 +917,25 @@ namespace cpu{
                                                             correctionOptions.estimatedCoverage,
                                                             correctionOptions.m_coverage,
                                                             correctionOptions.new_columns_to_correct);
+            
+            if(0) /*if(task.readId == 1)*/{
+                for(const auto& correctedCandidate : task.correctedCandidates){
+                    const read_number candidateId = data.bestCandidateReadIds[correctedCandidate.index];
+                    
+                    if(data.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+                        std::cerr << candidateId << " " << correctedCandidate.sequence << "\n";
+                    }else{
+                        std::string fwd;
+                        fwd.resize(correctedCandidate.sequence.length());
+                        reverseComplementString(
+                            &fwd[0], 
+                            correctedCandidate.sequence.c_str(), 
+                                                correctedCandidate.sequence.length()
+                        );
+                        std::cerr << "revc " << candidateId << " " << fwd << "\n";
+                    }
+                }
+            }
         }
 
         void correctSubjectWithForest(TaskData& data,
@@ -994,6 +1077,8 @@ namespace cpu{
                     tmp.readId = task.readId;
                     tmp.sequence = std::move(task.corrected_subject);
                     tmp.uncorrectedPositionsNoConsensus = task.uncorrectedPositionsNoConsensus;
+                    
+                    //std::cerr << "subject " << tmp << "\n";
                 }
 
                 task.candidatesoutput.reserve(task.correctedCandidates.size());
@@ -1050,6 +1135,8 @@ namespace cpu{
                         }else{
                             tmp.useEdits = false;
                         }
+                        
+                        //std::cerr << "candidate " << tmp << "\n";
 
                         task.candidatesoutput.emplace_back(std::move(tmp));
                     }
@@ -1089,7 +1176,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     // }
 
     const std::size_t availableMemory = getAvailableMemoryInKB();
-    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(1) << 30);
+    const std::size_t memoryForPartialResults = availableMemory - (std::size_t(2) << 30);
 
     auto heapusageOfTCS = [](const auto& x){
         return x.data.capacity();
@@ -1111,6 +1198,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
 
+
 #if 0
     NN_Correction_Classifier_Base nnClassifierBase;
     NN_Correction_Classifier nnClassifier;
@@ -1127,8 +1215,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
+          //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              //outputstream << tmp << '\n';
+              //std::cerr << tmp.readId << " " << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
           }
       };
@@ -1265,12 +1354,12 @@ void correct_cpu(const MinhashOptions& minhashOptions,
                 // unlock(readId);
                 bool ok = true;
                 if(ok){
-                    const char* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
+                    const unsigned int* originalsubjectptr = readStorage.fetchSequenceData_ptr(readId);
                     const int originalsubjectLength = readStorage.fetchSequenceLength(readId);
 
-                    task.original_subject_string = get2BitString((const unsigned int*)originalsubjectptr, originalsubjectLength);
+                    task.original_subject_string = get2BitString(originalsubjectptr, originalsubjectLength);
 
-                    task.encodedSubjectPtr = (const unsigned int*) originalsubjectptr;
+                    task.encodedSubjectPtr = originalsubjectptr;
                 }else{
                     task.active = false;
                 }
@@ -1387,6 +1476,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
                 makeCandidateStrings(taskdata,
                                         task,
+                                        encodedSequencePitchInInts,
                                         sequenceFileProperties.maxSequenceLength);
 
                 #ifdef ENABLE_TIMING
