@@ -396,7 +396,7 @@ public:
                 const read_number readId = readIds[index];
                 const T* const data = source + sourcePitchElements * readId;
 
-                T* const destData = destination + destinationPitchElements * i;
+                T* const destData = destination + destinationPitchElements * index;
                 std::copy_n(data, sourcePitchElements, destData);
             }
         }
