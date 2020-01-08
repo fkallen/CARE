@@ -1193,8 +1193,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
       //}
 
 #ifndef DO_PROFILE
-    //cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
-    cpu::RangeGenerator<read_number> readIdGenerator(100);
+    cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
 #else
     cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -1216,9 +1215,9 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     auto saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, const EncodedTempCorrectedSequence& encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
-          std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
+          //std::cerr << tmp.readId  << " hq " << tmp.hq << " " << "useedits " << tmp.useEdits << " emptyedits " << tmp.edits.empty() << "\n";
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
-              std::cerr << tmp.readId << " " << tmp << '\n';
+              //std::cerr << tmp.readId << " " << tmp << '\n';
               partialResults.storeElement(std::move(encoded));
           }
       };
@@ -1319,7 +1318,7 @@ void correct_cpu(const MinhashOptions& minhashOptions,
 
     //std::cerr << "correctionOptions.hits_per_candidate " <<  correctionOptions.hits_per_candidate << ", max_candidates " << max_candidates << '\n';
 
-//    #pragma omp parallel
+    #pragma omp parallel
     {
         const int threadId = omp_get_thread_num();
         auto& correctionTasks = correctionTasksPerThread[threadId];
