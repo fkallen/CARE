@@ -201,8 +201,8 @@ private:
     }
 
     bool storeInMemory(T&& element){
-        vector.emplace_back(std::move(element));
         usedHeapMemory += getHeapUsageOfElement(element);
+        vector.emplace_back(std::move(element));        
         numStoredElements++;
 
         return true;

@@ -1307,7 +1307,7 @@ void mergeResultFiles(
             }
         }
         
-        /*if(currentReadId == 1){
+       /* if(currentReadId == 1){
             std::cerr << "uncorrected: " << read.sequence << "\n";
             for(auto& s : correctionVector){
                 std::cerr << s << "\n";
