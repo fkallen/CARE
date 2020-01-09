@@ -852,6 +852,8 @@ std::vector<CorrectedCandidate> getCorrectedCandidatesNew(const char* consensus,
             candidateShouldBeCorrected = newColMinSupport >= min_support_threshold
                             && newColMinCov >= min_coverage_threshold;
 
+            candidateShouldBeCorrected = true;
+
             // if(newColMinSupport >= min_support_threshold
             //     && newColMinCov >= min_coverage_threshold){
 
