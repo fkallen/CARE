@@ -997,12 +997,15 @@ namespace test{
             batchData.nextIterationData.done = false;
             batchData.backgroundWorker->enqueue(
                 [batchptr](){
-                    nvtx::push_range("makeNextIterationData",2);
+                    nvtx::push_range("getSubjectDataOfNextIteration",1);
                     getSubjectDataOfNextIteration(
                         *batchptr, 
                         batchptr->transFuncData->correctionOptions.batchsize,
                         *batchptr->transFuncData->readStorage
                     );
+                    nvtx::pop_range();
+
+                    nvtx::push_range("determineCandidateReadIdsOfNextIteration",2);
         
                     if(batchptr->nextIterationData.initialNumberOfAnchorIds > 0){
                         determineCandidateReadIdsOfNextIteration(
@@ -2345,36 +2348,37 @@ namespace test{
                     batch.kernelLaunchHandle);
 
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_corrected_subjects,
                         dataArrays.d_corrected_subjects,
                         dataArrays.d_corrected_subjects.sizeInBytes(),
                         D2H,
-                        streams[primary_stream_index]); CUERR;
+                        streams[secondary_stream_index]); CUERR;
         cudaMemcpyAsync(dataArrays.h_subject_is_corrected,
                         dataArrays.d_subject_is_corrected,
                         dataArrays.d_subject_is_corrected.sizeInBytes(),
                         D2H,
-                        streams[primary_stream_index]); CUERR;
+                        streams[secondary_stream_index]); CUERR;
         cudaMemcpyAsync(dataArrays.h_is_high_quality_subject,
                         dataArrays.d_is_high_quality_subject,
                         dataArrays.d_is_high_quality_subject.sizeInBytes(),
                         D2H,
-                        streams[primary_stream_index]); CUERR;
+                        streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_num_uncorrected_positions_per_subject,
                         dataArrays.d_num_uncorrected_positions_per_subject,
                         dataArrays.d_num_uncorrected_positions_per_subject.sizeInBytes(),
                         D2H,
-                        streams[primary_stream_index]); CUERR;
+                        streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_uncorrected_positions_per_subject,
                         dataArrays.d_uncorrected_positions_per_subject,
                         dataArrays.d_uncorrected_positions_per_subject.sizeInBytes(),
                         D2H,
-                        streams[primary_stream_index]); CUERR;
+                        streams[secondary_stream_index]); CUERR;
 
-		cudaEventRecord(events[result_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+		cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
 
 		if(transFuncData.correctionOptions.correctCandidates) {
             // find subject ids of subjects with high quality multiple sequence alignment
@@ -2435,6 +2439,10 @@ namespace test{
         const float min_coverage_threshold = std::max(1.0f,
                     transFuncData.correctionOptions.m_coverage / 6.0f * transFuncData.correctionOptions.estimatedCoverage);
         const int new_columns_to_correct = transFuncData.correctionOptions.new_columns_to_correct;
+
+
+        //wait for transfer of h_indices_per_subject to host
+        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
 
 
@@ -2510,8 +2518,6 @@ namespace test{
                         streams[primary_stream_index]); CUERR;
 
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
-
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
     }
 
  
@@ -3491,9 +3497,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     //cudaDeviceSynchronize(); CUERR;
 
 
-                    if(transFuncData.correctionOptions.correctCandidates) {
-
-                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+                    if(transFuncData.correctionOptions.correctCandidates) {                        
 
                         pushrange("correctCandidates", 8);
 
