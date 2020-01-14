@@ -2049,13 +2049,17 @@ namespace test{
                 batch.numMinimizations++;
                 batch.previousNumIndices = currentNumIndices;
 
-                //if(batch.numMinimizations < max_num_minimizations){
+                if(batch.numMinimizations < max_num_minimizations){
                     cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-                //}
+                }
             }
             
             {
                 //std::cerr << "minimization finished\n";
+
+                cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
+                cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
+
                 cudaMemcpyAsync(dataArrays.h_num_indices,
                                 dataArrays.d_num_indices,
                                 dataArrays.d_num_indices.sizeInBytes(),
@@ -2443,6 +2447,7 @@ namespace test{
 
         //wait for transfer of h_indices_per_subject to host
         cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
 
 
 
