@@ -961,78 +961,6 @@ namespace test{
     }
 
 
-
-#if 0
-
-auto call = [&](auto f){
-    // if(batch->statesInProgress > 0){
-    //     std::cerr << "\nbatch " << batch->id << nameOf(batch->state) << " " << batch->statesInProgress << "\n";
-    //     assert(false);
-    // }
-
-    batch.statesInProgress++;
-    //std::cerr << "batch " << batch.id << " " << nameOf(batch.state) << "\n";
-    nvtx::push_range("batch "+std::to_string(batch.id)+nameOf(batch.state), int(batch.state));
-    f(batch);
-    nvtx::pop_range();
-
-    batch.statesInProgress--;
-};
-
-    while(!(readIdGenerator->empty() 
-             && batchData.nextIterationData.isDone()
-             && batchData.nextIterationData.tasks.empty())) {
-            
-        batchData.reset();
-        
-        getNextBatchOfSubjectsAndDetermineCandidateReadIds(batchData);
-
-        if(batchData.nextIterationData.initialNumberOfCandidates == 0){
-            continue;
-        }
-
-        getCandidateSequenceData(batchData, *transFuncData->readStorage);
-
-        getCandidateAlignments(batchData);
-
-        rearrangeIndices(batchData);
-
-        if(dataArrays.h_num_indices[0] == 0){
-            continue;
-        }
-
-        if(transFuncData.correctionOptions.useQualityScores) {
-            getQualities(batchData);
-        }
-
-        buildMultipleSequenceAlignment(batchData);
-
-    #ifdef USE_MSA_MINIMIZATION
-
-        removeCandidatesOfDifferentRegionFromMSA(batchData);
-
-        if(dataArrays.h_num_indices[0] == 0){
-            continue;
-        }
-
-    #endif
-
-        correctSubjects(batchData);
-
-        if(transFuncData.correctionOptions.correctCandidates) {
-            correctCandidates(batchData);
-        }
-
-        unpackClassicResults(batchData);
-
-        saveResults(batchData);
-        
-    }
-
-    batchData.isTerminated = true;
-#endif
-
-
     void getNextBatchOfSubjectsAndDetermineCandidateReadIds(Batch& batchData){
 
         if(batchData.isFirstIteration){
@@ -1153,7 +1081,7 @@ auto call = [&](auto f){
             max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
             temp_storage_bytes = max_temp_storage_bytes;
             dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
-            dataArrays.zero_gpu(streams[primary_stream_index]);
+            //dataArrays.zero_gpu(streams[primary_stream_index]);
         }
 
     }
@@ -1279,7 +1207,8 @@ auto call = [&](auto f){
                         D2H,
                         streams[secondary_stream_index]); CUERR;
 
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
     }
 
 
@@ -1490,7 +1419,7 @@ auto call = [&](auto f){
 
         cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
         //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
@@ -1505,7 +1434,7 @@ auto call = [&](auto f){
         std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
         std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
 
-#ifdef REARRANGE_INDICES
+#if 0
 
 
 
@@ -1594,7 +1523,7 @@ auto call = [&](auto f){
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
         cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
     }
 
 
@@ -1669,9 +1598,9 @@ auto call = [&](auto f){
                             dataArrays.d_candidate_qualities.sizeInBytes(),
                             D2H,
                             streams[secondary_stream_index]);
-
-            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
         }
+
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 	}
 
 
@@ -1726,7 +1655,7 @@ auto call = [&](auto f){
         //At this point the msa is built
         cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 	}
 
 
@@ -2117,7 +2046,9 @@ auto call = [&](auto f){
                 batch.numMinimizations++;
                 batch.previousNumIndices = currentNumIndices;
 
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+                //if(batch.numMinimizations < max_num_minimizations){
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+                //}
             }
             
             {
@@ -2162,7 +2093,9 @@ auto call = [&](auto f){
         //At this point the msa is built, maybe minimized, and is ready to be used for correction
 
         cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        
 
 #if 0        
         if(transFuncData.correctionOptions.extractFeatures || transFuncData.correctionOptions.correctionType != CorrectionType::Classic) {
@@ -2478,9 +2411,11 @@ auto call = [&](auto f){
                             streams[primary_stream_index]); CUERR;
 
             cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+
+            //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 		}
 
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        
 	}
 
 
@@ -2591,19 +2526,11 @@ auto call = [&](auto f){
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        if(!batch.combinedStreams){
-            auto& events = batch.events;
-            auto& streams = batch.streams;
+        auto& events = batch.events;
+        auto& streams = batch.streams;
 
-            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
 
-            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
 
-            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-            batch.combinedStreams = true;            
-        }
-
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
         cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
         if(errort != cudaSuccess){
             std::cout << "error cudaEventQuery\n";
@@ -2881,12 +2808,6 @@ auto call = [&](auto f){
 
         auto& events = batch.events;
         auto& streams = batch.streams;
-
-        cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
-
-        cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;
-
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
         cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
         if(errort != cudaSuccess){
@@ -3458,6 +3379,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         for(int i = 0; i < nParallelBatches; ++i) {
             batchExecutors.emplace_back([&,i](){
                 auto& batchData = batches[i];
+                auto& streams = batchData.streams;
+                auto& events = batchData.events;
 
                 auto pushrange = [&](const std::string& msg, int color){
                     nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
@@ -3467,21 +3390,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     nvtx::pop_range();
                 };
 
-                
-                // auto call = [&](auto f){
-                //     // if(batch->statesInProgress > 0){
-                //     //     std::cerr << "\nbatch " << batch->id << nameOf(batch->state) << " " << batch->statesInProgress << "\n";
-                //     //     assert(false);
-                //     // }
-
-                //     batch.statesInProgress++;
-                //     //std::cerr << "batch " << batch.id << " " << nameOf(batch.state) << "\n";
-                //     nvtx::push_range("batch "+std::to_string(batch.id)+nameOf(batch.state), int(batch.state));
-                //     f(batch);
-                //     nvtx::pop_range();
-
-                //     batch.statesInProgress--;
-                // };
 
                 while(!(readIdGenerator.empty() 
                         && batchData.nextIterationData.isDone()
@@ -3495,6 +3403,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
+                    //cudaDeviceSynchronize(); CUERR;
+
                     if(batchData.initialNumberOfCandidates == 0){
                         continue;
                     }
@@ -3505,17 +3415,28 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
+                    //cudaDeviceSynchronize(); CUERR;
+
+
                     pushrange("getCandidateAlignments", 2);
 
                     getCandidateAlignments(batchData);
 
                     poprange();
 
+                    //cudaDeviceSynchronize(); CUERR;
+
+
                     pushrange("rearrangeIndices", 3);
 
                     rearrangeIndices(batchData);
 
                     poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
                     if(batchData.dataArrays.h_num_indices[0] == 0){
                         continue;
@@ -3529,11 +3450,16 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         poprange();
                     }
 
+                    //cudaDeviceSynchronize(); CUERR;
+
                     pushrange("buildMultipleSequenceAlignment", 5);
 
                     buildMultipleSequenceAlignment(batchData);
 
                     poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
 
                 #ifdef USE_MSA_MINIMIZATION
 
@@ -3543,11 +3469,18 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
                     if(batchData.dataArrays.h_num_indices[0] == 0){
                         continue;
                     }
 
                 #endif
+
+                //cudaDeviceSynchronize(); CUERR;
 
                     pushrange("correctSubjects", 7);
 
@@ -3555,7 +3488,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
+                    //cudaDeviceSynchronize(); CUERR;
+
+
                     if(transFuncData.correctionOptions.correctCandidates) {
+
+                        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
                         pushrange("correctCandidates", 8);
 
@@ -3564,11 +3502,20 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         poprange();
                     }
 
+                    cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+                    cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;            
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    //cudaDeviceSynchronize(); CUERR;
+
                     pushrange("unpackClassicResults", 9);
 
                     unpackClassicResults(batchData);
 
                     poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
 
                     pushrange("saveResults", 10);
 
