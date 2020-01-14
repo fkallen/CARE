@@ -8,6 +8,9 @@
 #include <cassert>
 #include <cooperative_groups.h>
 
+
+//#define DO_CHECK_CONVERSIONS
+
 namespace cg = cooperative_groups;
 
 namespace care{
@@ -476,6 +479,8 @@ void callConversionKernel2BitTo2BitHiLoNN(
         d_sequenceLengths,
         numSequences); CUERR;
 
+#ifdef DO_CHECK_CONVERSIONS        
+
     callCheckSequenceConversionKernelNN(d_inputdata,
         inputpitchInInts,
         d_outputdata,
@@ -483,6 +488,9 @@ void callConversionKernel2BitTo2BitHiLoNN(
         d_sequenceLengths,
         numSequences,
         stream);
+
+#endif
+
 }
 
 void callConversionKernel2BitTo2BitHiLoNT(
@@ -552,6 +560,8 @@ void callConversionKernel2BitTo2BitHiLoNT(
         d_sequenceLengths,
         numSequences); CUERR;
 
+#ifdef DO_CHECK_CONVERSIONS    
+
     callCheckSequenceConversionKernelNT(d_inputdata,
         inputpitchInInts,
         d_outputdata,
@@ -559,6 +569,9 @@ void callConversionKernel2BitTo2BitHiLoNT(
         d_sequenceLengths,
         numSequences,
         stream);
+
+#endif
+
 }
 
 void callConversionKernel2BitTo2BitHiLoTT(
@@ -628,6 +641,8 @@ void callConversionKernel2BitTo2BitHiLoTT(
         d_sequenceLengths,
         numSequences); CUERR;
 
+#ifdef DO_CHECK_CONVERSIONS            
+
     callCheckSequenceConversionKernelTT(d_inputdata,
         inputpitchInInts,
         d_outputdata,
@@ -635,6 +650,9 @@ void callConversionKernel2BitTo2BitHiLoTT(
         d_sequenceLengths,
         numSequences,
         stream);
+
+#endif 
+        
 }
 
 
