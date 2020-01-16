@@ -1584,86 +1584,7 @@ namespace test{
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
     }
 
-
     void getQualities(Batch& batch){
-
-        cudaSetDevice(batch.deviceId); CUERR;
-
-        const auto& transFuncData = *batch.transFuncData;
-
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
-
-        DataArrays& dataArrays = batch.dataArrays;
-
-		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-
-        const auto* gpuReadStorage = transFuncData.readStorage;
-
-		if(transFuncData.correctionOptions.useQualityScores) {
-
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                batch.threadPool,
-                batch.subjectQualitiesGatherHandle2,
-                dataArrays.d_subject_qualities,
-                dataArrays.quality_pitch,
-                dataArrays.h_subject_read_ids,
-                dataArrays.d_subject_read_ids,
-                dataArrays.n_subjects,
-                batch.deviceId,
-                streams[primary_stream_index],
-                transFuncData.runtimeOptions.nCorrectorThreads);
-
-            read_number* d_tmp_read_ids = nullptr;
-            cubCachingAllocator.DeviceAllocate((void**)&d_tmp_read_ids, dataArrays.n_queries * sizeof(read_number), streams[primary_stream_index]); CUERR;
-
-            call_compact_kernel_async(d_tmp_read_ids,
-                                        dataArrays.d_candidate_read_ids.get(),
-                                        dataArrays.d_indices,
-                                        dataArrays.h_num_indices[0],
-                                        streams[primary_stream_index]);
-
-            std::vector<read_number> h_tmp_read_ids(dataArrays.h_num_indices[0]);
-            for(int i = 0; i < dataArrays.h_num_indices[0]; i++){
-                h_tmp_read_ids[i] = dataArrays.h_candidate_read_ids[dataArrays.h_indices[i]];
-            }
-
-            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
-                batch.threadPool,
-                batch.candidateQualitiesGatherHandle2,
-                dataArrays.d_candidate_qualities,
-                dataArrays.quality_pitch,
-                h_tmp_read_ids.data(),
-                d_tmp_read_ids,
-                dataArrays.h_num_indices[0],
-                batch.deviceId,
-                streams[primary_stream_index],
-                transFuncData.runtimeOptions.nCorrectorThreads);
-
-            cubCachingAllocator.DeviceFree(d_tmp_read_ids); CUERR;
-
-            cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
-
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_subject_qualities,
-                            dataArrays.d_subject_qualities,
-                            dataArrays.d_subject_qualities.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]);
-
-            cudaMemcpyAsync(dataArrays.h_candidate_qualities,
-                            dataArrays.d_candidate_qualities,
-                            dataArrays.d_candidate_qualities.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]);
-        }
-
-        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-    }
-    
-
-
-    void getQualitiesOfAllSequencesInBatch(Batch& batch){
 
         cudaSetDevice(batch.deviceId); CUERR;
 
@@ -3552,13 +3473,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     //cudaDeviceSynchronize(); CUERR;
 
-
-                    // pushrange("rearrangeIndices", 3);
-
-                    // rearrangeIndices(batchData);
-
-                    // poprange();
-
                     //cudaDeviceSynchronize(); CUERR;
 
 
@@ -3571,8 +3485,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     if(transFuncData.correctionOptions.useQualityScores) {
                         pushrange("getQualities", 4);
 
-                        //getQualities(batchData);
-                        getQualitiesOfAllSequencesInBatch(batchData);
+                        getQualities(batchData);
 
                         poprange();
                     }
