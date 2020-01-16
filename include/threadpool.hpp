@@ -68,9 +68,9 @@ struct BackgroundThread{
     void threadfunc(){
         while(!stop){
             std::unique_lock<std::mutex> mylock(m);
-            nvtx::push_range("bg thread wait", 7);
+            //nvtx::push_range("bg thread wait", 7);
             consumer_cv.wait(mylock, [&](){return !tasks.empty() || stop;});
-            nvtx::pop_range();
+            //nvtx::pop_range();
 
             if(!tasks.empty()){
                 auto func = std::move(tasks.front());
