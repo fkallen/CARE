@@ -1422,6 +1422,41 @@ namespace test{
 
         cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
+        // {
+        //     cudaDeviceSynchronize(); CUERR;
+        //     unsigned int* d_candidateDataTmp = nullptr;
+        //     unsigned int* d_candidateData = (unsigned int*)dataArrays.d_candidate_sequences_data.get();
+
+        //     const int nIndices = dataArrays.h_num_indices[0];
+        //     const int* d_indices = dataArrays.d_indices.get();
+        //     const int numCols = batch.encodedSequencePitchInInts;
+            
+
+
+
+        //     cubCachingAllocator.DeviceAllocate((void**)&d_candidateDataTmp,
+        //                                         sizeof(unsigned int) * nIndices,
+        //                                         streams[primary_stream_index]); CUERR;
+
+        //     dim3 block(256,1,1);
+        //     dim3 grid(std::min(65535, SDIV(nIndices * numCols, 256)),1,1);
+
+        //     generic_kernel<<<grid, block, 0, streams[primary_stream_index]>>>([=] __device__ (){
+        //         for(size_t i = threadIdx.x + size_t(blockIdx.x) * 256; i < nIndices * numCols; i += size_t(256) * gridDim.x){
+        //             const int outputrow = i / numCols;
+        //             const int inputrow = d_indices[outputrow];
+        //             const int col = i % numCols;
+        //             d_candidateDataTmp[size_t(outputrow) * numCols + col] 
+        //                     = d_candidateData[size_t(inputrow) * numCols + col];
+        //         }
+        //     }); CUERR;
+
+        //     cubCachingAllocator.DeviceFree(d_candidateDataTmp); CUERR;
+
+        // }
+
+        
+
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
         //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
