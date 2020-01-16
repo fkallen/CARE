@@ -661,7 +661,6 @@ namespace test{
                     const int* d_indices_per_subject_prefixsum,
                     int n_subjects,
                     int n_queries,
-                    const int* h_num_indices,
                     const int* d_num_indices,
                     float expectedAffectedIndicesFraction,
                     bool useQualityScores,
@@ -698,7 +697,6 @@ namespace test{
                     d_indices_per_subject_prefixsum,
                     n_subjects,
                     n_queries,
-                    h_num_indices,
                     d_num_indices,
                     expectedAffectedIndicesFraction,
                     useQualityScores,
@@ -1421,6 +1419,28 @@ namespace test{
                         streams[primary_stream_index]); CUERR;
 
         cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[num_indices_transfered_event_index], 0); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_indices,
+                        dataArrays.d_indices,
+                        dataArrays.d_indices.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_indices_per_subject,
+                        dataArrays.d_indices_per_subject,
+                        dataArrays.d_indices_per_subject.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaMemcpyAsync(dataArrays.h_indices_per_subject_prefixsum,
+                        dataArrays.d_indices_per_subject_prefixsum,
+                        dataArrays.d_indices_per_subject_prefixsum.sizeInBytes(),
+                        D2H,
+                        streams[secondary_stream_index]); CUERR;
+
+        cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+        //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
         // {
         //     cudaDeviceSynchronize(); CUERR;
@@ -1639,6 +1659,68 @@ namespace test{
         }
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+    }
+    
+
+
+    void getQualitiesOfAllSequencesInBatch(Batch& batch){
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+
+        DataArrays& dataArrays = batch.dataArrays;
+
+		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
+
+        const auto* gpuReadStorage = transFuncData.readStorage;
+
+		if(transFuncData.correctionOptions.useQualityScores) {
+
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
+                batch.threadPool,
+                batch.subjectQualitiesGatherHandle2,
+                dataArrays.d_subject_qualities,
+                dataArrays.quality_pitch,
+                dataArrays.h_subject_read_ids,
+                dataArrays.d_subject_read_ids,
+                dataArrays.n_subjects,
+                batch.deviceId,
+                streams[primary_stream_index],
+                transFuncData.runtimeOptions.nCorrectorThreads);
+
+            gpuReadStorage->gatherQualitiesToGpuBufferAsync(
+                batch.threadPool,
+                batch.candidateQualitiesGatherHandle2,
+                dataArrays.d_candidate_qualities,
+                dataArrays.quality_pitch,
+                dataArrays.h_candidate_read_ids.get(),
+                dataArrays.d_candidate_read_ids.get(),
+                dataArrays.n_queries,
+                batch.deviceId,
+                streams[primary_stream_index],
+                transFuncData.runtimeOptions.nCorrectorThreads);
+
+            cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+
+            cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+
+            cudaMemcpyAsync(dataArrays.h_subject_qualities,
+                            dataArrays.d_subject_qualities,
+                            dataArrays.d_subject_qualities.sizeInBytes(),
+                            D2H,
+                            streams[secondary_stream_index]);
+
+            cudaMemcpyAsync(dataArrays.h_candidate_qualities,
+                            dataArrays.d_candidate_qualities,
+                            dataArrays.d_candidate_qualities.sizeInBytes(),
+                            D2H,
+                            streams[secondary_stream_index]);
+        }
+
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 	}
 
 
@@ -1674,7 +1756,6 @@ namespace test{
                         dataArrays.d_indices_per_subject_prefixsum,
                         dataArrays.n_subjects,
                         dataArrays.n_queries,
-                        dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
                         1.0f,
                         transFuncData.correctionOptions.useQualityScores,
@@ -1823,7 +1904,7 @@ namespace test{
                             dataArrays.n_subjects,
                             streams[primary_stream_index]); CUERR;
 
-
+#if 0
                 //compact the quality scores
                 if(transFuncData.correctionOptions.useQualityScores){
 #if 1                    
@@ -1884,7 +1965,6 @@ namespace test{
 
 
 #endif
-
 
                    /* char* d_candidate_qualities_tmp2;
                     cubCachingAllocator.DeviceAllocate((void**)&d_candidate_qualities_tmp2, currentNumIndices * quality_pitch, streams[primary_stream_index]); CUERR;
@@ -2006,6 +2086,7 @@ namespace test{
 
                     std::swap(dataArrays.d_candidate_qualities, dataArrays.d_candidate_qualities_tmp);
                 }
+#endif
 
                 {
                     /*
@@ -2058,7 +2139,6 @@ namespace test{
                                 dataArrays.d_indices_per_subject_prefixsum,
                                 dataArrays.n_subjects,
                                 dataArrays.n_queries,
-                                dataArrays.h_num_indices,
                                 dataArrays.d_num_indices,
                                 0.05f, //
                                 transFuncData.correctionOptions.useQualityScores,
@@ -3473,28 +3553,31 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     //cudaDeviceSynchronize(); CUERR;
 
 
-                    pushrange("rearrangeIndices", 3);
+                    // pushrange("rearrangeIndices", 3);
 
-                    rearrangeIndices(batchData);
+                    // rearrangeIndices(batchData);
 
-                    poprange();
+                    // poprange();
 
                     //cudaDeviceSynchronize(); CUERR;
 
 
-                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+                    // cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-                    if(batchData.dataArrays.h_num_indices[0] == 0){
-                        continue;
-                    }
+                    // if(batchData.dataArrays.h_num_indices[0] == 0){
+                    //     continue;
+                    // }
 
                     if(transFuncData.correctionOptions.useQualityScores) {
                         pushrange("getQualities", 4);
 
-                        getQualities(batchData);
+                        //getQualities(batchData);
+                        getQualitiesOfAllSequencesInBatch(batchData);
 
                         poprange();
                     }
+
+                    
 
                     //cudaDeviceSynchronize(); CUERR;
 
@@ -3508,6 +3591,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
                 #ifdef USE_MSA_MINIMIZATION
+
+                    cudaEventSynchronize(events[num_indices_transfered_event_index]); CUERR;
 
                     pushrange("removeCandidatesOfDifferentRegionFromMSA", 6);
 
@@ -3525,6 +3610,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     }
 
                 #endif
+
+                    cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
 
                 //cudaDeviceSynchronize(); CUERR;
 

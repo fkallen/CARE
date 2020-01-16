@@ -788,7 +788,6 @@ namespace gpu{
                     d_indices_per_subject_prefixsum,
                     n_subjects,
                     n_queries,
-                    h_num_indices,
                     d_num_indices,
                     expectedAffectedIndicesFraction,
                     useQualityScores,
