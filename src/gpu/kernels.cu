@@ -2366,11 +2366,9 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
-                CorrectionResultPointers h_correctionResultPointers,
     			const int* d_indices,
     			const int* d_indices_per_subject,
     			const int* d_indices_per_subject_prefixsum,
-                const int* h_indices_per_subject,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -2387,7 +2385,7 @@ namespace gpu{
 
         //constexpr int tilesize = 32;
         const int max_block_size = 256;
-        const int blocksize = 64;// std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
+        constexpr int blocksize = 64;// std::min(max_block_size, SDIV(maximum_sequence_length, 32) * 32);
 
         const int* d_highQualitySubjectIndices =  d_correctionResultPointers.highQualitySubjectIndices;
 
@@ -2408,87 +2406,26 @@ namespace gpu{
         void* tempstorage = nullptr;
         size_t tempstoragesize = 0;
 
-        const int numHQSubjects = *(h_correctionResultPointers.numHighQualitySubjectIndices);
+        //const int numHQSubjects = *(h_correctionResultPointers.numHighQualitySubjectIndices);
 
 
         //make prefixsum of number of candidates per high quality subject
         int* d_candidatesPerHQAnchorPrefixSum = nullptr;
-        cubCachingAllocator.DeviceAllocate((void**)&d_candidatesPerHQAnchorPrefixSum, sizeof(int) * (numHQSubjects+1), stream);  CUERR;
+        cubCachingAllocator.DeviceAllocate((void**)&d_candidatesPerHQAnchorPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
 
         cub::TransformInputIterator<int, CperHQA_t, CountIt> transformIter(CountIt{0}, getCandidatesPerHQAnchor);
 
-        cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
+        //calculate prefixsum of candidatesPerHQAnchor. 
+        //only the first d_correctionResultPointersnumHighQualitySubjectIndices+1 entries will contain valid data.
+        cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, n_subjects, stream);
         cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
-        cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
+        cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, n_subjects, stream);
         cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
 
         call_set_kernel_async(d_candidatesPerHQAnchorPrefixSum, 0, 0, stream);
 
         // set number of corrected candidates per subject to 0
         cudaMemsetAsync(d_correctionResultPointers.numCorrectedCandidates, 0, sizeof(int) * n_subjects, stream); CUERR;
-        //call_fill_kernel_async(d_correctionResultPointers.numCorrectedCandidates, n_subjects, 0, stream);
-
-        //make tiles per anchor prefixsum
-        // int* d_tilesPerHQAnchorPrefixSum;
-        // cubCachingAllocator.DeviceAllocate((void**)&d_tilesPerHQAnchorPrefixSum, sizeof(int) * (numHQSubjects+1), stream);  CUERR;
-        //
-        // cub::TransformInputIterator<int, TperHQA_t, CountIt> transformIter2(CountIt{0}, getTilesPerHQAnchor);
-        //
-        // cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter2, d_tilesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
-        // cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
-        // cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter2, d_tilesPerHQAnchorPrefixSum+1, numHQSubjects, stream);
-        // cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
-        //
-        // call_set_kernel_async(d_tilesPerHQAnchorPrefixSum, 0, 0, stream);
-        //
-        // const int blocksize = 128;
-        // const int tilesPerBlock = blocksize / tilesize;
-        //
-        // //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
-        //
-        // int requiredTiles = 0;
-        // for(int i = 0; i < numHQSubjects; i++){
-        //     const int subjectIndex = h_correctionResultPointers.highQualitySubjectIndices[i];
-        //     const int numCandidatesOfAnchor = h_indices_per_subject[subjectIndex];
-        //     requiredTiles += SDIV(numCandidatesOfAnchor, tilesize);
-        // }
-        //
-        // const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
-
-
-        // int* d_blocksPerHQAnchorPrefixSum;
-        // cubCachingAllocator.DeviceAllocate((void**)&d_blocksPerHQAnchorPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
-        //
-        // // calculate blocks per subject prefixsum
-        // auto getBlocksPerHQAnchor = [=] __device__ (int hqIndex){
-        //     const int numCandidatesOfAnchor = getCandidatesPerHQAnchor(hqIndex);
-        //     return SDIV(numCandidatesOfAnchor, blocksize);
-        // };
-        // cub::TransformInputIterator<int,decltype(getBlocksPerHQAnchor), CountIt>
-        //     d_blocksPerHQAnchor(CountIt{0}, getBlocksPerHQAnchor);
-        //
-        // cub::DeviceScan::InclusiveSum(nullptr,
-        //             tempstoragesize,
-        //             d_blocksPerHQAnchor,
-        //             d_blocksPerHQAnchorPrefixSum+1,
-        //             numHQSubjects,
-        //             stream); CUERR;
-        //
-        // cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
-        //
-        // cub::DeviceScan::InclusiveSum(tempstorage,
-        //             tempstoragesize,
-        //             d_blocksPerHQAnchor,
-        //             d_blocksPerHQAnchorPrefixSum+1,
-        //             numHQSubjects,
-        //             stream); CUERR;
-        //
-        // cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
-        //
-        // call_set_kernel_async(d_blocksPerHQAnchorPrefixSum,
-        //                         0,
-        //                         0,
-        //                         stream);
 
 
     	const std::size_t smem = 0;
@@ -2576,8 +2513,6 @@ namespace gpu{
 
     		#undef mycall
 
-        //cubCachingAllocator.DeviceFree(d_blocksPerHQAnchorPrefixSum);  CUERR;
-        //cubCachingAllocator.DeviceFree(d_tilesPerHQAnchorPrefixSum);  CUERR;
         cubCachingAllocator.DeviceFree(d_candidatesPerHQAnchorPrefixSum);  CUERR;
     }
 

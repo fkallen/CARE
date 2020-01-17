@@ -2211,19 +2211,24 @@ namespace test{
                         dataArrays.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
+            cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
+            cudaStreamWaitEvent(streams[secondary_stream_index], events[correction_finished_event_index], 0); CUERR;
+
             cudaMemcpyAsync(dataArrays.h_high_quality_subject_indices,
                             dataArrays.d_high_quality_subject_indices,
                             dataArrays.d_high_quality_subject_indices.sizeInBytes(),
                             D2H,
-                            streams[primary_stream_index]); CUERR;
+                            streams[secondary_stream_index]); CUERR;
 
             cudaMemcpyAsync(dataArrays.h_num_high_quality_subject_indices,
                             dataArrays.d_num_high_quality_subject_indices,
                             dataArrays.d_num_high_quality_subject_indices.sizeInBytes(),
                             D2H,
-                            streams[primary_stream_index]); CUERR;
+                            streams[secondary_stream_index]); CUERR;
 
-            cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+            cudaEventRecord(events[result_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
+
+            //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
 
             //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 		}
@@ -2251,7 +2256,7 @@ namespace test{
 
 
         //wait for transfer of h_indices_per_subject to host
-        cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
         //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
 
 
@@ -2262,11 +2267,9 @@ namespace test{
                 dataArrays.getDeviceAlignmentResultPointers(),
                 dataArrays.getDeviceSequencePointers(),
                 dataArrays.getDeviceCorrectionResultPointers(),
-                dataArrays.getHostCorrectionResultPointers(),
                 dataArrays.d_indices,
                 dataArrays.d_indices_per_subject,
                 dataArrays.d_indices_per_subject_prefixsum,
-                dataArrays.h_indices_per_subject,
                 dataArrays.n_subjects,
                 dataArrays.n_queries,
                 dataArrays.d_num_indices,
@@ -3286,7 +3289,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                 #endif
 
-                    cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
+                    //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
 
                 //cudaDeviceSynchronize(); CUERR;
 
