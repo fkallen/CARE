@@ -187,6 +187,7 @@ void call_msa_init_kernel_async_exp(
             const int* d_indices_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
+            const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
@@ -195,6 +196,7 @@ void call_msa_update_properties_kernel_async(
             const int* d_indices_per_subject,
             int n_subjects,
             size_t msa_weights_pitch,
+            const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
@@ -220,36 +222,10 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
             size_t quality_pitch,
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
+            const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-void call_msa_add_sequences_kernel_implicit_shared_testwithsubjectselection_async(
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            ReadQualitiesPointers d_qualityPointers,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_active_candidate_indices,
-            const int* d_active_candidate_indices_per_subject,
-            const int* d_active_candidate_indices_per_subject_prefixsum,
-            const int* d_active_subject_indices,
-            int n_subjects,
-            int n_queries,
-            const int* d_num_active_candidate_indices,
-            const int* h_num_active_candidate_indices,
-            const int* d_num_active_subject_indices,
-            const int* h_num_active_subject_indices,
-            bool canUseQualityScores,
-            float desiredAlignmentMaxErrorRate,
-            int maximum_sequence_length,
-            int max_sequence_bytes,
-            size_t encoded_sequence_pitch,
-            size_t quality_pitch,
-            size_t msa_row_pitch,
-            size_t msa_weights_row_pitch,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            bool debug);
 
 void call_msa_add_sequences_kernel_implicit_global_async(
             MSAPointers d_msapointers,
@@ -272,32 +248,11 @@ void call_msa_add_sequences_kernel_implicit_global_async(
             size_t quality_pitch,
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
+            const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle,
             bool debug = false);
 
-void call_msa_add_sequences_implicit_singlecol_kernel_async(
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            ReadQualitiesPointers d_qualityPointers,
-            const int* d_candidates_per_subject_prefixsum,
-            const int* d_indices,
-            const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
-            int n_subjects,
-            int n_queries,
-            bool canUseQualityScores,
-            float desiredAlignmentMaxErrorRate,
-            int maximum_sequence_length,
-            int max_sequence_bytes,
-            size_t encoded_sequence_pitch,
-            size_t quality_pitch,
-            size_t msa_weights_pitch,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            const read_number* d_subject_read_ids,
-            bool debug = false);
 
 void call_msa_add_sequences_kernel_implicit_async(
             MSAPointers d_msapointers,
@@ -320,6 +275,7 @@ void call_msa_add_sequences_kernel_implicit_async(
             size_t quality_pitch,
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
+            const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle,
             bool debug = false);
@@ -333,8 +289,33 @@ void call_msa_find_consensus_implicit_kernel_async(
             size_t encoded_sequence_pitch,
             size_t msa_pitch,
             size_t msa_weights_pitch,
+            const bool* d_canExecute,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
+
+
+void call_msa_findCandidatesOfDifferentRegion_kernel_async(
+            MSAPointers d_msapointers,
+            AlignmentResultPointers d_alignmentresultpointers,
+            ReadSequencesPointers d_sequencePointers,
+            bool* d_shouldBeKept,
+            const int* d_candidates_per_subject_prefixsum,
+            int n_subjects,
+            int n_candidates,
+            int max_sequence_bytes,
+            size_t encodedsequencepitch,
+            size_t msa_pitch,
+            size_t msa_weights_pitch,
+            const int* d_indices,
+            const int* d_indices_per_subject,
+            const int* d_indices_per_subject_prefixsum,
+            float desiredAlignmentMaxErrorRate,
+            int dataset_coverage,
+            const bool* d_canExecute,
+            cudaStream_t stream,            
+            KernelLaunchHandle& handle,
+            const unsigned int* d_readids,
+            bool debug = false);
 
 
 void call_msa_correct_subject_implicit_kernel_async(
@@ -408,27 +389,7 @@ void call_msa_correct_candidates_kernel_async_experimental(
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
-void call_msa_findCandidatesOfDifferentRegion_kernel_async(
-            MSAPointers d_msapointers,
-            AlignmentResultPointers d_alignmentresultpointers,
-            ReadSequencesPointers d_sequencePointers,
-            bool* d_shouldBeKept,
-            const int* d_candidates_per_subject_prefixsum,
-            int n_subjects,
-            int n_candidates,
-            int max_sequence_bytes,
-            size_t encodedsequencepitch,
-            size_t msa_pitch,
-            size_t msa_weights_pitch,
-            const int* d_indices,
-            const int* d_indices_per_subject,
-            const int* d_indices_per_subject_prefixsum,
-            float desiredAlignmentMaxErrorRate,
-            int dataset_coverage,
-            cudaStream_t stream,
-            KernelLaunchHandle& handle,
-            const unsigned int* d_readids,
-            bool debug = false);
+
 
 
 

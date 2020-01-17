@@ -671,6 +671,7 @@ namespace test{
                     size_t quality_pitch,
                     size_t msa_pitch,
                     size_t msa_weights_pitch,
+                    const bool* d_canExecute,
                     cudaStream_t stream,
                     gpu::KernelLaunchHandle& kernelLaunchHandle){
 
@@ -683,9 +684,10 @@ namespace test{
                 d_indices_per_subject_prefixsum,
                 n_subjects,
                 n_queries,
+                d_canExecute,
                 stream,
                 kernelLaunchHandle);
-#if 1
+
         call_msa_add_sequences_kernel_implicit_async(
                     d_msapointers,
                     d_alignmentresultpointers,
@@ -707,35 +709,11 @@ namespace test{
                     quality_pitch,
                     msa_pitch,
                     msa_weights_pitch,
+                    d_canExecute,
                     stream,
                     kernelLaunchHandle,
                     false);
-#else
 
-        call_msa_add_sequences_implicit_singlecol_kernel_async(
-                    d_msapointers,
-                    d_alignmentresultpointers,
-                    d_sequencePointers,
-                    d_qualityPointers,
-                    d_candidates_per_subject_prefixsum,
-                    d_indices,
-                    d_indices_per_subject,
-                    d_indices_per_subject_prefixsum,
-                    n_subjects,
-                    n_queries,
-                    useQualityScores,
-                    desiredAlignmentMaxErrorRate,
-                    maximum_sequence_length,
-                    maxSequenceBytes,
-                    encoded_sequence_pitch,
-                    quality_pitch,
-                    msa_weights_pitch,
-                    stream,
-                    kernelLaunchHandle,
-                    nullptr,
-                    false);
-
-#endif
         call_msa_find_consensus_implicit_kernel_async(
                     d_msapointers,
                     d_sequencePointers,
@@ -744,6 +722,7 @@ namespace test{
                     encoded_sequence_pitch,
                     msa_pitch,
                     msa_weights_pitch,
+                    d_canExecute,
                     stream,
                     kernelLaunchHandle);
     };
@@ -1082,6 +1061,13 @@ namespace test{
             max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
             temp_storage_bytes = max_temp_storage_bytes;
             dataArrays.set_cub_temp_storage_size(max_temp_storage_bytes);
+
+            call_fill_kernel_async(
+                dataArrays.d_canExecute.get(),
+                1,
+                true,
+                streams[primary_stream_index]
+            );
             //dataArrays.zero_gpu(streams[primary_stream_index]);
         }
 
@@ -1687,6 +1673,7 @@ namespace test{
                         dataArrays.quality_pitch,
                         dataArrays.msa_pitch,
                         dataArrays.msa_weights_pitch,
+                        dataArrays.d_canExecute,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
 
@@ -1754,6 +1741,7 @@ namespace test{
                             dataArrays.d_indices_per_subject_prefixsum,
                             desiredAlignmentMaxErrorRate,
                             transFuncData.correctionOptions.estimatedCoverage,
+                            dataArrays.d_canExecute.get(),
                             streams[primary_stream_index],
                             batch.kernelLaunchHandle,
                             dataArrays.d_subject_read_ids,
@@ -1886,6 +1874,7 @@ namespace test{
                                 dataArrays.quality_pitch,
                                 dataArrays.msa_pitch,
                                 dataArrays.msa_weights_pitch,
+                                dataArrays.d_canExecute,
                                 streams[primary_stream_index],
                                 batch.kernelLaunchHandle);
 

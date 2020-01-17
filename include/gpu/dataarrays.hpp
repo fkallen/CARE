@@ -257,6 +257,7 @@ struct DataArrays {
         d_indices_per_subject.resize(n_sub);
         d_indices_per_subject_prefixsum.resize((n_sub + 1));
         d_num_indices.resize(1);
+        d_num_indices_tmp.resize(1);
 
 		//qualitiy scores
 		if(useQualityScores) {
@@ -320,6 +321,9 @@ struct DataArrays {
         d_msa_column_properties.resize(n_sub);
         d_counts.resize(n_sub * 4 * msa_weights_pitch_floats);
         d_weights.resize(n_sub * 4 * msa_weights_pitch_floats);
+
+
+        d_canExecute.resize(1);
 
         // size_t hostSizeBytes = hostArraysSizeInBytes();
         // size_t deviceSizeBytes = deviceArraysSizeInBytes();
@@ -476,8 +480,11 @@ struct DataArrays {
         d_indices_per_subject = std::move(SimpleAllocationDevice<int>{});
         d_indices_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
         d_num_indices = std::move(SimpleAllocationDevice<int>{});
+        d_num_indices_tmp = std::move(SimpleAllocationDevice<int>{});
 
         d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
+
+        d_canExecute = std::move(SimpleAllocationDevice<bool>{});
 
 		n_subjects = 0;
 		n_queries = 0;
@@ -596,8 +603,12 @@ struct DataArrays {
         bytes += f(d_indices_per_subject);
         bytes += f(d_indices_per_subject_prefixsum);
         bytes += f(d_num_indices);
+        bytes += f(d_num_indices_tmp);
 
         bytes += f(d_cub_temp_storage);
+
+        bytes += f(d_canExecute);
+
 
         return bytes;
 	}
@@ -705,8 +716,11 @@ struct DataArrays {
         bytes += f(d_indices_per_subject);
         bytes += f(d_indices_per_subject_prefixsum);
         bytes += f(d_num_indices);
+        bytes += f(d_num_indices_tmp);
 
         bytes += f(d_cub_temp_storage);
+
+        bytes += f(d_canExecute);
 
         return bytes;
 	}
@@ -774,6 +788,7 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_indices_per_subject;
     SimpleAllocationDevice<int> d_indices_per_subject_prefixsum;
     SimpleAllocationDevice<int> d_num_indices;
+    SimpleAllocationDevice<int> d_num_indices_tmp;
 
 
 
@@ -908,6 +923,8 @@ struct DataArrays {
 
 	//tmp storage for cub
     SimpleAllocationDevice<char> d_cub_temp_storage;
+
+    SimpleAllocationDevice<bool> d_canExecute;
 
 
 	// multiple sequence alignment
