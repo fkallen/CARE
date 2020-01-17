@@ -176,6 +176,8 @@ namespace test{
         std::vector<bool> corrected_candidate_equals_uncorrected;
         std::vector<int> uncorrectedPositionsNoConsensus;
 
+        EncodedTempCorrectedSequence encodedAnchoroutput;
+        std::vector<EncodedTempCorrectedSequence> encodedCandidatesoutput;
         TempCorrectedSequence anchoroutput;
         std::vector<TempCorrectedSequence> candidatesoutput;
     };
@@ -487,7 +489,7 @@ namespace test{
         FileOptions fileOptions;
 		std::atomic_uint8_t* correctionStatusFlagsPerRead;
 		std::ofstream* featurestream;
-        std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence&&)> saveCorrectedSequence;
+        std::function<void(const TempCorrectedSequence&, EncodedTempCorrectedSequence)> saveCorrectedSequence;
 		std::function<void(read_number)> lock;
 		std::function<void(read_number)> unlock;
 
@@ -2711,6 +2713,7 @@ namespace test{
                     task.anchoroutput.readId = task.readId;
                     task.anchoroutput.sequence = std::move(task.corrected_subject);
                     task.anchoroutput.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+                    task.encodedAnchoroutput = task.anchoroutput.encode();
 
                 }else{
 
@@ -2742,6 +2745,7 @@ namespace test{
                 task.corrected_candidates.resize(n_corrected_candidates);
                 task.corrected_candidate_equals_uncorrected.resize(n_corrected_candidates);
                 task.candidatesoutput.reserve(n_corrected_candidates);
+                task.encodedCandidatesoutput.reserve(n_corrected_candidates);
 
                 // if(task.readId == 10){
                 //     for(int i = 0; i < n_corrected_candidates; ++i) {
@@ -2811,6 +2815,7 @@ namespace test{
                         tmp.readId = candidate_read_id;
                         tmp.sequence = std::move(task.corrected_candidates[i]);
 
+                        task.encodedCandidatesoutput.emplace_back(tmp.encode());
                         task.candidatesoutput.emplace_back(std::move(tmp));
     				}
                 }
@@ -2950,7 +2955,7 @@ namespace test{
     			//std::cout << "finished readId " << task.readId << std::endl;
 
     			if(task.corrected) {
-                    transFuncData->saveCorrectedSequence(task.anchoroutput, task.anchoroutput.encode());
+                    transFuncData->saveCorrectedSequence(task.anchoroutput, task.encodedAnchoroutput);
     			}else{
                     if(task.candidate_read_ids.empty()){
                         notCorrectedNoCandidates++;
@@ -2960,8 +2965,8 @@ namespace test{
 
                 }
 
-                for(const auto& tmp : task.candidatesoutput){
-                    transFuncData->saveCorrectedSequence(tmp, tmp.encode());
+                for(int i = 0; i < int(task.candidatesoutput.size()); i++){
+                    transFuncData->saveCorrectedSequence(task.candidatesoutput[i], task.encodedCandidatesoutput[i]);
                 }
     		}
 
@@ -3151,7 +3156,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       //std::mutex outputstreammutex;
 
-      transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, EncodedTempCorrectedSequence&& encoded){
+      transFuncData.saveCorrectedSequence = [&](const TempCorrectedSequence& tmp, EncodedTempCorrectedSequence encoded){
           //std::unique_lock<std::mutex> l(outputstreammutex);
           if(!(tmp.hq && tmp.useEdits && tmp.edits.empty())){
               //outputstream << tmp << '\n';
