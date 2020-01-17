@@ -1700,29 +1700,46 @@ namespace test{
 
         DataArrays& dataArrays = batch.dataArrays;
 
-#ifdef USE_MSA_MINIMIZATION
         constexpr int max_num_minimizations = 5;
-#else 
-        constexpr int max_num_minimizations = 0;
-#endif
 
         const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
         //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
+        bool* d_shouldBeKept = nullptr; //flag per candidate which shows whether the candidate should remain in the msa, or not.
+        int* d_shouldBeKept_positions = nullptr;
+        int* d_newIndices = nullptr;
+        int* d_indices_per_subject_tmp = nullptr;
+
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_shouldBeKept, 
+            sizeof(bool) * dataArrays.n_queries, 
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_shouldBeKept_positions, 
+            sizeof(int) * dataArrays.n_queries, 
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_newIndices, 
+            sizeof(int) * dataArrays.n_queries, 
+            streams[primary_stream_index]
+        ); CUERR;
+
+        cubCachingAllocator.DeviceAllocate(
+            (void**)&d_indices_per_subject_tmp, 
+            sizeof(int) * dataArrays.n_subjects, 
+            streams[primary_stream_index]
+        ); CUERR;
+
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 
-            bool* d_shouldBeKept; //flag per candidate which shows whether the candidate should remain in the msa, or not.
-
-            cubCachingAllocator.DeviceAllocate(
-                (void**)&d_shouldBeKept, 
-                sizeof(bool) * dataArrays.n_queries, 
-                streams[primary_stream_index]
-            ); CUERR;
-
             {
-                //Fill d_shouldBeKept array
-                
-                int N = dataArrays.n_queries;
+                //Initialize d_shouldBeKept array
+
+                const int N = dataArrays.n_queries;
                 const int* d_num_indices = dataArrays.d_num_indices.get();
             
                 generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
@@ -1759,16 +1776,6 @@ namespace test{
                         batch.kernelLaunchHandle,
                         dataArrays.d_subject_read_ids,
                         false);  CUERR;
-
-
-            int* d_shouldBeKept_positions = nullptr;
-            cubCachingAllocator.DeviceAllocate((void**)&d_shouldBeKept_positions, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]); CUERR;
-
-            int* d_newIndices = nullptr;
-            cubCachingAllocator.DeviceAllocate((void**)&d_newIndices, sizeof(int) * dataArrays.n_queries, streams[primary_stream_index]); CUERR;
-
-            int* d_indices_per_subject_tmp = nullptr;
-            cubCachingAllocator.DeviceAllocate((void**)&d_indices_per_subject_tmp, sizeof(int) * dataArrays.n_subjects, streams[primary_stream_index]); CUERR;
 
             //save current indices_per_subject
             cudaMemcpyAsync(d_indices_per_subject_tmp,
@@ -1888,12 +1895,8 @@ namespace test{
 
             std::swap(dataArrays.d_num_indices_tmp, dataArrays.d_num_indices);
 
-            cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
-
-            cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
-
-            const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
-            //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
+            //cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
+            //cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
             build_msa_async(dataArrays.getDeviceMSAPointers(),
                             dataArrays.getDeviceAlignmentResultPointers(),
@@ -1918,18 +1921,12 @@ namespace test{
                             dataArrays.d_canExecute,
                             streams[primary_stream_index],
                             batch.kernelLaunchHandle);
-
-            //batch.dataArrays.copyEverythingToHostForDebugging();
-
-            
-
-            cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
-            cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
-            cubCachingAllocator.DeviceFree(d_indices_per_subject_tmp); CUERR;
-            cubCachingAllocator.DeviceFree(d_shouldBeKept_positions); CUERR;
-            
-            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
         }
+
+        cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
+        cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
+        cubCachingAllocator.DeviceFree(d_indices_per_subject_tmp); CUERR;
+        cubCachingAllocator.DeviceFree(d_shouldBeKept_positions); CUERR;
         
         {
             //std::cerr << "minimization finished\n";
@@ -1977,82 +1974,6 @@ namespace test{
         cudaEventRecord(events[msa_build_finished_event_index], streams[primary_stream_index]); CUERR;
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-        
-
-#if 0        
-        if(transFuncData.correctionOptions.extractFeatures || transFuncData.correctionOptions.correctionType != CorrectionType::Classic) {
-
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[msa_build_finished_event_index], 0); CUERR;
-
-            cudaMemcpyAsync(dataArrays.h_consensus,
-                        dataArrays.d_consensus,
-                        dataArrays.n_subjects * dataArrays.msa_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_support,
-                        dataArrays.d_support,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_coverage,
-                        dataArrays.d_coverage,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_origCoverages,
-                        dataArrays.d_origCoverages,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_msa_column_properties,
-                        dataArrays.d_msa_column_properties,
-                        dataArrays.n_subjects * sizeof(MSAColumnProperties),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_counts,
-                        dataArrays.d_counts,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-            cudaMemcpyAsync(dataArrays.h_weights,
-                        dataArrays.d_weights,
-                        dataArrays.n_subjects * dataArrays.msa_weights_pitch * 4,
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-            cudaEventRecord(events[msadata_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-        }
-
-        if(transFuncData.correctionOptions.extractFeatures){
-            cudaStreamWaitEvent(streams[primary_stream_index], events[msadata_transfer_finished_event_index], 0); CUERR;
-            batch.setState(BatchState::WriteFeatures, expectedState);
-            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-            return;
-        }else{
-            switch(transFuncData.correctionOptions.correctionType){
-            case CorrectionType::Classic:
-                //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
-                batch.setState(BatchState::StartClassicCorrection, expectedState);
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-                return;
-            case CorrectionType::Forest:
-                cudaStreamWaitEvent(streams[primary_stream_index], events[msadata_transfer_finished_event_index], 0); CUERR;
-                batch.setState(BatchState::StartForestCorrection, expectedState);
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-                return;
-            case CorrectionType::Convnet:
-                cudaStreamWaitEvent(streams[primary_stream_index], events[msadata_transfer_finished_event_index], 0); CUERR;
-                batch.setState(BatchState::StartConvnetCorrection, expectedState);
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-                return;
-            default:
-                batch.setState(BatchState::StartClassicCorrection, expectedState);
-                cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-                return;
-            }
-        }
-#endif
-
     }
 
 
@@ -3346,8 +3267,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                 #ifdef USE_MSA_MINIMIZATION
 
-                    cudaEventSynchronize(events[num_indices_transfered_event_index]); CUERR;
-
                     pushrange("removeCandidatesOfDifferentRegionFromMSA", 6);
 
                     removeCandidatesOfDifferentRegionFromMSA(batchData);
@@ -3355,13 +3274,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     poprange();
 
                     //cudaDeviceSynchronize(); CUERR;
-
-
-                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                    if(batchData.dataArrays.h_num_indices[0] == 0){
-                        continue;
-                    }
 
                 #endif
 
