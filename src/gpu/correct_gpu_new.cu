@@ -1165,6 +1165,15 @@ namespace test{
 
         assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
 
+        call_transpose_kernel(
+            (unsigned int*)dataArrays.d_transposedCandidateSequencesData.get(), 
+            (const unsigned int*)dataArrays.d_candidate_sequences_data.get(), 
+            dataArrays.n_queries, 
+            dataArrays.encoded_sequence_pitch / sizeof(int), 
+            dataArrays.encoded_sequence_pitch / sizeof(int), 
+            streams[primary_stream_index]
+        );
+
 
         cudaEventRecord(events[alignment_data_transfer_h2d_finished_event_index], streams[primary_stream_index]); CUERR;
 

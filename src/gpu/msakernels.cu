@@ -340,7 +340,7 @@ namespace gpu{
 
 
 
-    template<bool candidatesAreTransposed>
+    //template<bool candidatesAreTransposed>
     __global__
     void msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel(
                 char* __restrict__ consensus,
@@ -374,6 +374,8 @@ namespace gpu{
                 size_t qualityPitchInBytes,
                 size_t lengthOfMSARow,
                 const bool* __restrict__ canExecute){
+
+        constexpr bool candidatesAreTransposed = true;
 
         if(*canExecute){
 
@@ -1501,7 +1503,7 @@ namespace gpu{
     			KernelLaunchHandle& handle,
                 bool debug){
 
-        constexpr bool transposeCandidates = true;
+        //constexpr bool transposeCandidates = true;
 
         // set counts, weights, and coverages to zero for subjects with valid indices
         generic_kernel<<<n_subjects, 128, 0, stream>>>([=] __device__ (){
@@ -1556,7 +1558,7 @@ namespace gpu{
                                         + sizeof(int) * 4 * msa_weights_row_pitch_floats; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel<transposeCandidates>, \
+                    msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel, \
                             kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -1633,22 +1635,23 @@ namespace gpu{
         dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
 
-        unsigned int* candidateDataToUse = (unsigned int*)d_sequencePointers.candidateSequencesData;
+        unsigned int* candidateDataToUse = (unsigned int*)d_sequencePointers.transposedCandidateSequencesData;
 
-        if(transposeCandidates){
-            cubCachingAllocator.DeviceAllocate((void**)&candidateDataToUse, sizeof(unsigned int) * n_queries * encoded_sequence_pitch / sizeof(int), stream);  CUERR;
+        // if(transposeCandidates){
+        //     cubCachingAllocator.DeviceAllocate((void**)&candidateDataToUse, sizeof(unsigned int) * n_queries * encoded_sequence_pitch / sizeof(int), stream);  CUERR;
 
-            call_transpose_kernel(
-                candidateDataToUse, 
-                (unsigned int*)d_sequencePointers.candidateSequencesData, 
-                n_queries, 
-                encoded_sequence_pitch / sizeof(int), 
-                encoded_sequence_pitch / sizeof(int), 
-                stream
-            );
-        }
+        //     call_transpose_kernel(
+        //         candidateDataToUse, 
+        //         (unsigned int*)d_sequencePointers.candidateSequencesData, 
+        //         n_queries, 
+        //         encoded_sequence_pitch / sizeof(int), 
+        //         encoded_sequence_pitch / sizeof(int), 
+        //         stream
+        //     );
+        // }
 
-        msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel<transposeCandidates><<<grid, block, smem, stream>>>(
+        //msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel<transposeCandidates><<<grid, block, smem, stream>>>(
+        msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel<<<grid, block, smem, stream>>>(
             d_msapointers.consensus,
             d_msapointers.support,
             d_msapointers.coverage,
@@ -1681,9 +1684,9 @@ namespace gpu{
             msa_row_pitch,
             d_canExecute); CUERR;
 
-        if(transposeCandidates){
-            cubCachingAllocator.DeviceFree(candidateDataToUse); CUERR;
-        }
+        // if(transposeCandidates){
+        //     cubCachingAllocator.DeviceFree(candidateDataToUse); CUERR;
+        // }
 
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;

@@ -214,6 +214,7 @@ struct DataArrays {
 
         h_subject_sequences_data.resize(n_sub * encoded_sequence_pitch);
         h_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch);
+        h_transposedCandidateSequencesData.resize(n_quer * encoded_sequence_pitch);
         h_subject_sequences_lengths.resize(n_sub);
         h_candidate_sequences_lengths.resize(n_quer);
         h_candidates_per_subject.resize(n_sub);
@@ -223,6 +224,7 @@ struct DataArrays {
 
         d_subject_sequences_data.resize(n_sub * encoded_sequence_pitch);
         d_candidate_sequences_data.resize(n_quer * encoded_sequence_pitch);
+        d_transposedCandidateSequencesData.resize(n_quer * encoded_sequence_pitch);
         d_subject_sequences_lengths.resize(n_sub);
         d_candidate_sequences_lengths.resize(n_quer);
         d_candidates_per_subject.resize(n_sub);
@@ -393,6 +395,7 @@ struct DataArrays {
 
         h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
         h_candidate_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
+        h_transposedCandidateSequencesData = std::move(SimpleAllocationPinnedHost<char>{});
         h_subject_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
         h_candidate_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
         h_candidates_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
@@ -402,6 +405,7 @@ struct DataArrays {
 
         d_subject_sequences_data = std::move(SimpleAllocationDevice<char>{});
         d_candidate_sequences_data = std::move(SimpleAllocationDevice<char>{});
+        d_transposedCandidateSequencesData = std::move(SimpleAllocationDevice<char>{});
         d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         d_candidate_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
@@ -507,6 +511,7 @@ struct DataArrays {
         size_t bytes = 0;
         bytes += f(h_subject_sequences_data);
         bytes += f(h_candidate_sequences_data);
+        bytes += f(h_transposedCandidateSequencesData);
         bytes += f(h_subject_sequences_lengths);
         bytes += f(h_candidate_sequences_lengths);
         bytes += f(h_candidates_per_subject);
@@ -560,6 +565,7 @@ struct DataArrays {
 
         bytes += f(d_subject_sequences_data);
         bytes += f(d_candidate_sequences_data);
+        bytes += f(d_transposedCandidateSequencesData);
         bytes += f(d_subject_sequences_lengths);
         bytes += f(d_candidate_sequences_lengths);
         bytes += f(d_candidates_per_subject);
@@ -620,6 +626,7 @@ struct DataArrays {
         size_t bytes = 0;
         bytes += f(h_subject_sequences_data);
         bytes += f(h_candidate_sequences_data);
+        bytes += f(h_transposedCandidateSequencesData);
         bytes += f(h_subject_sequences_lengths);
         bytes += f(h_candidate_sequences_lengths);
         bytes += f(h_candidates_per_subject);
@@ -673,6 +680,7 @@ struct DataArrays {
 
         bytes += f(d_subject_sequences_data);
         bytes += f(d_candidate_sequences_data);
+        bytes += f(d_transposedCandidateSequencesData);
         bytes += f(d_subject_sequences_lengths);
         bytes += f(d_candidate_sequences_lengths);
         bytes += f(d_candidates_per_subject);
@@ -743,6 +751,7 @@ struct DataArrays {
             h_candidate_sequences_data.get(),
             h_subject_sequences_lengths.get(),
             h_candidate_sequences_lengths.get(),
+            h_transposedCandidateSequencesData.get()
         };
         return pointers;
     }
@@ -753,6 +762,7 @@ struct DataArrays {
             d_candidate_sequences_data.get(),
             d_subject_sequences_lengths.get(),
             d_candidate_sequences_lengths.get(),
+            d_transposedCandidateSequencesData.get()
         };
         return pointers;
     }
@@ -761,6 +771,7 @@ struct DataArrays {
 
     SimpleAllocationPinnedHost<char> h_subject_sequences_data;
     SimpleAllocationPinnedHost<char> h_candidate_sequences_data;
+    SimpleAllocationPinnedHost<char> h_transposedCandidateSequencesData;
     SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
     SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
     SimpleAllocationPinnedHost<int> h_candidates_per_subject;
@@ -770,6 +781,7 @@ struct DataArrays {
 
     SimpleAllocationDevice<char> d_subject_sequences_data;
     SimpleAllocationDevice<char> d_candidate_sequences_data;
+    SimpleAllocationDevice<char> d_transposedCandidateSequencesData;
     SimpleAllocationDevice<int> d_subject_sequences_lengths;
     SimpleAllocationDevice<int> d_candidate_sequences_lengths;
     SimpleAllocationDevice<int> d_candidates_per_subject;
@@ -999,6 +1011,7 @@ struct DataArrays {
 
         handlearray(subject_sequences_data);
         handlearray(candidate_sequences_data);
+        handlearray(transposedCandidateSequencesData);
         handlearray(subject_sequences_lengths);
         handlearray(candidate_sequences_lengths);
         handlearray(candidates_per_subject);
@@ -1064,6 +1077,7 @@ struct DataArrays {
 
         handlearray(subject_sequences_data);
         handlearray(candidate_sequences_data);
+        handlearray(transposedCandidateSequencesData);
         handlearray(subject_sequences_lengths);
         handlearray(candidate_sequences_lengths);
         handlearray(candidates_per_subject);
@@ -1128,6 +1142,7 @@ struct DataArrays {
 
         handlearray(subject_sequences_data);
         handlearray(candidate_sequences_data);
+        handlearray(transposedCandidateSequencesData);
         handlearray(subject_sequences_lengths);
         handlearray(candidate_sequences_lengths);
         handlearray(candidates_per_subject);

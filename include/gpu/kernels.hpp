@@ -66,6 +66,7 @@ struct ReadSequencesPointers{
     char* candidateSequencesData;
     int* subjectSequencesLength;
     int* candidateSequencesLength;
+    char* transposedCandidateSequencesData;
 };
 
 struct ReadQualitiesPointers{
