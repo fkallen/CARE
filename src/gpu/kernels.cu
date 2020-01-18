@@ -576,7 +576,7 @@ namespace gpu{
         };
 
         auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
             return result;
         };
 
@@ -719,17 +719,17 @@ namespace gpu{
                             for(int candidatenr = 0; candidatenr < myNumIndices; candidatenr++){
                                 const int arrayindex = myIndices[candidatenr];
 
-                                const char* candidateptr = getCandidatePtr(arrayindex);
+                                const unsigned int* candidateptr = getCandidatePtr(arrayindex);
                                 const int candidateLength = getCandidateLength(arrayindex);
                                 const int candidateShift = alignmentresultpointers.shifts[arrayindex];
                                 const int candidateBasePosition = globalIndex - (subjectColumnsBegin_incl + candidateShift);
                                 if(candidateBasePosition >= 0 && candidateBasePosition < candidateLength){
                                     char candidateBaseEnc = 0xFF;
                                     if(alignmentresultpointers.bestAlignmentFlags[arrayindex] == BestAlignment_t::ReverseComplement){
-                                        candidateBaseEnc = get(candidateptr, candidateLength, candidateLength - candidateBasePosition-1);
+                                        candidateBaseEnc = get((const char*)candidateptr, candidateLength, candidateLength - candidateBasePosition-1);
                                         candidateBaseEnc = (~candidateBaseEnc) & 0x03;
                                     }else{
-                                        candidateBaseEnc = get(candidateptr, candidateLength, candidateBasePosition);
+                                        candidateBaseEnc = get((const char*)candidateptr, candidateLength, candidateBasePosition);
                                     }
                                     const char candidateBase = to_nuc(candidateBaseEnc);
 
@@ -932,7 +932,7 @@ namespace gpu{
         };
 
         auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
             return result;
         };
 
@@ -1179,6 +1179,8 @@ namespace gpu{
                 float min_coverage_threshold,
                 int new_columns_to_correct){
 
+        const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
+
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
             return reverseComplementStringInplace((char*)sequence, sequencelength);
         };
@@ -1204,7 +1206,7 @@ namespace gpu{
         };
 
         auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
             return result;
         };
 
@@ -1321,6 +1323,8 @@ namespace gpu{
                 float min_coverage_threshold,
                 int new_columns_to_correct){
 
+        const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
+
         auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
             return reverseComplementStringInplace((char*)sequence, sequencelength);
         };
@@ -1346,7 +1350,7 @@ namespace gpu{
         };
 
         auto getCandidatePtr = [&] (int candidateIndex){
-            const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+            const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
             return result;
         };
 
@@ -1472,7 +1476,7 @@ namespace gpu{
                     }
 
                     const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
-                    const char* candidate = d_sequencePointers.candidateSequencesData + std::size_t(global_candidate_index) * encoded_sequence_pitch;
+                    const unsigned int* candidate = d_sequencePointers.candidateSequencesData + std::size_t(global_candidate_index) * encodedSequencePitchInInts;
 
                     // for(int i = copyposbegin; i < copyposend; i += 1) {
                     //     //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
@@ -1775,7 +1779,7 @@ namespace gpu{
             ); CUERR;
 
             call_transpose_kernel(d_candidateDataTransposed,
-                (const unsigned int*)d_sequencePointers.candidateSequencesData,
+                d_sequencePointers.candidateSequencesData,
                 n_queries,
                 intsPerSequence2Bit,
                 intsPerSequence2Bit,
@@ -1797,7 +1801,7 @@ namespace gpu{
 #else 
 
             callConversionKernel2BitTo2BitHiLoNT(
-                (const unsigned int*)d_sequencePointers.candidateSequencesData,
+                d_sequencePointers.candidateSequencesData,
                 intsPerSequence2Bit,
                 d_candidateDataHiLoTransposed,
                 intsPerSequence2BitHiLo,

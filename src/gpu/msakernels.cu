@@ -211,7 +211,7 @@ namespace gpu{
             };
 
             auto getCandidatePtr = [&] (int candidateIndex){
-                const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encoded_sequence_pitch;
+                const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
                 return result;
             };
 
@@ -288,7 +288,7 @@ namespace gpu{
 
                     int* const my_coverage = d_msapointers.coverage + subjectIndex * msa_weights_row_pitch_floats;
 
-                    const char* const query = getCandidatePtr(queryIndex);
+                    const unsigned int* const query = getCandidatePtr(queryIndex);
                     const int queryLength = getCandidateLength(queryIndex);
                     const char* const queryQualityScore = getCandidateQualityPtr(index);
 
@@ -306,7 +306,7 @@ namespace gpu{
                     if(flag == BestAlignment_t::Forward) {
                         for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
                             const int globalIndex = defaultcolumnoffset + i;
-                            const char base = get(query, queryLength, i);
+                            const char base = get((const char*)query, queryLength, i);
                             //printf("%d ", int(base));
                             const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[i]) * overlapweight : overlapweight;
                             const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
@@ -323,7 +323,7 @@ namespace gpu{
                         for(int i = threadIdx.x; i < queryLength; i+= blockDim.x){
                             const int reverseIndex = queryLength - 1 - i;
                             const int globalIndex = defaultcolumnoffset + i;
-                            const char base = get(query, queryLength, reverseIndex);
+                            const char base = get((const char*)query, queryLength, reverseIndex);
                             const char revCompl = make_reverse_complement_byte(base);
                             //printf("%d ", int(revCompl));
                             const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[reverseIndex]) * overlapweight : overlapweight;
@@ -845,7 +845,7 @@ namespace gpu{
             };
 
             auto getCandidatePtr = [&] (int candidateIndex){
-                const char* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedsequencepitch;
+                const unsigned int* result = d_sequencePointers.candidateSequencesData + std::size_t(candidateIndex) * encodedSequencePitchInInts;
                 return result;
             };
 
@@ -1086,7 +1086,7 @@ namespace gpu{
 
                                 for(int k = threadIdx.x; k < myNumIndices; k += blockDim.x){
                                     const int candidateIndex = myIndices[k];
-                                    const char* const candidateptr = getCandidatePtr(candidateIndex);
+                                    const unsigned int* const candidateptr = getCandidatePtr(candidateIndex);
                                     const int candidateLength = getCandidateLength(candidateIndex);
                                     const int shift = d_alignmentresultpointers.shifts[candidateIndex];
                                     const BestAlignment_t alignmentFlag = d_alignmentresultpointers.bestAlignmentFlags[candidateIndex];
@@ -1098,10 +1098,10 @@ namespace gpu{
                                     char base = 'F';
                                     if(!notAffected){
                                         if(alignmentFlag == BestAlignment_t::Forward){
-                                            base = to_nuc(get(candidateptr, candidateLength, (col - row_begin_incl)));
+                                            base = to_nuc(get((const char*)candidateptr, candidateLength, (col - row_begin_incl)));
                                         }else{
                                             assert(alignmentFlag == BestAlignment_t::ReverseComplement); //all candidates of MSA must not have alignmentflag None
-                                            const char forwardbaseEncoded = get(candidateptr, candidateLength, row_end_excl-1 - col);
+                                            const char forwardbaseEncoded = get((const char*)candidateptr, candidateLength, row_end_excl-1 - col);
                                             base = to_nuc((~forwardbaseEncoded & 0x03));
                                         }
                                     }
@@ -1641,7 +1641,7 @@ namespace gpu{
         dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
 
-        unsigned int* candidateDataToUse = (unsigned int*)d_sequencePointers.transposedCandidateSequencesData;
+        unsigned int* candidateDataToUse = d_sequencePointers.transposedCandidateSequencesData;
 
         // if(transposeCandidates){
         //     cubCachingAllocator.DeviceAllocate((void**)&candidateDataToUse, sizeof(unsigned int) * n_queries * encoded_sequence_pitch / sizeof(int), stream);  CUERR;

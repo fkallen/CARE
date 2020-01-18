@@ -276,7 +276,7 @@ namespace test{
             return done;
         }
     };
-
+#if 0
     struct BatchResultData{
         std::vector<CorrectionTask> tasks;
 
@@ -289,7 +289,7 @@ namespace test{
 
         SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
         SimpleAllocationPinnedHost<char> h_corrected_candidates;
-        SimpleAllocationPinnedHost<char> h_candidate_sequences_data;
+        SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
         SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
         SimpleAllocationPinnedHost<int> h_indices_per_subject_prefixsum;
 
@@ -326,13 +326,16 @@ namespace test{
             return done;
         }
     };
+#endif 
+
+
 
     struct Batch {
 
         NextIterationData nextIterationData;
         bool isFirstIteration = true;
 
-        BatchResultData resultData;
+        //BatchResultData resultData;
 
 		std::vector<CorrectionTask> tasks;
 		int initialNumberOfCandidates = 0;
@@ -916,6 +919,7 @@ namespace test{
         nextData.signal();
     }
 
+#if 0
     void makeBatchResultData(Batch& batch, BatchResultData& resultData){
         // resultData.tasks = std::move(batch.tasks);
 
@@ -944,7 +948,7 @@ namespace test{
         // resultData.sequence_pitch = da.sequence_pitch;
         // resultData.encoded_sequence_pitch = da.encoded_sequence_pitch;
     }
-
+#endif
 
     void getNextBatchOfSubjectsAndDetermineCandidateReadIds(Batch& batchData){
 
@@ -1033,8 +1037,8 @@ namespace test{
             //sequence input data
     
             dataArrays.h_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
-            dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * encoded_sequence_pitch);
-            dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * encoded_sequence_pitch);
+            dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
+            dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
             dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
             dataArrays.h_candidate_sequences_lengths.resize(batchData.n_queries);
             dataArrays.h_candidates_per_subject.resize(batchData.n_subjects);
@@ -1043,8 +1047,8 @@ namespace test{
             dataArrays.h_candidate_read_ids.resize(batchData.n_queries);
     
             dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
-            dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * encoded_sequence_pitch);
-            dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * encoded_sequence_pitch);
+            dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
+            dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
             dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
             dataArrays.d_candidate_sequences_lengths.resize(batchData.n_queries);
             dataArrays.d_candidates_per_subject.resize(batchData.n_subjects);
@@ -1299,7 +1303,7 @@ namespace test{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.candidateSequenceGatherHandle2,
-            dataArrays.d_candidate_sequences_data,
+            (char*)dataArrays.d_candidate_sequences_data.get(),
             batchData.encodedSequencePitchInInts * sizeof(unsigned int),
             dataArrays.h_candidate_read_ids,
             dataArrays.d_candidate_read_ids,
@@ -1309,8 +1313,8 @@ namespace test{
             transFuncData.runtimeOptions.nCorrectorThreads);
 
         call_transpose_kernel(
-            (unsigned int*)dataArrays.d_transposedCandidateSequencesData.get(), 
-            (const unsigned int*)dataArrays.d_candidate_sequences_data.get(), 
+            dataArrays.d_transposedCandidateSequencesData.get(), 
+            dataArrays.d_candidate_sequences_data.get(), 
             batchData.n_queries, 
             batchData.encodedSequencePitchInInts, 
             batchData.encodedSequencePitchInInts, 
@@ -2223,7 +2227,7 @@ namespace test{
                     candlengths[j] = dataArrays.h_candidate_sequences_lengths[index];
                     candshifts[j] = dataArrays.h_alignment_shifts[index];
 
-                    const char* candidateSequencePtr = dataArrays.h_candidate_sequences_data.get() + index * batch.encodedSequencePitchInInts * sizeof(unsigned int);
+                    const unsigned int* candidateSequencePtr = dataArrays.h_candidate_sequences_data.get() + index * batch.encodedSequencePitchInInts;
 
                     assert(dataArrays.h_alignment_best_alignment_flags[index] != BestAlignment_t::None);
 
@@ -2476,7 +2480,7 @@ namespace test{
         cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
     }
 
- 
+#if 0 
     void unpackClassicResults2(Batch& batch){
 
         const auto& transFuncDataPtr = batch.transFuncData;
@@ -2655,7 +2659,7 @@ namespace test{
                         TempCorrectedSequence tmp;
 
                         if(!originalReadContainsN){
-                            const char* ptr = &resultData.h_candidate_sequences_data[global_candidate_index * resultData.encoded_sequence_pitch];
+                            const unsigned int* ptr = &resultData.h_candidate_sequences_data[global_candidate_index * encodedSequencePitchInInts];
                             const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
 
                             const int maxEdits = candidate_length / 7;
@@ -2760,7 +2764,7 @@ namespace test{
         batch.setState(BatchState::Finished, expectedState);
     }
 
-
+#endif
 
     void unpackClassicResults(Batch& batch){
 
@@ -2934,7 +2938,7 @@ namespace test{
                         TempCorrectedSequence tmp;
 
                         if(!originalReadContainsN){
-                            const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * batch.encodedSequencePitchInInts * sizeof(unsigned int)];
+                            const unsigned int* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * batch.encodedSequencePitchInInts];
                             const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
 
                             const int maxEdits = candidate_length / 7;

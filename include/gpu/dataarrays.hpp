@@ -395,8 +395,8 @@ struct DataArrays {
 	void reset(){
 
         h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<unsigned int>{});
-        h_candidate_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
-        h_transposedCandidateSequencesData = std::move(SimpleAllocationPinnedHost<char>{});
+        h_candidate_sequences_data = std::move(SimpleAllocationPinnedHost<unsigned int>{});
+        h_transposedCandidateSequencesData = std::move(SimpleAllocationPinnedHost<unsigned int>{});
         h_subject_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
         h_candidate_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
         h_candidates_per_subject = std::move(SimpleAllocationPinnedHost<int>{});
@@ -405,8 +405,8 @@ struct DataArrays {
         h_candidate_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
 
         d_subject_sequences_data = std::move(SimpleAllocationDevice<unsigned int>{});
-        d_candidate_sequences_data = std::move(SimpleAllocationDevice<char>{});
-        d_transposedCandidateSequencesData = std::move(SimpleAllocationDevice<char>{});
+        d_candidate_sequences_data = std::move(SimpleAllocationDevice<unsigned int>{});
+        d_transposedCandidateSequencesData = std::move(SimpleAllocationDevice<unsigned int>{});
         d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         d_candidate_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         d_candidates_per_subject = std::move(SimpleAllocationDevice<int>{});
@@ -771,8 +771,8 @@ struct DataArrays {
 	//std::size_t encoded_sequence_pitch = 0;
 
     SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
-    SimpleAllocationPinnedHost<char> h_candidate_sequences_data;
-    SimpleAllocationPinnedHost<char> h_transposedCandidateSequencesData;
+    SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
+    SimpleAllocationPinnedHost<unsigned int> h_transposedCandidateSequencesData;
     SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
     SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
     SimpleAllocationPinnedHost<int> h_candidates_per_subject;
@@ -781,8 +781,8 @@ struct DataArrays {
     SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
 
     SimpleAllocationDevice<unsigned int> d_subject_sequences_data;
-    SimpleAllocationDevice<char> d_candidate_sequences_data;
-    SimpleAllocationDevice<char> d_transposedCandidateSequencesData;
+    SimpleAllocationDevice<unsigned int> d_candidate_sequences_data;
+    SimpleAllocationDevice<unsigned int> d_transposedCandidateSequencesData;
     SimpleAllocationDevice<int> d_subject_sequences_lengths;
     SimpleAllocationDevice<int> d_candidate_sequences_lengths;
     SimpleAllocationDevice<int> d_candidates_per_subject;
