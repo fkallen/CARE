@@ -373,10 +373,18 @@ namespace care{
             Minhasher::Handle& handle,
             const std::string& sequence,
             std::uint64_t) const noexcept{
+        getCandidates_any_map(handle, sequence.c_str(), sequence.length(), 0);
+    }
+
+    void Minhasher::getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const char* sequence,
+            int sequenceLength,
+            std::uint64_t) const noexcept{
 
         static_assert(std::is_same<Result_t, Value_t>::value, "Value_t != Result_t");
         // we do not consider reads which are shorter than k
-        if(sequence.size() < unsigned(minparams.k)){
+        if(sequenceLength < minparams.k){
             handle.allUniqueResults.clear();
             return;
         }
@@ -385,7 +393,7 @@ namespace care{
 #ifdef NVTXTIMELINE        
         nvtx::push_range("hashing", 3);
 #endif        
-        auto hashValues = minhashfunc(sequence);
+        auto hashValues = minhashfunc(sequence, sequenceLength);
 #ifdef NVTXTIMELINE        
         nvtx::pop_range("hashing");
 #endif        
@@ -832,7 +840,12 @@ Minhasher::getCandidates_fromHashvalues_any_map(
 
 
 	std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
+        return minhashfunc_other(sequence.c_str(), sequence.length());
+	}
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc_other(const char* sequence, int sequenceLength) const noexcept{
         std::array<std::uint64_t, maximum_number_of_maps> kmerHashValues{0};
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature{0};
 
@@ -840,10 +853,10 @@ Minhasher::getCandidates_fromHashvalues_any_map(
         std::uint64_t rhVal = 0;
 		bool isForward = false;
 		// calc hash values of first canonical kmer
-		NTMC64(sequence.c_str(), minparams.k, minparams.maps, minhashSignature.data(), fhVal, rhVal, isForward);
+		NTMC64(sequence, minparams.k, minparams.maps, minhashSignature.data(), fhVal, rhVal, isForward);
 
 		//calc hash values of remaining canonical kmers
-		for (size_t i = 0; i < sequence.size() - minparams.k; ++i) {
+		for (int i = 0; i < sequenceLength - minparams.k; ++i) {
 			NTMC64(fhVal, rhVal, sequence[i], sequence[i + minparams.k], minparams.k, minparams.maps, 
                     kmerHashValues.data(), isForward);
 
@@ -857,11 +870,17 @@ Minhasher::getCandidates_fromHashvalues_any_map(
         return minhashSignature;
 	}
 
+
     std::array<std::uint64_t, maximum_number_of_maps> 
-    Minhasher::minhashfunc_other(const std::string& sequence) const noexcept{
+    Minhasher::minhashfunc(const std::string& sequence) const noexcept{
+        return minhashfunc(sequence.c_str(), sequence.length());
+    }
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    Minhasher::minhashfunc(const char* sequence, int sequenceLength) const noexcept{
         assert(minparams.k <= maximum_kmer_length);
 
-        const int length = sequence.length();
+        const int length = sequenceLength;
 
         std::array<std::uint64_t, maximum_number_of_maps> minhashSignature;
         std::fill_n(minhashSignature.begin(), minparams.maps, std::numeric_limits<std::uint64_t>::max());

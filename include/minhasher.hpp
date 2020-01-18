@@ -566,6 +566,12 @@ struct Minhasher {
             const std::string& sequence,
             std::uint64_t) const noexcept;
 
+    void getCandidates_any_map(
+            Minhasher::Handle& handle,
+            const char* sequence,
+            int sequenceLength,
+            std::uint64_t) const noexcept;
+
     /*
         This version of getCandidates returns only read ids which are found in at least num_hits maps
     */
@@ -605,8 +611,14 @@ private:
 	std::array<std::uint64_t, maximum_number_of_maps>
     minhashfunc(const std::string& sequence) const noexcept;
 
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    minhashfunc(const char* sequence, int sequenceLength) const noexcept;
+
     std::array<std::uint64_t, maximum_number_of_maps>
     minhashfunc_other(const std::string& sequence) const noexcept;
+
+    std::array<std::uint64_t, maximum_number_of_maps> 
+    minhashfunc_other(const char* sequence, int sequenceLength) const noexcept;
 
     void insertIntoMap(int map, std::uint64_t hashValue, read_number readNumber);
     void insertIntoExternalTable(Minhasher::Map_t& table, std::uint64_t hashValue, read_number readnum) const;
