@@ -392,6 +392,12 @@ namespace test{
         int decodedSequencePitchInBytes;
         int qualityPitchInBytes;
 
+        int msa_weights_pitch;
+        int msa_pitch;
+
+        int n_subjects;
+        int n_queries;
+
         FindCandidateIdsDataFrame findcandidateidsDataFrame;
         UnpackClassicResultsDataFrame unpackclassicresultsDataFrame;
 
@@ -911,32 +917,32 @@ namespace test{
     }
 
     void makeBatchResultData(Batch& batch, BatchResultData& resultData){
-        resultData.tasks = std::move(batch.tasks);
+        // resultData.tasks = std::move(batch.tasks);
 
-        auto& da = batch.dataArrays;
-        std::swap(resultData.h_corrected_subjects, da.h_corrected_subjects);
-        std::swap(resultData.h_subject_is_corrected, da.h_subject_is_corrected);
-        std::swap(resultData.h_is_high_quality_subject, da.h_is_high_quality_subject);
-        std::swap(resultData.h_subject_sequences_lengths, da.h_subject_sequences_lengths);
-        std::swap(resultData.h_num_uncorrected_positions_per_subject, da.h_num_uncorrected_positions_per_subject);
-        std::swap(resultData.h_uncorrected_positions_per_subject, da.h_uncorrected_positions_per_subject);
+        // auto& da = batch.dataArrays;
+        // std::swap(resultData.h_corrected_subjects, da.h_corrected_subjects);
+        // std::swap(resultData.h_subject_is_corrected, da.h_subject_is_corrected);
+        // std::swap(resultData.h_is_high_quality_subject, da.h_is_high_quality_subject);
+        // std::swap(resultData.h_subject_sequences_lengths, da.h_subject_sequences_lengths);
+        // std::swap(resultData.h_num_uncorrected_positions_per_subject, da.h_num_uncorrected_positions_per_subject);
+        // std::swap(resultData.h_uncorrected_positions_per_subject, da.h_uncorrected_positions_per_subject);
 
-        const auto& transFuncData = *batch.transFuncData;
+        // const auto& transFuncData = *batch.transFuncData;
 
-        if(transFuncData.correctionOptions.correctCandidates){
-            std::swap(resultData.h_num_corrected_candidates, da.h_num_corrected_candidates);
-            std::swap(resultData.h_corrected_candidates, da.h_corrected_candidates);
-            std::swap(resultData.h_candidate_sequences_data, da.h_candidate_sequences_data);            
-            std::swap(resultData.h_indices_of_corrected_candidates, da.h_indices_of_corrected_candidates);
-            std::swap(resultData.h_indices_per_subject_prefixsum, da.h_indices_per_subject_prefixsum);
-            std::swap(resultData.h_candidate_sequences_lengths, da.h_candidate_sequences_lengths);
-            std::swap(resultData.h_alignment_shifts, da.h_alignment_shifts);
-            std::swap(resultData.h_candidate_read_ids, da.h_candidate_read_ids);
-        }
+        // if(transFuncData.correctionOptions.correctCandidates){
+        //     std::swap(resultData.h_num_corrected_candidates, da.h_num_corrected_candidates);
+        //     std::swap(resultData.h_corrected_candidates, da.h_corrected_candidates);
+        //     std::swap(resultData.h_candidate_sequences_data, da.h_candidate_sequences_data);            
+        //     std::swap(resultData.h_indices_of_corrected_candidates, da.h_indices_of_corrected_candidates);
+        //     std::swap(resultData.h_indices_per_subject_prefixsum, da.h_indices_per_subject_prefixsum);
+        //     std::swap(resultData.h_candidate_sequences_lengths, da.h_candidate_sequences_lengths);
+        //     std::swap(resultData.h_alignment_shifts, da.h_alignment_shifts);
+        //     std::swap(resultData.h_candidate_read_ids, da.h_candidate_read_ids);
+        // }
 
-        resultData.maximum_sequence_length = da.maximum_sequence_length;
-        resultData.sequence_pitch = da.sequence_pitch;
-        resultData.encoded_sequence_pitch = da.encoded_sequence_pitch;
+        // resultData.maximum_sequence_length = da.maximum_sequence_length;
+        // resultData.sequence_pitch = da.sequence_pitch;
+        // resultData.encoded_sequence_pitch = da.encoded_sequence_pitch;
     }
 
 
@@ -1007,14 +1013,134 @@ namespace test{
             auto& streams = batchData.streams;
 
             nvtx::push_range("set_problem_dimensions", 4);
-            dataArrays.set_problem_dimensions(
-                int(batchData.tasks.size()),
-                batchData.initialNumberOfCandidates,
-                transFuncData.sequenceFileProperties.maxSequenceLength,
-                sizeof(unsigned int) * batchData.encodedSequencePitchInInts,
-                transFuncData.goodAlignmentProperties.min_overlap,
-                transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                transFuncData.correctionOptions.useQualityScores); CUERR;
+
+            batchData.n_subjects = int(batchData.tasks.size());
+            batchData.n_queries = batchData.initialNumberOfCandidates;
+
+            const int min_overlap = std::max(1, std::max(transFuncData.goodAlignmentProperties.min_overlap, 
+                int(transFuncData.sequenceFileProperties.maxSequenceLength 
+                    * transFuncData.goodAlignmentProperties.min_overlap_ratio)));
+    
+            const int encoded_sequence_pitch = sizeof(unsigned int) * batchData.encodedSequencePitchInInts;
+            const int quality_pitch = batchData.qualityPitchInBytes;
+            const int sequence_pitch = batchData.decodedSequencePitchInBytes;
+
+            int msa_max_column_count = (3*transFuncData.sequenceFileProperties.maxSequenceLength - 2*min_overlap);
+            batchData.msa_pitch = SDIV(sizeof(char)*msa_max_column_count, 4) * 4;
+            batchData.msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, 4) * 4;
+            size_t msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
+    
+            //sequence input data
+    
+            dataArrays.h_subject_sequences_data.resize(batchData.n_subjects * encoded_sequence_pitch);
+            dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * encoded_sequence_pitch);
+            dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * encoded_sequence_pitch);
+            dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
+            dataArrays.h_candidate_sequences_lengths.resize(batchData.n_queries);
+            dataArrays.h_candidates_per_subject.resize(batchData.n_subjects);
+            dataArrays.h_candidates_per_subject_prefixsum.resize((batchData.n_subjects + 1));
+            dataArrays.h_subject_read_ids.resize(batchData.n_subjects);
+            dataArrays.h_candidate_read_ids.resize(batchData.n_queries);
+    
+            dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * encoded_sequence_pitch);
+            dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * encoded_sequence_pitch);
+            dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * encoded_sequence_pitch);
+            dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
+            dataArrays.d_candidate_sequences_lengths.resize(batchData.n_queries);
+            dataArrays.d_candidates_per_subject.resize(batchData.n_subjects);
+            dataArrays.d_candidates_per_subject_prefixsum.resize((batchData.n_subjects + 1));
+            dataArrays.d_subject_read_ids.resize(batchData.n_subjects);
+            dataArrays.d_candidate_read_ids.resize(batchData.n_queries);
+    
+            //alignment output
+    
+            dataArrays.h_alignment_scores.resize(2*batchData.n_queries);
+            dataArrays.h_alignment_overlaps.resize(2*batchData.n_queries);
+            dataArrays.h_alignment_shifts.resize(2*batchData.n_queries);
+            dataArrays.h_alignment_nOps.resize(2*batchData.n_queries);
+            dataArrays.h_alignment_isValid.resize(2*batchData.n_queries);
+            dataArrays.h_alignment_best_alignment_flags.resize(batchData.n_queries);
+    
+            dataArrays.d_alignment_scores.resize(2*batchData.n_queries);
+            dataArrays.d_alignment_overlaps.resize(2*batchData.n_queries);
+            dataArrays.d_alignment_shifts.resize(2*batchData.n_queries);
+            dataArrays.d_alignment_nOps.resize(2*batchData.n_queries);
+            dataArrays.d_alignment_isValid.resize(2*batchData.n_queries);
+            dataArrays.d_alignment_best_alignment_flags.resize(batchData.n_queries);
+    
+            // candidate indices
+    
+            dataArrays.h_indices.resize(batchData.n_queries);
+            dataArrays.h_indices_per_subject.resize(batchData.n_subjects);
+            dataArrays.h_indices_per_subject_prefixsum.resize((batchData.n_subjects + 1));
+            dataArrays.h_num_indices.resize(1);
+    
+            dataArrays.d_indices.resize(batchData.n_queries);
+            dataArrays.d_indices_per_subject.resize(batchData.n_subjects);
+            dataArrays.d_indices_per_subject_prefixsum.resize((batchData.n_subjects + 1));
+            dataArrays.d_num_indices.resize(1);
+            dataArrays.d_num_indices_tmp.resize(1);
+    
+            //qualitiy scores
+            if(transFuncData.correctionOptions.useQualityScores) {
+                dataArrays.h_subject_qualities.resize(batchData.n_subjects * quality_pitch);
+                dataArrays.h_candidate_qualities.resize(batchData.n_queries * quality_pitch);
+    
+                dataArrays.d_subject_qualities.resize(batchData.n_subjects * quality_pitch);
+                dataArrays.d_candidate_qualities.resize(batchData.n_queries * quality_pitch);
+                dataArrays.d_candidate_qualities_transposed.resize(batchData.n_queries * quality_pitch);
+                dataArrays.d_candidate_qualities_tmp.resize(batchData.n_queries * quality_pitch);
+            }
+    
+    
+            //correction results
+    
+            dataArrays.h_corrected_subjects.resize(batchData.n_subjects * sequence_pitch);
+            dataArrays.h_corrected_candidates.resize(batchData.n_queries * sequence_pitch);
+            dataArrays.h_num_corrected_candidates.resize(batchData.n_subjects);
+            dataArrays.h_subject_is_corrected.resize(batchData.n_subjects);
+            dataArrays.h_indices_of_corrected_candidates.resize(batchData.n_queries);
+            dataArrays.h_num_uncorrected_positions_per_subject.resize(batchData.n_subjects);
+            dataArrays.h_uncorrected_positions_per_subject.resize(batchData.n_subjects * transFuncData.sequenceFileProperties.maxSequenceLength);
+    
+            dataArrays.d_corrected_subjects.resize(batchData.n_subjects * sequence_pitch);
+            dataArrays.d_corrected_candidates.resize(batchData.n_queries * sequence_pitch);
+            dataArrays.d_num_corrected_candidates.resize(batchData.n_subjects);
+            dataArrays.d_subject_is_corrected.resize(batchData.n_subjects);
+            dataArrays.d_indices_of_corrected_candidates.resize(batchData.n_queries);
+            dataArrays.d_num_uncorrected_positions_per_subject.resize(batchData.n_subjects);
+            dataArrays.d_uncorrected_positions_per_subject.resize(batchData.n_subjects * transFuncData.sequenceFileProperties.maxSequenceLength);
+    
+            dataArrays.h_is_high_quality_subject.resize(batchData.n_subjects);
+            dataArrays.h_high_quality_subject_indices.resize(batchData.n_subjects);
+            dataArrays.h_num_high_quality_subject_indices.resize(1);
+    
+            dataArrays.d_is_high_quality_subject.resize(batchData.n_subjects);
+            dataArrays.d_high_quality_subject_indices.resize(batchData.n_subjects);
+            dataArrays.d_num_high_quality_subject_indices.resize(1);
+    
+            //multiple sequence alignment
+    
+            dataArrays.h_consensus.resize(batchData.n_subjects * batchData.msa_pitch);
+            dataArrays.h_support.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.h_coverage.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.h_origWeights.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.h_origCoverages.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.h_msa_column_properties.resize(batchData.n_subjects);
+            dataArrays.h_counts.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+            dataArrays.h_weights.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+    
+            dataArrays.d_consensus.resize(batchData.n_subjects * batchData.msa_pitch);
+            dataArrays.d_support.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.d_coverage.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.d_origWeights.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.d_origCoverages.resize(batchData.n_subjects * msa_weights_pitch_floats);
+            dataArrays.d_msa_column_properties.resize(batchData.n_subjects);
+            dataArrays.d_counts.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+            dataArrays.d_weights.resize(batchData.n_subjects * 4 * msa_weights_pitch_floats);
+    
+    
+            dataArrays.d_canExecute.resize(1);
 
             nvtx::pop_range();
 
@@ -1022,9 +1148,9 @@ namespace test{
             std::size_t max_temp_storage_bytes = 0;
             cub::DeviceHistogram::HistogramRange((void*)nullptr, temp_storage_bytes,
                         (int*)nullptr, (int*)nullptr,
-                        dataArrays.n_subjects+1,
+                        batchData.n_subjects+1,
                         (int*)nullptr,
-                        dataArrays.n_queries,
+                        batchData.n_queries,
                         streams[primary_stream_index]); CUERR;
 
             max_temp_storage_bytes = std::max(max_temp_storage_bytes, temp_storage_bytes);
@@ -1038,12 +1164,12 @@ namespace test{
 
             cub::DeviceScan::ExclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
                         (int*)nullptr,
-                        dataArrays.n_subjects,
+                        batchData.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
             cub::DeviceScan::InclusiveSum((void*)nullptr, temp_storage_bytes, (int*)nullptr,
                         (int*)nullptr,
-                        dataArrays.n_subjects,
+                        batchData.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
             cub::DeviceSegmentedRadixSort::SortPairs((void*)nullptr,
@@ -1053,7 +1179,7 @@ namespace test{
                                                     (const int*)nullptr,
                                                     (int*)nullptr,
                                                     batchData.initialNumberOfCandidates,
-                                                    dataArrays.n_subjects,
+                                                    batchData.n_subjects,
                                                     (const int*)nullptr,
                                                     (const int*)nullptr,
                                                     0,
@@ -1089,72 +1215,7 @@ namespace test{
     }
 
     void determineCandidateReadIds(Batch& batchData){
-        
-    }
 
-
-
-    void getSubjectDataOfNextIteration(Batch& batchData, int batchsize, const DistributedReadStorage& readStorage){
-        NextIterationData& nextData = batchData.nextIterationData;
-        const auto& transFuncData = *batchData.transFuncData;
-
-        nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * sizeof(unsigned int) * batchsize);
-        nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * sizeof(unsigned int) * batchsize);
-        nextData.h_subject_sequences_lengths.resize(batchsize);
-        nextData.d_subject_sequences_lengths.resize(batchsize);
-        nextData.h_subject_read_ids.resize(batchsize);
-        nextData.d_subject_read_ids.resize(batchsize);
-        //nextData.tasks.reserve(batchsize);
-
-        read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
-        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
-        nextData.initialNumberOfAnchorIds = std::distance(readIdsBegin, readIdsEnd);
-
-        if(nextData.initialNumberOfAnchorIds == 0){
-            nextData.signal();
-            return;
-        };
-
-        //copy read ids to device. gather sequences + lengths for those ids and copy them back to host
-        cudaMemcpyAsync(
-            nextData.d_subject_read_ids,
-            nextData.h_subject_read_ids,
-            nextData.h_subject_read_ids.sizeInBytes(),
-            H2D,
-            nextData.stream); CUERR;
-
-        readStorage.gatherSequenceDataToGpuBufferAsync(
-            batchData.threadPool,
-            batchData.subjectSequenceGatherHandle2,
-            nextData.d_subject_sequences_data.get(),
-            sizeof(unsigned int) * batchData.encodedSequencePitchInInts,
-            nextData.h_subject_read_ids,
-            nextData.d_subject_read_ids,
-            nextData.initialNumberOfAnchorIds,
-            batchData.deviceId,
-            nextData.stream,
-            transFuncData.runtimeOptions.nCorrectorThreads);
-
-        readStorage.gatherSequenceLengthsToGpuBufferAsync(
-            nextData.d_subject_sequences_lengths.get(),
-            batchData.deviceId,
-            nextData.d_subject_read_ids.get(),
-            nextData.initialNumberOfAnchorIds,            
-            nextData.stream);
-
-        cudaMemcpyAsync(
-            nextData.h_subject_sequences_data,
-            nextData.d_subject_sequences_data,
-            nextData.d_subject_sequences_data.sizeInBytes(),
-            D2H,
-            nextData.stream); CUERR;
-
-        cudaMemcpyAsync(
-            nextData.h_subject_sequences_lengths,
-            nextData.d_subject_sequences_lengths,
-            nextData.d_subject_sequences_lengths.sizeInBytes(),
-            D2H,
-            nextData.stream); CUERR;
     }
 
 
@@ -1213,24 +1274,24 @@ namespace test{
                                         dataArrays.d_subject_sequences_lengths.get(),
                                         batchData.deviceId,
                                         dataArrays.d_subject_read_ids.get(),
-                                        dataArrays.n_subjects,   
+                                        batchData.n_subjects,   
                                         streams[primary_stream_index]);
 
         readStorage.gatherSequenceLengthsToGpuBufferAsync(
                                         dataArrays.d_candidate_sequences_lengths.get(),
                                         batchData.deviceId,
                                         dataArrays.d_candidate_read_ids.get(),
-                                        dataArrays.n_queries,            
+                                        batchData.n_queries,            
                                         streams[primary_stream_index]);
 
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle2,
             dataArrays.d_subject_sequences_data,
-            dataArrays.encoded_sequence_pitch,
+            batchData.encodedSequencePitchInInts * sizeof(unsigned int),
             dataArrays.h_subject_read_ids,
             dataArrays.d_subject_read_ids,
-            dataArrays.n_subjects,
+            batchData.n_subjects,
             batchData.deviceId,
             streams[primary_stream_index],
             transFuncData.runtimeOptions.nCorrectorThreads);
@@ -1239,22 +1300,20 @@ namespace test{
             batchData.threadPool,
             batchData.candidateSequenceGatherHandle2,
             dataArrays.d_candidate_sequences_data,
-            dataArrays.encoded_sequence_pitch,
+            batchData.encodedSequencePitchInInts * sizeof(unsigned int),
             dataArrays.h_candidate_read_ids,
             dataArrays.d_candidate_read_ids,
-            dataArrays.n_queries,
+            batchData.n_queries,
             batchData.deviceId,
             streams[primary_stream_index],
             transFuncData.runtimeOptions.nCorrectorThreads);
 
-        assert(dataArrays.encoded_sequence_pitch % sizeof(int) == 0);
-
         call_transpose_kernel(
             (unsigned int*)dataArrays.d_transposedCandidateSequencesData.get(), 
             (const unsigned int*)dataArrays.d_candidate_sequences_data.get(), 
-            dataArrays.n_queries, 
-            dataArrays.encoded_sequence_pitch / sizeof(int), 
-            dataArrays.encoded_sequence_pitch / sizeof(int), 
+            batchData.n_queries, 
+            batchData.encodedSequencePitchInInts, 
+            batchData.encodedSequencePitchInInts, 
             streams[primary_stream_index]
         );
 
@@ -1310,9 +1369,9 @@ namespace test{
                     dataArrays.d_candidates_per_subject_prefixsum,
                     dataArrays.h_candidates_per_subject,
                     dataArrays.d_candidates_per_subject,
-                    dataArrays.n_subjects,
-                    dataArrays.n_queries,
-                    dataArrays.maximum_sequence_length,
+                    batch.n_subjects,
+                    batch.n_queries,
+                    transFuncData.sequenceFileProperties.maxSequenceLength,
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
                     transFuncData.goodAlignmentProperties.min_overlap_ratio,
@@ -1383,16 +1442,16 @@ namespace test{
 
         for(int i = 0; i < dataArrays.n_subjects; i++){
             // std::string s; s.resize(128);
-            // decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * dataArrays.encoded_sequence_pitch, 100, identity);
+            // decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_subject_sequences_data.get() + i * batch.encodedSequencePitchInInts * sizeof(unsigned int), 100, identity);
             // std::cout << "Subject  : " << s << " " << batch.tasks[i].readId << std::endl;
 
             if(dataArrays.n_queries > 0){
                 for(int j = 0; j < dataArrays.n_queries; j++){
                     // std::string s; s.resize(128);
-                    // decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch, 100, identity);
+                    // decode2BitSequence(&s[0], (const unsigned int*)dataArrays.h_candidate_sequences_data.get() + j * batch.encodedSequencePitchInInts * sizeof(unsigned int), 100, identity);
                     //const char* hostptr = transFuncData.readStorage->fetchSequenceData_ptr(batch.tasks[i].candidate_read_ids[j]);
                     //std::string hostsequence = get2BitString((const unsigned int*)hostptr, 100, identity);
-                    //std::string s = get2BitString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * dataArrays.encoded_sequence_pitch), 100, identity);
+                    //std::string s = get2BitString((const unsigned int*)(dataArrays.h_candidate_sequences_data.get() + j * batch.encodedSequencePitchInInts * sizeof(unsigned int)), 100, identity);
                     // if(hostsequence != s){
                     //     std::cout << "host " << hostsequence << std::endl;
                     //     std::cout << "device " << s << std::endl;
@@ -1421,8 +1480,8 @@ namespace test{
                     dataArrays.getDeviceAlignmentResultPointers(),
                     dataArrays.getDeviceSequencePointers(),
                     dataArrays.d_candidates_per_subject_prefixsum.get(),
-                    dataArrays.n_subjects,
-					dataArrays.n_queries,
+                    batch.n_subjects,
+					batch.n_queries,
                     transFuncData.goodAlignmentProperties.min_overlap_ratio,
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.correctionOptions.estimatedErrorrate,
@@ -1436,8 +1495,8 @@ namespace test{
 		call_cuda_filter_alignments_by_mismatchratio_kernel_async(
 					dataArrays.getDeviceAlignmentResultPointers(),
 					dataArrays.d_candidates_per_subject_prefixsum.get(),
-					dataArrays.n_subjects,
-					dataArrays.n_queries,
+					batch.n_subjects,
+					batch.n_queries,
 					transFuncData.correctionOptions.estimatedErrorrate,
 					transFuncData.correctionOptions.estimatedCoverage * transFuncData.correctionOptions.m_coverage,
 					streams[primary_stream_index],
@@ -1446,7 +1505,7 @@ namespace test{
 
         //initialize indices with -1. this allows to calculate the histrogram later on
         //without knowing the number of valid indices
-        call_fill_kernel_async(dataArrays.d_indices.get(), dataArrays.n_queries, -1, streams[primary_stream_index]);
+        call_fill_kernel_async(dataArrays.d_indices.get(), batch.n_queries, -1, streams[primary_stream_index]);
 
         auto select_op = [] __device__ (const BestAlignment_t& flag){
             return flag != BestAlignment_t::None;
@@ -1465,7 +1524,7 @@ namespace test{
                                     d_isGoodAlignment,
                                     dataArrays.d_indices.get(),
                                     dataArrays.d_num_indices.get(),
-                                    dataArrays.n_queries,
+                                    batch.n_queries,
                                     streams[primary_stream_index]); CUERR;
 
         //calculate indices_per_subject
@@ -1473,9 +1532,9 @@ namespace test{
                     cubTempSize,
                     dataArrays.d_indices.get(),
                     dataArrays.d_indices_per_subject.get(),
-                    dataArrays.n_subjects+1,
+                    batch.n_subjects+1,
                     dataArrays.d_candidates_per_subject_prefixsum.get(),
-                    dataArrays.n_queries,
+                    batch.n_queries,
                     streams[primary_stream_index]); CUERR;
 
         //calculate indices_per_subject_prefixsum
@@ -1488,7 +1547,7 @@ namespace test{
                     cubTempSize,
                     dataArrays.d_indices_per_subject.get(),
                     dataArrays.d_indices_per_subject_prefixsum.get()+1,
-                    dataArrays.n_subjects,
+                    batch.n_subjects,
                     streams[primary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_num_indices,
@@ -1580,15 +1639,15 @@ namespace test{
         BestAlignment_t* d_alignment_best_alignment_flags_discardedoutput;
 
         cubCachingAllocator.DeviceAllocate((void**)&d_indices_segmented_partitioned,
-                                            sizeof(int) * dataArrays.n_queries,
+                                            sizeof(int) * batch.n_queries,
                                             streams[primary_stream_index]); CUERR;
 
         cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_compact,
-                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
+                                            sizeof(BestAlignment_t) * batch.n_queries,
                                             streams[primary_stream_index]); CUERR;
 
         cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_discardedoutput,
-                                            sizeof(BestAlignment_t) * dataArrays.n_queries,
+                                            sizeof(BestAlignment_t) * batch.n_queries,
                                             streams[primary_stream_index]); CUERR;
 
         //compact alignment flags according to indices
@@ -1614,7 +1673,7 @@ namespace test{
                                                 dataArrays.d_indices,
                                                 d_indices_segmented_partitioned,
                                                 dataArrays.h_num_indices[0],
-                                                dataArrays.n_subjects,
+                                                batch.n_subjects,
                                                 dataArrays.d_indices_per_subject_prefixsum,
                                                 dataArrays.d_indices_per_subject_prefixsum+1,
                                                 0,
@@ -1683,10 +1742,10 @@ namespace test{
                 batch.threadPool,
                 batch.subjectQualitiesGatherHandle2,
                 dataArrays.d_subject_qualities,
-                dataArrays.quality_pitch,
+                batch.qualityPitchInBytes,
                 dataArrays.h_subject_read_ids,
                 dataArrays.d_subject_read_ids,
-                dataArrays.n_subjects,
+                batch.n_subjects,
                 batch.deviceId,
                 streams[primary_stream_index],
                 transFuncData.runtimeOptions.nCorrectorThreads);
@@ -1695,10 +1754,10 @@ namespace test{
                 batch.threadPool,
                 batch.candidateQualitiesGatherHandle2,
                 dataArrays.d_candidate_qualities,
-                dataArrays.quality_pitch,
+                batch.qualityPitchInBytes,
                 dataArrays.h_candidate_read_ids.get(),
                 dataArrays.d_candidate_read_ids.get(),
-                dataArrays.n_queries,
+                batch.n_queries,
                 batch.deviceId,
                 streams[primary_stream_index],
                 transFuncData.runtimeOptions.nCorrectorThreads);
@@ -1754,18 +1813,18 @@ namespace test{
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
                         dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.n_subjects,
-                        dataArrays.n_queries,
+                        batch.n_subjects,
+                        batch.n_queries,
                         dataArrays.d_num_indices,
                         1.0f,
                         transFuncData.correctionOptions.useQualityScores,
                         desiredAlignmentMaxErrorRate,
-                        dataArrays.maximum_sequence_length,
-                        sizeof(unsigned int) * getEncodedNumInts2Bit(dataArrays.maximum_sequence_length),
-                        dataArrays.encoded_sequence_pitch,
-                        dataArrays.quality_pitch,
-                        dataArrays.msa_pitch,
-                        dataArrays.msa_weights_pitch,
+                        transFuncData.sequenceFileProperties.maxSequenceLength,
+                        sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
+                        batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                        batch.qualityPitchInBytes,
+                        batch.msa_pitch,
+                        batch.msa_weights_pitch,
                         dataArrays.d_canExecute,
                         streams[primary_stream_index],
                         batch.kernelLaunchHandle);
@@ -1805,25 +1864,25 @@ namespace test{
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_shouldBeKept, 
-            sizeof(bool) * dataArrays.n_queries, 
+            sizeof(bool) * batch.n_queries, 
             streams[primary_stream_index]
         ); CUERR;
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_shouldBeKept_positions, 
-            sizeof(int) * dataArrays.n_queries, 
+            sizeof(int) * batch.n_queries, 
             streams[primary_stream_index]
         ); CUERR;
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_newIndices, 
-            sizeof(int) * dataArrays.n_queries, 
+            sizeof(int) * batch.n_queries, 
             streams[primary_stream_index]
         ); CUERR;
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_indices_per_subject_tmp, 
-            sizeof(int) * dataArrays.n_subjects, 
+            sizeof(int) * batch.n_subjects, 
             streams[primary_stream_index]
         ); CUERR;
 
@@ -1832,10 +1891,10 @@ namespace test{
             {
                 //Initialize d_shouldBeKept array
 
-                const int N = dataArrays.n_queries;
+                const int N = batch.n_queries;
                 const int* d_num_indices = dataArrays.d_num_indices.get();
             
-                generic_kernel<<<SDIV(dataArrays.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
+                generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
                     [=] __device__ (){
                         const int index = threadIdx.x + blockIdx.x * 128;
                         const int maxValidIndex = *d_num_indices;
@@ -1853,12 +1912,12 @@ namespace test{
                         dataArrays.getDeviceSequencePointers(),
                         d_shouldBeKept,
                         dataArrays.d_candidates_per_subject_prefixsum,
-                        dataArrays.n_subjects,
-                        dataArrays.n_queries,
-                        sizeof(unsigned int) * getEncodedNumInts2Bit(dataArrays.maximum_sequence_length),
-                        dataArrays.encoded_sequence_pitch,
-                        dataArrays.msa_pitch,
-                        dataArrays.msa_weights_pitch,
+                        batch.n_subjects,
+                        batch.n_queries,
+                        sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
+                        batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                        batch.msa_pitch,
+                        batch.msa_weights_pitch,
                         dataArrays.d_indices,
                         dataArrays.d_indices_per_subject,
                         dataArrays.d_indices_per_subject_prefixsum,
@@ -1873,11 +1932,11 @@ namespace test{
             //save current indices_per_subject
             cudaMemcpyAsync(d_indices_per_subject_tmp,
                 dataArrays.d_indices_per_subject,
-                sizeof(int) * dataArrays.n_subjects,
+                sizeof(int) * batch.n_subjects,
                 D2D,
                 streams[primary_stream_index]); CUERR;
 
-            call_fill_kernel_async(d_newIndices, dataArrays.n_queries, -1, streams[primary_stream_index]);
+            call_fill_kernel_async(d_newIndices, batch.n_queries, -1, streams[primary_stream_index]);
 
             size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
@@ -1887,21 +1946,21 @@ namespace test{
                         d_shouldBeKept,
                         d_shouldBeKept_positions,
                         dataArrays.d_num_indices_tmp.get(),
-                        dataArrays.n_queries,
+                        batch.n_queries,
                         streams[primary_stream_index]); CUERR;
 
             call_compact_kernel_async(d_newIndices,
                 dataArrays.d_indices.get(),
                 d_shouldBeKept_positions,
                 dataArrays.d_num_indices_tmp.get(),
-                dataArrays.n_queries,
+                batch.n_queries,
                 streams[primary_stream_index]);
 
             // d_newIndices now contains *d_num_indices_tmp valid indices, followed by (n_queries - *d_num_indices_tmp) times -1
 
             cudaMemcpyAsync(dataArrays.d_indices,
                 d_newIndices,
-                sizeof(int) * dataArrays.n_queries,
+                sizeof(int) * batch.n_queries,
                 D2D,
                 streams[primary_stream_index]); CUERR;
 
@@ -1910,9 +1969,9 @@ namespace test{
                         cubTempSize,
                         d_newIndices,
                         dataArrays.d_indices_per_subject.get(),
-                        dataArrays.n_subjects+1,
+                        batch.n_subjects+1,
                         dataArrays.d_candidates_per_subject_prefixsum.get(),
-                        dataArrays.n_queries,
+                        batch.n_queries,
                         streams[primary_stream_index]); CUERR;
 
             //make indices per subject prefixsum
@@ -1925,7 +1984,7 @@ namespace test{
                         cubTempSize,
                         dataArrays.d_indices_per_subject.get(),
                         dataArrays.d_indices_per_subject_prefixsum.get()+1,
-                        dataArrays.n_subjects,
+                        batch.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
             {
@@ -1937,11 +1996,11 @@ namespace test{
                 */
 
                 const int* d_indices_per_subject = dataArrays.d_indices_per_subject;
-                const int n_subjects = dataArrays.n_subjects;
+                const int n_subjects = batch.n_subjects;
                 cudaStream_t stream = streams[primary_stream_index];
 
                 dim3 block(128,1,1);
-                dim3 grid(SDIV(dataArrays.n_subjects, block.x),1,1);
+                dim3 grid(SDIV(batch.n_subjects, block.x),1,1);
                 generic_kernel<<<grid, block, 0, stream>>>(
                     [=] __device__ (){
                         for(int i = threadIdx.x + blockDim.x * blockIdx.x; i < n_subjects; i += blockDim.x * gridDim.x){
@@ -1999,18 +2058,18 @@ namespace test{
                             dataArrays.d_indices,
                             d_indices_per_subject_tmp,
                             dataArrays.d_indices_per_subject_prefixsum,
-                            dataArrays.n_subjects,
-                            dataArrays.n_queries,
+                            batch.n_subjects,
+                            batch.n_queries,
                             dataArrays.d_num_indices,
                             0.05f, //
                             transFuncData.correctionOptions.useQualityScores,
                             desiredAlignmentMaxErrorRate,
-                            dataArrays.maximum_sequence_length,
-                            sizeof(unsigned int) * getEncodedNumInts2Bit(dataArrays.maximum_sequence_length),
-                            dataArrays.encoded_sequence_pitch,
-                            dataArrays.quality_pitch,
-                            dataArrays.msa_pitch,
-                            dataArrays.msa_weights_pitch,
+                            transFuncData.sequenceFileProperties.maxSequenceLength,
+                            sizeof(unsigned int) * getEncodedNumInts2Bit(transFuncData.sequenceFileProperties.maxSequenceLength),
+                            batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                            batch.qualityPitchInBytes,
+                            batch.msa_pitch,
+                            batch.msa_weights_pitch,
                             dataArrays.d_canExecute,
                             streams[primary_stream_index],
                             batch.kernelLaunchHandle);
@@ -2164,7 +2223,7 @@ namespace test{
                     candlengths[j] = dataArrays.h_candidate_sequences_lengths[index];
                     candshifts[j] = dataArrays.h_alignment_shifts[index];
 
-                    const char* candidateSequencePtr = dataArrays.h_candidate_sequences_data.get() + index * dataArrays.encoded_sequence_pitch;
+                    const char* candidateSequencePtr = dataArrays.h_candidate_sequences_data.get() + index * batch.encodedSequencePitchInInts * sizeof(unsigned int);
 
                     assert(dataArrays.h_alignment_best_alignment_flags[index] != BestAlignment_t::None);
 
@@ -2190,7 +2249,7 @@ namespace test{
                                          dataArrays.h_msa_column_properties[i].lastColumn_excl - dataArrays.h_msa_column_properties[i].firstColumn_incl,
                                          128);
                  std::cout << "\n";
-                 std::string consensus = std::string{dataArrays.h_consensus + i * dataArrays.msa_pitch, dataArrays.h_consensus + (i+1) * dataArrays.msa_pitch};
+                 std::string consensus = std::string{dataArrays.h_consensus + i * batch.msa_pitch, dataArrays.h_consensus + (i+1) * batch.msa_pitch};
                  std::cout << "Consensus:\n   " << consensus << "\n\n";
                  printSequencesInMSAConsEq(std::cout,
                                           batch.tasks[i].subject_string.c_str(),
@@ -2223,11 +2282,11 @@ namespace test{
                     dataArrays.d_indices,
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
-                    dataArrays.n_subjects,
-                    dataArrays.encoded_sequence_pitch,
-                    dataArrays.sequence_pitch,
-                    dataArrays.msa_pitch,
-                    dataArrays.msa_weights_pitch,
+                    batch.n_subjects,
+                    batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                    batch.decodedSequencePitchInBytes,
+                    batch.msa_pitch,
+                    batch.msa_weights_pitch,
                     transFuncData.sequenceFileProperties.maxSequenceLength,
                     transFuncData.correctionOptions.estimatedErrorrate,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
@@ -2236,7 +2295,7 @@ namespace test{
                     min_coverage_threshold,
                     max_coverage_threshold,
                     transFuncData.correctionOptions.kmerlength,
-                    dataArrays.maximum_sequence_length,
+                    transFuncData.sequenceFileProperties.maxSequenceLength,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
 
@@ -2292,7 +2351,7 @@ namespace test{
                         d_isHqSubject,
                         dataArrays.d_high_quality_subject_indices.get(),
                         dataArrays.d_num_high_quality_subject_indices.get(),
-                        dataArrays.n_subjects,
+                        batch.n_subjects,
                         streams[primary_stream_index]); CUERR;
 
             cudaEventRecord(events[correction_finished_event_index], streams[primary_stream_index]); CUERR;
@@ -2354,17 +2413,17 @@ namespace test{
                 dataArrays.d_indices,
                 dataArrays.d_indices_per_subject,
                 dataArrays.d_indices_per_subject_prefixsum,
-                dataArrays.n_subjects,
-                dataArrays.n_queries,
+                batch.n_subjects,
+                batch.n_queries,
                 dataArrays.d_num_indices,
-                dataArrays.encoded_sequence_pitch,
-                dataArrays.sequence_pitch,
-                dataArrays.msa_pitch,
-                dataArrays.msa_weights_pitch,
+                batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                batch.decodedSequencePitchInBytes,
+                batch.msa_pitch,
+                batch.msa_weights_pitch,
                 min_support_threshold,
                 min_coverage_threshold,
                 new_columns_to_correct,
-                dataArrays.maximum_sequence_length,
+                transFuncData.sequenceFileProperties.maxSequenceLength,
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle);
 
@@ -2378,17 +2437,17 @@ namespace test{
                 dataArrays.d_indices,
                 dataArrays.d_indices_per_subject,
                 dataArrays.d_indices_per_subject_prefixsum,
-                dataArrays.n_subjects,
-                dataArrays.n_queries,
+                batch.n_subjects,
+                batch.n_queries,
                 dataArrays.d_num_indices,
-                dataArrays.encoded_sequence_pitch,
-                dataArrays.sequence_pitch,
-                dataArrays.msa_pitch,
-                dataArrays.msa_weights_pitch,
+                batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                batch.decodedSequencePitchInBytes,
+                batch.msa_pitch,
+                batch.msa_weights_pitch,
                 min_support_threshold,
                 min_coverage_threshold,
                 new_columns_to_correct,
-                dataArrays.maximum_sequence_length,
+                transFuncData.sequenceFileProperties.maxSequenceLength,
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle);
 #endif
@@ -2736,7 +2795,7 @@ namespace test{
 
             for(int subject_index = begin; subject_index < end; ++subject_index) {
                 auto& task = batch.tasks[subject_index];
-                const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * dataArrays.sequence_pitch;
+                const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * batch.decodedSequencePitchInBytes;
                 task.corrected = dataArrays.h_subject_is_corrected[subject_index];
                 task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
 
@@ -2753,7 +2812,7 @@ namespace test{
                     const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
                     if(numUncorrectedPositions > 0){
                         task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
-                        std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * dataArrays.maximum_sequence_length,
+                        std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
                                     numUncorrectedPositions,
                                     task.uncorrectedPositionsNoConsensus.begin());
 
@@ -2817,7 +2876,7 @@ namespace test{
 
                 const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
                 const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
-                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index] * dataArrays.sequence_pitch;
+                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index] * batch.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
                                                 + dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
@@ -2851,7 +2910,7 @@ namespace test{
                         const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];
                         const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
 
-                        const char* const candidate_data = my_corrected_candidates_data + i * dataArrays.sequence_pitch;
+                        const char* const candidate_data = my_corrected_candidates_data + i * batch.decodedSequencePitchInBytes;
                         if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
                             std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
                                     << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
@@ -2875,7 +2934,7 @@ namespace test{
                         TempCorrectedSequence tmp;
 
                         if(!originalReadContainsN){
-                            const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * dataArrays.encoded_sequence_pitch];
+                            const char* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * batch.encodedSequencePitchInInts * sizeof(unsigned int)];
                             const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
 
                             const int maxEdits = candidate_length / 7;
@@ -3176,7 +3235,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
           cudaSetDevice(deviceId); CUERR;
 
-          DataArrays dataArrays(deviceId);
+          DataArrays dataArrays;
 
           std::array<cudaStream_t, nStreamsPerBatch> streams;
           for(int j = 0; j < nStreamsPerBatch; ++j) {
@@ -3206,8 +3265,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].threadPool = &threadPool;
           batches[i].minhashHandles.resize(threadPoolSize);
           batches[i].encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
-          batches[i].decodedSequencePitchInBytes = sequenceFileProperties.maxSequenceLength;
-          batches[i].qualityPitchInBytes = sequenceFileProperties.maxSequenceLength;
+          batches[i].decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
+          batches[i].qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
           
           initNextIterationData(batches[i].nextIterationData, batches[i].deviceId);
 
