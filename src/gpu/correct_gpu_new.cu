@@ -235,11 +235,11 @@ namespace test{
     };
 
     struct NextIterationData{
-        SimpleAllocationPinnedHost<char> h_subject_sequences_data;
+        SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
         SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
         SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
 
-        SimpleAllocationDevice<char> d_subject_sequences_data;
+        SimpleAllocationDevice<unsigned int> d_subject_sequences_data;
         SimpleAllocationDevice<int> d_subject_sequences_lengths;
         SimpleAllocationDevice<read_number> d_subject_read_ids;
 
@@ -749,11 +749,11 @@ namespace test{
         cudaStreamDestroy(nextData.stream); CUERR;
         cudaEventDestroy(nextData.event); CUERR;
 
-        nextData.h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<char>{});
+        nextData.h_subject_sequences_data = std::move(SimpleAllocationPinnedHost<unsigned int>{});
         nextData.h_subject_sequences_lengths = std::move(SimpleAllocationPinnedHost<int>{});
         nextData.h_subject_read_ids = std::move(SimpleAllocationPinnedHost<read_number>{});
 
-        nextData.d_subject_sequences_data = std::move(SimpleAllocationDevice<char>{});
+        nextData.d_subject_sequences_data = std::move(SimpleAllocationDevice<unsigned int>{});
         nextData.d_subject_sequences_lengths = std::move(SimpleAllocationDevice<int>{});
         nextData.d_subject_read_ids = std::move(SimpleAllocationDevice<read_number>{});
 
@@ -765,8 +765,8 @@ namespace test{
         NextIterationData& nextData = batchData.nextIterationData;
         const auto& transFuncData = *batchData.transFuncData;
 
-        nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * sizeof(unsigned int) * batchsize);
-        nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * sizeof(unsigned int) * batchsize);
+        nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
+        nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * batchsize);
         nextData.h_subject_sequences_lengths.resize(batchsize);
         nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.h_subject_read_ids.resize(batchsize);
@@ -793,7 +793,7 @@ namespace test{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle2,
-            nextData.d_subject_sequences_data.get(),
+            (char*)nextData.d_subject_sequences_data.get(),
             sizeof(unsigned int) * batchData.encodedSequencePitchInInts,
             nextData.h_subject_read_ids,
             nextData.d_subject_read_ids,
@@ -854,11 +854,11 @@ namespace test{
                 const bool ok = true;
 
                 if(ok){
-                    const char* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * sizeof(unsigned int) * batchptr->encodedSequencePitchInInts;
+                    const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
                     const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
 
                     //TIMERSTARTCPU(get2BitString);
-                    task.subject_string = get2BitString((const unsigned int*)sequenceptr, sequencelength);
+                    task.subject_string = get2BitString(sequenceptr, sequencelength);
                     //TIMERSTOPCPU(get2BitString);
 
                     //TIMERSTARTCPU(getCandidates);
@@ -1032,7 +1032,7 @@ namespace test{
     
             //sequence input data
     
-            dataArrays.h_subject_sequences_data.resize(batchData.n_subjects * encoded_sequence_pitch);
+            dataArrays.h_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
             dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * encoded_sequence_pitch);
             dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * encoded_sequence_pitch);
             dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
@@ -1042,7 +1042,7 @@ namespace test{
             dataArrays.h_subject_read_ids.resize(batchData.n_subjects);
             dataArrays.h_candidate_read_ids.resize(batchData.n_queries);
     
-            dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * encoded_sequence_pitch);
+            dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
             dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * encoded_sequence_pitch);
             dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * encoded_sequence_pitch);
             dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
@@ -1287,7 +1287,7 @@ namespace test{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle2,
-            dataArrays.d_subject_sequences_data,
+            (char*)dataArrays.d_subject_sequences_data.get(),
             batchData.encodedSequencePitchInInts * sizeof(unsigned int),
             dataArrays.h_subject_read_ids,
             dataArrays.d_subject_read_ids,

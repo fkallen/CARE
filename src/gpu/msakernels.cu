@@ -195,6 +195,8 @@ namespace gpu{
 
         if(*canExecute){
 
+            const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
+
             auto get = [] (const char* data, int length, int index){
                 return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
             };
@@ -204,7 +206,7 @@ namespace gpu{
             };
 
             auto getSubjectPtr = [&] (int subjectIndex){
-                const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+                const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
                 return result;
             };
 
@@ -242,7 +244,7 @@ namespace gpu{
                     const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
                     const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
                     const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-                    const char* const subject = getSubjectPtr(subjectIndex);
+                    const unsigned int* const subject = getSubjectPtr(subjectIndex);
                     const char* const subjectQualityScore = getSubjectQualityPtr(subjectIndex);
                     const int shift = 0;
 
@@ -251,7 +253,7 @@ namespace gpu{
                     //printf("subject: ");
                     for(int i = threadIdx.x; i < subjectLength; i+= blockDim.x){
                         const int globalIndex = subjectColumnsBegin_incl + shift + i;
-                        const char base = get(subject, subjectLength, i);
+                        const char base = get((const char*)subject, subjectLength, i);
                         //printf("%d ", int(base));
                         const float weight = canUseQualityScores ? getQualityWeight(subjectQualityScore[i]) : 1.0f;
                         const int ptrOffset = subjectIndex * 4 * msa_weights_row_pitch_floats + int(base) * msa_weights_row_pitch_floats;
@@ -611,6 +613,8 @@ namespace gpu{
 
             constexpr int blocks_per_msa = 1;
 
+            const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
+
             using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
 
             __shared__ union {
@@ -624,7 +628,7 @@ namespace gpu{
             };
 
             auto getSubjectPtr = [&] (int subjectIndex){
-                const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+                const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
                 return result;
             };
 
@@ -645,7 +649,7 @@ namespace gpu{
                     assert(lastColumn_excl <= msa_weights_pitch_floats);
 
                     const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-                    const char* const subject = getSubjectPtr(subjectIndex);
+                    const unsigned int* const subject = getSubjectPtr(subjectIndex);
 
                     char* const my_consensus = d_msapointers.consensus + subjectIndex * msa_pitch;
                     float* const my_support = d_msapointers.support + subjectIndex * msa_weights_pitch_floats;
@@ -759,7 +763,7 @@ namespace gpu{
                         if(subjectColumnsBegin_incl <= column && column < subjectColumnsEnd_excl){
 
                             const int localIndex = column - subjectColumnsBegin_incl;
-                            const char subjectbase = get(subject, subjectLength, localIndex);
+                            const char subjectbase = get((const char*)subject, subjectLength, localIndex);
 
                             if(subjectbase == A_enc){
                                 my_orig_weights[column] = wa;
@@ -825,6 +829,8 @@ namespace gpu{
 
         if(*canExecute){
 
+            const int encodedSequencePitchInInts = encodedsequencepitch / sizeof(unsigned int);
+
             auto getNumBytes = [] (int sequencelength){
                 return sizeof(unsigned int) * getEncodedNumInts2Bit(sequencelength);
             };
@@ -834,7 +840,7 @@ namespace gpu{
             };
 
             auto getSubjectPtr = [&] (int subjectIndex){
-                const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedsequencepitch;
+                const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
                 return result;
             };
 
@@ -906,7 +912,7 @@ namespace gpu{
 
                 if(myNumIndices > 0){
 
-                    const char* subjectptr = getSubjectPtr(subjectIndex);
+                    const unsigned int* const subjectptr = getSubjectPtr(subjectIndex);
                     const int subjectLength = getSubjectLength(subjectIndex);
 
                     const char* myConsensus = d_msapointers.consensus + subjectIndex * msa_pitch;
@@ -921,7 +927,7 @@ namespace gpu{
                     for(int pos = threadIdx.x; pos < subjectLength && !hasMismatchToConsensus; pos += blockDim.x){
                         const int column = subjectColumnsBegin_incl + pos;
                         const char consbase = myConsensus[column];
-                        const char subjectbase = to_nuc(get(subjectptr, subjectLength, pos));
+                        const char subjectbase = to_nuc(get((const char*)subjectptr, subjectLength, pos));
 
                         hasMismatchToConsensus |= (consbase != subjectbase);
                     }
@@ -1065,7 +1071,7 @@ namespace gpu{
                         if(foundColumn){
 
                             //compare found base to original base
-                            const char originalbase = to_nuc(get(subjectptr, subjectLength, col - subjectColumnsBegin_incl));
+                            const char originalbase = to_nuc(get((const char*)subjectptr, subjectLength, col - subjectColumnsBegin_incl));
 
                             /*int counts[4];
 
@@ -1664,7 +1670,7 @@ namespace gpu{
             d_alignmentresultpointers.shifts,
             d_alignmentresultpointers.nOps,
             d_alignmentresultpointers.bestAlignmentFlags,
-            (const unsigned int*)d_sequencePointers.subjectSequencesData,
+            d_sequencePointers.subjectSequencesData,
             candidateDataToUse,
             d_sequencePointers.subjectSequencesLength,
             d_sequencePointers.candidateSequencesLength,

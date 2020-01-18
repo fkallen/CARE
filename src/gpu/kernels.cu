@@ -152,8 +152,6 @@ namespace gpu{
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
 
             const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * maximumNumberOfIntsPerSequence;
-            //transposed
-            //const char* subjectptr =  (const char*)((unsigned int*)(subject_sequences_data) + std::size_t(subjectIndex));
 
             //save subject in shared memory (in parallel, per tile)
             for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
@@ -565,13 +563,15 @@ namespace gpu{
         __shared__ int uncorrectedPositions[BLOCKSIZE];
         __shared__ float avgCountPerWeight[4];
 
+        const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
+
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
             return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
-            const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+            const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
             return result;
         };
 
@@ -681,9 +681,9 @@ namespace gpu{
 
                     //decode orignal sequence and copy to corrected sequence
                     const int subjectLength = subjectColumnsEnd_excl - subjectColumnsBegin_incl;
-                    const char* const subject = getSubjectPtr(subjectIndex);
+                    const unsigned int* const subject = getSubjectPtr(subjectIndex);
                     for(int i = threadIdx.x; i < subjectLength; i += BLOCKSIZE){
-                        my_corrected_subject[i] = to_nuc(get(subject, subjectLength, i));
+                        my_corrected_subject[i] = to_nuc(get((const char*)subject, subjectLength, i));
                     }
 
                     bool foundAColumn = false;
@@ -919,13 +919,15 @@ namespace gpu{
         __shared__ int uncorrectedPositions[BLOCKSIZE];
         __shared__ float avgCountPerWeight[4];
 
+        const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
+
         auto get = [] (const char* data, int length, int index){
             //return Sequence_t::get_as_nucleotide(data, length, index);
             return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
         };
 
         auto getSubjectPtr = [&] (int subjectIndex){
-            const char* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encoded_sequence_pitch;
+            const unsigned int* result = d_sequencePointers.subjectSequencesData + std::size_t(subjectIndex) * encodedSequencePitchInInts;
             return result;
         };
 
@@ -1065,8 +1067,8 @@ namespace gpu{
                         if(my_support[i] > 0.90f && my_orig_coverage[i] <= 2){
                             my_corrected_subject[i - subjectColumnsBegin_incl] = my_consensus[i];
                         }else{
-                            const char* subject = getSubjectPtr(subjectIndex);
-                            const char encodedBase = get(subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
+                            const unsigned int* subject = getSubjectPtr(subjectIndex);
+                            const char encodedBase = get((const char*)subject, subjectColumnsEnd_excl- subjectColumnsBegin_incl, i - subjectColumnsBegin_incl);
                             const char base = to_nuc(encodedBase);
                             my_corrected_subject[i - subjectColumnsBegin_incl] = base;
                         }
@@ -1817,7 +1819,7 @@ namespace gpu{
             ); CUERR;
 
             callConversionKernel2BitTo2BitHiLoNN(
-                (const unsigned int*)d_sequencePointers.subjectSequencesData,
+                d_sequencePointers.subjectSequencesData,
                 intsPerSequence2Bit,
                 d_subjectDataHiLo,
                 intsPerSequence2BitHiLo,

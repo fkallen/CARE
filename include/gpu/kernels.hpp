@@ -62,7 +62,7 @@ struct MSAPointers{
 };
 
 struct ReadSequencesPointers{
-    char* subjectSequencesData;
+    unsigned int* subjectSequencesData;
     char* candidateSequencesData;
     int* subjectSequencesLength;
     int* candidateSequencesLength;
