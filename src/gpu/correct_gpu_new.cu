@@ -1076,6 +1076,88 @@ namespace test{
     }
 
 
+    void getAnchorReadIds(Batch& batchData, int batchsize){
+
+    }
+
+    void getAnchorData(Batch& batchData, const DistributedReadStorage& readStorage){
+
+    }
+
+    void calculateAnchorMinhashSignature(Batch& batchData){
+
+    }
+
+    void determineCandidateReadIds(Batch& batchData){
+        
+    }
+
+
+
+    void getSubjectDataOfNextIteration(Batch& batchData, int batchsize, const DistributedReadStorage& readStorage){
+        NextIterationData& nextData = batchData.nextIterationData;
+        const auto& transFuncData = *batchData.transFuncData;
+
+        nextData.h_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * sizeof(unsigned int) * batchsize);
+        nextData.d_subject_sequences_data.resize(batchData.encodedSequencePitchInInts * sizeof(unsigned int) * batchsize);
+        nextData.h_subject_sequences_lengths.resize(batchsize);
+        nextData.d_subject_sequences_lengths.resize(batchsize);
+        nextData.h_subject_read_ids.resize(batchsize);
+        nextData.d_subject_read_ids.resize(batchsize);
+        //nextData.tasks.reserve(batchsize);
+
+        read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
+        read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
+        nextData.initialNumberOfAnchorIds = std::distance(readIdsBegin, readIdsEnd);
+
+        if(nextData.initialNumberOfAnchorIds == 0){
+            nextData.signal();
+            return;
+        };
+
+        //copy read ids to device. gather sequences + lengths for those ids and copy them back to host
+        cudaMemcpyAsync(
+            nextData.d_subject_read_ids,
+            nextData.h_subject_read_ids,
+            nextData.h_subject_read_ids.sizeInBytes(),
+            H2D,
+            nextData.stream); CUERR;
+
+        readStorage.gatherSequenceDataToGpuBufferAsync(
+            batchData.threadPool,
+            batchData.subjectSequenceGatherHandle2,
+            nextData.d_subject_sequences_data.get(),
+            sizeof(unsigned int) * batchData.encodedSequencePitchInInts,
+            nextData.h_subject_read_ids,
+            nextData.d_subject_read_ids,
+            nextData.initialNumberOfAnchorIds,
+            batchData.deviceId,
+            nextData.stream,
+            transFuncData.runtimeOptions.nCorrectorThreads);
+
+        readStorage.gatherSequenceLengthsToGpuBufferAsync(
+            nextData.d_subject_sequences_lengths.get(),
+            batchData.deviceId,
+            nextData.d_subject_read_ids.get(),
+            nextData.initialNumberOfAnchorIds,            
+            nextData.stream);
+
+        cudaMemcpyAsync(
+            nextData.h_subject_sequences_data,
+            nextData.d_subject_sequences_data,
+            nextData.d_subject_sequences_data.sizeInBytes(),
+            D2H,
+            nextData.stream); CUERR;
+
+        cudaMemcpyAsync(
+            nextData.h_subject_sequences_lengths,
+            nextData.d_subject_sequences_lengths,
+            nextData.d_subject_sequences_lengths.sizeInBytes(),
+            D2H,
+            nextData.stream); CUERR;
+    }
+
+
     void getCandidateSequenceData(Batch& batchData, const DistributedReadStorage& readStorage){
 
         cudaSetDevice(batchData.deviceId); CUERR;
