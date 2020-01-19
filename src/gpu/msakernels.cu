@@ -185,7 +185,7 @@ namespace gpu{
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
                 int encodedSequencePitchInInts,
-    			size_t quality_pitch,
+    			size_t qualityPitchInBytes,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
                 const bool* __restrict__ canExecute,
@@ -212,12 +212,12 @@ namespace gpu{
             };
 
             auto getSubjectQualityPtr = [&] (int subjectIndex){
-                const char* result = d_qualityPointers.subjectQualities + std::size_t(subjectIndex) * quality_pitch;
+                const char* result = d_qualityPointers.subjectQualities + std::size_t(subjectIndex) * qualityPitchInBytes;
                 return result;
             };
 
             auto getCandidateQualityPtr = [&] (int candidateIndex){
-                const char* result = d_qualityPointers.candidateQualities + std::size_t(candidateIndex) * quality_pitch;
+                const char* result = d_qualityPointers.candidateQualities + std::size_t(candidateIndex) * qualityPitchInBytes;
                 return result;
             };
 
@@ -1356,7 +1356,7 @@ namespace gpu{
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
                 int encodedSequencePitchInInts,
-    			size_t quality_pitch,
+    			size_t qualityPitchInBytes,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
                 const bool* d_canExecute,
@@ -1455,7 +1455,7 @@ namespace gpu{
                                         canUseQualityScores,
                                         desiredAlignmentMaxErrorRate,
                                         encodedSequencePitchInInts,
-                                        quality_pitch,
+                                        qualityPitchInBytes,
                                         msa_row_pitch,
                                         msa_weights_row_pitch,
                                         d_canExecute,
@@ -1487,7 +1487,7 @@ namespace gpu{
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
                 int encodedSequencePitchInInts,
-    			size_t quality_pitch,
+    			size_t qualityPitchInBytes,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
                 const bool* d_canExecute,
@@ -1658,7 +1658,7 @@ namespace gpu{
             d_num_indices,
             canUseQualityScores,
             encodedSequencePitchInInts,
-            quality_pitch,
+            qualityPitchInBytes,
             msa_row_pitch,
             d_canExecute); CUERR;
 
@@ -1697,7 +1697,7 @@ namespace gpu{
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
                 int encodedSequencePitchInInts,
-    			size_t quality_pitch,
+    			size_t qualityPitchInBytes,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
                 const bool* d_canExecute,
@@ -1723,7 +1723,7 @@ namespace gpu{
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
                                                             encodedSequencePitchInInts,
-                                                            quality_pitch,
+                                                            qualityPitchInBytes,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
                                                             d_canExecute,
@@ -1749,7 +1749,7 @@ namespace gpu{
                                                             desiredAlignmentMaxErrorRate,
                                                             maximum_sequence_length,
                                                             encodedSequencePitchInInts,
-                                                            quality_pitch,
+                                                            qualityPitchInBytes,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
                                                             d_canExecute,

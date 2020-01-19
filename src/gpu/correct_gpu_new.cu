@@ -678,7 +678,7 @@ namespace test{
                     float desiredAlignmentMaxErrorRate,
                     int maximum_sequence_length,
                     int encodedSequencePitchInInts,
-                    size_t quality_pitch,
+                    int qualityPitchInBytes,
                     size_t msa_pitch,
                     size_t msa_weights_pitch,
                     const bool* d_canExecute,
@@ -715,7 +715,7 @@ namespace test{
                     desiredAlignmentMaxErrorRate,
                     maximum_sequence_length,
                     encodedSequencePitchInInts,
-                    quality_pitch,
+                    qualityPitchInBytes,
                     msa_pitch,
                     msa_weights_pitch,
                     d_canExecute,
@@ -1023,7 +1023,6 @@ namespace test{
                 int(transFuncData.sequenceFileProperties.maxSequenceLength 
                     * transFuncData.goodAlignmentProperties.min_overlap_ratio)));
     
-            const int quality_pitch = batchData.qualityPitchInBytes;
             const int sequence_pitch = batchData.decodedSequencePitchInBytes;
 
             int msa_max_column_count = (3*transFuncData.sequenceFileProperties.maxSequenceLength - 2*min_overlap);
@@ -1084,13 +1083,13 @@ namespace test{
     
             //qualitiy scores
             if(transFuncData.correctionOptions.useQualityScores) {
-                dataArrays.h_subject_qualities.resize(batchData.n_subjects * quality_pitch);
-                dataArrays.h_candidate_qualities.resize(batchData.n_queries * quality_pitch);
+                dataArrays.h_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
+                dataArrays.h_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
     
-                dataArrays.d_subject_qualities.resize(batchData.n_subjects * quality_pitch);
-                dataArrays.d_candidate_qualities.resize(batchData.n_queries * quality_pitch);
-                dataArrays.d_candidate_qualities_transposed.resize(batchData.n_queries * quality_pitch);
-                dataArrays.d_candidate_qualities_tmp.resize(batchData.n_queries * quality_pitch);
+                dataArrays.d_subject_qualities.resize(batchData.n_subjects * batchData.qualityPitchInBytes);
+                dataArrays.d_candidate_qualities.resize(batchData.n_queries * batchData.qualityPitchInBytes);
+                dataArrays.d_candidate_qualities_transposed.resize(batchData.n_queries * batchData.qualityPitchInBytes);
+                dataArrays.d_candidate_qualities_tmp.resize(batchData.n_queries * batchData.qualityPitchInBytes);
             }
     
     
