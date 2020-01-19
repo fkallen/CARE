@@ -624,11 +624,11 @@ namespace gpu{
                 return duration;
             };
 
-            auto getSequenceData = [&](char* dest, int sequencepitch, const read_number* indices, int numIndices){
+            auto getSequenceData = [&](char* dest, int sequencepitchInBytes, const read_number* indices, int numIndices){
                 readStorage.gatherSequenceDataToHostBuffer(
                     sequencehandle,
-                    dest,
-                    sequencepitch,
+                    (unsigned int*)dest,
+                    sequencepitchInBytes / sizeof(unsigned int),
                     indices,
                     numIndices,
                     1);          

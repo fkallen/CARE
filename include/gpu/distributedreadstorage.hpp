@@ -157,8 +157,8 @@ public:
     void gatherSequenceDataToGpuBufferAsync(
                                 ThreadPool* threadPool,
                                 const GatherHandleSequences& handle,
-                                char* d_sequence_data,
-                                size_t out_sequence_pitch,
+                                unsigned int* d_sequence_data,
+                                size_t outSequencePitchInInts,
                                 const read_number* h_readIds,
                                 const read_number* d_readIds,
                                 int nReadIds,
@@ -180,8 +180,8 @@ public:
 
     std::future<void> gatherSequenceDataToHostBufferAsync(
                                 const GatherHandleSequences& handle,
-                                char* h_sequence_data,
-                                size_t out_sequence_pitch,
+                                unsigned int* h_sequence_data,
+                                size_t outSequencePitchInInts,
                                 const read_number* h_readIds,
                                 int nReadIds,
                                 int numCpuThreads) const;
@@ -196,8 +196,8 @@ public:
 
     void gatherSequenceDataToHostBuffer(
                                 const GatherHandleSequences& handle,
-                                char* h_sequence_data,
-                                size_t out_sequence_pitch,
+                                unsigned int* h_sequence_data,
+                                size_t outSequencePitchInInts,
                                 const read_number* h_readIds,
                                 int nReadIds,
                                 int numCpuThreads) const;

@@ -794,8 +794,8 @@ namespace test{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle2,
-            (char*)nextData.d_subject_sequences_data.get(),
-            sizeof(unsigned int) * batchData.encodedSequencePitchInInts,
+            nextData.d_subject_sequences_data.get(),
+            batchData.encodedSequencePitchInInts,
             nextData.h_subject_read_ids,
             nextData.d_subject_read_ids,
             nextData.initialNumberOfAnchorIds,
@@ -1288,8 +1288,8 @@ namespace test{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.subjectSequenceGatherHandle2,
-            (char*)dataArrays.d_subject_sequences_data.get(),
-            batchData.encodedSequencePitchInInts * sizeof(unsigned int),
+            dataArrays.d_subject_sequences_data.get(),
+            batchData.encodedSequencePitchInInts,
             dataArrays.h_subject_read_ids,
             dataArrays.d_subject_read_ids,
             batchData.n_subjects,
@@ -1300,8 +1300,8 @@ namespace test{
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.candidateSequenceGatherHandle2,
-            (char*)dataArrays.d_candidate_sequences_data.get(),
-            batchData.encodedSequencePitchInInts * sizeof(unsigned int),
+            dataArrays.d_candidate_sequences_data.get(),
+            batchData.encodedSequencePitchInInts,
             dataArrays.h_candidate_read_ids,
             dataArrays.d_candidate_read_ids,
             batchData.n_queries,
