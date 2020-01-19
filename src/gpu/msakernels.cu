@@ -184,7 +184,7 @@ namespace gpu{
     			const int* __restrict__ d_num_indices,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
-                size_t encoded_sequence_pitch,
+                int encodedSequencePitchInInts,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
@@ -192,8 +192,6 @@ namespace gpu{
                 bool debug){
 
         if(*canExecute){
-
-            const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
 
             auto get = [] (const char* data, int length, int index){
                 return getEncodedNuc2Bit((const unsigned int*)data, length, index, [](auto i){return i;});
@@ -597,7 +595,7 @@ namespace gpu{
                             ReadSequencesPointers d_sequencePointers,
                             const int* __restrict__ d_indices_per_subject,
                             int n_subjects,
-                            size_t encoded_sequence_pitch,
+                            int encodedSequencePitchInInts,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
                             const bool* __restrict__ canExecute){
@@ -610,8 +608,6 @@ namespace gpu{
             constexpr char T_enc = 0x03;
 
             constexpr int blocks_per_msa = 1;
-
-            const int encodedSequencePitchInInts = encoded_sequence_pitch / sizeof(unsigned int);
 
             using BlockReduceFloat = cub::BlockReduce<float, BLOCKSIZE>;
 
@@ -1363,7 +1359,7 @@ namespace gpu{
                 float expectedAffectedIndicesFraction,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
-                size_t encoded_sequence_pitch,
+                int encodedSequencePitchInInts,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
@@ -1460,7 +1456,7 @@ namespace gpu{
                                         d_num_indices,
                                         canUseQualityScores,
                                         desiredAlignmentMaxErrorRate,
-                                        encoded_sequence_pitch,
+                                        encodedSequencePitchInInts,
                                         quality_pitch,
                                         msa_row_pitch,
                                         msa_weights_row_pitch,
@@ -1492,7 +1488,7 @@ namespace gpu{
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
-                size_t encoded_sequence_pitch,
+                int encodedSequencePitchInInts,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
@@ -1677,7 +1673,7 @@ namespace gpu{
             n_queries,
             d_num_indices,
             canUseQualityScores,
-            encoded_sequence_pitch / sizeof(int),
+            encodedSequencePitchInInts,
             quality_pitch,
             msa_row_pitch,
             d_canExecute); CUERR;
@@ -1721,7 +1717,7 @@ namespace gpu{
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
-                size_t encoded_sequence_pitch,
+                int encodedSequencePitchInInts,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
                 size_t msa_weights_row_pitch,
@@ -1747,7 +1743,7 @@ namespace gpu{
                                                             expectedAffectedIndicesFraction,
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
-                                                            encoded_sequence_pitch,
+                                                            encodedSequencePitchInInts,
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
@@ -1773,7 +1769,7 @@ namespace gpu{
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
                                                             maximum_sequence_length,
-                                                            encoded_sequence_pitch,
+                                                            encodedSequencePitchInInts,
                                                             quality_pitch,
                                                             msa_row_pitch,
                                                             msa_weights_row_pitch,
@@ -1790,7 +1786,7 @@ namespace gpu{
                             ReadSequencesPointers d_sequencePointers,
                             const int* d_indices_per_subject,
                             int n_subjects,
-                            size_t encoded_sequence_pitch,
+                            int encodedSequencePitchInInts,
                             size_t msa_pitch,
                             size_t msa_weights_pitch,
                             const bool* d_canExecute,
@@ -1875,7 +1871,7 @@ namespace gpu{
                                                                 d_sequencePointers, \
                                                                 d_indices_per_subject, \
                                                                 n_subjects, \
-                                                                encoded_sequence_pitch, \
+                                                                encodedSequencePitchInInts, \
                                                                 msa_pitch, \
                                                                 msa_weights_pitch, \
                                                                 d_canExecute); CUERR;

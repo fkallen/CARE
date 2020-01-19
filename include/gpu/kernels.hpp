@@ -211,7 +211,7 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
             const int* d_indices,
             const int* d_indices_per_subject,
             const int* d_indices_per_subject_prefixsum,
-            const int* d_blocks_per_subject_prefixsum,
+            //const int* d_blocks_per_subject_prefixsum,
             int n_subjects,
             int n_queries,
             const int* d_num_indices,
@@ -219,12 +219,14 @@ void call_msa_add_sequences_kernel_implicit_shared_async(
             bool canUseQualityScores,
             float desiredAlignmentMaxErrorRate,
             int maximum_sequence_length,
+            int encodedSequencePitchInInts,
             size_t quality_pitch,
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
             const bool* d_canExecute,
             cudaStream_t stream,
-            KernelLaunchHandle& handle);
+            KernelLaunchHandle& handle,
+            bool debug);
 
 
 void call_msa_add_sequences_kernel_implicit_global_async(
@@ -242,7 +244,7 @@ void call_msa_add_sequences_kernel_implicit_global_async(
             float expectedAffectedIndicesFraction,
             bool canUseQualityScores,
             float desiredAlignmentMaxErrorRate,
-            size_t encoded_sequence_pitch,
+            int encodedSequencePitchInInts,
             size_t quality_pitch,
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
@@ -268,7 +270,7 @@ void call_msa_add_sequences_kernel_implicit_async(
             bool canUseQualityScores,
             float desiredAlignmentMaxErrorRate,
             int maximum_sequence_length,
-            size_t encoded_sequence_pitch,
+            int encodedSequencePitchInInts,
             size_t quality_pitch,
             size_t msa_row_pitch,
             size_t msa_weights_row_pitch,
@@ -283,7 +285,7 @@ void call_msa_find_consensus_implicit_kernel_async(
             ReadSequencesPointers d_sequencePointers,
             const int* d_indices_per_subject,
             int n_subjects,
-            size_t encoded_sequence_pitch,
+            int encodedSequencePitchInInts,
             size_t msa_pitch,
             size_t msa_weights_pitch,
             const bool* d_canExecute,
