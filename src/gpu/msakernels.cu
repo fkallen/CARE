@@ -808,7 +808,7 @@ namespace gpu{
                         const int* __restrict__ d_candidates_per_subject_prefixsum,
                         int n_subjects,
                         int n_candidates,
-                        size_t encodedsequencepitch,
+                        int encodedSequencePitchInInts,
                         size_t msa_pitch,
                         size_t msa_weights_pitch,
                         const int* __restrict__ d_indices,
@@ -821,8 +821,6 @@ namespace gpu{
                         bool debug = false){
 
         if(*canExecute){
-
-            const int encodedSequencePitchInInts = encodedsequencepitch / sizeof(unsigned int);
 
             auto getNumBytes = [] (int sequencelength){
                 return sizeof(unsigned int) * getEncodedNumInts2Bit(sequencelength);
@@ -1628,22 +1626,6 @@ namespace gpu{
         //const int blocks = SDIV(n_queries, blocksize);
         dim3 grid(std::min(blocks, max_blocks_per_device), 1, 1);
 
-
-        unsigned int* candidateDataToUse = d_sequencePointers.transposedCandidateSequencesData;
-
-        // if(transposeCandidates){
-        //     cubCachingAllocator.DeviceAllocate((void**)&candidateDataToUse, sizeof(unsigned int) * n_queries * encoded_sequence_pitch / sizeof(int), stream);  CUERR;
-
-        //     call_transpose_kernel(
-        //         candidateDataToUse, 
-        //         (unsigned int*)d_sequencePointers.candidateSequencesData, 
-        //         n_queries, 
-        //         encoded_sequence_pitch / sizeof(int), 
-        //         encoded_sequence_pitch / sizeof(int), 
-        //         stream
-        //     );
-        // }
-
         //msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel<transposeCandidates><<<grid, block, smem, stream>>>(
         msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel<<<grid, block, smem, stream>>>(
             d_msapointers.consensus,
@@ -1659,7 +1641,7 @@ namespace gpu{
             d_alignmentresultpointers.nOps,
             d_alignmentresultpointers.bestAlignmentFlags,
             d_sequencePointers.subjectSequencesData,
-            candidateDataToUse,
+            d_sequencePointers.transposedCandidateSequencesData,
             d_sequencePointers.subjectSequencesLength,
             d_sequencePointers.candidateSequencesLength,
             d_qualityPointers.subjectQualities,
@@ -1677,11 +1659,6 @@ namespace gpu{
             quality_pitch,
             msa_row_pitch,
             d_canExecute); CUERR;
-
-        // if(transposeCandidates){
-        //     cubCachingAllocator.DeviceFree(candidateDataToUse); CUERR;
-        // }
-
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;
 
@@ -1893,7 +1870,7 @@ namespace gpu{
                 const int* d_candidates_per_subject_prefixsum,
                 int n_subjects,
                 int n_candidates,
-                size_t encodedsequencepitch,
+                int encodedSequencePitchInInts,
                 size_t msa_pitch,
                 size_t msa_weights_pitch,
                 const int* d_indices,
@@ -1968,7 +1945,7 @@ namespace gpu{
                     d_candidates_per_subject_prefixsum, \
                     n_subjects, \
                     n_candidates, \
-                    encodedsequencepitch, \
+                    encodedSequencePitchInInts, \
                     msa_pitch, \
                     msa_weights_pitch, \
                     d_indices, \

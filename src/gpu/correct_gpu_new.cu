@@ -1023,7 +1023,6 @@ namespace test{
                 int(transFuncData.sequenceFileProperties.maxSequenceLength 
                     * transFuncData.goodAlignmentProperties.min_overlap_ratio)));
     
-            const int encoded_sequence_pitch = sizeof(unsigned int) * batchData.encodedSequencePitchInInts;
             const int quality_pitch = batchData.qualityPitchInBytes;
             const int sequence_pitch = batchData.decodedSequencePitchInBytes;
 
@@ -1915,7 +1914,7 @@ namespace test{
                         dataArrays.d_candidates_per_subject_prefixsum,
                         batch.n_subjects,
                         batch.n_queries,
-                        batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                        batch.encodedSequencePitchInInts,
                         batch.msa_pitch,
                         batch.msa_weights_pitch,
                         dataArrays.d_indices,
@@ -2282,7 +2281,7 @@ namespace test{
                     dataArrays.d_indices_per_subject,
                     dataArrays.d_indices_per_subject_prefixsum,
                     batch.n_subjects,
-                    batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                    batch.encodedSequencePitchInInts,
                     batch.decodedSequencePitchInBytes,
                     batch.msa_pitch,
                     batch.msa_weights_pitch,
@@ -2401,33 +2400,6 @@ namespace test{
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
         //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
 
-
-
-#if 1
-        call_msa_correct_candidates_kernel_async_experimental(
-                dataArrays.getDeviceMSAPointers(),
-                dataArrays.getDeviceAlignmentResultPointers(),
-                dataArrays.getDeviceSequencePointers(),
-                dataArrays.getDeviceCorrectionResultPointers(),
-                dataArrays.d_indices,
-                dataArrays.d_indices_per_subject,
-                dataArrays.d_indices_per_subject_prefixsum,
-                batch.n_subjects,
-                batch.n_queries,
-                dataArrays.d_num_indices,
-                batch.encodedSequencePitchInInts * sizeof(unsigned int),
-                batch.decodedSequencePitchInBytes,
-                batch.msa_pitch,
-                batch.msa_weights_pitch,
-                min_support_threshold,
-                min_coverage_threshold,
-                new_columns_to_correct,
-                transFuncData.sequenceFileProperties.maxSequenceLength,
-                streams[primary_stream_index],
-                batch.kernelLaunchHandle);
-
-        // correct candidates
-#else
         call_msa_correct_candidates_kernel_async(
                 dataArrays.getDeviceMSAPointers(),
                 dataArrays.getDeviceAlignmentResultPointers(),
@@ -2439,7 +2411,7 @@ namespace test{
                 batch.n_subjects,
                 batch.n_queries,
                 dataArrays.d_num_indices,
-                batch.encodedSequencePitchInInts * sizeof(unsigned int),
+                batch.encodedSequencePitchInInts,
                 batch.decodedSequencePitchInBytes,
                 batch.msa_pitch,
                 batch.msa_weights_pitch,
@@ -2449,7 +2421,7 @@ namespace test{
                 transFuncData.sequenceFileProperties.maxSequenceLength,
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle);
-#endif
+
 
         cudaMemcpyAsync(dataArrays.h_corrected_candidates,
                         dataArrays.d_corrected_candidates,
