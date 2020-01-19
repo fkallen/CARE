@@ -332,6 +332,12 @@ namespace test{
 
     struct Batch {
 
+        Batch() = default;
+        Batch(const Batch&) = delete;
+        Batch(Batch&&) = default;
+        Batch& operator=(const Batch&) = delete;
+        Batch& operator=(Batch&&) = default;
+
         NextIterationData nextIterationData;
         bool isFirstIteration = true;
 
@@ -3246,6 +3252,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 #ifndef DO_PROFILE
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
+        //cpu::RangeGenerator<read_number> readIdGenerator(1000000);
 #else
         cpu::RangeGenerator<read_number> readIdGenerator(num_reads_to_profile);
 #endif
@@ -3304,15 +3311,19 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
 
      outputThread.start();
-    for(auto& w : backgroundWorkers){
-        w.start();
-    }
 
         std::vector<std::thread> batchExecutors;
 
       #ifdef DO_PROFILE
           cudaProfilerStart();
       #endif
+
+
+#if 0
+
+        for(auto& w : backgroundWorkers){
+            w.start();
+        }
 
         for(int i = 0; i < nParallelBatches; ++i) {
             batchExecutors.emplace_back([&,i](){
@@ -3479,6 +3490,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             std::this_thread::sleep_for(std::chrono::seconds{1});
         }
 
+
         for(auto& w : backgroundWorkers){
             w.stopThread(BackgroundThread::StopType::FinishAndStop);
         }
@@ -3491,6 +3503,270 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
+#else 
+
+
+        auto initBatchData = [&](auto& batchData, int deviceId){
+
+            cudaSetDevice(deviceId); CUERR;
+
+            DataArrays dataArrays;
+
+            std::array<cudaStream_t, nStreamsPerBatch> streams;
+            for(int j = 0; j < nStreamsPerBatch; ++j) {
+                cudaStreamCreate(&streams[j]); CUERR;
+            }
+
+            std::array<cudaEvent_t, nEventsPerBatch> events;
+            for(int j = 0; j < nEventsPerBatch; ++j) {
+                cudaEventCreateWithFlags(&events[j], cudaEventDisableTiming); CUERR;
+            }
+
+            batchData.id = -1;
+            batchData.deviceId = deviceId;
+            batchData.dataArrays = std::move(dataArrays);
+            batchData.streams = std::move(streams);
+            batchData.events = std::move(events);
+            batchData.kernelLaunchHandle = make_kernel_launch_handle(deviceId);
+            batchData.subjectSequenceGatherHandle2 = readStorage.makeGatherHandleSequences();
+            batchData.candidateSequenceGatherHandle2 = readStorage.makeGatherHandleSequences();
+            //batch.subjectLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
+            //batch.candidateLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
+            batchData.subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
+            batchData.candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
+            batchData.transFuncData = &transFuncData;
+            batchData.outputThread = &outputThread;
+            batchData.backgroundWorker = nullptr;//&backgroundWorkers[i];
+            batchData.threadPool = &threadPool;
+            batchData.minhashHandles.resize(threadPoolSize);
+            batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
+            batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
+            batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
+            
+            initNextIterationData(batchData.nextIterationData, batchData.deviceId); 
+        };
+
+        auto destroyBatchData = [&](auto& batchData){
+            
+            cudaSetDevice(batchData.deviceId); CUERR;
+    
+            batchData.dataArrays.reset();
+            destroyNextIterationData(batchData.nextIterationData);
+    
+            for(auto& stream : batchData.streams) {
+                cudaStreamDestroy(stream); CUERR;
+            }
+    
+            for(auto& event : batchData.events){
+                cudaEventDestroy(event); CUERR;
+            }            
+        };
+
+        auto showProgress = [&](std::int64_t totalCount, int seconds){
+            int hours = seconds / 3600;
+            seconds = seconds % 3600;
+            int minutes = seconds / 60;
+            seconds = seconds % 60;
+
+            printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\r",
+                totalCount, sequenceFileProperties.nReads,
+                hours, minutes, seconds);
+
+            if(totalCount == std::int64_t(sequenceFileProperties.nReads)){
+                std::cerr << '\n';
+            }
+        };
+
+        auto updateShowProgressInterval = [](auto duration){
+            return duration;
+        };
+
+        ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
+
+
+        for(int deviceIdIndex = 0; deviceIdIndex < int(deviceIds.size()); ++deviceIdIndex) {
+            batchExecutors.emplace_back([&, deviceIdIndex](){
+                const int deviceId = deviceIds[deviceIdIndex];
+                std::cerr << "Began work on device id = " << deviceId << "\n";
+
+                BackgroundThread backgroundWorker(true);
+
+                Batch batchData;
+                initBatchData(batchData, deviceId);
+                batchData.id = deviceIdIndex;
+                batchData.backgroundWorker = &backgroundWorker;
+                
+                auto& streams = batchData.streams;
+                auto& events = batchData.events;
+
+                auto pushrange = [&](const std::string& msg, int color){
+                    nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+                };
+
+                auto poprange = [&](){
+                    nvtx::pop_range();
+                };
+
+
+                while(!(readIdGenerator.empty() 
+                        && batchData.nextIterationData.isDone()
+                        && batchData.nextIterationData.tasks.empty())) {
+                        
+                    batchData.reset();
+
+                    pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
+                    
+                    getNextBatchOfSubjectsAndDetermineCandidateReadIds(batchData);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+                    if(batchData.initialNumberOfCandidates == 0){
+                        continue;
+                    }
+
+                    pushrange("getCandidateSequenceData", 1);
+
+                    getCandidateSequenceData(batchData, *transFuncData.readStorage);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                    pushrange("getCandidateAlignments", 2);
+
+                    getCandidateAlignments(batchData);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                    // cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    // if(batchData.dataArrays.h_num_indices[0] == 0){
+                    //     continue;
+                    // }
+
+                    if(transFuncData.correctionOptions.useQualityScores) {
+                        pushrange("getQualities", 4);
+
+                        getQualities(batchData);
+
+                        poprange();
+                    }
+
+                    
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+                    pushrange("buildMultipleSequenceAlignment", 5);
+
+                    buildMultipleSequenceAlignment(batchData);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                #ifdef USE_MSA_MINIMIZATION
+
+                    pushrange("removeCandidatesOfDifferentRegionFromMSA", 6);
+
+                    removeCandidatesOfDifferentRegionFromMSA(batchData);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+                #endif
+
+                    //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
+
+                //cudaDeviceSynchronize(); CUERR;
+
+                    pushrange("correctSubjects", 7);
+
+                    correctSubjects(batchData);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                    if(transFuncData.correctionOptions.correctCandidates) {                        
+
+                        pushrange("correctCandidates", 8);
+
+                        correctCandidates(batchData);
+
+                        poprange();
+                    }
+
+                    cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+                    cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;            
+                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+                    pushrange("unpackClassicResults", 9);
+
+                    unpackClassicResults(batchData);
+
+                    poprange();
+
+                    //cudaDeviceSynchronize(); CUERR;
+
+
+                    pushrange("saveResults", 10);
+
+                    saveResults(batchData);
+
+                    poprange();
+
+                    progressThread.addProgress(batchsize);
+                    
+                }
+
+                batchData.isTerminated = true;
+                batchData.state = BatchState::Finished;
+
+                std::cerr << "\nbatchData.backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop)\n";
+
+                batchData.backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+
+                std::cerr << "\ndestroyBatchData(batchData);\n";
+
+                destroyBatchData(batchData);
+
+                std::cerr << "\nbatchdone\n";
+            });
+        }
+
+        for(auto& executor : batchExecutors){
+            std::cerr << "\nexecutor.join();\n";
+            executor.join();
+            std::cerr << "\nexecutor joined();\n";
+        }
+
+        std::cerr << "\nprogressThread.finished();\n";
+
+        progressThread.finished();
+
+        std::cerr << "\nthreadPool.wait()\n";
+        
+        threadPool.wait();
+
+        std::cerr << "\noutputThread.stopThread(BackgroundThread::StopType::FinishAndStop)\n";
+
+        outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
+
+        std::cerr << "\noutputThread stopped\n";
+#endif
 
       //flushCachedResults();
       //outputstream.flush();
