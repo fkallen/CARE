@@ -184,8 +184,6 @@ namespace gpu{
     			const int* __restrict__ d_num_indices,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
-    			int maximum_sequence_length,
-    			int max_sequence_bytes,
                 size_t encoded_sequence_pitch,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
@@ -814,7 +812,6 @@ namespace gpu{
                         const int* __restrict__ d_candidates_per_subject_prefixsum,
                         int n_subjects,
                         int n_candidates,
-                        int max_sequence_bytes,
                         size_t encodedsequencepitch,
                         size_t msa_pitch,
                         size_t msa_weights_pitch,
@@ -1366,8 +1363,6 @@ namespace gpu{
                 float expectedAffectedIndicesFraction,
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
-    			int maximum_sequence_length,
-    			int max_sequence_bytes,
                 size_t encoded_sequence_pitch,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
@@ -1465,8 +1460,6 @@ namespace gpu{
                                         d_num_indices,
                                         canUseQualityScores,
                                         desiredAlignmentMaxErrorRate,
-                                        maximum_sequence_length,
-                                        max_sequence_bytes,
                                         encoded_sequence_pitch,
                                         quality_pitch,
                                         msa_row_pitch,
@@ -1499,7 +1492,6 @@ namespace gpu{
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
-    			int max_sequence_bytes,
                 size_t encoded_sequence_pitch,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
@@ -1729,7 +1721,6 @@ namespace gpu{
     			bool canUseQualityScores,
     			float desiredAlignmentMaxErrorRate,
     			int maximum_sequence_length,
-    			int max_sequence_bytes,
                 size_t encoded_sequence_pitch,
     			size_t quality_pitch,
     			size_t msa_row_pitch,
@@ -1756,8 +1747,6 @@ namespace gpu{
                                                             expectedAffectedIndicesFraction,
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
-                                                            maximum_sequence_length,
-                                                            max_sequence_bytes,
                                                             encoded_sequence_pitch,
                                                             quality_pitch,
                                                             msa_row_pitch,
@@ -1784,7 +1773,6 @@ namespace gpu{
                                                             canUseQualityScores,
                                                             desiredAlignmentMaxErrorRate,
                                                             maximum_sequence_length,
-                                                            max_sequence_bytes,
                                                             encoded_sequence_pitch,
                                                             quality_pitch,
                                                             msa_row_pitch,
@@ -1909,7 +1897,6 @@ namespace gpu{
                 const int* d_candidates_per_subject_prefixsum,
                 int n_subjects,
                 int n_candidates,
-                int max_sequence_bytes,
                 size_t encodedsequencepitch,
                 size_t msa_pitch,
                 size_t msa_weights_pitch,
@@ -1985,7 +1972,6 @@ namespace gpu{
                     d_candidates_per_subject_prefixsum, \
                     n_subjects, \
                     n_candidates, \
-                    max_sequence_bytes, \
                     encodedsequencepitch, \
                     msa_pitch, \
                     msa_weights_pitch, \
