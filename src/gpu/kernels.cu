@@ -48,7 +48,7 @@ namespace gpu{
     template<int tilesize>
     __global__
     void
-    cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel(
+    popcount_shifted_hamming_distance_kernel(
                 const unsigned int* subjectDataHiLo,
                 const unsigned int* candidateDataHiLoTransposed,
                 AlignmentResultPointers d_alignmentresultpointers,
@@ -57,12 +57,10 @@ namespace gpu{
                 const int* __restrict__ tiles_per_subject_prefixsum,
                 int n_subjects,
                 int n_candidates,
-                int maximumSequenceLength,
+                int encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
                 float min_overlap_ratio){
-
-        const int maximumNumberOfIntsPerSequence = getEncodedNumInts2BitHiLo(maximumSequenceLength);
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
             reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
@@ -114,8 +112,6 @@ namespace gpu{
 
         //set up shared memory pointers
 
-        const int max_sequence_ints = getEncodedNumInts2BitHiLo(maximumSequenceLength);
-
         const int tiles = (blockDim.x * gridDim.x) / tilesize;
         const int globalTileId = (blockDim.x * blockIdx.x + threadIdx.x) / tilesize;
         const int localTileId = (threadIdx.x) / tilesize;
@@ -124,10 +120,10 @@ namespace gpu{
         const int requiredTiles = tiles_per_subject_prefixsum[n_subjects];
 
         unsigned int* const subjectBackupsBegin = sharedmemory; // per tile shared memory to store subject
-        unsigned int* const queryBackupsBegin = subjectBackupsBegin + max_sequence_ints * tilesPerBlock; // per thread shared memory to store query
-        unsigned int* const mySequencesBegin = queryBackupsBegin + max_sequence_ints * blockDim.x; // per thread shared memory to store shifted sequence
+        unsigned int* const queryBackupsBegin = subjectBackupsBegin + encodedSequencePitchInInts2BitHiLo * tilesPerBlock; // per thread shared memory to store query
+        unsigned int* const mySequencesBegin = queryBackupsBegin + encodedSequencePitchInInts2BitHiLo * blockDim.x; // per thread shared memory to store shifted sequence
 
-        unsigned int* const subjectBackup = subjectBackupsBegin + max_sequence_ints * localTileId; // accesed via identity
+        unsigned int* const subjectBackup = subjectBackupsBegin + encodedSequencePitchInInts2BitHiLo * localTileId; // accesed via identity
         unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
         unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
 
@@ -151,10 +147,10 @@ namespace gpu{
 
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
 
-            const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * maximumNumberOfIntsPerSequence;
+            const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * encodedSequencePitchInInts2BitHiLo;
 
             //save subject in shared memory (in parallel, per tile)
-            for(int lane = laneInTile; lane < max_sequence_ints; lane += tilesize) {
+            for(int lane = laneInTile; lane < encodedSequencePitchInInts2BitHiLo; lane += tilesize) {
                 subjectBackup[identity(lane)] = subjectptr[lane];
                 //transposed
                 //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
@@ -170,7 +166,7 @@ namespace gpu{
                 const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
                 //save query in shared memory
-                for(int i = 0; i < max_sequence_ints; i += 1) {
+                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
                     //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
                     //transposed
                     queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
@@ -230,7 +226,7 @@ namespace gpu{
                 };
 
                 //initialize threadlocal smem array with subject
-                for(int i = 0; i < max_sequence_ints; i += 1) {
+                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
                     mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
                 }
 
@@ -250,7 +246,7 @@ namespace gpu{
                 }
 
                 //initialize threadlocal smem array with query
-                for(int i = 0; i < max_sequence_ints; i += 1) {
+                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
                     mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
                 }
 
@@ -1594,7 +1590,7 @@ namespace gpu{
     //####################   KERNEL DISPATCH   ####################
 
 
-    void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
+    void call_popcount_shifted_hamming_distance_kernel_async(
     			AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
     			const int* d_candidates_per_subject_prefixsum,
@@ -1602,14 +1598,14 @@ namespace gpu{
                 const int* d_candidates_per_subject,
     			int n_subjects,
     			int n_queries,
-    			int maximumSequenceLength,
+                int maximumSequenceLength,
+                int encodedSequencePitchInInts2Bit,
     			int min_overlap,
     			float maxErrorRate,
     			float min_overlap_ratio,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
 
-            const int intsPerSequence2Bit = getEncodedNumInts2Bit(maximumSequenceLength);
             const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
             const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
 
@@ -1621,40 +1617,10 @@ namespace gpu{
                 sizeof(unsigned int) * intsPerSequence2BitHiLo * n_queries, 
                 stream
             ); CUERR;
-#if 0
-            unsigned int* d_candidateDataTransposed = nullptr;
-
-            cubCachingAllocator.DeviceAllocate(
-                (void**)&d_candidateDataTransposed, 
-                sizeof(unsigned int) * intsPerSequence2Bit * n_queries, 
-                stream
-            ); CUERR;
-
-            call_transpose_kernel(d_candidateDataTransposed,
-                d_sequencePointers.candidateSequencesData,
-                n_queries,
-                intsPerSequence2Bit,
-                intsPerSequence2Bit,
-                stream
-            );
-
-            callConversionKernel2BitTo2BitHiLoTT(
-                d_candidateDataTransposed,
-                intsPerSequence2Bit,
-                d_candidateDataHiLoTransposed,
-                intsPerSequence2BitHiLo,
-                d_sequencePointers.candidateSequencesLength,
-                n_queries,
-                stream,
-                handle
-            );
-
-            cubCachingAllocator.DeviceFree(d_candidateDataTransposed); CUERR;
-#else 
 
             callConversionKernel2BitTo2BitHiLoNT(
                 d_sequencePointers.candidateSequencesData,
-                intsPerSequence2Bit,
+                encodedSequencePitchInInts2Bit,
                 d_candidateDataHiLoTransposed,
                 intsPerSequence2BitHiLo,
                 d_sequencePointers.candidateSequencesLength,
@@ -1662,11 +1628,6 @@ namespace gpu{
                 stream,
                 handle
             );
-
-#endif 
-
-
-            
 
             cubCachingAllocator.DeviceAllocate(
                 (void**)&d_subjectDataHiLo, 
@@ -1676,7 +1637,7 @@ namespace gpu{
 
             callConversionKernel2BitTo2BitHiLoNN(
                 d_sequencePointers.subjectSequencesData,
-                intsPerSequence2Bit,
+                encodedSequencePitchInInts2Bit,
                 d_subjectDataHiLo,
                 intsPerSequence2BitHiLo,
                 d_sequencePointers.subjectSequencesLength,
@@ -1761,7 +1722,7 @@ namespace gpu{
                 		kernelLaunchConfig.smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2); \
                 		KernelProperties kernelProperties; \
                 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                            cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel<tilesize>, \
+                            popcount_shifted_hamming_distance_kernel<tilesize>, \
                 					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 		mymap[kernelLaunchConfig] = kernelProperties; \
                 }
@@ -1787,7 +1748,7 @@ namespace gpu{
         		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
         	}
 
-            #define mycall cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_new_kernel<tilesize> \
+            #define mycall popcount_shifted_hamming_distance_kernel<tilesize> \
                                                 <<<grid, block, smem, stream>>>( \
                                                 d_subjectDataHiLo, \
                                                 d_candidateDataHiLoTransposed, \
@@ -1797,7 +1758,7 @@ namespace gpu{
                                                 d_tiles_per_subject_prefixsum, \
                                         		n_subjects, \
                                         		n_queries, \
-                                        		maximumSequenceLength, \
+                                        		intsPerSequence2BitHiLo, \
                                         		min_overlap, \
                                         		maxErrorRate, \
                                         		min_overlap_ratio); CUERR;

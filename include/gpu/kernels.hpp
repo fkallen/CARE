@@ -133,7 +133,7 @@ struct KernelLaunchHandle {
 KernelLaunchHandle make_kernel_launch_handle(int deviceId);
 
 
-void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
+void call_popcount_shifted_hamming_distance_kernel_async(
             AlignmentResultPointers d_alignmentresultpointers,
             ReadSequencesPointers d_sequencePointers,
             const int* d_candidates_per_subject_prefixsum,
@@ -142,6 +142,7 @@ void call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_asyn
             int n_subjects,
             int n_queries,
             int maximumSequenceLength,
+            int encodedSequencePitchInInts2Bit,
             int min_overlap,
             float maxErrorRate,
             float min_overlap_ratio,

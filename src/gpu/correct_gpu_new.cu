@@ -1364,7 +1364,7 @@ namespace test{
 
         //cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
         
-        call_cuda_popcount_shifted_hamming_distance_with_revcompl_tiled_kernel_async(
+        call_popcount_shifted_hamming_distance_kernel_async(
                     dataArrays.getDeviceAlignmentResultPointers(),
                     dataArrays.getDeviceSequencePointers(),
                     dataArrays.d_candidates_per_subject_prefixsum,
@@ -1373,6 +1373,7 @@ namespace test{
                     batch.n_subjects,
                     batch.n_queries,
                     transFuncData.sequenceFileProperties.maxSequenceLength,
+                    batch.encodedSequencePitchInInts,
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
                     transFuncData.goodAlignmentProperties.min_overlap_ratio,
