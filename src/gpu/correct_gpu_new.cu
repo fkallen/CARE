@@ -852,59 +852,182 @@ namespace test{
 
             auto& minhashHandle = batchptr->minhashHandles[threadId];
 
-            int initialNumberOfCandidates = 0;          
-            
+            int initialNumberOfCandidates = 0;
 
+            std::vector<std::string> decodedSubjectStrings(end-begin);
+
+            nvtx::push_range("init tasks", 0);
             for(int i = begin; i < end; i++){
                 auto& task = nextDataPtr->tasks[i];
 
                 const read_number readId = nextDataPtr->h_subject_read_ids[i];
 
                 task = CorrectionTask(readId);
-                const bool ok = true;
+            }
+            nvtx::pop_range();
 
-                if(ok){
-                    const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
-                    const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
+            nvtx::push_range("decode sequences", 1);
+            for(int i = begin; i < end; i++){
+                auto& task = nextDataPtr->tasks[i];
+                const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
+                const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
 
-                    //TIMERSTARTCPU(get2BitString);
-                    task.subject_string = get2BitString(sequenceptr, sequencelength);
-                    //TIMERSTOPCPU(get2BitString);
+                decodedSubjectStrings[i - begin] = get2BitString(sequenceptr, sequencelength);
+                //task.subject_string = get2BitString(sequenceptr, sequencelength);
+            }
+            nvtx::pop_range();
 
-                    //TIMERSTARTCPU(getCandidates);
-                    minhasherPtr->getCandidates_any_map(
-                        minhashHandle,
-                        task.subject_string,
-                        transFuncData.runtimeOptions.max_candidates
-                    );
+#if 0
+            nvtx::push_range("minhashing", 2);
+            for(int i = begin; i < end; i++){
+                auto& task = nextDataPtr->tasks[i];
+                minhasherPtr->getCandidates_any_map(
+                    minhashHandle,
+                    decodedSubjectStrings[i - begin],
+                    transFuncData.runtimeOptions.max_candidates
+                );
+                std::swap(task.candidate_read_ids, minhashHandle.result());
+            }
+            nvtx::pop_range();
 
-                    std::swap(task.candidate_read_ids, minhashHandle.result());
-                    //TIMERSTOPCPU(getCandidates);
+            nvtx::push_range("remove self", 3);
+            
+            for(int i = begin; i < end; i++){
+                auto& task = nextDataPtr->tasks[i];
+                task.candidate_read_ids.clear();
+                std::copy(minhashHandle.multiresults() + numResultsOfSequence(), task.candidate_read_ids.begin());
+                task.subject_string = std::move(decodedSubjectStrings[i - begin]);
 
-                    //TIMERSTARTCPU(lower_bound);
-                    auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
-                    //TIMERSTOPCPU(lower_bound);
+                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+                //TIMERSTOPCPU(lower_bound);
 
-                    if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
-                        //TIMERSTARTCPU(erase);
-                        task.candidate_read_ids.erase(readIdPos);
-                        //TIMERSTOPCPU(erase);
-                    }
-
-                    std::size_t myNumCandidates = task.candidate_read_ids.size();
-
-                    //assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
-
-                    if(myNumCandidates == 0) {
-                        task.active = false;
-                    }
-                }else{
-                    task.active = false;
+                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                    //TIMERSTARTCPU(erase);
+                    task.candidate_read_ids.erase(readIdPos);
+                    //TIMERSTOPCPU(erase);
                 }
 
-                const int myNumCandidates = int(task.candidate_read_ids.size());
+                std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+                //assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+                if(myNumCandidates == 0) {
+                    task.active = false;
+                }
                 initialNumberOfCandidates += myNumCandidates;
             }
+            nvtx::pop_range();
+#else 
+            nvtx::push_range("calculateMinhashSignatures", 5);
+            minhasherPtr->calculateMinhashSignatures(
+                minhashHandle,
+                decodedSubjectStrings
+            );
+            nvtx::pop_range();
+            nvtx::push_range("queryPrecalculatedSignatures", 6);
+            minhasherPtr->queryPrecalculatedSignatures(
+                minhashHandle, 
+                end - begin
+            );
+            nvtx::pop_range();
+            nvtx::push_range("makeUniqueQueryResults", 7);
+            minhasherPtr->makeUniqueQueryResults(
+                minhashHandle, 
+                end - begin
+            );
+            nvtx::pop_range();
+
+            nvtx::push_range("remove self", 3);
+
+            auto multiresultbegin = minhashHandle.multiresults().begin();
+            
+            for(int i = begin; i < end; i++){
+                auto& task = nextDataPtr->tasks[i];
+                task.candidate_read_ids.clear();
+                task.candidate_read_ids.resize(minhashHandle.numResultsOfSequence(i-begin));
+                auto multiresultend = multiresultbegin + minhashHandle.numResultsOfSequence(i-begin);               
+
+                std::copy(
+                    multiresultbegin,
+                    multiresultend, 
+                    task.candidate_read_ids.begin()
+                );
+                multiresultbegin = multiresultend;
+                task.subject_string = std::move(decodedSubjectStrings[i - begin]);
+
+                auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+                //TIMERSTOPCPU(lower_bound);
+
+                if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+                    //TIMERSTARTCPU(erase);
+                    task.candidate_read_ids.erase(readIdPos);
+                    //TIMERSTOPCPU(erase);
+                }
+
+                std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+                //assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+                if(myNumCandidates == 0) {
+                    task.active = false;
+                }
+                initialNumberOfCandidates += myNumCandidates;
+            }
+            nvtx::pop_range();
+#endif
+            
+            
+
+            // for(int i = begin; i < end; i++){
+            //     auto& task = nextDataPtr->tasks[i];
+
+            //     const read_number readId = nextDataPtr->h_subject_read_ids[i];
+
+            //     task = CorrectionTask(readId);
+            //     const bool ok = true;
+
+            //     if(ok){
+            //         const unsigned int* sequenceptr = nextDataPtr->h_subject_sequences_data.get() + i * batchptr->encodedSequencePitchInInts;
+            //         const int sequencelength = nextDataPtr->h_subject_sequences_lengths[i];
+
+            //         //TIMERSTARTCPU(get2BitString);
+            //         task.subject_string = get2BitString(sequenceptr, sequencelength);
+            //         //TIMERSTOPCPU(get2BitString);
+
+            //         //TIMERSTARTCPU(getCandidates);
+            //         minhasherPtr->getCandidates_any_map(
+            //             minhashHandle,
+            //             task.subject_string,
+            //             transFuncData.runtimeOptions.max_candidates
+            //         );
+
+            //         std::swap(task.candidate_read_ids, minhashHandle.result());
+            //         //TIMERSTOPCPU(getCandidates);
+
+            //         //TIMERSTARTCPU(lower_bound);
+            //         auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
+            //         //TIMERSTOPCPU(lower_bound);
+
+            //         if(readIdPos != task.candidate_read_ids.end() && *readIdPos == task.readId) {
+            //             //TIMERSTARTCPU(erase);
+            //             task.candidate_read_ids.erase(readIdPos);
+            //             //TIMERSTOPCPU(erase);
+            //         }
+
+            //         std::size_t myNumCandidates = task.candidate_read_ids.size();
+
+            //         //assert(myNumCandidates <= std::size_t(transFuncData.runtimeOptions.max_candidates));
+
+            //         if(myNumCandidates == 0) {
+            //             task.active = false;
+            //         }
+            //     }else{
+            //         task.active = false;
+            //     }
+
+            //    const int myNumCandidates = int(task.candidate_read_ids.size());
+            //    initialNumberOfCandidates += myNumCandidates;
+            //}
 
             nextDataPtr->initialNumberOfCandidates += initialNumberOfCandidates;
         };

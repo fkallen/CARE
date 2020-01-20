@@ -492,8 +492,25 @@ struct Minhasher {
 		std::vector<Value_t> allUniqueResults;
         SetUnionHandle<Value_t> suHandle;
 
+        
+
+
+        std::vector<Range_t> multiranges;
+		std::vector<Value_t> multiallUniqueResults;
+        std::vector<std::uint64_t> multiminhashSignatures;
+        std::vector<int> numResultsPerSequence;
+
         std::vector<Value_t>& result() noexcept{
             return allUniqueResults;
+        }
+
+        std::vector<Value_t>& multiresults() noexcept{
+            return multiallUniqueResults;
+        }
+
+        int numResultsOfSequence(int i) const{
+            assert(i < int(numResultsPerSequence.size()));
+            return numResultsPerSequence[i];
         }
 	};
 
@@ -551,6 +568,23 @@ struct Minhasher {
 
     std::pair<const Value_t*, const Value_t*> queryMap(int mapid,
                                                         Map_t::Key_t key) const noexcept;
+
+
+
+    void calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const std::vector<std::string>& sequences) const;     
+
+    void calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const char* sequences,
+            int numSequences,
+            const int* sequenceLengths,
+            int sequencesPitch) const;
+
+    void queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const;   
+
+    void makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const;                                      
 
 
     std::vector<Result_t> getCandidates(

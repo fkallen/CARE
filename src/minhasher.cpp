@@ -487,7 +487,7 @@ namespace care{
 #if 1
         handle.allUniqueResults.resize(maximumResultSize);
 
-        auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges);
+        auto resultEnd = k_way_set_union<Value_t>(handle.suHandle, handle.allUniqueResults.begin(), handle.ranges.data(), handle.ranges.size());
         handle.allUniqueResults.erase(resultEnd, handle.allUniqueResults.end());
 #else 
         std::unordered_set<Value_t> uniqueValues;
@@ -513,6 +513,126 @@ namespace care{
 
         //TIMERSTOPCPU(setunion);
     }
+
+
+
+    void Minhasher::calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const std::vector<std::string>& sequences) const{
+
+        handle.multiminhashSignatures.resize(maximum_number_of_maps * sequences.size());
+
+        const int numSequences = sequences.size();
+        for(int i = 0; i < numSequences; i++){
+            const char* sequence = sequences[i].c_str();
+            const int length = sequences[i].length();
+            if(length < minparams.k){
+                // handle.allUniqueResults.clear();
+                // return;
+            }else{
+                auto hashValues = minhashfunc(sequence, length);
+                std::copy(
+                    hashValues.begin(), 
+                    hashValues.end(), 
+                    handle.multiminhashSignatures.begin() + maximum_number_of_maps * i
+                );
+            }
+        }
+    }
+
+    void Minhasher::calculateMinhashSignatures(
+            Minhasher::Handle& handle,
+            const char* sequences,
+            int numSequences,
+            const int* sequenceLengths,
+            int sequencesPitch) const{
+
+        handle.multiminhashSignatures.resize(maximum_number_of_maps * numSequences);
+
+        for(int i = 0; i < numSequences; i++){
+            const char* sequence = sequences + i * sequencesPitch;
+            const int length = sequenceLengths[i];
+            if(length < minparams.k){
+                // handle.allUniqueResults.clear();
+                // return;
+            }else{
+                auto hashValues = minhashfunc(sequence, length);
+                std::copy(
+                    hashValues.begin(), 
+                    hashValues.end(), 
+                    handle.multiminhashSignatures.begin() + maximum_number_of_maps * i
+                );
+            }
+        }
+    }
+
+    void Minhasher::queryPrecalculatedSignatures(Minhasher::Handle& handle, int numSequences) const{
+
+        handle.multiranges.clear();
+        handle.multiranges.reserve(minparams.maps * numSequences);
+        handle.numResultsPerSequence.clear();
+        handle.numResultsPerSequence.resize(numSequences, 0);        
+
+        for(int i = 0; i < numSequences; i++){
+            const std::uint64_t* signature = &handle.multiminhashSignatures[i * maximum_number_of_maps];
+
+            for(int map = 0; map < minparams.maps; ++map){
+                kmer_type key = signature[map] & key_mask;
+                auto entries_range = queryMap(map, key);
+                int n_entries = std::distance(entries_range.first, entries_range.second);
+                if(n_entries > 0){
+                    handle.numResultsPerSequence[i] += n_entries;
+                }
+                handle.multiranges.emplace_back(entries_range);
+            }
+        }      
+    }
+
+    //static bool once = true;
+
+    void Minhasher::makeUniqueQueryResults(Minhasher::Handle& handle, int numSequences) const{
+        int maxNumResults = 0;
+        for(int i = 0; i < numSequences; i++){
+            maxNumResults += handle.numResultsPerSequence[i];
+        }
+        handle.multiallUniqueResults.resize(maxNumResults);
+
+        // if(once){
+        //     once = false;
+
+        //     std::ofstream stream("queryranges.txt");
+
+        //     for(int i = 0; i < numSequences; i++){
+        //         stream << handle.numResultsPerSequence[i] << "\n";
+        //         auto myranges = &handle.multiranges[i * minparams.maps];
+        //         const int numRangesForSequence = minparams.maps;
+
+        //         for(int k = 0; k < numRangesForSequence; k++){
+        //             auto& range = myranges[k];
+        //             stream << (range.second - range.first) << "\n";
+                    
+        //             for(auto it = range.first; it != range.second; it++){
+        //                 stream << *it << " ";                     
+        //             }
+        //             stream<< "\n";
+        //         }
+        //     }
+        // }
+
+        auto currentBegin = handle.multiallUniqueResults.begin();
+        auto currentEnd = handle.multiallUniqueResults.begin();
+        for(int i = 0; i < numSequences; i++){
+            auto myranges = &handle.multiranges[i * minparams.maps];
+            const int numRangesForSequence = minparams.maps;
+            currentBegin = currentEnd;
+            currentEnd = k_way_set_union<Value_t>(handle.suHandle, currentBegin, myranges, numRangesForSequence);
+            handle.numResultsPerSequence[i] = std::distance(currentBegin, currentEnd);
+        }
+
+        handle.multiallUniqueResults.erase(currentEnd, handle.multiallUniqueResults.end());   
+    }
+
+
 
 
 
