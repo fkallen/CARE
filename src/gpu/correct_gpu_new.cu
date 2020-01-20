@@ -3503,6 +3503,15 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
 
+        runtime = std::chrono::system_clock::now() - timepoint_begin;
+        if(runtimeOptions.showProgress){
+            printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\n",
+                    sequenceFileProperties.nReads, sequenceFileProperties.nReads,
+                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
+                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
+                    int(runtime.count()) % 60);
+        }
+
 #else 
 
 
@@ -3587,40 +3596,46 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         for(int deviceIdIndex = 0; deviceIdIndex < int(deviceIds.size()); ++deviceIdIndex) {
             batchExecutors.emplace_back([&, deviceIdIndex](){
                 const int deviceId = deviceIds[deviceIdIndex];
-                std::cerr << "Began work on device id = " << deviceId << "\n";
 
-                BackgroundThread backgroundWorker(true);
+                std::array<BackgroundThread, 2> backgroundWorkerArray;
 
-                Batch batchData;
-                initBatchData(batchData, deviceId);
-                batchData.id = deviceIdIndex;
-                batchData.backgroundWorker = &backgroundWorker;
-                
-                auto& streams = batchData.streams;
-                auto& events = batchData.events;
+                std::array<Batch, 2> batchDataArray;
 
-                auto pushrange = [&](const std::string& msg, int color){
-                    nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
-                };
+                for(int i = 0; i < 2; i++){
+                    initBatchData(batchDataArray[i], deviceId);
+                    batchDataArray[i].id = deviceIdIndex * 2 + i;
+                    batchDataArray[i].backgroundWorker = &backgroundWorkerArray[i];
+                }
 
-                auto poprange = [&](){
-                    nvtx::pop_range();
-                };
+                backgroundWorkerArray[0].start();
 
+                std::int64_t iterations = 0;
+
+                int batchIndex = 0;
 
                 while(!(readIdGenerator.empty() 
-                        && batchData.nextIterationData.isDone()
-                        && batchData.nextIterationData.tasks.empty())) {
-                        
-                    batchData.reset();
+                        && batchDataArray[0].nextIterationData.isDone()
+                        && batchDataArray[0].nextIterationData.tasks.empty()
+                        && batchDataArray[1].nextIterationData.isDone()
+                        && batchDataArray[1].nextIterationData.tasks.empty())) {
 
+                    auto& batchData = batchDataArray[batchIndex];
+                    auto& streams = batchData.streams;
+                    auto& events = batchData.events;
+
+                    auto pushrange = [&](const std::string& msg, int color){
+                        nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+                    };
+    
+                    auto poprange = [&](){
+                        nvtx::pop_range();
+                    };
+                        
                     pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
                     
                     getNextBatchOfSubjectsAndDetermineCandidateReadIds(batchData);
 
                     poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
 
                     if(batchData.initialNumberOfCandidates == 0){
                         continue;
@@ -3632,25 +3647,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
-                    //cudaDeviceSynchronize(); CUERR;
-
 
                     pushrange("getCandidateAlignments", 2);
 
                     getCandidateAlignments(batchData);
 
                     poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-
-                    // cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                    // if(batchData.dataArrays.h_num_indices[0] == 0){
-                    //     continue;
-                    // }
 
                     if(transFuncData.correctionOptions.useQualityScores) {
                         pushrange("getQualities", 4);
@@ -3660,18 +3662,11 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         poprange();
                     }
 
-                    
-
-                    //cudaDeviceSynchronize(); CUERR;
-
                     pushrange("buildMultipleSequenceAlignment", 5);
 
                     buildMultipleSequenceAlignment(batchData);
 
                     poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
 
                 #ifdef USE_MSA_MINIMIZATION
 
@@ -3681,22 +3676,14 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
-                    //cudaDeviceSynchronize(); CUERR;
-
                 #endif
 
-                    //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
 
                     pushrange("correctSubjects", 7);
 
                     correctSubjects(batchData);
 
                     poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
 
                     if(transFuncData.correctionOptions.correctCandidates) {                        
 
@@ -3711,15 +3698,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                     cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;            
                     cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
-                    //cudaDeviceSynchronize(); CUERR;
 
                     pushrange("unpackClassicResults", 9);
 
                     unpackClassicResults(batchData);
 
                     poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
 
 
                     pushrange("saveResults", 10);
@@ -3728,44 +3712,31 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     poprange();
 
+                    batchData.reset();
+
                     progressThread.addProgress(batchsize);
                     
                 }
 
-                batchData.isTerminated = true;
-                batchData.state = BatchState::Finished;
+                batchDataArray[0].isTerminated = true;
+                batchDataArray[0].state = BatchState::Finished;
+                batchDataArray[1].isTerminated = true;
+                batchDataArray[1].state = BatchState::Finished;
 
-                std::cerr << "\nbatchData.backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop)\n";
-
-                batchData.backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
-
-                std::cerr << "\ndestroyBatchData(batchData);\n";
-
-                destroyBatchData(batchData);
-
-                std::cerr << "\nbatchdone\n";
+                batchDataArray[0].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                batchDataArray[1].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
+                destroyBatchData(batchDataArray[0]);
+                destroyBatchData(batchDataArray[1]);
             });
         }
 
         for(auto& executor : batchExecutors){
-            std::cerr << "\nexecutor.join();\n";
             executor.join();
-            std::cerr << "\nexecutor joined();\n";
         }
 
-        std::cerr << "\nprogressThread.finished();\n";
-
-        progressThread.finished();
-
-        std::cerr << "\nthreadPool.wait()\n";
-        
+        progressThread.finished();        
         threadPool.wait();
-
-        std::cerr << "\noutputThread.stopThread(BackgroundThread::StopType::FinishAndStop)\n";
-
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
-        std::cerr << "\noutputThread stopped\n";
 #endif
 
       //flushCachedResults();
@@ -3777,14 +3748,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           cudaProfilerStop();
       #endif
 
-      runtime = std::chrono::system_clock::now() - timepoint_begin;
-      if(runtimeOptions.showProgress){
-          printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\n",
-                  sequenceFileProperties.nReads, sequenceFileProperties.nReads,
-                  int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                  int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                  int(runtime.count()) % 60);
-      }
+
 
     //   for(const auto& batch : batches){
     //       std::cout << "size elements: " << batch.dataArrays.h_candidate_read_ids.size() << ", capacity elements " << batch.dataArrays.h_candidate_read_ids.capacity() << std::endl;
