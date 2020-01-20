@@ -361,7 +361,8 @@ namespace test{
 		int numsortedCandidateIds = 0;
 		int numsortedCandidateIdTasks = 0;
 
-		DataArrays dataArrays;
+        DataArrays dataArrays;
+        bool hasUnprocessedResults = false;
 
         bool doImproveMSA = false;
         int numMinimizations = 0;
@@ -445,6 +446,7 @@ namespace test{
 
             initialNumberOfAnchorIds = 0;
             initialNumberOfCandidates = 0;
+            hasUnprocessedResults = false;
 
     		numsortedCandidateIds = 0;
     		numsortedCandidateIdTasks = 0;
@@ -850,7 +852,8 @@ namespace test{
 
             auto& minhashHandle = batchptr->minhashHandles[threadId];
 
-            int initialNumberOfCandidates = 0;
+            int initialNumberOfCandidates = 0;          
+            
 
             for(int i = begin; i < end; i++){
                 auto& task = nextDataPtr->tasks[i];
@@ -3593,6 +3596,118 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         ProgressThread<std::int64_t> progressThread(sequenceFileProperties.nReads, showProgress, updateShowProgressInterval);
 
 
+        auto processBatchUntilResultTransferIsInitiated = [&](auto& batchData){
+            auto& streams = batchData.streams;
+            auto& events = batchData.events;
+
+            auto pushrange = [&](const std::string& msg, int color){
+                nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+            };
+
+            auto poprange = [&](){
+                nvtx::pop_range();
+            };
+                
+            pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
+            
+            getNextBatchOfSubjectsAndDetermineCandidateReadIds(batchData);
+
+            poprange();
+
+            if(batchData.initialNumberOfCandidates == 0){
+                return;
+            }
+
+            pushrange("getCandidateSequenceData", 1);
+
+            getCandidateSequenceData(batchData, *transFuncData.readStorage);
+
+            poprange();
+
+
+            pushrange("getCandidateAlignments", 2);
+
+            getCandidateAlignments(batchData);
+
+            poprange();
+
+            if(transFuncData.correctionOptions.useQualityScores) {
+                pushrange("getQualities", 4);
+
+                getQualities(batchData);
+
+                poprange();
+            }
+
+            pushrange("buildMultipleSequenceAlignment", 5);
+
+            buildMultipleSequenceAlignment(batchData);
+
+            poprange();
+
+        #ifdef USE_MSA_MINIMIZATION
+
+            pushrange("removeCandidatesOfDifferentRegionFromMSA", 6);
+
+            removeCandidatesOfDifferentRegionFromMSA(batchData);
+
+            poprange();
+
+        #endif
+
+
+            pushrange("correctSubjects", 7);
+
+            correctSubjects(batchData);
+
+            poprange();
+
+            if(transFuncData.correctionOptions.correctCandidates) {                        
+
+                pushrange("correctCandidates", 8);
+
+                correctCandidates(batchData);
+
+                poprange();
+            }
+
+            cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
+            cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;   
+
+            batchData.hasUnprocessedResults = true;
+        };
+
+        auto processBatchResults = [&](auto& batchData){
+            auto& streams = batchData.streams;
+            auto& events = batchData.events;
+
+            auto pushrange = [&](const std::string& msg, int color){
+                nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+            };
+
+            auto poprange = [&](){
+                nvtx::pop_range();
+            };
+
+            cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+
+            pushrange("unpackClassicResults", 9);
+
+            unpackClassicResults(batchData);
+
+            poprange();
+
+
+            pushrange("saveResults", 10);
+
+            saveResults(batchData);
+
+            poprange();
+
+            batchData.hasUnprocessedResults = false;
+        };
+
+
         for(int deviceIdIndex = 0; deviceIdIndex < int(deviceIds.size()); ++deviceIdIndex) {
             batchExecutors.emplace_back([&, deviceIdIndex](){
                 const int deviceId = deviceIds[deviceIdIndex];
@@ -3608,11 +3723,12 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 }
 
                 backgroundWorkerArray[0].start();
+                backgroundWorkerArray[1].start();
 
-                std::int64_t iterations = 0;
+                bool isFirstIteration = true;
 
                 int batchIndex = 0;
-
+#if 0
                 while(!(readIdGenerator.empty() 
                         && batchDataArray[0].nextIterationData.isDone()
                         && batchDataArray[0].nextIterationData.tasks.empty()
@@ -3620,104 +3736,58 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         && batchDataArray[1].nextIterationData.tasks.empty())) {
 
                     auto& batchData = batchDataArray[batchIndex];
-                    auto& streams = batchData.streams;
-                    auto& events = batchData.events;
 
-                    auto pushrange = [&](const std::string& msg, int color){
-                        nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
-                    };
-    
-                    auto poprange = [&](){
-                        nvtx::pop_range();
-                    };
-                        
-                    pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
-                    
-                    getNextBatchOfSubjectsAndDetermineCandidateReadIds(batchData);
-
-                    poprange();
+                    processBatchUntilResultTransferIsInitiated(batchData);
 
                     if(batchData.initialNumberOfCandidates == 0){
+                        batchData.reset();
+                        progressThread.addProgress(batchsize);
                         continue;
                     }
 
-                    pushrange("getCandidateSequenceData", 1);
-
-                    getCandidateSequenceData(batchData, *transFuncData.readStorage);
-
-                    poprange();
-
-
-                    pushrange("getCandidateAlignments", 2);
-
-                    getCandidateAlignments(batchData);
-
-                    poprange();
-
-                    if(transFuncData.correctionOptions.useQualityScores) {
-                        pushrange("getQualities", 4);
-
-                        getQualities(batchData);
-
-                        poprange();
-                    }
-
-                    pushrange("buildMultipleSequenceAlignment", 5);
-
-                    buildMultipleSequenceAlignment(batchData);
-
-                    poprange();
-
-                #ifdef USE_MSA_MINIMIZATION
-
-                    pushrange("removeCandidatesOfDifferentRegionFromMSA", 6);
-
-                    removeCandidatesOfDifferentRegionFromMSA(batchData);
-
-                    poprange();
-
-                #endif
-
-
-                    pushrange("correctSubjects", 7);
-
-                    correctSubjects(batchData);
-
-                    poprange();
-
-                    if(transFuncData.correctionOptions.correctCandidates) {                        
-
-                        pushrange("correctCandidates", 8);
-
-                        correctCandidates(batchData);
-
-                        poprange();
-                    }
-
-                    cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
-                    cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;            
-                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-
-                    pushrange("unpackClassicResults", 9);
-
-                    unpackClassicResults(batchData);
-
-                    poprange();
-
-
-                    pushrange("saveResults", 10);
-
-                    saveResults(batchData);
-
-                    poprange();
+                    processBatchResults(batchData);
 
                     batchData.reset();
+                    progressThread.addProgress(batchsize);                    
+                }
+#else 
+                while(!(readIdGenerator.empty() 
+                        && batchDataArray[0].nextIterationData.isDone()
+                        && batchDataArray[0].nextIterationData.tasks.empty()
+                        && !batchDataArray[0].hasUnprocessedResults
+                        && batchDataArray[1].nextIterationData.isDone()
+                        && batchDataArray[1].nextIterationData.tasks.empty()
+                        && !batchDataArray[1].hasUnprocessedResults)) {
 
-                    progressThread.addProgress(batchsize);
-                    
+                    const int nextBatchIndex = 1 - batchIndex;
+                    auto& currentBatchData = batchDataArray[batchIndex];
+                    auto& nextBatchData = batchDataArray[nextBatchIndex];
+
+                    if(isFirstIteration){
+                        isFirstIteration = false;
+
+                        processBatchUntilResultTransferIsInitiated(currentBatchData);
+                    }else{
+
+                        processBatchUntilResultTransferIsInitiated(nextBatchData);
+
+                        if(currentBatchData.initialNumberOfCandidates == 0){
+                            currentBatchData.reset();
+                            progressThread.addProgress(batchsize);
+                            batchIndex = 1-batchIndex;
+                            continue;
+                        }
+    
+                        processBatchResults(currentBatchData);
+    
+                        currentBatchData.reset();
+                        progressThread.addProgress(batchsize);     
+
+                        batchIndex = 1-batchIndex;
+                    }                
                 }
 
+#endif
                 batchDataArray[0].isTerminated = true;
                 batchDataArray[0].state = BatchState::Finished;
                 batchDataArray[1].isTerminated = true;
