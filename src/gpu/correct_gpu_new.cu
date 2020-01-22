@@ -3369,7 +3369,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].minhashHandles.resize(threadPoolSize);
           batches[i].encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
           batches[i].decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
-          batches[i].qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
+          batches[i].qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
           
           initNextIterationData(batches[i].nextIterationData, batches[i].deviceId);
 
@@ -3676,7 +3676,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             batchData.minhashHandles.resize(threadPoolSize);
             batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
-            batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
+            batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
             
             initNextIterationData(batchData.nextIterationData, batchData.deviceId); 
         };
