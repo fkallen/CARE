@@ -1531,7 +1531,8 @@ namespace gpu{
         const std::size_t smem = sizeof(float) * 4 * msa_weights_row_pitch_floats // weights
                                 + sizeof(int) * 4 * msa_weights_row_pitch_floats; // counts
 
-        //std::cout << "smem = " << smem << "\n";
+        //std::cerr << "msa_weights_row_pitch = " << msa_weights_row_pitch << " msa_weights_row_pitch_floats = " 
+        //<< msa_weights_row_pitch_floats << "smem = " << smem << "\n";
 
 
     	int max_blocks_per_device = 1;
@@ -1659,7 +1660,7 @@ namespace gpu{
             canUseQualityScores,
             encodedSequencePitchInInts,
             qualityPitchInBytes,
-            msa_row_pitch,
+            msa_weights_row_pitch_floats,
             d_canExecute); CUERR;
 
         cubCachingAllocator.DeviceFree(d_blocksPerSubjectPrefixSum); CUERR;
