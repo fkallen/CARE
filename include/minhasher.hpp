@@ -467,6 +467,18 @@ namespace care{
 
                //nvtx::push_range("fetch index",3);
                 const Index_t index = keyIndexMap.get(key);
+
+                if(size_t(index) >=  countsPrefixSum.size() || size_t(index+1) >= countsPrefixSum.size()) {
+                    std::cerr << "\ninvalid index returned by keyIndexMap: key = " << key << ", returned index = " << index << "cPS.size() = " << countsPrefixSum.size() << "\n";
+                    assert(false);
+                }else{
+                    if(size_t(countsPrefixSum[index]) > values.size() || size_t(countsPrefixSum[index+1]) > values.size()){
+                        std::cerr << "\ninvalid prefix sum at index " << index << " or " << (index+1) << ". cPS = " << countsPrefixSum[index] << " " << countsPrefixSum[index+1] << " values.size() = " << values.size() << "\n";
+                        assert(false);
+                    }
+                }
+
+                
                 return {&values[countsPrefixSum[index]], &values[countsPrefixSum[index+1]]};
                 //nvtx::pop_range("fetch index");
 			}
