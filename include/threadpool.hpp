@@ -250,13 +250,13 @@ private:
 
         handle.wait(); //make sure previous parallelfor is finished
 
-        pforData->isDone = false;
-        pforData->finishedWork = 0;
-        //std::size_t startedWork = 0;
-        pforData->enqueuedWork = 0;
-
         Index_t totalIterations = lastIndex - firstIndex;
         if(totalIterations > 0){
+            pforData->isDone = false;
+            pforData->finishedWork = 0;
+            //std::size_t startedWork = 0;
+            pforData->enqueuedWork = 0;
+
             const Index_t chunks = numThreads;
             const Index_t chunksize = totalIterations / chunks;
             const Index_t leftover = totalIterations % chunks;
