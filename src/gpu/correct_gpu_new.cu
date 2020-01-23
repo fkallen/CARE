@@ -2890,6 +2890,7 @@ namespace test{
         //batch.dataArrays.copyEverythingToHostForDebugging();
 
         auto unpackAnchors = [batchptr](int begin, int end){
+            nvtx::push_range("Anchor unpacking", 3);
             Batch& batch = *batchptr;
             DataArrays& dataArrays = batch.dataArrays;
             const auto& transFuncData = *batch.transFuncData;
@@ -2965,9 +2966,12 @@ namespace test{
 
                 }
             }
+
+            nvtx::pop_range();
         };
 
         auto unpackcandidates = [batchptr](int begin, int end){
+            nvtx::push_range("candidate unpacking", 3);
             Batch& batch = *batchptr;
             DataArrays& dataArrays = batch.dataArrays;
             const auto& transFuncData = *batch.transFuncData;
@@ -3064,6 +3068,8 @@ namespace test{
     				}
                 }
             }
+
+            nvtx::pop_range();
         };
 
 
