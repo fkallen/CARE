@@ -474,7 +474,9 @@ namespace gpu{
 
                         const bool isForward = (flag == BestAlignment_t::Forward);
 
-                        const int fullInts = queryLength / 16;
+                        constexpr int nucleotidesPerInt2Bit = 16;
+
+                        const int fullInts = queryLength / nucleotidesPerInt2Bit;
                         for(int intIndex = 0; intIndex < fullInts; intIndex++){
                             const unsigned int currentDataInt = ((unsigned int*)query)[intIndex * (candidatesAreTransposed ? n_queries : 1)];
 
@@ -505,23 +507,25 @@ namespace gpu{
                         }
 
                         //add remaining positions
-                        const unsigned int currentDataInt = ((unsigned int*)query)[fullInts * (candidatesAreTransposed ? n_queries : 1)];
-                        const int maxPos = queryLength - fullInts * 16;
-                        for(int posInInt = 0; posInInt < maxPos; posInInt++){
-                            unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
-                            if(!isForward){
-                                //reverse complement
-                                encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
-                            }
-                            const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
+                        if(queryLength % nucleotidesPerInt2Bit != 0){
+                            const unsigned int currentDataInt = ((unsigned int*)query)[fullInts * (candidatesAreTransposed ? n_queries : 1)];
+                            const int maxPos = queryLength - fullInts * 16;
+                            for(int posInInt = 0; posInInt < maxPos; posInInt++){
+                                unsigned int encodedBaseAsInt = getEncodedNucFromInt2Bit(currentDataInt, posInInt);
+                                if(!isForward){
+                                    //reverse complement
+                                    encodedBaseAsInt = (~encodedBaseAsInt & 0x00000003);
+                                }
+                                const float weight = canUseQualityScores ? getQualityWeight(queryQualityScore[fullInts * 16 + posInInt]) * overlapweight : overlapweight;
 
-                            assert(weight != 0);
-                            const int ptrOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
-                            const int globalIndex = defaultcolumnoffset + (isForward ? (fullInts * 16 + posInInt) : queryLength - 1 - (fullInts * 16 + posInInt));
-                            atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
-                            atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
-                            atomicAdd(my_coverage + globalIndex, 1);
-                        } 
+                                assert(weight != 0);
+                                const int ptrOffset = encodedBaseAsInt * msa_weights_row_pitch_floats;
+                                const int globalIndex = defaultcolumnoffset + (isForward ? (fullInts * 16 + posInInt) : queryLength - 1 - (fullInts * 16 + posInInt));
+                                atomicAdd(shared_counts + ptrOffset + globalIndex, 1);
+                                atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
+                                atomicAdd(my_coverage + globalIndex, 1);
+                            } 
+                        }
 
                         //printf("\n");
                     }
