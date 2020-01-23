@@ -3392,7 +3392,91 @@ namespace test{
 
 
 
+    void processResultsInOutputThread(Batch& batch){
+        const auto& transFuncData = *batch.transFuncData;
 
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        auto& events = batch.events;
+        auto& streams = batch.streams;
+
+        cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
+        if(errort != cudaSuccess){
+            std::cout << "error cudaEventQuery\n";
+            std::exit(0);
+        }
+        assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
+        assert(cudaEventQuery(events[result_transfer_finished_event_index]) == cudaSuccess); CUERR;
+
+
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
+
+
+        auto& outputData = batch.waitableOutputData.data;
+        auto& dataArrays = batch.dataArrays;
+
+        Batch* batchptr = &batch;
+        
+        //batch.waitableOutputData.wait(); // until outputdata can savely be reused
+
+        if(batch.waitableOutputData.done == false){
+            std::cerr << "\nbatch id " << batch.id << "\n";
+        }
+        
+        assert(batch.waitableOutputData.done == true);
+
+
+        std::cerr << "batch id " << batch.id << " set done to false\n";
+        batch.waitableOutputData.done = false;
+
+        auto processingFunction = [batchptr](){
+            auto& batch = *batchptr;
+            auto& outputData = batch.waitableOutputData.data;
+            const auto transFuncDataPtr = batch.transFuncData;
+
+            std::cerr << "batch id " << batch.id << " unpack in output thread\n";
+
+            nvtx::push_range("batch "+std::to_string(batch.id)+" unpackClassicResultsContiguousVersion", 4);
+
+            unpackClassicResultsContiguousVersion(batch);
+
+            nvtx::pop_range();
+
+            std::cerr << "batch id " << batch.id << " unpack in output thread finished\n";
+
+
+            std::cerr << "batch id " << batch.id << " write result in output thread\n";
+            nvtx::push_range("batch "+std::to_string(batch.id)+" writeresultoutputhread", 4);
+
+            const int numA = outputData.anchorCorrections.size();
+            const int numC = outputData.candidateCorrections.size();
+
+            for(int i = 0; i < numA; i++){
+                transFuncDataPtr->saveCorrectedSequence(
+                    outputData.anchorCorrections[i], 
+                    outputData.encodedAnchorCorrections[i]
+                );
+            }
+
+            for(int i = 0; i < numC; i++){
+                transFuncDataPtr->saveCorrectedSequence(
+                    outputData.candidateCorrections[i], 
+                    outputData.encodedCandidateCorrections[i]
+                );
+            }
+            nvtx::pop_range();
+
+            assert(batch.waitableOutputData.done == false);
+            batch.waitableOutputData.signal();
+
+            std::cerr << "batch id " << batch.id << " write result in output thread finished\n";
+        };
+
+        nvtx::push_range("enqueue to outputthread", 2);
+        batch.outputThread->enqueue(std::move(processingFunction));
+        nvtx::pop_range();
+
+    }
 
 
 
@@ -4178,21 +4262,26 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
             cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 
+#if 1
             pushrange("unpackClassicResults", 9);
 
-            //unpackClassicResults(batchData);
-            unpackClassicResultsContiguousVersion(batchData);
+            unpackClassicResults(batchData);
+            //unpackClassicResultsContiguousVersion(batchData);
 
             poprange();
 
 
             pushrange("saveResults", 10);
 
-            //saveResults(batchData);
-            saveResultsContiguous(batchData);
+            saveResults(batchData);
+            //saveResultsContiguous(batchData);
 
             poprange();
-
+#else 
+            pushrange("submit to outputthread", 9);
+            processResultsInOutputThread(batchData);
+            poprange();
+#endif
             batchData.hasUnprocessedResults = false;
         };
 
@@ -4254,19 +4343,29 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
                     if(isFirstIteration){
                         isFirstIteration = false;
-
+//std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << currentBatchData.id << "\n";
                         processBatchUntilResultTransferIsInitiated(currentBatchData);
                     }else{
 
+                        // while(!nextBatchData.waitableOutputData.isDone()){
+                        //     std::cerr << "nextBatchIndex " << nextBatchIndex << "not ready\n";
+                        // }
+                       // std::cerr << "nextBatchIndex " << nextBatchIndex << " wait\n";
+                        nextBatchData.waitableOutputData.wait(); // until outputdata can savely be reused
+                       // std::cerr << "nextBatchIndex " << nextBatchIndex << " waited\n";
+
+                       // std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << nextBatchData.id << "\n";
                         processBatchUntilResultTransferIsInitiated(nextBatchData);
 
                         if(currentBatchData.initialNumberOfCandidates == 0){
+                            std::cerr << "ZEEERROOO\n";
+                            currentBatchData.waitableOutputData.signal();
                             currentBatchData.reset();
                             progressThread.addProgress(batchsize);
                             batchIndex = 1-batchIndex;
                             continue;
                         }
-    
+                        //std::cerr << "\processBatchResults batch " << currentBatchData.id << "\n";
                         processBatchResults(currentBatchData);
     
                         currentBatchData.reset();
