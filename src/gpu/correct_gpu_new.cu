@@ -3291,7 +3291,7 @@ namespace test{
                 tmp.sequence = std::move(task.corrected_subject);
                 tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
 
-                tmpencoded = task.anchoroutput.encode();
+                tmpencoded = tmp.encode();
             }
 
             nvtx::pop_range();
@@ -4180,16 +4180,16 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
             pushrange("unpackClassicResults", 9);
 
-            unpackClassicResults(batchData);
-            //unpackClassicResultsContiguousVersion(batchData);
+            //unpackClassicResults(batchData);
+            unpackClassicResultsContiguousVersion(batchData);
 
             poprange();
 
 
             pushrange("saveResults", 10);
 
-            saveResults(batchData);
-            //saveResultsContiguous(batchData);
+            //saveResults(batchData);
+            saveResultsContiguous(batchData);
 
             poprange();
 
