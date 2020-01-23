@@ -329,17 +329,58 @@ namespace test{
 #endif 
 
 
+    template<class T>
+    struct WaitableData{
+        T data;
+
+        bool done = true;
+        std::mutex mDone;
+        std::condition_variable cvDone;
+
+        void wait(){
+            if(!isDone()){
+                std::unique_lock<std::mutex> l(mDone);
+                while(!isDone()){
+                    cvDone.wait(l);
+                }
+            }
+        }
+
+        void signal(){
+            std::unique_lock<std::mutex> l(mDone);
+            done = true;
+            cvDone.notify_all();
+        }
+
+        bool isDone() const{
+            return done;
+        }
+    };
+
 
     struct Batch {
 
+ 
         Batch() = default;
         Batch(const Batch&) = delete;
         Batch(Batch&&) = default;
         Batch& operator=(const Batch&) = delete;
         Batch& operator=(Batch&&) = default;
 
+        struct OutputData{
+            std::vector<TempCorrectedSequence> anchorCorrections;
+            std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
+            std::vector<TempCorrectedSequence> candidateCorrections;
+            std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+
+            std::vector<int> subjectIndicesToProcess;
+            std::vector<std::pair<int,int>> candidateIndicesToProcess;
+        };
+
         NextIterationData nextIterationData;
         bool isFirstIteration = true;
+
+        WaitableData<OutputData> waitableOutputData;
 
         //BatchResultData resultData;
 
@@ -380,6 +421,7 @@ namespace test{
         BackgroundThread* backgroundWorker;
 
         ThreadPool* threadPool;
+        int threadsInThreadPool = 1;
 
         ThreadPool::ParallelForHandle pforHandle;
         std::vector<Minhasher::Handle> minhashHandles;
@@ -2865,6 +2907,8 @@ namespace test{
 
 #endif
 
+
+
     void unpackClassicResults(Batch& batch){
 
         const auto& transFuncData = *batch.transFuncData;
@@ -3087,6 +3131,273 @@ namespace test{
     }
 
 
+
+
+
+
+
+
+    void unpackClassicResultsContiguousVersion(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        auto& events = batch.events;
+        auto& streams = batch.streams;
+
+        cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
+        if(errort != cudaSuccess){
+            std::cout << "error cudaEventQuery\n";
+            std::exit(0);
+        }
+        assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
+        assert(cudaEventQuery(events[result_transfer_finished_event_index]) == cudaSuccess); CUERR;
+
+
+        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
+
+
+        auto& outputData = batch.waitableOutputData.data;
+        auto& dataArrays = batch.dataArrays;
+
+        Batch* batchptr = &batch;
+
+        auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
+        auto& candidateIndicesToProcess = outputData.candidateIndicesToProcess;
+
+        subjectIndicesToProcess.clear();
+        candidateIndicesToProcess.clear();
+
+        subjectIndicesToProcess.reserve(batch.tasks.size());
+        candidateIndicesToProcess.reserve(16 * batch.tasks.size());
+
+        for(int subject_index = 0; subject_index < int(batch.tasks.size()); subject_index++){
+            auto& task = batch.tasks[subject_index];
+            task.corrected = dataArrays.h_subject_is_corrected[subject_index];
+            task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
+
+            if(task.highQualityAlignment){
+                transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+            }
+
+            if(task.corrected){
+                subjectIndicesToProcess.emplace_back(subject_index);
+            }else{
+                transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+            }
+        }
+
+        for(int subject_index = 0; subject_index < int(batch.tasks.size()); subject_index++){
+            const auto& task = batch.tasks[subject_index];
+
+            const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
+            const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
+                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index];
+
+            for(int i = 0; i < n_corrected_candidates; ++i) {
+                const int global_candidate_index = my_indices_of_corrected_candidates[i];
+
+                const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
+
+                bool savingIsOk = false;
+                const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[candidate_read_id];
+                if(!(mask & readCorrectedAsHQAnchor)) {
+                    savingIsOk = true;
+                }
+                if (savingIsOk) {
+                    candidateIndicesToProcess.emplace_back(std::make_pair(subject_index, i));
+                }
+            }
+        }
+
+        const int numCorrectedAnchors = subjectIndicesToProcess.size();
+        const int numCorrectedCandidates = candidateIndicesToProcess.size();
+
+        outputData.anchorCorrections.clear();
+        outputData.encodedAnchorCorrections.clear();
+        outputData.candidateCorrections.clear();
+        outputData.encodedCandidateCorrections.clear();
+
+        outputData.anchorCorrections.resize(numCorrectedAnchors);
+        outputData.encodedAnchorCorrections.resize(numCorrectedAnchors);
+        outputData.candidateCorrections.resize(numCorrectedCandidates);
+        outputData.encodedCandidateCorrections.resize(numCorrectedCandidates);
+
+        auto unpackAnchors = [batchptr](int begin, int end){
+            nvtx::push_range("Anchor unpacking", 3);
+            Batch& batch = *batchptr;
+            auto& outputData = batch.waitableOutputData.data;
+            DataArrays& dataArrays = batch.dataArrays;
+            const auto& transFuncData = *batch.transFuncData;
+            const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
+            
+
+            //std::cerr << "in unpackAnchors " << begin << " - " << end << "\n";
+
+            for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+                const int subject_index = subjectIndicesToProcess[positionInVector];
+
+                auto& task = batch.tasks[subject_index];
+                const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * batch.decodedSequencePitchInBytes;
+
+
+                const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
+                task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
+
+                //task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
+
+                const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
+                if(numUncorrectedPositions > 0){
+                    task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                    std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
+                                numUncorrectedPositions,
+                                task.uncorrectedPositionsNoConsensus.begin());
+
+                }
+
+                auto isValidSequence = [](const std::string& s){
+                    return std::all_of(s.begin(), s.end(), [](char c){
+                        return (c == 'A' || c == 'C' || c == 'G' || c == 'T' || c == 'N');
+                    });
+                };
+
+                if(!isValidSequence(task.corrected_subject)){
+                    std::cout << task.corrected_subject << std::endl;
+                }
+
+                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
+
+                auto& tmp = outputData.anchorCorrections[positionInVector];
+                auto& tmpencoded = outputData.encodedAnchorCorrections[positionInVector];
+
+                if(!originalReadContainsN){
+                    const int maxEdits = subject_length / 7;
+                    int edits = 0;
+                    for(int i = 0; i < subject_length && edits <= maxEdits; i++){
+                        if(task.corrected_subject[i] != task.subject_string[i]){
+                            tmp.edits.emplace_back(i, task.corrected_subject[i]);
+                            edits++;
+                        }
+                    }
+                    tmp.useEdits = edits <= maxEdits;
+                }else{
+                    tmp.useEdits = false;
+                }
+
+                tmp.hq = task.highQualityAlignment;                    
+                tmp.type = TempCorrectedSequence::Type::Anchor;
+                tmp.readId = task.readId;
+                tmp.sequence = std::move(task.corrected_subject);
+                tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+
+                tmpencoded = task.anchoroutput.encode();
+            }
+
+            nvtx::pop_range();
+        };
+
+        auto unpackcandidates = [batchptr](int begin, int end){
+            nvtx::push_range("candidate unpacking", 3);
+            Batch& batch = *batchptr;
+            auto& outputData = batch.waitableOutputData.data;
+            DataArrays& dataArrays = batch.dataArrays;
+            const auto& transFuncData = *batch.transFuncData;
+            const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
+            const auto& candidateIndicesToProcess = outputData.candidateIndicesToProcess;
+
+            //std::cerr << "in unpackcandidates " << begin << " - " << end << "\n";
+
+            for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
+                const int subject_index = candidateIndicesToProcess[positionInVector].first;
+                const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
+
+                auto& task = batch.tasks[subject_index];
+
+                const size_t offset = dataArrays.h_indices_per_subject_prefixsum[subject_index];
+
+                const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
+                                                + offset * batch.decodedSequencePitchInBytes;
+                const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
+                                                + offset;
+
+                auto& tmp = outputData.candidateCorrections[positionInVector];
+                auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
+
+
+                const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
+
+                const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
+
+                const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];
+                const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
+
+                const char* const candidate_data = my_corrected_candidates_data + candidateIndex * batch.decodedSequencePitchInBytes;
+
+                if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
+                    std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
+                            << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
+                }
+                assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
+
+                auto correctedCandidateString = std::string{candidate_data, candidate_data + candidate_length};
+
+                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
+                
+
+                if(!originalReadContainsN){
+                    const unsigned int* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * batch.encodedSequencePitchInInts];
+                    const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
+
+                    const int maxEdits = candidate_length / 7;
+                    int edits = 0;
+                    for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
+                        if(correctedCandidateString[pos] != uncorrectedCandidate[pos]){
+                            tmp.edits.emplace_back(pos, correctedCandidateString[pos]);
+                            edits++;
+                        }
+                    }
+
+                    tmp.useEdits = edits <= maxEdits;
+                }else{
+                    tmp.useEdits = false;
+                }
+                
+                tmp.type = TempCorrectedSequence::Type::Candidate;
+                tmp.shift = candidate_shift;
+                tmp.readId = candidate_read_id;
+                tmp.sequence = std::move(correctedCandidateString);
+
+                tmpencoded = tmp.encode();
+            }
+
+            nvtx::pop_range();
+        };
+
+
+        if(!transFuncData.correctionOptions.correctCandidates){
+            batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
+                unpackAnchors(begin, end);
+            });
+        }else{
+            batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
+                unpackAnchors(begin, end);
+            });
+            batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedCandidates, [=](auto begin, auto end, auto /*threadId*/){
+                unpackcandidates(begin, end);
+            });
+        }
+
+    }
+
+
+
+
+
+
+
+
+
 	void saveResults(Batch& batch){
 
         const auto& transFuncData = *batch.transFuncData;
@@ -3221,6 +3532,51 @@ namespace test{
     		}
 
             //std::cerr << "not corrected "<< " " << notCorrectedNoCandidates << " " << notCorrected << "/" << tasks.size() << "\n";
+
+            nvtx::pop_range();
+        };
+
+		//function();
+
+        nvtx::push_range("enqueue to outputthread", 2);
+        batch.outputThread->enqueue(std::move(function));
+        nvtx::pop_range();
+        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+    }
+    
+
+
+
+
+
+
+    void saveResultsContiguous(Batch& batch){
+
+        const auto& transFuncData = *batch.transFuncData;
+
+        cudaSetDevice(batch.deviceId); CUERR;
+
+        auto function = [outputData = std::move(batch.waitableOutputData.data),
+                         transFuncData = &transFuncData,
+                         id = batch.id](){
+            nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread", 4);
+
+            const int numA = outputData.anchorCorrections.size();
+            const int numC = outputData.candidateCorrections.size();
+
+            for(int i = 0; i < numA; i++){
+                transFuncData->saveCorrectedSequence(
+                    outputData.anchorCorrections[i], 
+                    outputData.encodedAnchorCorrections[i]
+                );
+            }
+
+            for(int i = 0; i < numC; i++){
+                transFuncData->saveCorrectedSequence(
+                    outputData.candidateCorrections[i], 
+                    outputData.encodedCandidateCorrections[i]
+                );
+            }
 
             nvtx::pop_range();
         };
@@ -3372,6 +3728,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           batches[i].outputThread = &outputThread;
           batches[i].backgroundWorker = &backgroundWorkers[i];
           batches[i].threadPool = &threadPool;
+          batches[i].threadsInThreadPool = threadPoolSize;
           batches[i].minhashHandles.resize(threadPoolSize);
           batches[i].encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
           batches[i].decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
@@ -3679,6 +4036,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             batchData.outputThread = &outputThread;
             batchData.backgroundWorker = nullptr;//&backgroundWorkers[i];
             batchData.threadPool = &threadPool;
+            batchData.threadsInThreadPool = threadPoolSize;
             batchData.minhashHandles.resize(threadPoolSize);
             batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
@@ -3823,6 +4181,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             pushrange("unpackClassicResults", 9);
 
             unpackClassicResults(batchData);
+            //unpackClassicResultsContiguousVersion(batchData);
 
             poprange();
 
@@ -3830,6 +4189,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             pushrange("saveResults", 10);
 
             saveResults(batchData);
+            //saveResultsContiguous(batchData);
 
             poprange();
 
