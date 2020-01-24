@@ -94,58 +94,7 @@ namespace test{
     constexpr int secondary_stream_finished_event_index = 10;
     constexpr int nEventsPerBatch = 11;
 
-
-    enum class BatchState : int{
-		Unprepared,
-        FindCandidateIds,
-		CopyReads,
-		StartAlignment,
-        RearrangeIndices,
-		CopyQualities,
-		BuildMSA,
-        ImproveMSA,
-		StartClassicCorrection,
-		StartForestCorrection,
-        StartConvnetCorrection,
-        StartClassicCandidateCorrection,
-        CombineStreams,
-		UnpackClassicResults,
-		WriteResults,
-		WriteFeatures,
-		Finished,
-	};
-
-    static constexpr int nBatchStates = static_cast<int>(BatchState::Finished)+1;
-
-    std::string nameOf(const BatchState&);
-
     struct TransitionFunctionData;
-
-    struct FindCandidateIdsDataFrame{
-        std::atomic_int initialNumberOfCandidates{0};
-        int finishedChunks = 0;
-        int chunksToWaitFor = 0;
-        std::mutex m;
-        std::condition_variable cv;
-
-        void reset(){
-            initialNumberOfCandidates = 0;
-            finishedChunks = 0;
-            chunksToWaitFor = 0;
-        }
-    };
-
-    struct UnpackClassicResultsDataFrame{
-        int finishedChunks = 0;
-        int chunksToWaitFor = 0;
-        std::mutex m;
-        std::condition_variable cv;
-
-        void reset(){
-            finishedChunks = 0;
-            chunksToWaitFor = 0;
-        }
-    };
 
     struct NextIterationData{
         SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
@@ -196,57 +145,6 @@ namespace test{
             return done;
         }
     };
-#if 0
-    struct BatchResultData{
-        std::vector<CorrectionTask> tasks;
-
-        SimpleAllocationPinnedHost<char> h_corrected_subjects;
-        SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
-        SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
-        SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
-        SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
-        SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
-
-        SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
-        SimpleAllocationPinnedHost<char> h_corrected_candidates;
-        SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
-        SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
-        SimpleAllocationPinnedHost<int> h_indices_per_subject_prefixsum;
-
-        SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
-        SimpleAllocationPinnedHost<int> h_alignment_shifts;
-        SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
-
-        int maximum_sequence_length;
-        int sequence_pitch;
-        int encoded_sequence_pitch;
-
-        ThreadPool::ParallelForHandle pforHandle;
-
-        bool done = true;
-        std::mutex mDone;
-        std::condition_variable cvDone;
-
-        void wait(){
-            if(!isDone()){
-                std::unique_lock<std::mutex> l(mDone);
-                while(!isDone()){
-                    cvDone.wait(l);
-                }
-            }
-        }
-
-        void signal(){
-            std::unique_lock<std::mutex> l(mDone);
-            done = true;
-            cvDone.notify_all();
-        }
-
-        bool isDone() const{
-            return done;
-        }
-    };
-#endif 
 
 
     template<class T>
@@ -303,9 +201,6 @@ namespace test{
         WaitableData<OutputData> waitableOutputData;
 
 		int initialNumberOfCandidates = 0;
-		BatchState state = BatchState::Unprepared;
-
-        bool handledReadIds = false;
 
         bool combinedStreams = false;
 
@@ -314,19 +209,10 @@ namespace test{
 
         DataArrays dataArrays;
         bool hasUnprocessedResults = false;
-
-        bool doImproveMSA = false;
-        int numMinimizations = 0;
-        int previousNumIndices = 0;
-
         std::vector<std::string> decodedSubjectStrings;
 
 		std::array<cudaStream_t, nStreamsPerBatch> streams;
 		std::array<cudaEvent_t, nEventsPerBatch> events;
-
-        std::array<std::atomic_int, nBatchStates> waitCounts{};
-        int activeWaitIndex = 0;
-        //std::vector<std::unique_ptr<WaitCallbackData>> callbackDataList;
 
         TransitionFunctionData* transFuncData;
         BackgroundThread* outputThread;
@@ -347,8 +233,6 @@ namespace test{
 
         DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle2;
         DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle2;
-        DistributedReadStorage::GatherHandleLengths subjectLengthGatherHandle2;
-        DistributedReadStorage::GatherHandleLengths candidateLengthGatherHandle2;
         DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle2;
         DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle2;
 
@@ -362,47 +246,11 @@ namespace test{
         int n_subjects;
         int n_queries;
 
-        FindCandidateIdsDataFrame findcandidateidsDataFrame;
-        UnpackClassicResultsDataFrame unpackclassicresultsDataFrame;
-
-        std::atomic_int statesInProgress{0};
-
-        void setState(BatchState s){
-            std::cerr << "batch " << nameOf(state) << " -> " << nameOf(s) << "\n";
-
-            state = s;
-        }
-
-        void setState(BatchState s, BatchState expected){
-            if(state != expected){
-                std::cerr << "batch " << id << nameOf(state) << " ( " << nameOf(expected) << " )" << " -> " << nameOf(s) << "\n";
-                assert(false);
-            }
-            state = s;
-        }
-
 		void reset(){
-
-    		findcandidateidsDataFrame.reset();
-            unpackclassicresultsDataFrame.reset();
-
-            statesInProgress = 0;
-
-    		state = BatchState::Unprepared;
-            handledReadIds = false;
-
             combinedStreams = false;
-
             initialNumberOfAnchorIds = 0;
             initialNumberOfCandidates = 0;
             hasUnprocessedResults = false;
-
-
-            activeWaitIndex = 0;
-
-            doImproveMSA = false;
-            numMinimizations = 0;
-            previousNumIndices = 0;
         }
 
         void updateFromIterationData(NextIterationData& data){
@@ -474,30 +322,6 @@ namespace test{
 
         std::vector<Minhasher::Handle> minhashHandles;
 	};
-
-    std::string nameOf(const BatchState& state){
-        switch(state) {
-        case BatchState::Unprepared: return "Unprepared";
-        case BatchState::FindCandidateIds: return "FindCandidateIds";
-        case BatchState::CopyReads: return "CopyReads";
-        case BatchState::StartAlignment: return "StartAlignment";
-        case BatchState::RearrangeIndices: return "RearrangeIndices";
-        case BatchState::CopyQualities: return "CopyQualities";
-        case BatchState::BuildMSA: return "BuildMSA";
-        case BatchState::ImproveMSA: return "ImproveMSA";
-        case BatchState::StartClassicCorrection: return "StartClassicCorrection";
-        case BatchState::StartForestCorrection: return "StartForestCorrection";
-        case BatchState::StartConvnetCorrection: return "StartConvnetCorrection";
-        case BatchState::StartClassicCandidateCorrection: return "StartClassicCandidateCorrection";
-        case BatchState::UnpackClassicResults: return "UnpackClassicResults";
-        case BatchState::WriteResults: return "WriteResults";
-        case BatchState::WriteFeatures: return "WriteFeatures";
-        case BatchState::Finished: return "Finished";
-        default: assert(false); return "None";
-        }
-    }
-
-
 
 
 
@@ -614,7 +438,6 @@ namespace test{
         nextData.d_subject_sequences_lengths.resize(batchsize);
         nextData.h_subject_read_ids.resize(batchsize);
         nextData.d_subject_read_ids.resize(batchsize);
-        //nextData.tasks.reserve(batchsize);
 
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
         read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
@@ -2718,203 +2541,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
           cudaProfilerStart();
       #endif
 
-
-#if 0
-
-        for(auto& w : backgroundWorkers){
-            w.start();
-        }
-
-        for(int i = 0; i < nParallelBatches; ++i) {
-            batchExecutors.emplace_back([&,i](){
-                auto& batchData = batches[i];
-                auto& streams = batchData.streams;
-                auto& events = batchData.events;
-
-                auto pushrange = [&](const std::string& msg, int color){
-                    nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
-                };
-
-                auto poprange = [&](){
-                    nvtx::pop_range();
-                };
-
-
-                while(!(readIdGenerator.empty() 
-                        && batchData.nextIterationData.isDone()
-                        && batchData.nextIterationData.initialNumberOfAnchorIds == 0)) {
-                        
-                    batchData.reset();
-
-                    pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
-                    
-                    getNextBatchOfSubjectsAndDetermineCandidateReadIds(batchData);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-                    if(batchData.initialNumberOfCandidates == 0){
-                        continue;
-                    }
-
-                    pushrange("getCandidateSequenceData", 1);
-
-                    getCandidateSequenceData(batchData, *transFuncData.readStorage);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-
-                    pushrange("getCandidateAlignments", 2);
-
-                    getCandidateAlignments(batchData);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-
-                    // cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                    // if(batchData.dataArrays.h_num_indices[0] == 0){
-                    //     continue;
-                    // }
-
-                    if(transFuncData.correctionOptions.useQualityScores) {
-                        pushrange("getQualities", 4);
-
-                        getQualities(batchData);
-
-                        poprange();
-                    }
-
-                    
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-                    pushrange("buildMultipleSequenceAlignment", 5);
-
-                    buildMultipleSequenceAlignment(batchData);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-
-                #ifdef USE_MSA_MINIMIZATION
-
-                    pushrange("removeCandidatesOfDifferentRegionFromMSA", 6);
-
-                    removeCandidatesOfDifferentRegionFromMSA(batchData);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-                #endif
-
-                    //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
-
-                //cudaDeviceSynchronize(); CUERR;
-
-                    pushrange("correctSubjects", 7);
-
-                    correctSubjects(batchData);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-
-                    if(transFuncData.correctionOptions.correctCandidates) {                        
-
-                        pushrange("correctCandidates", 8);
-
-                        correctCandidates(batchData);
-
-                        poprange();
-                    }
-
-                    cudaEventRecord(events[secondary_stream_finished_event_index], streams[secondary_stream_index]); CUERR;
-                    cudaStreamWaitEvent(streams[primary_stream_index], events[secondary_stream_finished_event_index], 0); CUERR;            
-                    cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-                    pushrange("unpackClassicResults", 9);
-
-                    constructResults(batchData);
-
-                    poprange();
-
-                    //cudaDeviceSynchronize(); CUERR;
-
-
-                    pushrange("saveResults", 10);
-
-                    saveResults(batchData);
-
-                    poprange();
-                    
-                }
-
-                batchData.isTerminated = true;
-                batchData.state = BatchState::Finished;
-            });
-        }
-
-        while(
-            !(std::all_of(batches.begin(), batches.end(), [](const auto& batch){
-                return batch.state == BatchState::Finished;
-            }) && readIdGenerator.empty())) {
-
-
-            const auto now = std::chrono::system_clock::now();
-            runtime = now - timepoint_begin;
-
-            #ifndef DO_PROFILE
-            if(runtimeOptions.showProgress/* && readIdGenerator.getCurrentUnsafe() - previousprocessedreads > 100000*/){
-                printf("Processed %10u of %10lu reads (Runtime: %03d:%02d:%02d)\r",
-                    readIdGenerator.getCurrentUnsafe() - readIdGenerator.getBegin(), sequenceFileProperties.nReads,
-                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                    int(runtime.count()) % 60);
-                //previousprocessedreads = readIdGenerator.getCurrentUnsafe();
-            }
-            #endif
-
-            std::this_thread::sleep_for(std::chrono::seconds{1});
-        }
-
-
-        for(auto& w : backgroundWorkers){
-            w.stopThread(BackgroundThread::StopType::FinishAndStop);
-        }
-
-        for(auto& thread : batchExecutors){
-            thread.join();
-        }
-        
-        threadPool.wait();
-
-        outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-
-        runtime = std::chrono::system_clock::now() - timepoint_begin;
-        if(runtimeOptions.showProgress){
-            printf("Processed %10lu of %10lu reads (Runtime: %03d:%02d:%02d)\n",
-                    sequenceFileProperties.nReads, sequenceFileProperties.nReads,
-                    int(std::chrono::duration_cast<std::chrono::hours>(runtime).count()),
-                    int(std::chrono::duration_cast<std::chrono::minutes>(runtime).count()) % 60,
-                    int(runtime.count()) % 60);
-        }
-
-#else 
-
-
         auto initBatchData = [&](auto& batchData, int deviceId){
 
             cudaSetDevice(deviceId); CUERR;
@@ -3215,7 +2841,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
         progressThread.finished();        
         threadPool.wait();
         outputThread.stopThread(BackgroundThread::StopType::FinishAndStop);
-#endif
 
       //flushCachedResults();
       //outputstream.flush();
