@@ -247,6 +247,8 @@ namespace test{
         int initialNumberOfAnchorIds = -1;
         std::atomic<int> initialNumberOfCandidates{-1};
 
+        std::vector<std::string> decodedSubjectStrings;
+
         cudaStream_t stream;
         cudaEvent_t event;
         int deviceId;
@@ -388,10 +390,6 @@ namespace test{
 		int initialNumberOfCandidates = 0;
 		BatchState state = BatchState::Unprepared;
 
-		int copiedTasks = 0;         // used if state == CandidatesPresent
-		int copiedCandidates = 0;         // used if state == CandidatesPresent
-
-        int copiedSubjects = 0;
         bool handledReadIds = false;
 
         bool combinedStreams = false;
@@ -408,6 +406,8 @@ namespace test{
         bool doImproveMSA = false;
         int numMinimizations = 0;
         int previousNumIndices = 0;
+
+        std::vector<std::string> decodedSubjectStrings;
 
 		std::array<cudaStream_t, nStreamsPerBatch> streams;
 		std::array<cudaEvent_t, nEventsPerBatch> events;
@@ -479,9 +479,6 @@ namespace test{
             statesInProgress = 0;
 
     		state = BatchState::Unprepared;
-    		copiedTasks = 0;
-    		copiedCandidates = 0;
-            copiedSubjects = 0;
             handledReadIds = false;
 
             combinedStreams = false;
@@ -510,6 +507,7 @@ namespace test{
             std::swap(dataArrays.d_subject_sequences_lengths, data.d_subject_sequences_lengths);
             std::swap(dataArrays.d_subject_read_ids, data.d_subject_read_ids);
             std::swap(tasks, data.tasks);
+            std::swap(decodedSubjectStrings, data.decodedSubjectStrings);
 
             initialNumberOfAnchorIds = data.initialNumberOfAnchorIds;
             initialNumberOfCandidates = data.initialNumberOfCandidates;  
@@ -517,6 +515,7 @@ namespace test{
             data.tasks.clear();
             data.initialNumberOfAnchorIds = 0;
             data.initialNumberOfCandidates = 0;
+            data.decodedSubjectStrings.clear();
         }
 
 	};
@@ -887,14 +886,16 @@ namespace test{
 
         nextData.initialNumberOfCandidates = 0;
 
-        auto maketasks = [batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
+        std::vector<std::vector<std::string>> decodedSubjectStringsPerThread(batchData.threadsInThreadPool);
+
+        auto maketasks = [&, batchptr, nextDataPtr, minhasherPtr](int begin, int end, int threadId){
 
             auto& transFuncData = *(batchptr->transFuncData);
             const int hits_per_candidate = transFuncData.correctionOptions.hits_per_candidate;
 
             auto& minhashHandle = batchptr->minhashHandles[threadId];
 
-            int initialNumberOfCandidates = 0;
+            int initialNumberOfCandidates = 0;            
 
             std::vector<std::string> decodedSubjectStrings(end-begin);
 
@@ -938,7 +939,8 @@ namespace test{
                 auto& task = nextDataPtr->tasks[i];
                 task.candidate_read_ids.clear();
                 std::copy(minhashHandle.multiresults() + numResultsOfSequence(), task.candidate_read_ids.begin());
-                task.subject_string = std::move(decodedSubjectStrings[i - begin]);
+                //task.subject_string = std::move(decodedSubjectStrings[i - begin]);
+                task.subject_string = decodedSubjectStrings[i - begin];
 
                 auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
                 //TIMERSTOPCPU(lower_bound);
@@ -995,7 +997,8 @@ namespace test{
                     task.candidate_read_ids.begin()
                 );
                 multiresultbegin = multiresultend;
-                task.subject_string = std::move(decodedSubjectStrings[i - begin]);
+                //task.subject_string = std::move(decodedSubjectStrings[i - begin]);
+                task.subject_string = decodedSubjectStrings[i - begin];
 
                 auto readIdPos = std::lower_bound(task.candidate_read_ids.begin(), task.candidate_read_ids.end(), task.readId);
                 //TIMERSTOPCPU(lower_bound);
@@ -1072,6 +1075,8 @@ namespace test{
             //}
 
             nextDataPtr->initialNumberOfCandidates += initialNumberOfCandidates;
+
+            decodedSubjectStringsPerThread[threadId] = std::move(decodedSubjectStrings);
         };
 
         cudaStreamSynchronize(nextData.stream); CUERR; //wait for D2H transfers of anchor data which is required for minhasher
@@ -1085,10 +1090,35 @@ namespace test{
             }
         );
 
-        auto it = std::remove_if(nextData.tasks.begin(), nextData.tasks.end(), [](const auto& t){return !t.active;});
-        nextData.tasks.erase(it, nextData.tasks.end());
+        // auto it = std::remove_if(nextData.tasks.begin(), nextData.tasks.end(), [](const auto& t){return !t.active;});
+        // nextData.tasks.erase(it, nextData.tasks.end());
+
+        nextData.decodedSubjectStrings.clear();
+        for(int i = 0; i < batchData.threadsInThreadPool; i++){
+            nextData.decodedSubjectStrings.insert(
+                nextData.decodedSubjectStrings.end(),
+                decodedSubjectStringsPerThread[i].begin(),
+                decodedSubjectStringsPerThread[i].end()
+            );
+        }
+
+        int cur = 0;
+        for(int i = 0; i < nextData.initialNumberOfAnchorIds; i++){
+            if(nextData.tasks[i].active){
+                if(i != cur){
+                    nextData.tasks[cur] = std::move(nextData.tasks[i]);
+                    nextData.decodedSubjectStrings[cur] = std::move(nextData.decodedSubjectStrings[i]);
+                }
+
+                cur++;
+            }
+        }
+
+        nextData.tasks.erase(nextData.tasks.begin() + cur, nextData.tasks.end());
+        nextData.decodedSubjectStrings.erase(nextData.decodedSubjectStrings.begin() + cur, nextData.decodedSubjectStrings.end());
 
         nextData.initialNumberOfAnchorIds = nextData.tasks.size();
+
 
         nextData.signal();
     }
@@ -3294,6 +3324,8 @@ namespace test{
 
                 if(!originalReadContainsN){
                     const std::string originalSubjectString = task.subject_string;
+                    const std::string s2 = batch.decodedSubjectStrings[subject_index];
+                    assert(originalSubjectString == s2);
 
                     const int maxEdits = subject_length / 7;
                     int edits = 0;
