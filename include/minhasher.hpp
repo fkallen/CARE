@@ -511,6 +511,7 @@ struct Minhasher {
 		std::vector<Value_t> multiallUniqueResults;
         std::vector<std::uint64_t> multiminhashSignatures;
         std::vector<int> numResultsPerSequence;
+        std::vector<int> numResultsPerSequencePrefixSum;
 
         std::vector<Value_t>& result() noexcept{
             return allUniqueResults;
@@ -520,10 +521,10 @@ struct Minhasher {
             return multiallUniqueResults;
         }
 
-        int numResultsOfSequence(int i) const{
-            assert(i < int(numResultsPerSequence.size()));
-            return numResultsPerSequence[i];
-        }
+        // int numResultsOfSequence(int i) const{
+        //     assert(i < int(numResultsPerSequence.size()));
+        //     return numResultsPerSequence[i];
+        // }
 	};
 
 	// the actual maps

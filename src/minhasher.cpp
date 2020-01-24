@@ -596,6 +596,9 @@ namespace care{
             maxNumResults += handle.numResultsPerSequence[i];
         }
         handle.multiallUniqueResults.resize(maxNumResults);
+        handle.numResultsPerSequencePrefixSum.resize(numSequences + 1);
+
+        handle.numResultsPerSequencePrefixSum[0] = 0;
 
         // if(once){
         //     once = false;
@@ -615,7 +618,7 @@ namespace care{
         //                 stream << *it << " ";                     
         //             }
         //             stream<< "\n";
-        //         }
+        //         } 
         //     }
         // }
 
@@ -627,6 +630,8 @@ namespace care{
             currentBegin = currentEnd;
             currentEnd = k_way_set_union<Value_t>(handle.suHandle, currentBegin, myranges, numRangesForSequence);
             handle.numResultsPerSequence[i] = std::distance(currentBegin, currentEnd);
+
+            handle.numResultsPerSequencePrefixSum[i+1] = handle.numResultsPerSequencePrefixSum[i] + handle.numResultsPerSequence[i];
         }
 
         handle.multiallUniqueResults.erase(currentEnd, handle.multiallUniqueResults.end());   
