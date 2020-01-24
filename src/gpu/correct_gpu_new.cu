@@ -224,10 +224,10 @@ namespace test{
 
 		KernelLaunchHandle kernelLaunchHandle;
 
-        DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle2;
-        DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle2;
-        DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle2;
-        DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle2;
+        DistributedReadStorage::GatherHandleSequences subjectSequenceGatherHandle;
+        DistributedReadStorage::GatherHandleSequences candidateSequenceGatherHandle;
+        DistributedReadStorage::GatherHandleQualities subjectQualitiesGatherHandle;
+        DistributedReadStorage::GatherHandleQualities candidateQualitiesGatherHandle;
 
         int encodedSequencePitchInInts;
         int decodedSequencePitchInBytes;
@@ -437,7 +437,6 @@ namespace test{
         nextData.n_subjects = std::distance(readIdsBegin, readIdsEnd);
 
         if(nextData.n_subjects == 0){
-            nextData.signal();
             return;
         };
 
@@ -451,7 +450,7 @@ namespace test{
 
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
-            batchData.subjectSequenceGatherHandle2,
+            batchData.subjectSequenceGatherHandle,
             nextData.d_subject_sequences_data.get(),
             batchData.encodedSequencePitchInInts,
             nextData.h_subject_read_ids,
@@ -654,24 +653,37 @@ namespace test{
 
 
     void getNextBatchOfSubjectsAndDetermineCandidateReadIds(Batch& batchData){
+        Batch* batchptr = &batchData;
+
+        auto getDataForNextIteration = [batchptr](){
+            nvtx::push_range("getSubjectDataOfNextIteration",1);
+            getSubjectDataOfNextIteration(
+                *batchptr, 
+                batchptr->transFuncData->correctionOptions.batchsize,
+                *batchptr->transFuncData->readStorage
+            );
+            nvtx::pop_range();
+
+            nvtx::push_range("determineCandidateReadIdsOfNextIteration",2);
+
+            if(batchptr->nextIterationData.n_subjects > 0){
+                determineCandidateReadIdsOfNextIteration(
+                    *batchptr, 
+                    *batchptr->transFuncData->minhasher
+                );
+                cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
+                batchptr->nextIterationData.signal();
+            }else{
+                batchptr->nextIterationData.n_queries = 0;
+                batchptr->nextIterationData.signal();
+            }
+            nvtx::pop_range();
+        };
 
         if(batchData.isFirstIteration){
             batchData.nextIterationData.done = false;
 
-            getSubjectDataOfNextIteration(
-                batchData, 
-                batchData.transFuncData->correctionOptions.batchsize,
-                *batchData.transFuncData->readStorage
-            );
-
-            if(batchData.nextIterationData.n_subjects > 0){
-                determineCandidateReadIdsOfNextIteration(
-                    batchData, 
-                    *batchData.transFuncData->minhasher
-                );
-            }else{
-                batchData.nextIterationData.n_queries = 0;
-            }         
+            getDataForNextIteration();        
          
             batchData.isFirstIteration = false;
         }else{
@@ -685,33 +697,10 @@ namespace test{
             batchData.updateFromIterationData(batchData.nextIterationData);
 
             //asynchronously prepare data for next iteration
-            Batch* batchptr = &batchData;
+            
             batchData.nextIterationData.done = false;
             batchData.backgroundWorker->enqueue(
-                [batchptr](){
-                    nvtx::push_range("getSubjectDataOfNextIteration",1);
-                    getSubjectDataOfNextIteration(
-                        *batchptr, 
-                        batchptr->transFuncData->correctionOptions.batchsize,
-                        *batchptr->transFuncData->readStorage
-                    );
-                    nvtx::pop_range();
-
-                    nvtx::push_range("determineCandidateReadIdsOfNextIteration",2);
-        
-                    if(batchptr->nextIterationData.n_subjects > 0){
-                        determineCandidateReadIdsOfNextIteration(
-                            *batchptr, 
-                            *batchptr->transFuncData->minhasher
-                        );
-                        cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
-                        batchptr->nextIterationData.signal();
-                    }else{
-                        batchptr->nextIterationData.n_queries = 0;
-                        batchptr->nextIterationData.signal();
-                    }
-                    nvtx::pop_range();
-                }
+                getDataForNextIteration
             );
 
 
@@ -955,7 +944,7 @@ namespace test{
 
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
-            batchData.candidateSequenceGatherHandle2,
+            batchData.candidateSequenceGatherHandle,
             dataArrays.d_candidate_sequences_data.get(),
             batchData.encodedSequencePitchInInts,
             dataArrays.h_candidate_read_ids,
@@ -1306,7 +1295,7 @@ namespace test{
 
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
-                batch.subjectQualitiesGatherHandle2,
+                batch.subjectQualitiesGatherHandle,
                 dataArrays.d_subject_qualities,
                 batch.qualityPitchInBytes,
                 dataArrays.h_subject_read_ids,
@@ -1318,7 +1307,7 @@ namespace test{
 
             gpuReadStorage->gatherQualitiesToGpuBufferAsync(
                 batch.threadPool,
-                batch.candidateQualitiesGatherHandle2,
+                batch.candidateQualitiesGatherHandle,
                 dataArrays.d_candidate_qualities,
                 batch.qualityPitchInBytes,
                 dataArrays.h_candidate_read_ids.get(),
@@ -2316,19 +2305,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
       //assert(runtimeOptions.max_candidates > 0);
       assert(runtimeOptions.deviceIds.size() > 0);
 
-      int oldNumOMPThreads = 1;
-      #pragma omp parallel
-      {
-          #pragma omp single
-          oldNumOMPThreads = omp_get_num_threads();
-      }
-
-      omp_set_num_threads(runtimeOptions.nCorrectorThreads);
-      //omp_set_num_threads(1);
-
-      std::chrono::time_point<std::chrono::system_clock> timepoint_begin = std::chrono::system_clock::now();
-      std::chrono::duration<double> runtime = std::chrono::seconds(0);
-
       const auto& deviceIds = runtimeOptions.deviceIds;
 
       std::vector<std::string> tmpfiles{fileOptions.tempdirectory + "/" + fileOptions.outputfilename + "_tmp"};
@@ -2386,67 +2362,16 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       //std::mutex outputstreamlock;
 
-      Read readInFile;
-
       TransitionFunctionData transFuncData;
 
       const int nParallelBatches = runtimeOptions.gpuParallelBatches;
       const int batchsize = correctionOptions.batchsize;
 
-      std::cerr << "Using " << nParallelBatches << " batches of size " << batchsize << " for correction\n";
-
-      std::vector<Batch> batches(nParallelBatches);
       BackgroundThread outputThread;
-      std::vector<BackgroundThread> backgroundWorkers(nParallelBatches);
+
       const int threadPoolSize = std::max(1, runtimeOptions.threads - nParallelBatches);
       std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
       ThreadPool threadPool(threadPoolSize);
-
-      int deviceIdIndex = 0;
-
-      for(int i = 0; i < nParallelBatches; i++) {
-          const int deviceId = deviceIds[deviceIdIndex];
-
-          cudaSetDevice(deviceId); CUERR;
-
-          DataArrays dataArrays;
-
-          std::array<cudaStream_t, nStreamsPerBatch> streams;
-          for(int j = 0; j < nStreamsPerBatch; ++j) {
-              cudaStreamCreate(&streams[j]); CUERR;
-          }
-
-          std::array<cudaEvent_t, nEventsPerBatch> events;
-          for(int j = 0; j < nEventsPerBatch; ++j) {
-              cudaEventCreateWithFlags(&events[j], cudaEventDisableTiming); CUERR;
-          }
-
-          batches[i].id = i;
-          batches[i].deviceId = deviceId;
-          batches[i].dataArrays = std::move(dataArrays);
-          batches[i].streams = std::move(streams);
-          batches[i].events = std::move(events);
-          batches[i].kernelLaunchHandle = make_kernel_launch_handle(deviceId);
-          batches[i].subjectSequenceGatherHandle2 = readStorage.makeGatherHandleSequences();
-          batches[i].candidateSequenceGatherHandle2 = readStorage.makeGatherHandleSequences();
-          //batches[i].subjectLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
-          //batches[i].candidateLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
-          batches[i].subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
-          batches[i].candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
-          batches[i].transFuncData = &transFuncData;
-          batches[i].outputThread = &outputThread;
-          batches[i].backgroundWorker = &backgroundWorkers[i];
-          batches[i].threadPool = &threadPool;
-          batches[i].threadsInThreadPool = threadPoolSize;
-          batches[i].minhashHandles.resize(threadPoolSize);
-          batches[i].encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
-          batches[i].decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
-          batches[i].qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
-          
-          initNextIterationData(batches[i].nextIterationData, batches[i].deviceId);
-
-          deviceIdIndex = (deviceIdIndex + 1) % deviceIds.size();
-      }
 
 #ifndef DO_PROFILE
         cpu::RangeGenerator<read_number> readIdGenerator(sequenceFileProperties.nReads);
@@ -2538,12 +2463,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             batchData.streams = std::move(streams);
             batchData.events = std::move(events);
             batchData.kernelLaunchHandle = make_kernel_launch_handle(deviceId);
-            batchData.subjectSequenceGatherHandle2 = readStorage.makeGatherHandleSequences();
-            batchData.candidateSequenceGatherHandle2 = readStorage.makeGatherHandleSequences();
-            //batch.subjectLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
-            //batch.candidateLengthGatherHandle2 = readStorage.makeGatherHandleLengths();
-            batchData.subjectQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
-            batchData.candidateQualitiesGatherHandle2 = readStorage.makeGatherHandleQualities();
+            batchData.subjectSequenceGatherHandle = readStorage.makeGatherHandleSequences();
+            batchData.candidateSequenceGatherHandle = readStorage.makeGatherHandleSequences();
+            batchData.subjectQualitiesGatherHandle = readStorage.makeGatherHandleQualities();
+            batchData.candidateQualitiesGatherHandle = readStorage.makeGatherHandleQualities();
             batchData.transFuncData = &transFuncData;
             batchData.outputThread = &outputThread;
             batchData.backgroundWorker = nullptr;//&backgroundWorkers[i];
@@ -2836,27 +2759,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
     //         std::cerr << '\n';
     //     }
 
-      for(auto& batch : batches){
-          cudaSetDevice(batch.deviceId); CUERR;
-
-          batch.dataArrays.reset();
-          destroyNextIterationData(batch.nextIterationData);
-
-          for(auto& stream : batch.streams) {
-              cudaStreamDestroy(stream); CUERR;
-          }
-
-          for(auto& event : batch.events){
-              cudaEventDestroy(event); CUERR;
-          }
-      }
 
       correctionStatusFlagsPerRead.reset();
-
-
-
-      omp_set_num_threads(oldNumOMPThreads);
-
 
       //size_t occupiedMemory = minhasher.numBytes() + cpuReadStorage.size();
 
