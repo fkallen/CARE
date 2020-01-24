@@ -264,6 +264,14 @@ struct EncodedTempCorrectedSequence{
 
     bool writeToBinaryStream(std::ostream& s) const;
     bool readFromBinaryStream(std::istream& s);
+
+    bool operator==(const EncodedTempCorrectedSequence& rhs) const{
+        return readId == rhs.readId && data == rhs.data;
+    }
+
+    bool operator!=(const EncodedTempCorrectedSequence& rhs) const{
+        return !(operator==(rhs));
+    }
 };
 
 // represents a sequence produced by the correction of a read.
@@ -276,6 +284,14 @@ struct TempCorrectedSequence{
         int pos;
         Edit() = default;
         Edit(int p, char b) : base(b), pos(p){}
+
+        bool operator==(const Edit& rhs) const{
+            return base == rhs.base && pos == rhs.pos;
+        }
+
+        bool operator!=(const Edit& rhs) const{
+            return !(operator==(rhs));
+        }
     };
     static constexpr char AnchorChar = 'a';
     static constexpr char CandidateChar = 'c';
@@ -304,6 +320,15 @@ struct TempCorrectedSequence{
     std::string sequence = "";
     std::vector<Edit> edits;
     std::vector<int> uncorrectedPositionsNoConsensus{}; //if anchor
+
+    bool operator==(const TempCorrectedSequence& rhs) const{
+        return hq == rhs.hq && useEdits == rhs.useEdits && type == rhs.type && shift == rhs.shift && readId == rhs.readId
+            && sequence == rhs.sequence && edits == rhs.edits && uncorrectedPositionsNoConsensus == rhs.uncorrectedPositionsNoConsensus;
+    }
+
+    bool operator!=(const TempCorrectedSequence& rhs) const{
+        return !(operator==(rhs));
+    }
 
     
 };
