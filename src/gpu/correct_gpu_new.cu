@@ -953,18 +953,6 @@ namespace test{
                                         batchData.n_queries,            
                                         streams[primary_stream_index]);
 
-        // readStorage.gatherSequenceDataToGpuBufferAsync(
-        //     batchData.threadPool,
-        //     batchData.subjectSequenceGatherHandle2,
-        //     dataArrays.d_subject_sequences_data.get(),
-        //     batchData.encodedSequencePitchInInts,
-        //     dataArrays.h_subject_read_ids,
-        //     dataArrays.d_subject_read_ids,
-        //     batchData.n_subjects,
-        //     batchData.deviceId,
-        //     streams[primary_stream_index],
-        //     transFuncData.runtimeOptions.nCorrectorThreads);
-
         readStorage.gatherSequenceDataToGpuBufferAsync(
             batchData.threadPool,
             batchData.candidateSequenceGatherHandle2,
