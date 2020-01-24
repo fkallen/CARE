@@ -1088,6 +1088,8 @@ namespace test{
         auto it = std::remove_if(nextData.tasks.begin(), nextData.tasks.end(), [](const auto& t){return !t.active;});
         nextData.tasks.erase(it, nextData.tasks.end());
 
+        nextData.initialNumberOfAnchorIds = nextData.tasks.size();
+
         nextData.signal();
     }
 
@@ -3172,19 +3174,28 @@ namespace test{
         subjectIndicesToProcess.reserve(batch.tasks.size());
         candidateIndicesToProcess.reserve(16 * batch.tasks.size());
 
-        for(int subject_index = 0; subject_index < int(batch.tasks.size()); subject_index++){
+        assert(batch.initialNumberOfAnchorIds == int(batch.tasks.size()));
+
+        for(int subject_index = 0; subject_index < batch.initialNumberOfAnchorIds; subject_index++){
             auto& task = batch.tasks[subject_index];
             task.corrected = dataArrays.h_subject_is_corrected[subject_index];
             task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
 
-            if(task.highQualityAlignment){
-                transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCorrectedAsHQAnchor;
+            const read_number readId = dataArrays.h_subject_read_ids[subject_index];
+            const bool isCorrected = dataArrays.h_subject_is_corrected[subject_index];
+            const bool isHQ = dataArrays.h_is_high_quality_subject[subject_index].hq();
+
+            assert(readId == task.readId);
+
+            //if(task.highQualityAlignment){
+            if(isHQ){
+                transFuncData.correctionStatusFlagsPerRead[readId] |= readCorrectedAsHQAnchor;
             }
 
-            if(task.corrected){
+            if(isCorrected){
                 subjectIndicesToProcess.emplace_back(subject_index);
             }else{
-                transFuncData.correctionStatusFlagsPerRead[task.readId] |= readCouldNotBeCorrectedAsAnchor;
+                transFuncData.correctionStatusFlagsPerRead[readId] |= readCouldNotBeCorrectedAsAnchor;
             }
         }
 
@@ -3241,18 +3252,28 @@ namespace test{
                 auto& task = batch.tasks[subject_index];
                 const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * batch.decodedSequencePitchInBytes;
 
+                const read_number readId = dataArrays.h_subject_read_ids[subject_index];
+                assert(readId == task.readId);
+
 
                 const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
                 task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
 
+                const std::string correctedSubjectString = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
+
+                assert(task.corrected_subject == correctedSubjectString);
+
                 //task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
 
                 const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
+                std::vector<int> uncorrectedPositionsNoConsensus;
                 if(numUncorrectedPositions > 0){
-                    task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                    //task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                    uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
                     std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
                                 numUncorrectedPositions,
-                                task.uncorrectedPositionsNoConsensus.begin());
+                                //task.uncorrectedPositionsNoConsensus.begin());
+                                uncorrectedPositionsNoConsensus.begin());
 
                 }
 
@@ -3262,21 +3283,23 @@ namespace test{
                     });
                 };
 
-                if(!isValidSequence(task.corrected_subject)){
-                    std::cout << task.corrected_subject << std::endl;
+                if(!isValidSequence(correctedSubjectString)){
+                    std::cerr << correctedSubjectString << "\n";
                 }
 
-                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(task.readId);
+                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
 
                 auto& tmp = outputData.anchorCorrections[positionInVector];
                 auto& tmpencoded = outputData.encodedAnchorCorrections[positionInVector];
 
                 if(!originalReadContainsN){
+                    const std::string originalSubjectString = task.subject_string;
+
                     const int maxEdits = subject_length / 7;
                     int edits = 0;
                     for(int i = 0; i < subject_length && edits <= maxEdits; i++){
-                        if(task.corrected_subject[i] != task.subject_string[i]){
-                            tmp.edits.emplace_back(i, task.corrected_subject[i]);
+                        if(correctedSubjectString[i] != originalSubjectString[i]){
+                            tmp.edits.emplace_back(i, correctedSubjectString[i]);
                             edits++;
                         }
                     }
@@ -3287,9 +3310,11 @@ namespace test{
 
                 tmp.hq = task.highQualityAlignment;                    
                 tmp.type = TempCorrectedSequence::Type::Anchor;
-                tmp.readId = task.readId;
-                tmp.sequence = std::move(task.corrected_subject);
-                tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+                tmp.readId = readId;
+                //tmp.sequence = std::move(task.corrected_subject);
+                tmp.sequence = std::move(correctedSubjectString);
+                //tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
+                tmp.uncorrectedPositionsNoConsensus = std::move(uncorrectedPositionsNoConsensus);
 
                 tmpencoded = tmp.encode();
             }
@@ -4265,16 +4290,16 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 #if 1
             pushrange("unpackClassicResults", 9);
 
-            unpackClassicResults(batchData);
-            //unpackClassicResultsContiguousVersion(batchData);
+            //unpackClassicResults(batchData);
+            unpackClassicResultsContiguousVersion(batchData);
 
             poprange();
 
 
             pushrange("saveResults", 10);
 
-            saveResults(batchData);
-            //saveResultsContiguous(batchData);
+            //saveResults(batchData);
+            saveResultsContiguous(batchData);
 
             poprange();
 #else 
