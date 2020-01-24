@@ -77,16 +77,18 @@ namespace cpu{
         ContiguousReadStorage(read_number nSequences, bool b) : ContiguousReadStorage(nSequences, b, 0, 0){
         }
 
-        ContiguousReadStorage(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length)
-            : 
-                sequenceLengthLowerBound(minimum_sequence_length),
-                sequenceLengthUpperBound(maximum_sequence_length),
-                sequenceDataPitchInInts(getEncodedNumInts2Bit(maximum_sequence_length)),
-                sequenceQualitiesPitchInBytes(maximum_sequence_length),
-                useQualityScores(b),
-                maximumNumberOfSequences(nSequences){
+        ContiguousReadStorage(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length){
+            init(nSequences, b, minimum_sequence_length, maximum_sequence_length);
+        }
 
-            
+        void init(read_number nSequences, bool b, int minimum_sequence_length, int maximum_sequence_length){
+            sequenceLengthLowerBound = minimum_sequence_length,
+            sequenceLengthUpperBound = maximum_sequence_length,
+            sequenceDataPitchInInts = getEncodedNumInts2Bit(maximum_sequence_length),
+            sequenceQualitiesPitchInBytes = maximum_sequence_length,
+            useQualityScores = b,
+            maximumNumberOfSequences = nSequences;
+
             lengthStorage = std::move(LengthStore_t(sequenceLengthLowerBound, sequenceLengthUpperBound, nSequences));
 
             h_sequence_data.reset(new unsigned int[std::size_t(maximumNumberOfSequences) * sequenceDataPitchInInts]);
@@ -528,27 +530,19 @@ public:
 
             read_number inserted = getNumberOfReads();
 
-            //int ser_id = serialization_id;
-            std::size_t lengthsize = sizeof(Length_t);
-            //stream.write(reinterpret_cast<const char*>(&ser_id), sizeof(int));
-            stream.write(reinterpret_cast<const char*>(&lengthsize), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
-            stream.write(reinterpret_cast<const char*>(&sequenceDataPitchInInts), sizeof(int));
-            stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
-            stream.write(reinterpret_cast<const char*>(&maximumNumberOfSequences), sizeof(read_number));
-            stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&sequence_lengths_bytes), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
-            stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
             stream.write(reinterpret_cast<const char*>(&inserted), sizeof(read_number));
+            stream.write(reinterpret_cast<const char*>(&sequenceLengthUpperBound), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(&sequenceLengthLowerBound), sizeof(int));
+            stream.write(reinterpret_cast<const char*>(&useQualityScores), sizeof(bool));
+            stream.write(reinterpret_cast<const char*>(&statistics), sizeof(Statistics));
 
             lengthStorage.writeToStream(stream);
 
-            stream.write(reinterpret_cast<const char*>(&h_sequence_data[0]), sequence_data_bytes);
-            //stream.write(reinterpret_cast<const char*>(&h_sequence_lengths[0]), sequence_lengths_bytes);
+            stream.write(reinterpret_cast<const char*>(&sequence_data_bytes), sizeof(std::size_t));
+            stream.write(reinterpret_cast<const char*>(&h_sequence_data[0]), sequence_data_bytes); 
+            stream.write(reinterpret_cast<const char*>(&quality_data_bytes), sizeof(std::size_t));
             stream.write(reinterpret_cast<const char*>(&h_quality_data[0]), quality_data_bytes);
 
-            //read ids with N
             std::size_t numUndeterminedReads = readIdsOfReadsWithUndeterminedBase.size();
             stream.write(reinterpret_cast<const char*>(&numUndeterminedReads), sizeof(size_t));
             stream.write(reinterpret_cast<const char*>(readIdsOfReadsWithUndeterminedBase.data()), numUndeterminedReads * sizeof(read_number));
@@ -560,65 +554,34 @@ public:
             if(!stream)
                 throw std::runtime_error("Cannot open file " + filename);
 
-            //int ser_id = serialization_id;
-            std::size_t lengthsize = sizeof(Length_t);
+            destroy();
 
-            //int loaded_serialization_id = 0;
-            std::size_t loaded_lengthsize = 0;
+            read_number loaded_inserted = 0;
+            int loaded_sequenceLengthLowerBound = 0;
             int loaded_sequenceLengthUpperBound = 0;
-            int loaded_sequenceDataPitchInInts = 0;
             bool loaded_useQualityScores = false;
-            read_number loaded_maximumNumberOfSequences = 0;
+
             std::size_t loaded_sequence_data_bytes = 0;
-            std::size_t loaded_sequence_lengths_bytes = 0;
-            std::size_t loaded_quality_data_bytes = 0;
-            read_number inserted = 0;
+            std::size_t loaded_quality_data_bytes = 0;            
 
-            //stream.read(reinterpret_cast<char*>(&loaded_serialization_id), sizeof(int));
-            stream.read(reinterpret_cast<char*>(&loaded_lengthsize), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));
-            stream.read(reinterpret_cast<char*>(&loaded_sequenceDataPitchInInts), sizeof(int));
+            stream.read(reinterpret_cast<char*>(&loaded_inserted), sizeof(read_number));
+            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthLowerBound), sizeof(int));
+            stream.read(reinterpret_cast<char*>(&loaded_sequenceLengthUpperBound), sizeof(int));            
             stream.read(reinterpret_cast<char*>(&loaded_useQualityScores), sizeof(bool));
-            stream.read(reinterpret_cast<char*>(&loaded_maximumNumberOfSequences), sizeof(read_number));
-            stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_sequence_lengths_bytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));
-            stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
-            stream.read(reinterpret_cast<char*>(&inserted), sizeof(read_number));
 
-            numberOfInsertedReads = inserted;
+            init(loaded_inserted, loaded_useQualityScores, loaded_sequenceLengthLowerBound, loaded_sequenceLengthUpperBound);
+
+            numberOfInsertedReads = loaded_inserted;
+
+            stream.read(reinterpret_cast<char*>(&statistics), sizeof(Statistics));
 
             lengthStorage.readFromStream(stream);
 
-            //if(loaded_serialization_id != ser_id)
-            //    throw std::runtime_error("Wrong serialization id!");
-            if(loaded_lengthsize != lengthsize)
-                throw std::runtime_error("Wrong size of length type!");
-            //if(useQualityScores && !loaded_useQualityScores)
-            //    throw std::runtime_error("Quality scores are required but not present in binary sequence file!");
-            //if(!useQualityScores && loaded_useQualityScores)
-            //    std::cerr << "The loaded compressed read file contains quality scores, but program does not use them!\n";
-
-            destroy();
-
-            h_sequence_data.reset(new unsigned int[std::size_t(loaded_maximumNumberOfSequences) * loaded_sequenceDataPitchInInts]);
-            //h_sequence_lengths.reset((Length_t*)new char[loaded_sequence_lengths_bytes]);
-            h_quality_data.reset((char*)new char[loaded_quality_data_bytes]);
-
+            stream.read(reinterpret_cast<char*>(&loaded_sequence_data_bytes), sizeof(std::size_t));
             stream.read(reinterpret_cast<char*>(&h_sequence_data[0]), loaded_sequence_data_bytes);
-            //stream.read(reinterpret_cast<char*>(&h_sequence_lengths[0]), loaded_sequence_lengths_bytes);
+            stream.read(reinterpret_cast<char*>(&loaded_quality_data_bytes), sizeof(std::size_t));            
             stream.read(reinterpret_cast<char*>(&h_quality_data[0]), loaded_quality_data_bytes);
 
-            sequenceLengthUpperBound = loaded_sequenceLengthUpperBound;
-            sequenceDataPitchInInts = loaded_sequenceDataPitchInInts;
-            sequenceQualitiesPitchInBytes = sequenceLengthUpperBound;
-            maximumNumberOfSequences = loaded_maximumNumberOfSequences;
-            useQualityScores = loaded_useQualityScores;
-            sequence_data_bytes = loaded_sequence_data_bytes;
-            sequence_lengths_bytes = loaded_sequence_lengths_bytes;
-            quality_data_bytes = loaded_quality_data_bytes;
-
-                //read ids with N
             std::size_t numUndeterminedReads = 0;
             stream.read(reinterpret_cast<char*>(&numUndeterminedReads), sizeof(std::size_t));
             readIdsOfReadsWithUndeterminedBase.resize(numUndeterminedReads);
