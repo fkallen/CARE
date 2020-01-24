@@ -3201,23 +3201,14 @@ namespace test{
         subjectIndicesToProcess.clear();
         candidateIndicesToProcess.clear();
 
-        subjectIndicesToProcess.reserve(batch.tasks.size());
-        candidateIndicesToProcess.reserve(16 * batch.tasks.size());
-
-        assert(batch.initialNumberOfAnchorIds == int(batch.tasks.size()));
+        subjectIndicesToProcess.reserve(batch.initialNumberOfAnchorIds);
+        candidateIndicesToProcess.reserve(16 * batch.initialNumberOfAnchorIds);
 
         for(int subject_index = 0; subject_index < batch.initialNumberOfAnchorIds; subject_index++){
-            auto& task = batch.tasks[subject_index];
-            task.corrected = dataArrays.h_subject_is_corrected[subject_index];
-            task.highQualityAlignment = dataArrays.h_is_high_quality_subject[subject_index].hq();
-
             const read_number readId = dataArrays.h_subject_read_ids[subject_index];
             const bool isCorrected = dataArrays.h_subject_is_corrected[subject_index];
             const bool isHQ = dataArrays.h_is_high_quality_subject[subject_index].hq();
 
-            assert(readId == task.readId);
-
-            //if(task.highQualityAlignment){
             if(isHQ){
                 transFuncData.correctionStatusFlagsPerRead[readId] |= readCorrectedAsHQAnchor;
             }
@@ -3229,8 +3220,7 @@ namespace test{
             }
         }
 
-        for(int subject_index = 0; subject_index < int(batch.tasks.size()); subject_index++){
-            const auto& task = batch.tasks[subject_index];
+        for(int subject_index = 0; subject_index < batch.initialNumberOfAnchorIds; subject_index++){
 
             const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
             const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
@@ -3273,37 +3263,29 @@ namespace test{
             const auto& transFuncData = *batch.transFuncData;
             const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
             
-
-            //std::cerr << "in unpackAnchors " << begin << " - " << end << "\n";
-
             for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                 const int subject_index = subjectIndicesToProcess[positionInVector];
 
-                auto& task = batch.tasks[subject_index];
+                auto& tmp = outputData.anchorCorrections[positionInVector];
+                auto& tmpencoded = outputData.encodedAnchorCorrections[positionInVector];
+
                 const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * batch.decodedSequencePitchInBytes;
-
                 const read_number readId = dataArrays.h_subject_read_ids[subject_index];
-                assert(readId == task.readId);
-
 
                 const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
-                task.corrected_subject = std::move(std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length});
 
-                const std::string correctedSubjectString = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
-
-                assert(task.corrected_subject == correctedSubjectString);
-
-                //task.correctionEqualsOriginal = task.corrected_subject == task.subject_string;
+                tmp.hq = dataArrays.h_is_high_quality_subject[subject_index].hq();                    
+                tmp.type = TempCorrectedSequence::Type::Anchor;
+                tmp.readId = readId;
+                tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
 
                 const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
-                std::vector<int> uncorrectedPositionsNoConsensus;
+
                 if(numUncorrectedPositions > 0){
-                    //task.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
-                    uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                    tmp.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
                     std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
                                 numUncorrectedPositions,
-                                //task.uncorrectedPositionsNoConsensus.begin());
-                                uncorrectedPositionsNoConsensus.begin());
+                                tmp.uncorrectedPositionsNoConsensus.begin());
 
                 }
 
@@ -3313,25 +3295,20 @@ namespace test{
                     });
                 };
 
-                if(!isValidSequence(correctedSubjectString)){
-                    std::cerr << correctedSubjectString << "\n";
+                if(!isValidSequence(tmp.sequence)){
+                    std::cerr << tmp.sequence << "\n";
                 }
 
                 const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
 
-                auto& tmp = outputData.anchorCorrections[positionInVector];
-                auto& tmpencoded = outputData.encodedAnchorCorrections[positionInVector];
-
                 if(!originalReadContainsN){
-                    const std::string originalSubjectString = task.subject_string;
-                    const std::string s2 = batch.decodedSubjectStrings[subject_index];
-                    assert(originalSubjectString == s2);
+                    const std::string originalSubjectString = batch.decodedSubjectStrings[subject_index];
 
                     const int maxEdits = subject_length / 7;
                     int edits = 0;
                     for(int i = 0; i < subject_length && edits <= maxEdits; i++){
-                        if(correctedSubjectString[i] != originalSubjectString[i]){
-                            tmp.edits.emplace_back(i, correctedSubjectString[i]);
+                        if(tmp.sequence[i] != originalSubjectString[i]){
+                            tmp.edits.emplace_back(i, tmp.sequence[i]);
                             edits++;
                         }
                     }
@@ -3339,14 +3316,6 @@ namespace test{
                 }else{
                     tmp.useEdits = false;
                 }
-
-                tmp.hq = task.highQualityAlignment;                    
-                tmp.type = TempCorrectedSequence::Type::Anchor;
-                tmp.readId = readId;
-                //tmp.sequence = std::move(task.corrected_subject);
-                tmp.sequence = std::move(correctedSubjectString);
-                //tmp.uncorrectedPositionsNoConsensus = std::move(task.uncorrectedPositionsNoConsensus);
-                tmp.uncorrectedPositionsNoConsensus = std::move(uncorrectedPositionsNoConsensus);
 
                 tmpencoded = tmp.encode();
             }
@@ -3368,19 +3337,17 @@ namespace test{
             for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                 const int subject_index = candidateIndicesToProcess[positionInVector].first;
                 const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
+                const read_number subjectReadId = dataArrays.h_subject_read_ids[subject_index];
 
-                auto& task = batch.tasks[subject_index];
+                auto& tmp = outputData.candidateCorrections[positionInVector];
+                auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
 
                 const size_t offset = dataArrays.h_indices_per_subject_prefixsum[subject_index];
 
                 const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
                                                 + offset * batch.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
-                                                + offset;
-
-                auto& tmp = outputData.candidateCorrections[positionInVector];
-                auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
-
+                                                + offset;           
 
                 const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
 
@@ -3392,12 +3359,15 @@ namespace test{
                 const char* const candidate_data = my_corrected_candidates_data + candidateIndex * batch.decodedSequencePitchInBytes;
 
                 if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
-                    std::cerr << "\n" << "readid " << task.readId << " candidate readid " << candidate_read_id << " : "
+                    std::cerr << "\n" << "readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
                             << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
                 }
                 assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
 
-                auto correctedCandidateString = std::string{candidate_data, candidate_data + candidate_length};
+                tmp.type = TempCorrectedSequence::Type::Candidate;
+                tmp.shift = candidate_shift;
+                tmp.readId = candidate_read_id;
+                tmp.sequence = std::string{candidate_data, candidate_data + candidate_length};
 
                 const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
                 
@@ -3409,8 +3379,8 @@ namespace test{
                     const int maxEdits = candidate_length / 7;
                     int edits = 0;
                     for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
-                        if(correctedCandidateString[pos] != uncorrectedCandidate[pos]){
-                            tmp.edits.emplace_back(pos, correctedCandidateString[pos]);
+                        if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
+                            tmp.edits.emplace_back(pos, tmp.sequence[pos]);
                             edits++;
                         }
                     }
@@ -3420,10 +3390,7 @@ namespace test{
                     tmp.useEdits = false;
                 }
                 
-                tmp.type = TempCorrectedSequence::Type::Candidate;
-                tmp.shift = candidate_shift;
-                tmp.readId = candidate_read_id;
-                tmp.sequence = std::move(correctedCandidateString);
+                
 
                 tmpencoded = tmp.encode();
             }
