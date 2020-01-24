@@ -409,12 +409,14 @@ namespace test{
             std::swap(dataArrays.h_subject_sequences_data, data.h_subject_sequences_data);
             std::swap(dataArrays.h_subject_sequences_lengths, data.h_subject_sequences_lengths);
             std::swap(dataArrays.h_subject_read_ids, data.h_subject_read_ids);
+            std::swap(dataArrays.h_candidate_read_ids, data.h_candidate_read_ids);
             std::swap(dataArrays.h_candidates_per_subject, data.h_candidates_per_subject);
             std::swap(dataArrays.h_candidates_per_subject_prefixsum, data.h_candidates_per_subject_prefixsum);
 
             std::swap(dataArrays.d_subject_sequences_data, data.d_subject_sequences_data);
             std::swap(dataArrays.d_subject_sequences_lengths, data.d_subject_sequences_lengths);
             std::swap(dataArrays.d_subject_read_ids, data.d_subject_read_ids);
+            std::swap(dataArrays.d_candidate_read_ids, data.d_candidate_read_ids);
             std::swap(dataArrays.d_candidates_per_subject, data.d_candidates_per_subject);
             std::swap(dataArrays.d_candidates_per_subject_prefixsum, data.d_candidates_per_subject_prefixsum);
 
@@ -923,26 +925,32 @@ namespace test{
             size_t msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
     
             //sequence input data
+            //following arrays are initialized by next iteration data:
+            //h_subject_sequences_data, h_candidates_per_subject, h_candidates_per_subject_prefixsum
+            //h_subject_read_ids, h_candidate_read_ids
+            //d_subject_sequences_data, d_candidates_per_subject, d_candidates_per_subject_prefixsum
+            //d_subject_read_ids, d_candidate_read_ids
     
-            dataArrays.h_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
+            //dataArrays.h_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
             dataArrays.h_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
             dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
             dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
             dataArrays.h_candidate_sequences_lengths.resize(batchData.n_queries);
-            dataArrays.h_candidates_per_subject.resize(batchData.n_subjects);
-            dataArrays.h_candidates_per_subject_prefixsum.resize((batchData.n_subjects + 1));
-            dataArrays.h_subject_read_ids.resize(batchData.n_subjects);
-            dataArrays.h_candidate_read_ids.resize(batchData.n_queries);
+
+            // dataArrays.h_candidates_per_subject.resize(batchData.n_subjects);
+            // dataArrays.h_candidates_per_subject_prefixsum.resize((batchData.n_subjects + 1));
+            // dataArrays.h_subject_read_ids.resize(batchData.n_subjects);
+            // dataArrays.h_candidate_read_ids.resize(batchData.n_queries);
     
             dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
             dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
             dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
             dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
             dataArrays.d_candidate_sequences_lengths.resize(batchData.n_queries);
-            dataArrays.d_candidates_per_subject.resize(batchData.n_subjects);
-            dataArrays.d_candidates_per_subject_prefixsum.resize((batchData.n_subjects + 1));
-            dataArrays.d_subject_read_ids.resize(batchData.n_subjects);
-            dataArrays.d_candidate_read_ids.resize(batchData.n_queries);
+            // dataArrays.d_candidates_per_subject.resize(batchData.n_subjects);
+            // dataArrays.d_candidates_per_subject_prefixsum.resize((batchData.n_subjects + 1));
+            // dataArrays.d_subject_read_ids.resize(batchData.n_subjects);
+            // dataArrays.d_candidate_read_ids.resize(batchData.n_queries);
     
             //alignment output
     
