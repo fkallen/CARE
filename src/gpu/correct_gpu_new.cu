@@ -656,11 +656,6 @@ namespace test{
             H2D,
             nextData.stream
         ); CUERR;
-
-        cudaStreamSynchronize(nextData.stream); CUERR;
-
-
-        nextData.signal();
     }
 
 
@@ -716,6 +711,8 @@ namespace test{
                             *batchptr, 
                             *batchptr->transFuncData->minhasher
                         );
+                        cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
+                        batchptr->nextIterationData.signal();
                     }else{
                         batchptr->nextIterationData.initialNumberOfCandidates = 0;
                         batchptr->nextIterationData.signal();
