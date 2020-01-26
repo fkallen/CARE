@@ -157,6 +157,9 @@ namespace test{
     struct UnprocessedCorrectionResults{
         int n_subjects;
         int n_queries;
+        int decodedSequencePitchInBytes;
+        int encodedSequencePitchInInts;
+
         std::vector<std::string> decodedSubjectStrings;
         SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
         SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
@@ -300,9 +303,11 @@ namespace test{
 
             rawResults.n_subjects = n_subjects;
             rawResults.n_queries = n_queries;
+            rawResults.encodedSequencePitchInInts = encodedSequencePitchInInts;
+            rawResults.decodedSequencePitchInBytes = decodedSequencePitchInBytes;
             
             std::swap(decodedSubjectStrings, rawResults.decodedSubjectStrings);
-            
+
             std::swap(dataArrays.h_subject_read_ids, rawResults.h_subject_read_ids);
             std::swap(dataArrays.h_subject_is_corrected, rawResults.h_subject_is_corrected);
             std::swap(dataArrays.h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
@@ -2055,10 +2060,10 @@ namespace test{
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
-        auto& outputData = batch.waitableOutputData.data;
-        auto& dataArrays = batch.dataArrays;
+        batch.moveResultsToOutputData(batch.waitableOutputData.data);
 
-        Batch* batchptr = &batch;
+        auto& outputData = batch.waitableOutputData.data;
+        auto& rawResults = outputData.rawResults;
 
         auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
         auto& candidateIndicesToProcess = outputData.candidateIndicesToProcess;
@@ -2066,13 +2071,13 @@ namespace test{
         subjectIndicesToProcess.clear();
         candidateIndicesToProcess.clear();
 
-        subjectIndicesToProcess.reserve(batch.n_subjects);
-        candidateIndicesToProcess.reserve(16 * batch.n_subjects);
+        subjectIndicesToProcess.reserve(rawResults.n_subjects);
+        candidateIndicesToProcess.reserve(16 * rawResults.n_subjects);
 
-        for(int subject_index = 0; subject_index < batch.n_subjects; subject_index++){
-            const read_number readId = dataArrays.h_subject_read_ids[subject_index];
-            const bool isCorrected = dataArrays.h_subject_is_corrected[subject_index];
-            const bool isHQ = dataArrays.h_is_high_quality_subject[subject_index].hq();
+        for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
+            const read_number readId = rawResults.h_subject_read_ids[subject_index];
+            const bool isCorrected = rawResults.h_subject_is_corrected[subject_index];
+            const bool isHQ = rawResults.h_is_high_quality_subject[subject_index].hq();
 
             if(isHQ){
                 transFuncData.correctionStatusFlagsPerRead[readId] |= readCorrectedAsHQAnchor;
@@ -2085,16 +2090,16 @@ namespace test{
             }
         }
 
-        for(int subject_index = 0; subject_index < batch.n_subjects; subject_index++){
+        for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
 
-            const int n_corrected_candidates = dataArrays.h_num_corrected_candidates[subject_index];
-            const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
-                                                + dataArrays.h_indices_per_subject_prefixsum[subject_index];
+            const int n_corrected_candidates = rawResults.h_num_corrected_candidates[subject_index];
+            const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
+                                                + rawResults.h_indices_per_subject_prefixsum[subject_index];
 
             for(int i = 0; i < n_corrected_candidates; ++i) {
                 const int global_candidate_index = my_indices_of_corrected_candidates[i];
 
-                const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
+                const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
                 bool savingIsOk = false;
                 const std::uint8_t mask = transFuncData.correctionStatusFlagsPerRead[candidate_read_id];
@@ -2123,12 +2128,15 @@ namespace test{
         outputData.candidateCorrections.resize(numCorrectedCandidates);
         outputData.encodedCandidateCorrections.resize(numCorrectedCandidates);
 
-        auto unpackAnchors = [batchptr](int begin, int end){
+        auto outputDataPtr = &outputData;
+        auto transFuncDataPtr = batch.transFuncData;
+
+        auto unpackAnchors = [outputDataPtr, transFuncDataPtr](int begin, int end){
             nvtx::push_range("Anchor unpacking", 3);
-            Batch& batch = *batchptr;
-            auto& outputData = batch.waitableOutputData.data;
-            DataArrays& dataArrays = batch.dataArrays;
-            const auto& transFuncData = *batch.transFuncData;
+            
+            auto& outputData = *outputDataPtr;
+            auto& rawResults = outputData.rawResults;
+            const auto& transFuncData = *transFuncDataPtr;
             const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
             
             for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
@@ -2137,21 +2145,21 @@ namespace test{
                 auto& tmp = outputData.anchorCorrections[positionInVector];
                 auto& tmpencoded = outputData.encodedAnchorCorrections[positionInVector];
 
-                const char* const my_corrected_subject_data = dataArrays.h_corrected_subjects + subject_index * batch.decodedSequencePitchInBytes;
-                const read_number readId = dataArrays.h_subject_read_ids[subject_index];
+                const char* const my_corrected_subject_data = rawResults.h_corrected_subjects + subject_index * rawResults.decodedSequencePitchInBytes;
+                const read_number readId = rawResults.h_subject_read_ids[subject_index];
 
-                const int subject_length = dataArrays.h_subject_sequences_lengths[subject_index];
+                const int subject_length = rawResults.h_subject_sequences_lengths[subject_index];
 
-                tmp.hq = dataArrays.h_is_high_quality_subject[subject_index].hq();                    
+                tmp.hq = rawResults.h_is_high_quality_subject[subject_index].hq();                    
                 tmp.type = TempCorrectedSequence::Type::Anchor;
                 tmp.readId = readId;
                 tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
 
-                const int numUncorrectedPositions = dataArrays.h_num_uncorrected_positions_per_subject[subject_index];
+                const int numUncorrectedPositions = rawResults.h_num_uncorrected_positions_per_subject[subject_index];
 
                 if(numUncorrectedPositions > 0){
                     tmp.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
-                    std::copy_n(dataArrays.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
+                    std::copy_n(rawResults.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
                                 numUncorrectedPositions,
                                 tmp.uncorrectedPositionsNoConsensus.begin());
 
@@ -2170,7 +2178,7 @@ namespace test{
                 const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
 
                 if(!originalReadContainsN){
-                    const std::string originalSubjectString = batch.decodedSubjectStrings[subject_index];
+                    const std::string originalSubjectString = rawResults.decodedSubjectStrings[subject_index];
 
                     const int maxEdits = subject_length / 7;
                     int edits = 0;
@@ -2191,12 +2199,13 @@ namespace test{
             nvtx::pop_range();
         };
 
-        auto unpackcandidates = [batchptr](int begin, int end){
+        auto unpackcandidates = [outputDataPtr, transFuncDataPtr](int begin, int end){
             nvtx::push_range("candidate unpacking", 3);
-            Batch& batch = *batchptr;
-            auto& outputData = batch.waitableOutputData.data;
-            DataArrays& dataArrays = batch.dataArrays;
-            const auto& transFuncData = *batch.transFuncData;
+            
+            auto& outputData = *outputDataPtr;
+            auto& rawResults = outputData.rawResults;
+            const auto& transFuncData = *transFuncDataPtr;
+
             const auto& subjectIndicesToProcess = outputData.subjectIndicesToProcess;
             const auto& candidateIndicesToProcess = outputData.candidateIndicesToProcess;
 
@@ -2205,29 +2214,29 @@ namespace test{
             for(int positionInVector = begin; positionInVector < end; ++positionInVector) {
                 const int subject_index = candidateIndicesToProcess[positionInVector].first;
                 const int candidateIndex = candidateIndicesToProcess[positionInVector].second;
-                const read_number subjectReadId = dataArrays.h_subject_read_ids[subject_index];
+                const read_number subjectReadId = rawResults.h_subject_read_ids[subject_index];
 
                 auto& tmp = outputData.candidateCorrections[positionInVector];
                 auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
 
-                const size_t offset = dataArrays.h_indices_per_subject_prefixsum[subject_index];
+                const size_t offset = rawResults.h_indices_per_subject_prefixsum[subject_index];
 
-                const char* const my_corrected_candidates_data = dataArrays.h_corrected_candidates
-                                                + offset * batch.decodedSequencePitchInBytes;
-                const int* const my_indices_of_corrected_candidates = dataArrays.h_indices_of_corrected_candidates
+                const char* const my_corrected_candidates_data = rawResults.h_corrected_candidates
+                                                + offset * rawResults.decodedSequencePitchInBytes;
+                const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
                                                 + offset;           
 
                 const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
 
-                const read_number candidate_read_id = dataArrays.h_candidate_read_ids[global_candidate_index];
+                const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
-                const int candidate_length = dataArrays.h_candidate_sequences_lengths[global_candidate_index];
-                const int candidate_shift = dataArrays.h_alignment_shifts[global_candidate_index];
+                const int candidate_length = rawResults.h_candidate_sequences_lengths[global_candidate_index];
+                const int candidate_shift = rawResults.h_alignment_shifts[global_candidate_index];
 
-                const char* const candidate_data = my_corrected_candidates_data + candidateIndex * batch.decodedSequencePitchInBytes;
+                const char* const candidate_data = my_corrected_candidates_data + candidateIndex * rawResults.decodedSequencePitchInBytes;
 
                 if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
-                    std::cerr << "\n" << "batch " << batch.id << " readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
+                    std::cerr << "readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
                             << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
                 }
                 assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
@@ -2241,7 +2250,7 @@ namespace test{
                 
 
                 if(!originalReadContainsN){
-                    const unsigned int* ptr = &dataArrays.h_candidate_sequences_data[global_candidate_index * batch.encodedSequencePitchInInts];
+                    const unsigned int* ptr = &rawResults.h_candidate_sequences_data[global_candidate_index * rawResults.encodedSequencePitchInInts];
                     const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
 
                     const int maxEdits = candidate_length / 7;
