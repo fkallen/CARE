@@ -267,8 +267,8 @@ namespace test{
 
 		void reset(){
             combinedStreams = false;
-            // n_subjects = 0;
-            // n_queries = 0;
+            n_subjects = 0;
+            n_queries = 0;
             hasUnprocessedResults = false;
         }
 
@@ -2248,8 +2248,6 @@ namespace test{
                 }else{
                     tmp.useEdits = false;
                 }
-                
-                
 
                 tmpencoded = tmp.encode();
             }
@@ -2277,12 +2275,6 @@ namespace test{
     void saveResults(Batch& batch){
 
         const auto& transFuncData = *batch.transFuncData;
-
-        cudaSetDevice(batch.deviceId); CUERR;
-
-        // auto function = [outputData = std::move(batch.waitableOutputData.data),
-        //                  transFuncData = &transFuncData,
-        //                  id = batch.id](){
             
         auto function = [batchPtr = &batch,
             transFuncData = &transFuncData,
@@ -2322,7 +2314,6 @@ namespace test{
         nvtx::push_range("enqueue to outputthread", 2);
         batch.outputThread->enqueue(std::move(function));
         nvtx::pop_range();
-        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
 	}
 
 
@@ -2757,29 +2748,21 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         processBatchUntilResultTransferIsInitiated(currentBatchData);
                     }else{
 
-                        // while(!nextBatchData.waitableOutputData.isDone()){
-                        //     std::cerr << "nextBatchIndex " << nextBatchIndex << "not ready\n";
-                        // }
-                       // std::cerr << "nextBatchIndex " << nextBatchIndex << " wait\n";
-                        //nextBatchData.waitableOutputData.wait(); // until outputdata can savely be reused
-                       // std::cerr << "nextBatchIndex " << nextBatchIndex << " waited\n";
-
                         //std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << nextBatchData.id << "\n";
                         processBatchUntilResultTransferIsInitiated(nextBatchData);
 
                         if(currentBatchData.n_queries == 0){
-                            std::cerr << "ZEEERROOO\n";
                             currentBatchData.waitableOutputData.signal();
+                            progressThread.addProgress(currentBatchData.n_subjects);
                             currentBatchData.reset();
-                            progressThread.addProgress(batchsize);
                             batchIndex = 1-batchIndex;
                             continue;
                         }
                         //std::cerr << "\processBatchResults batch " << currentBatchData.id << "\n";
                         processBatchResults(currentBatchData);
     
+                        progressThread.addProgress(currentBatchData.n_subjects);
                         currentBatchData.reset();
-                        progressThread.addProgress(batchsize);     
 
                         batchIndex = 1-batchIndex;
                     }                
