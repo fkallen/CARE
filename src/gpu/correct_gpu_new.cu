@@ -154,6 +154,39 @@ namespace test{
         SyncFlag syncFlag;
     };
 
+    struct UnprocessedCorrectionResults{
+        int n_subjects;
+        int n_queries;
+        std::vector<std::string> decodedSubjectStrings;
+        SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
+        SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
+        SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
+        SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
+        SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
+        SimpleAllocationPinnedHost<int>h_indices_per_subject_prefixsum;
+        SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
+        SimpleAllocationPinnedHost<char> h_corrected_subjects;
+        SimpleAllocationPinnedHost<char> h_corrected_candidates;
+        SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
+        SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
+        SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
+        SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
+        SimpleAllocationPinnedHost<int> h_alignment_shifts;
+        SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
+    };
+
+    struct OutputData{
+        std::vector<TempCorrectedSequence> anchorCorrections;
+        std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
+        std::vector<TempCorrectedSequence> candidateCorrections;
+        std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
+
+        std::vector<int> subjectIndicesToProcess;
+        std::vector<std::pair<int,int>> candidateIndicesToProcess;
+
+        UnprocessedCorrectionResults rawResults;
+    };
+
 
     template<class T>
     struct WaitableData{
@@ -179,23 +212,11 @@ namespace test{
 
 
     struct Batch {
-
- 
         Batch() = default;
         Batch(const Batch&) = delete;
         Batch(Batch&&) = default;
         Batch& operator=(const Batch&) = delete;
         Batch& operator=(Batch&&) = default;
-
-        struct OutputData{
-            std::vector<TempCorrectedSequence> anchorCorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedAnchorCorrections;
-            std::vector<TempCorrectedSequence> candidateCorrections;
-            std::vector<EncodedTempCorrectedSequence> encodedCandidateCorrections;
-
-            std::vector<int> subjectIndicesToProcess;
-            std::vector<std::pair<int,int>> candidateIndicesToProcess;
-        };
 
         NextIterationData nextIterationData;
         bool isFirstIteration = true;
@@ -272,6 +293,31 @@ namespace test{
             data.n_subjects = 0;
             data.n_queries = 0;
             data.decodedSubjectStrings.clear();
+        }
+
+        void moveResultsToOutputData(OutputData& outputData){
+            auto& rawResults = outputData.rawResults;
+
+            rawResults.n_subjects = n_subjects;
+            rawResults.n_queries = n_queries;
+            
+            std::swap(decodedSubjectStrings, rawResults.decodedSubjectStrings);
+            
+            std::swap(dataArrays.h_subject_read_ids, rawResults.h_subject_read_ids);
+            std::swap(dataArrays.h_subject_is_corrected, rawResults.h_subject_is_corrected);
+            std::swap(dataArrays.h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
+            std::swap(dataArrays.h_num_corrected_candidates, rawResults.h_num_corrected_candidates);
+            std::swap(dataArrays.h_indices_of_corrected_candidates, rawResults.h_indices_of_corrected_candidates);
+            std::swap(dataArrays.h_indices_per_subject_prefixsum, rawResults.h_indices_per_subject_prefixsum);
+            std::swap(dataArrays.h_candidate_read_ids, rawResults.h_candidate_read_ids);
+            std::swap(dataArrays.h_corrected_subjects, rawResults.h_corrected_subjects);
+            std::swap(dataArrays.h_corrected_candidates, rawResults.h_corrected_candidates);
+            std::swap(dataArrays.h_subject_sequences_lengths, rawResults.h_subject_sequences_lengths);
+            std::swap(dataArrays.h_num_uncorrected_positions_per_subject, rawResults.h_num_uncorrected_positions_per_subject);
+            std::swap(dataArrays.h_uncorrected_positions_per_subject, rawResults.h_uncorrected_positions_per_subject);
+            std::swap(dataArrays.h_candidate_sequences_lengths, rawResults.h_candidate_sequences_lengths);
+            std::swap(dataArrays.h_alignment_shifts, rawResults.h_alignment_shifts);
+            std::swap(dataArrays.h_candidate_sequences_data, rawResults.h_candidate_sequences_data);
         }
 
 	};
