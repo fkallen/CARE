@@ -158,29 +158,23 @@ namespace test{
     template<class T>
     struct WaitableData{
         T data;
+        SyncFlag syncFlag;
 
-        bool done = true;
-        std::mutex mDone;
-        std::condition_variable cvDone;
+        void setBusy(){
+            syncFlag.setBusy();
+        }
+
+        bool isBusy() const{
+            return syncFlag.isBusy();
+        }
 
         void wait(){
-            if(!isDone()){
-                std::unique_lock<std::mutex> l(mDone);
-                while(!isDone()){
-                    cvDone.wait(l);
-                }
-            }
+            syncFlag.wait();
         }
 
         void signal(){
-            std::unique_lock<std::mutex> l(mDone);
-            done = true;
-            cvDone.notify_all();
-        }
-
-        bool isDone() const{
-            return done;
-        }
+            syncFlag.signal();
+        } 
     };
 
 
@@ -249,8 +243,8 @@ namespace test{
 
 		void reset(){
             combinedStreams = false;
-            n_subjects = 0;
-            n_queries = 0;
+            // n_subjects = 0;
+            // n_queries = 0;
             hasUnprocessedResults = false;
         }
 
@@ -2015,7 +2009,6 @@ namespace test{
 
         assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
 
-
         auto& outputData = batch.waitableOutputData.data;
         auto& dataArrays = batch.dataArrays;
 
@@ -2070,6 +2063,9 @@ namespace test{
 
         const int numCorrectedAnchors = subjectIndicesToProcess.size();
         const int numCorrectedCandidates = candidateIndicesToProcess.size();
+
+        // std::cerr << "\n" << "batch " << batch.id << " " 
+        //     << numCorrectedAnchors << " " << numCorrectedCandidates << "\n";
 
         outputData.anchorCorrections.clear();
         outputData.encodedAnchorCorrections.clear();
@@ -2185,7 +2181,7 @@ namespace test{
                 const char* const candidate_data = my_corrected_candidates_data + candidateIndex * batch.decodedSequencePitchInBytes;
 
                 if(transFuncData.correctionOptions.new_columns_to_correct < candidate_shift){
-                    std::cerr << "\n" << "readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
+                    std::cerr << "\n" << "batch " << batch.id << " readid " << subjectReadId << " candidate readid " << candidate_read_id << " : "
                             << candidate_shift << " " << transFuncData.correctionOptions.new_columns_to_correct <<"\n";
                 }
                 assert(transFuncData.correctionOptions.new_columns_to_correct >= candidate_shift);
@@ -2247,10 +2243,16 @@ namespace test{
 
         cudaSetDevice(batch.deviceId); CUERR;
 
-        auto function = [outputData = std::move(batch.waitableOutputData.data),
-                         transFuncData = &transFuncData,
-                         id = batch.id](){
+        // auto function = [outputData = std::move(batch.waitableOutputData.data),
+        //                  transFuncData = &transFuncData,
+        //                  id = batch.id](){
             
+        auto function = [batchPtr = &batch,
+            transFuncData = &transFuncData,
+            id = batch.id](){
+
+            auto& batch = *batchPtr;
+            auto& outputData = batch.waitableOutputData.data;
 
             const int numA = outputData.anchorCorrections.size();
             const int numC = outputData.candidateCorrections.size();
@@ -2271,6 +2273,9 @@ namespace test{
                     outputData.encodedCandidateCorrections[i]
                 );
             }
+
+            batch.waitableOutputData.signal();
+            //std::cerr << "batch " << batch.id << " batch.waitableOutputData.signal() finished\n";
 
             nvtx::pop_range();
         };
@@ -2525,6 +2530,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             auto poprange = [&](){
                 nvtx::pop_range();
             };
+
+            batchData.waitableOutputData.wait();
                 
             pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
             
@@ -2603,32 +2610,51 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
         auto processBatchResults = [&](auto& batchData){
             auto& streams = batchData.streams;
-            auto& events = batchData.events;
-
-            auto pushrange = [&](const std::string& msg, int color){
-                nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
-            };
-
-            auto poprange = [&](){
-                nvtx::pop_range();
-            };
+            //auto& events = batchData.events;
 
             cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
+            // std::cerr << "batch " << batchData.id << " waitableOutputData.wait()\n";
+            // batchData.waitableOutputData.wait();
+            // std::cerr << "batch " << batchData.id << " waitableOutputData.wait() finished\n";
 
-            pushrange("unpackClassicResults", 9);
+            assert(!batchData.waitableOutputData.isBusy());
 
-            constructResults(batchData);
+            //std::cerr << "batch " << batchData.id << " waitableOutputData.setBusy()\n";
+            batchData.waitableOutputData.setBusy();
 
-            poprange();
 
+            auto func = [batchDataPtr = &batchData](){
+                //std::cerr << "batch " << batchDataPtr->id << " Backgroundworker func begin\n";
+                auto& batchData = *batchDataPtr;
+                auto pushrange = [&](const std::string& msg, int color){
+                    nvtx::push_range("batch "+std::to_string(batchData.id)+msg, color);
+                };
+    
+                auto poprange = [&](){
+                    nvtx::pop_range();
+                };
 
-            pushrange("saveResults", 10);
+                pushrange("unpackClassicResults", 9);
+    
+                constructResults(batchData);
+    
+                poprange();
+    
+    
+                pushrange("saveResults", 10);
+    
+                saveResults(batchData);
+    
+                poprange();
 
-            saveResults(batchData);
+                //std::cerr << "batch " << batchDataPtr->id << " Backgroundworker func end\n";
+    
+                //batchData.hasUnprocessedResults = false;
+            };
 
-            poprange();
-
-            batchData.hasUnprocessedResults = false;
+            //func();
+            batchData.backgroundWorker->enqueue(func);
+            
         };
 
 
@@ -2678,10 +2704,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[0].nextIterationData.n_subjects == 0
-                        && !batchDataArray[0].hasUnprocessedResults
+                        && !batchDataArray[0].waitableOutputData.isBusy()
                         && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[1].nextIterationData.n_subjects == 0
-                        && !batchDataArray[1].hasUnprocessedResults)) {
+                        && !batchDataArray[1].waitableOutputData.isBusy())) {
 
                     const int nextBatchIndex = 1 - batchIndex;
                     auto& currentBatchData = batchDataArray[batchIndex];
@@ -2697,10 +2723,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                         //     std::cerr << "nextBatchIndex " << nextBatchIndex << "not ready\n";
                         // }
                        // std::cerr << "nextBatchIndex " << nextBatchIndex << " wait\n";
-                        nextBatchData.waitableOutputData.wait(); // until outputdata can savely be reused
+                        //nextBatchData.waitableOutputData.wait(); // until outputdata can savely be reused
                        // std::cerr << "nextBatchIndex " << nextBatchIndex << " waited\n";
 
-                       // std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << nextBatchData.id << "\n";
+                        //std::cerr << "\nprocessBatchUntilResultTransferIsInitiated batch " << nextBatchData.id << "\n";
                         processBatchUntilResultTransferIsInitiated(nextBatchData);
 
                         if(currentBatchData.n_queries == 0){
