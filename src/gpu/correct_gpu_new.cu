@@ -96,6 +96,35 @@ namespace test{
 
     struct TransitionFunctionData;
 
+    struct SyncFlag{
+        bool busy = false;
+        std::mutex m;
+        std::condition_variable cv;
+
+        void setBusy(){
+            busy = true;
+        }
+
+        bool isBusy() const{
+            return busy;
+        }
+
+        void wait(){
+            if(isBusy()){
+                std::unique_lock<std::mutex> l(m);
+                while(isBusy()){
+                    cv.wait(l);
+                }
+            }
+        }
+
+        void signal(){
+            std::unique_lock<std::mutex> l(m);
+            busy = false;
+            cv.notify_all();
+        }        
+    };
+
     struct NextIterationData{
         SimpleAllocationPinnedHost<unsigned int> h_subject_sequences_data;
         SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
@@ -122,28 +151,7 @@ namespace test{
 
         ThreadPool::ParallelForHandle pforHandle;
 
-        bool done = true;
-        std::mutex mDone;
-        std::condition_variable cvDone;
-
-        void wait(){
-            if(!isDone()){
-                std::unique_lock<std::mutex> l(mDone);
-                while(!isDone()){
-                    cvDone.wait(l);
-                }
-            }
-        }
-
-        void signal(){
-            std::unique_lock<std::mutex> l(mDone);
-            done = true;
-            cvDone.notify_all();
-        }
-
-        bool isDone() const{
-            return done;
-        }
+        SyncFlag syncFlag;
     };
 
 
@@ -672,29 +680,29 @@ namespace test{
                     *batchptr->transFuncData->minhasher
                 );
                 cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
-                batchptr->nextIterationData.signal();
+                batchptr->nextIterationData.syncFlag.signal();
             }else{
                 batchptr->nextIterationData.n_queries = 0;
-                batchptr->nextIterationData.signal();
+                batchptr->nextIterationData.syncFlag.signal();
             }
             nvtx::pop_range();
         };
 
         if(batchData.isFirstIteration){
-            batchData.nextIterationData.done = false;
+            batchData.nextIterationData.syncFlag.setBusy();
 
             getDataForNextIteration();        
          
             batchData.isFirstIteration = false;
         }else{
-            batchData.nextIterationData.wait(); //wait until data is available
+            batchData.nextIterationData.syncFlag.wait(); //wait until data is available
         }
 
         batchData.updateFromIterationData(batchData.nextIterationData);
 
         //asynchronously prepare data for next iteration
             
-        batchData.nextIterationData.done = false;
+        batchData.nextIterationData.syncFlag.setBusy();
         batchData.backgroundWorker->enqueue(
             getDataForNextIteration
         );
@@ -2668,10 +2676,10 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 }
 #else 
                 while(!(readIdGenerator.empty() 
-                        && batchDataArray[0].nextIterationData.isDone()
+                        && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[0].nextIterationData.n_subjects == 0
                         && !batchDataArray[0].hasUnprocessedResults
-                        && batchDataArray[1].nextIterationData.isDone()
+                        && !batchDataArray[1].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[1].nextIterationData.n_subjects == 0
                         && !batchDataArray[1].hasUnprocessedResults)) {
 
