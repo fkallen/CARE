@@ -2044,24 +2044,6 @@ namespace test{
 
         const auto& transFuncData = *batch.transFuncData;
 
-        cudaSetDevice(batch.deviceId); CUERR;
-
-        auto& events = batch.events;
-        auto& streams = batch.streams;
-
-        cudaError_t errort = cudaEventQuery(events[correction_finished_event_index]);
-        if(errort != cudaSuccess){
-            std::cout << "error cudaEventQuery\n";
-            std::exit(0);
-        }
-        assert(cudaEventQuery(events[correction_finished_event_index]) == cudaSuccess); CUERR;
-        assert(cudaEventQuery(events[result_transfer_finished_event_index]) == cudaSuccess); CUERR;
-
-
-        assert(transFuncData.correctionOptions.correctionType == CorrectionType::Classic);
-
-        batch.moveResultsToOutputData(batch.waitableOutputData.data);
-
         auto& outputData = batch.waitableOutputData.data;
         auto& rawResults = outputData.rawResults;
 
@@ -2585,8 +2567,6 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             auto poprange = [&](){
                 nvtx::pop_range();
             };
-
-            batchData.waitableOutputData.wait();
                 
             pushrange("getNextBatchOfSubjectsAndDetermineCandidateReadIds", 0);
             
@@ -2672,11 +2652,14 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             // batchData.waitableOutputData.wait();
             // std::cerr << "batch " << batchData.id << " waitableOutputData.wait() finished\n";
 
+            batchData.waitableOutputData.wait();
+
             assert(!batchData.waitableOutputData.isBusy());
 
             //std::cerr << "batch " << batchData.id << " waitableOutputData.setBusy()\n";
-            batchData.waitableOutputData.setBusy();
+            batchData.moveResultsToOutputData(batchData.waitableOutputData.data);
 
+            batchData.waitableOutputData.setBusy();
 
             auto func = [batchDataPtr = &batchData](){
                 //std::cerr << "batch " << batchDataPtr->id << " Backgroundworker func begin\n";
