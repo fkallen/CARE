@@ -2242,10 +2242,13 @@ namespace test{
         auto function = [outputData = std::move(batch.waitableOutputData.data),
                          transFuncData = &transFuncData,
                          id = batch.id](){
-            nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread", 4);
+            
 
             const int numA = outputData.anchorCorrections.size();
             const int numC = outputData.candidateCorrections.size();
+
+            nvtx::push_range("batch "+std::to_string(id)+" writeresultoutputhread"
+                + std::to_string(numA) + " " + std::to_string(numC), 4);
 
             for(int i = 0; i < numA; i++){
                 transFuncData->saveCorrectedSequence(
