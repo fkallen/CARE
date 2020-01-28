@@ -97,11 +97,12 @@ namespace test{
     struct TransitionFunctionData;
 
     struct SyncFlag{
-        bool busy = false;
+        std::atomic<bool> busy{false};
         std::mutex m;
         std::condition_variable cv;
 
         void setBusy(){
+            assert(busy == false);
             busy = true;
         }
 
@@ -264,6 +265,8 @@ namespace test{
 
         int n_subjects;
         int n_queries;
+
+        int max_n_queries = 0;
 
 		void reset(){
             combinedStreams = false;
@@ -773,6 +776,11 @@ namespace test{
         batchData.msa_pitch = SDIV(sizeof(char)*msa_max_column_count, 4) * 4;
         batchData.msa_weights_pitch = SDIV(sizeof(float)*msa_max_column_count, 4) * 4;
         size_t msa_weights_pitch_floats = batchData.msa_weights_pitch / sizeof(float);
+
+        if(batchData.max_n_queries < batchData.n_queries){
+            batchData.max_n_queries = batchData.n_queries;
+            std::cerr << "resize necessary\n";
+        }
 
         //sequence input data
         //following arrays are initialized by next iteration data:
@@ -2398,7 +2406,7 @@ void correct_gpu(const MinhashOptions& minhashOptions,
 
       BackgroundThread outputThread;
 
-      const int threadPoolSize = std::max(1, runtimeOptions.threads - nParallelBatches);
+      const int threadPoolSize = std::max(1, runtimeOptions.threads - 3*int(deviceIds.size()));
       std::cerr << "threadpool size for correction = " << threadPoolSize << "\n";
       ThreadPool threadPool(threadPoolSize);
 
@@ -2505,6 +2513,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
             batchData.encodedSequencePitchInInts = getEncodedNumInts2Bit(sequenceFileProperties.maxSequenceLength);
             batchData.decodedSequencePitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 4) * 4;
             batchData.qualityPitchInBytes = SDIV(sequenceFileProperties.maxSequenceLength, 32) * 32;
+
+            batchData.max_n_queries = batchsize * 2.5 * correctionOptions.estimatedCoverage;
             
             initNextIterationData(batchData.nextIterationData, batchData.deviceId); 
         };
@@ -2681,8 +2691,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 //batchData.hasUnprocessedResults = false;
             };
 
-            //func();
-            batchData.backgroundWorker->enqueue(func);
+            func();
+            //batchData.backgroundWorker->enqueue(func);
             
         };
 
@@ -2709,26 +2719,28 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 int batchIndex = 0;
 #if 0
                 while(!(readIdGenerator.empty() 
-                        && batchDataArray[0].nextIterationData.isDone()
+                        && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
                         && batchDataArray[0].nextIterationData.n_subjects == 0
-                        && batchDataArray[1].nextIterationData.isDone()
-                        && batchDataArray[1].nextIterationData.n_subjects == 0)) {
+                        && !batchDataArray[0].waitableOutputData.isBusy())) {
 
                     auto& batchData = batchDataArray[batchIndex];
 
                     processBatchUntilResultTransferIsInitiated(batchData);
 
                     if(batchData.n_queries == 0){
+                        batchData.waitableOutputData.signal();
+                        progressThread.addProgress(batchData.n_subjects);
                         batchData.reset();
-                        progressThread.addProgress(batchsize);
                         continue;
                     }
 
                     processBatchResults(batchData);
 
-                    batchData.reset();
-                    progressThread.addProgress(batchsize);                    
+                    progressThread.addProgress(batchData.n_subjects);
+                    batchData.reset();                   
                 }
+
+                std::cerr << "exit while loop\n";
 #else 
                 while(!(readIdGenerator.empty() 
                         && !batchDataArray[0].nextIterationData.syncFlag.isBusy()
@@ -2769,7 +2781,8 @@ void correct_gpu(const MinhashOptions& minhashOptions,
                 }
 
 #endif
-
+                std::cerr << "batchDataArray[0].max_n_queries: " << batchDataArray[0].max_n_queries << "\n";
+                std::cerr << "batchDataArray[1].max_n_queries: " << batchDataArray[1].max_n_queries << "\n";
                 batchDataArray[0].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                 batchDataArray[1].backgroundWorker->stopThread(BackgroundThread::StopType::FinishAndStop);
                 destroyBatchData(batchDataArray[0]);
