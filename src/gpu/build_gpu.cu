@@ -216,6 +216,128 @@ namespace gpu{
                                                 int expectedMinimumReadLength,
                                                 int expectedMaximumReadLength){
 
+        auto validateReadstorage = [&](auto& readStorage){
+
+            std::vector<read_number> indicesBuffer;
+            std::vector<Read> readsBuffer;
+
+            ThreadPool threadPool(16);
+            auto gatherHandleQ = readStorage.makeGatherHandleQualities();
+            auto gatherHandleS = readStorage.makeGatherHandleSequences();
+            SimpleAllocationPinnedHost<char> h_qualities(128 * 1000);
+            SimpleAllocationDevice<char> d_qualities(128 * 1000);
+            SimpleAllocationPinnedHost<read_number> h_readids(1000);
+            SimpleAllocationDevice<read_number> d_readids(1000);
+            SimpleAllocationPinnedHost<unsigned int> h_sequences(16 * 1000);
+            SimpleAllocationDevice<unsigned int> d_sequences(16 * 1000);
+
+            cudaStream_t stream;
+            cudaStreamCreate(&stream); CUERR;
+
+            bool oneIter = true;
+
+            auto validateBatch = [&](){
+                std::copy(indicesBuffer.begin(), indicesBuffer.end(), h_readids.get());
+                cudaMemcpyAsync(d_readids.get(), h_readids.get(), indicesBuffer.size() * sizeof(read_number), H2D, stream); CUERR;
+
+                readStorage.gatherSequenceDataToGpuBufferAsync(
+                    &threadPool,
+                    gatherHandleS,
+                    d_sequences.get(),
+                    16,
+                    h_readids.get(),
+                    d_readids.get(),
+                    indicesBuffer.size(),
+                    0,
+                    stream,
+                    16
+                );
+
+                readStorage.gatherQualitiesToGpuBufferAsync(
+                    &threadPool,
+                    gatherHandleQ,
+                    d_qualities.get(),
+                    128,
+                    h_readids.get(),
+                    d_readids.get(),
+                    indicesBuffer.size(),
+                    0,
+                    stream,
+                    16
+                );
+
+                cudaMemcpyAsync(h_qualities.get(), d_qualities.get(), sizeof(char) * 128 * indicesBuffer.size(), D2H, stream); CUERR;
+                cudaMemcpyAsync(h_sequences.get(), d_sequences.get(), sizeof(unsigned int) * 16 * indicesBuffer.size(), D2H, stream); CUERR;
+
+                cudaStreamSynchronize(stream); CUERR;
+
+                
+                for(size_t i = 0; i < indicesBuffer.size(); i++){
+                    // std::cerr << indicesBuffer[i] << "\n";
+                    // std::cerr << "expected " << readsBuffer[i].quality << "\n";
+                    // std::cerr << "got      ";
+                    //     for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                    //         std::cerr << h_qualities[128 * i + l];
+                    //     }
+                    //     std::cerr << "\n";
+
+                    std::string seqstring = get2BitString(h_sequences.get() + i * 16, readsBuffer[i].sequence.size());
+
+                    bool ok = true;
+                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){                                
+
+                        if(readsBuffer[i].sequence[k] != seqstring[k]){
+                            ok = false;
+                            std::cerr << "error at sequence read " << indicesBuffer[i] << " position " << k << "\n";
+                            std::cerr << "expected " << readsBuffer[i].sequence << "\n";
+                            std::cerr << "got      " << seqstring << "\n";
+                        }
+                    }
+
+                    ok = true;
+                    for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){                                
+
+                        if(readsBuffer[i].quality[k] != h_qualities[128 * i + k]){
+                            ok = false;
+                            std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
+                            std::cerr << "expected " << readsBuffer[i].quality << "\n";
+                            std::cerr << "got      ";
+                            for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                                std::cerr << h_qualities[128 * i + l];
+                            }
+                            std::cerr << "\n";
+                        }
+                    }
+                }
+
+                //oneIter = false;
+
+                indicesBuffer.clear();
+                readsBuffer.clear();
+            };
+
+            forEachReadInFile(fileOptions.inputfile,
+                            fileOptions.format,
+                            [&](auto readnum, const auto& read){
+
+                if(oneIter){
+                    indicesBuffer.emplace_back(readnum);
+                    readsBuffer.emplace_back(read);         
+
+                    if(indicesBuffer.size() >= 1000){
+                        validateBatch();
+                    }
+                }
+
+            });
+
+            if(indicesBuffer.size() >= 1){
+                validateBatch();
+            }
+
+            cudaStreamDestroy(stream);
+        };
+
 
 
         if(fileOptions.load_binary_reads_from != ""){
@@ -235,6 +357,8 @@ namespace gpu{
             std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
 
             readStorage.constructionIsComplete();
+
+            validateReadstorage(readStorage);
 
             return result;
         }else{
@@ -541,6 +665,8 @@ namespace gpu{
             // }
 
             readstorage.constructionIsComplete();
+
+            validateReadstorage(readstorage);
 
             return result;
         }
