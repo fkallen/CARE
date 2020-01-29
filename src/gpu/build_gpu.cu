@@ -208,6 +208,286 @@ namespace gpu{
     }
 
 
+    void validateReadstorage(const DistributedReadStorage& readStorage, const FileOptions& fileOptions){
+
+        std::cerr << "validating data in readstorage\n";
+
+        std::vector<read_number> indicesBuffer;
+        std::vector<Read> readsBuffer;
+
+        constexpr int batchsize = 16000;
+
+        const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
+        const int sequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+        const int qualityPitchInBytes = (SDIV(maximumSequenceLength, 32) * 32);
+
+        ThreadPool threadPool(16);
+        auto gatherHandleQ = readStorage.makeGatherHandleQualities();
+        auto gatherHandleS = readStorage.makeGatherHandleSequences();
+        SimpleAllocationPinnedHost<char> h_qualities(qualityPitchInBytes * batchsize);
+        SimpleAllocationDevice<char> d_qualities(qualityPitchInBytes * batchsize);
+        SimpleAllocationPinnedHost<read_number> h_readids(batchsize);
+        SimpleAllocationDevice<read_number> d_readids(batchsize);
+        SimpleAllocationPinnedHost<unsigned int> h_sequences(sequencePitchInInts * batchsize);
+        SimpleAllocationDevice<unsigned int> d_sequences(sequencePitchInInts * batchsize);
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
+
+        bool oneIter = true;
+
+        auto validateBatch = [&](){
+            std::copy(indicesBuffer.begin(), indicesBuffer.end(), h_readids.get());
+            cudaMemcpyAsync(d_readids.get(), h_readids.get(), indicesBuffer.size() * sizeof(read_number), H2D, stream); CUERR;
+
+            readStorage.gatherSequenceDataToGpuBufferAsync(
+                &threadPool,
+                gatherHandleS,
+                d_sequences.get(),
+                sequencePitchInInts,
+                h_readids.get(),
+                d_readids.get(),
+                indicesBuffer.size(),
+                0,
+                stream,
+                16
+            );
+
+            readStorage.gatherQualitiesToGpuBufferAsync(
+                &threadPool,
+                gatherHandleQ,
+                d_qualities.get(),
+                qualityPitchInBytes,
+                h_readids.get(),
+                d_readids.get(),
+                indicesBuffer.size(),
+                0,
+                stream,
+                16
+            );
+
+            cudaMemcpyAsync(h_qualities.get(), d_qualities.get(), sizeof(char) * qualityPitchInBytes * indicesBuffer.size(), D2H, stream); CUERR;
+            cudaMemcpyAsync(h_sequences.get(), d_sequences.get(), sizeof(unsigned int) * sequencePitchInInts * indicesBuffer.size(), D2H, stream); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+
+            auto func = [&](int begin, int end, int /*threadId*/){
+                for(int i = begin; i < end; i++){
+                    // std::cerr << indicesBuffer[i] << "\n";
+                    // std::cerr << "expected " << readsBuffer[i].quality << "\n";
+                    // std::cerr << "got      ";
+                    //     for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                    //         std::cerr << h_qualities[qualityPitchInBytes * i + l];
+                    //     }
+                    //     std::cerr << "\n";
+    
+                    std::string seqstring = get2BitString(h_sequences.get() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
+    
+                    bool ok = true;
+                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){                                
+    
+                        if(readsBuffer[i].sequence[k] != 'N' && readsBuffer[i].sequence[k] != 'n' && readsBuffer[i].sequence[k] != seqstring[k]){
+                            ok = false;
+                            std::cerr << "error at sequence read " << indicesBuffer[i] << " position " << k << "\n";
+                            std::cerr << "expected " << readsBuffer[i].sequence << "\n";
+                            std::cerr << "got      " << seqstring << "\n";
+                        }
+                    }
+    
+                    ok = true;
+                    for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){                                
+    
+                        if(readsBuffer[i].quality[k] != h_qualities[qualityPitchInBytes * i + k]){
+                            ok = false;
+                            std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
+                            std::cerr << "expected " << readsBuffer[i].quality << "\n";
+                            std::cerr << "got      ";
+                            for(int l = 0; l < readsBuffer[i].quality.size(); l++){
+                                std::cerr << h_qualities[qualityPitchInBytes * i + l];
+                            }
+                            std::cerr << "\n";
+                        }
+                    }
+                }
+            };
+
+            //func(0, indices.size(), 0);
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            threadPool.parallelFor(pforHandle, 0, int(indicesBuffer.size()), func);
+           
+
+            //oneIter = false;
+
+            indicesBuffer.clear();
+            readsBuffer.clear();
+        };
+
+        forEachReadInFile(fileOptions.inputfile,
+                        fileOptions.format,
+                        [&](auto readnum, const auto& read){
+
+            if(oneIter){
+                indicesBuffer.emplace_back(readnum);
+                readsBuffer.emplace_back(read);         
+
+                if(indicesBuffer.size() >= batchsize){
+                    validateBatch();
+                }
+            }
+
+        });
+
+        if(indicesBuffer.size() >= 1){
+            validateBatch();
+        }
+
+        cudaStreamDestroy(stream);
+
+        std::cerr << "validated data in readstorage\n";
+    }
+
+
+
+    void validateMinhasher(const Minhasher& minhasher, const DistributedReadStorage& readStorage, const FileOptions& fileOptions){
+
+        std::cerr << "validating data in minhasher\n";
+
+        std::vector<read_number> indicesBuffer;
+        std::vector<Read> readsBuffer;
+        
+        constexpr std::int64_t batchsize = 16000;
+
+        const int maximumSequenceLength = readStorage.getSequenceLengthUpperBound();
+        const int sequencePitchInInts = getEncodedNumInts2Bit(maximumSequenceLength);
+        const int qualityPitchInBytes = (SDIV(maximumSequenceLength, 32) * 32);
+        
+
+        ThreadPool threadPool(16);
+        auto gatherHandleQ = readStorage.makeGatherHandleQualities();
+        auto gatherHandleS = readStorage.makeGatherHandleSequences();
+        SimpleAllocationPinnedHost<char> h_qualities(qualityPitchInBytes * batchsize);
+        SimpleAllocationDevice<char> d_qualities(qualityPitchInBytes * batchsize);
+        SimpleAllocationPinnedHost<int> h_lengths(batchsize);
+        SimpleAllocationDevice<int> d_lengths(batchsize);
+        SimpleAllocationPinnedHost<read_number> h_readids(batchsize);
+        SimpleAllocationDevice<read_number> d_readids(batchsize);
+        SimpleAllocationPinnedHost<unsigned int> h_sequences(sequencePitchInInts * batchsize);
+        SimpleAllocationDevice<unsigned int> d_sequences(sequencePitchInInts * batchsize);
+
+        cudaStream_t stream;
+        cudaStreamCreate(&stream); CUERR;
+
+        bool oneIter = true;
+
+        auto validateBatch = [&](){
+
+            ThreadPool::ParallelForHandle pforHandle;
+
+            std::copy(indicesBuffer.begin(), indicesBuffer.end(), h_readids.get());
+            cudaMemcpyAsync(d_readids.get(), h_readids.get(), indicesBuffer.size() * sizeof(read_number), H2D, stream); CUERR;
+
+            readStorage.gatherSequenceDataToGpuBufferAsync(
+                &threadPool,
+                gatherHandleS,
+                d_sequences.get(),
+                sequencePitchInInts,
+                h_readids.get(),
+                d_readids.get(),
+                indicesBuffer.size(),
+                0,
+                stream,
+                16
+            );
+
+            readStorage.gatherSequenceLengthsToGpuBufferAsync(
+                d_lengths.get(),
+                0,
+                d_readids.get(),
+                indicesBuffer.size(),            
+                stream
+            );
+
+            readStorage.gatherQualitiesToGpuBufferAsync(
+                &threadPool,
+                gatherHandleQ,
+                d_qualities.get(),
+                qualityPitchInBytes,
+                h_readids.get(),
+                d_readids.get(),
+                indicesBuffer.size(),
+                0,
+                stream,
+                16
+            );
+
+            cudaMemcpyAsync(h_lengths.get(), d_lengths.get(), sizeof(int) * indicesBuffer.size(), D2H, stream); CUERR;
+            cudaMemcpyAsync(h_sequences.get(), d_sequences.get(), sizeof(unsigned int) * sequencePitchInInts * indicesBuffer.size(), D2H, stream); CUERR;
+            cudaMemcpyAsync(h_qualities.get(), d_qualities.get(), sizeof(char) * qualityPitchInBytes * indicesBuffer.size(), D2H, stream); CUERR;
+
+            cudaStreamSynchronize(stream); CUERR;
+            
+            
+            auto func1 = [&](int begin, int end, int /*threadId*/){
+                Minhasher::Handle minhashHandle;
+                std::vector<std::string> sequences;
+
+                //should not hit assertion if everything is ok with minhasher
+                for(int i = begin; i < end; i++){               
+                    sequences.emplace_back(get2BitString(h_sequences.get() + i * sequencePitchInInts, h_lengths[i]));
+
+                    minhasher.getCandidates_any_map(
+                        minhashHandle,
+                        sequences.back(),
+                        0
+                    );
+                }
+
+                // check batch hashing too
+                minhasher.calculateMinhashSignatures(
+                    minhashHandle,
+                    sequences
+                );
+
+                minhasher.queryPrecalculatedSignatures(
+                    minhashHandle, 
+                    sequences.size()
+                );
+
+                minhasher.makeUniqueQueryResults(
+                    minhashHandle, 
+                    sequences.size()
+                );
+            };
+
+            //func1(0, int(indicesBuffer.size()), func1);
+            threadPool.parallelFor(pforHandle, 0, int(indicesBuffer.size()), func1);
+
+            //oneIter = false;
+
+            indicesBuffer.clear();
+            readsBuffer.clear();
+        };
+
+        const std::int64_t numReads = readStorage.getNumberOfReads();
+        const int iters = SDIV(numReads, batchsize);
+
+        for(int iter = 0; iter < iters; iter++){
+            const std::int64_t begin = iter * batchsize;
+            const std::int64_t end = std::min(numReads, (iter+1) * batchsize);
+
+            std::cerr << begin << " - " << end << "\n";
+            indicesBuffer.resize(end - begin);
+            std::iota(indicesBuffer.begin(), indicesBuffer.end(), begin);
+
+            validateBatch();
+        }
+
+        std::cerr << "validated data in minhasher\n";
+    }
+
+
 
     BuiltDataStructure<GpuReadStorageWithFlags> buildGpuReadStorage(const FileOptions& fileOptions,
                                                 const RuntimeOptions& runtimeOptions,
@@ -216,127 +496,7 @@ namespace gpu{
                                                 int expectedMinimumReadLength,
                                                 int expectedMaximumReadLength){
 
-        auto validateReadstorage = [&](auto& readStorage){
-
-            std::vector<read_number> indicesBuffer;
-            std::vector<Read> readsBuffer;
-
-            ThreadPool threadPool(16);
-            auto gatherHandleQ = readStorage.makeGatherHandleQualities();
-            auto gatherHandleS = readStorage.makeGatherHandleSequences();
-            SimpleAllocationPinnedHost<char> h_qualities(128 * 1000);
-            SimpleAllocationDevice<char> d_qualities(128 * 1000);
-            SimpleAllocationPinnedHost<read_number> h_readids(1000);
-            SimpleAllocationDevice<read_number> d_readids(1000);
-            SimpleAllocationPinnedHost<unsigned int> h_sequences(16 * 1000);
-            SimpleAllocationDevice<unsigned int> d_sequences(16 * 1000);
-
-            cudaStream_t stream;
-            cudaStreamCreate(&stream); CUERR;
-
-            bool oneIter = true;
-
-            auto validateBatch = [&](){
-                std::copy(indicesBuffer.begin(), indicesBuffer.end(), h_readids.get());
-                cudaMemcpyAsync(d_readids.get(), h_readids.get(), indicesBuffer.size() * sizeof(read_number), H2D, stream); CUERR;
-
-                readStorage.gatherSequenceDataToGpuBufferAsync(
-                    &threadPool,
-                    gatherHandleS,
-                    d_sequences.get(),
-                    16,
-                    h_readids.get(),
-                    d_readids.get(),
-                    indicesBuffer.size(),
-                    0,
-                    stream,
-                    16
-                );
-
-                readStorage.gatherQualitiesToGpuBufferAsync(
-                    &threadPool,
-                    gatherHandleQ,
-                    d_qualities.get(),
-                    128,
-                    h_readids.get(),
-                    d_readids.get(),
-                    indicesBuffer.size(),
-                    0,
-                    stream,
-                    16
-                );
-
-                cudaMemcpyAsync(h_qualities.get(), d_qualities.get(), sizeof(char) * 128 * indicesBuffer.size(), D2H, stream); CUERR;
-                cudaMemcpyAsync(h_sequences.get(), d_sequences.get(), sizeof(unsigned int) * 16 * indicesBuffer.size(), D2H, stream); CUERR;
-
-                cudaStreamSynchronize(stream); CUERR;
-
-                
-                for(size_t i = 0; i < indicesBuffer.size(); i++){
-                    // std::cerr << indicesBuffer[i] << "\n";
-                    // std::cerr << "expected " << readsBuffer[i].quality << "\n";
-                    // std::cerr << "got      ";
-                    //     for(int l = 0; l < readsBuffer[i].quality.size(); l++){
-                    //         std::cerr << h_qualities[128 * i + l];
-                    //     }
-                    //     std::cerr << "\n";
-
-                    std::string seqstring = get2BitString(h_sequences.get() + i * 16, readsBuffer[i].sequence.size());
-
-                    bool ok = true;
-                    for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){                                
-
-                        if(readsBuffer[i].sequence[k] != seqstring[k]){
-                            ok = false;
-                            std::cerr << "error at sequence read " << indicesBuffer[i] << " position " << k << "\n";
-                            std::cerr << "expected " << readsBuffer[i].sequence << "\n";
-                            std::cerr << "got      " << seqstring << "\n";
-                        }
-                    }
-
-                    ok = true;
-                    for(int k = 0; k < readsBuffer[i].quality.size() && ok; k++){                                
-
-                        if(readsBuffer[i].quality[k] != h_qualities[128 * i + k]){
-                            ok = false;
-                            std::cerr << "error at quality read " << indicesBuffer[i] << " position " << k << "\n";
-                            std::cerr << "expected " << readsBuffer[i].quality << "\n";
-                            std::cerr << "got      ";
-                            for(int l = 0; l < readsBuffer[i].quality.size(); l++){
-                                std::cerr << h_qualities[128 * i + l];
-                            }
-                            std::cerr << "\n";
-                        }
-                    }
-                }
-
-                //oneIter = false;
-
-                indicesBuffer.clear();
-                readsBuffer.clear();
-            };
-
-            forEachReadInFile(fileOptions.inputfile,
-                            fileOptions.format,
-                            [&](auto readnum, const auto& read){
-
-                if(oneIter){
-                    indicesBuffer.emplace_back(readnum);
-                    readsBuffer.emplace_back(read);         
-
-                    if(indicesBuffer.size() >= 1000){
-                        validateBatch();
-                    }
-                }
-
-            });
-
-            if(indicesBuffer.size() >= 1){
-                validateBatch();
-            }
-
-            cudaStreamDestroy(stream);
-        };
+        
 
 
 
@@ -357,8 +517,6 @@ namespace gpu{
             std::cout << "Loaded binary reads from " << fileOptions.load_binary_reads_from << std::endl;
 
             readStorage.constructionIsComplete();
-
-            validateReadstorage(readStorage);
 
             return result;
         }else{
@@ -665,8 +823,6 @@ namespace gpu{
             // }
 
             readstorage.constructionIsComplete();
-
-            validateReadstorage(readstorage);
 
             return result;
         }
@@ -1019,6 +1175,9 @@ namespace gpu{
         TIMERSTOPCPU(build_readstorage);
 
         const auto& readStorage = result.builtReadStorage.data.readStorage;
+
+        validateReadstorage(readStorage, fileOptions);
+
         std::cout << "Using " << readStorage.lengthStorage.getRawBitsPerLength() << " bits per read to store its length\n";
 
         if(saveDataStructuresToFile && fileOptions.save_binary_reads_to != "") {
@@ -1054,16 +1213,18 @@ namespace gpu{
         }
         
         const auto& minhasher = result.builtMinhasher.data;
-        const auto histograms = minhasher.getBinSizeHistogramsOfMaps();
 
-        std::ofstream outhist("histograms.txt");
-        for(int i = 0; i < int(histograms.size()); i++){
-            outhist << "table " << i << '\n';
-            for(auto pair : histograms[i]){
-                outhist << pair.first << ' '  << pair.second << '\n';
-            }
-            outhist << '\n';
-        }
+        validateMinhasher(minhasher, readStorage, fileOptions);
+        // const auto histograms = minhasher.getBinSizeHistogramsOfMaps();
+
+        // std::ofstream outhist("histograms.txt");
+        // for(int i = 0; i < int(histograms.size()); i++){
+        //     outhist << "table " << i << '\n';
+        //     for(auto pair : histograms[i]){
+        //         outhist << pair.first << ' '  << pair.second << '\n';
+        //     }
+        //     outhist << '\n';
+        // }
 
         return result;
     }
