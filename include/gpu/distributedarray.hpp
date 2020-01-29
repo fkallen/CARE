@@ -739,6 +739,8 @@ public:
                                     cudaStream_t stream) const{
         if(numIds == 0) return;
 
+        assert(resultPitch % sizeof(Value_t) == 0);
+
         //const int numCpuThreads = care::threadpool.getConcurrency();
 
         //fastpath, if all elements of distributed array reside in a single partition
@@ -747,26 +749,30 @@ public:
                 if(debug) std::cerr << "single location array fasthpath on host\n";
 
                 auto& h_result = handle->pinnedResultData;
-                h_result.resize(numIds * numColumns);
+                h_result.resize(numIds * SDIV(resultPitch, sizeof(Value_t)));
+
+                auto gather = [&](Index_t begin, Index_t end, int /*threadId*/){
+                    for(Index_t k = begin; k < end; k++){
+                        const Index_t localId = indices[k];
+                        const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
+                        //Value_t* destPtr = offsetPtr(h_result.get(), k);
+                        Value_t* destPtr = (Value_t*)(((const char*)(h_result.get())) + resultPitch * k);
+                        
+                        std::copy_n(srcPtr, numColumns, destPtr);
+                    }
+                };
 
                 forLoop( 
                     Index_t(0), 
                     numIds, 
-                    [&](Index_t begin, Index_t end, int threadId){
-                        for(Index_t k = begin; k < end; k++){
-                            const Index_t localId = indices[k];
-                            const Value_t* srcPtr = offsetPtr(dataPtrPerLocation[hostLocation], localId);
-                            Value_t* destPtr = offsetPtr(h_result.get(), k);
-                            std::copy_n(srcPtr, numColumns, destPtr);
-                        }
-                    }
+                    gather
                 );
 
                 int oldDevice; cudaGetDevice(&oldDevice); CUERR;
 
                 wrapperCudaSetDevice(resultDeviceId); CUERR;
 
-                cudaMemcpyAsync(d_result, h_result.get(), sizeof(Value_t) * numIds * numColumns, H2D, stream); CUERR;
+                cudaMemcpyAsync(d_result, h_result.get(), numIds * resultPitch, H2D, stream); CUERR;
 
                 wrapperCudaSetDevice(oldDevice); CUERR;
 
@@ -1007,7 +1013,7 @@ public:
                                         sizeOfElement * numHits,
                                         stream); CUERR;
 
-                    if(debug) cudaDeviceSynchronize(); CUERR;
+                    if(debug){ cudaDeviceSynchronize(); CUERR;}
                 }                       
             }
     	}
@@ -1121,6 +1127,7 @@ public:
                 const Index_t outputrow = i / numCols;
                 const Index_t inputrow = d_indices[outputrow] + indexOffset;
                 const Index_t col = i % numCols;
+
                 d_result[size_t(outputrow) * resultPitchValueTs + col] 
                         = gpuData[size_t(inputrow) * numCols + col];
             }
