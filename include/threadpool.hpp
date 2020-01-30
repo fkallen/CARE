@@ -339,6 +339,10 @@ struct ParallelForLoopExecutor{
         );
     }
 
+    int getNumThreads() const{
+        return threadPool->getConcurrency();
+    }
+
     ThreadPool* threadPool;
     ThreadPool::ParallelForHandle* pforHandle;
 };
