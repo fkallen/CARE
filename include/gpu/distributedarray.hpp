@@ -864,9 +864,13 @@ public:
 
         
         std::vector<Index_t> hitsPerLocation(numLocations, 0);
-#if 0   
+        std::vector<int> locationsOfIndices(numIds);
+        std::vector<Index_t> localIndices(numIds);
+
+#if 1   
         const int threadlocoffset = SDIV(numLocations,32) * 32;     
-        std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numCpuThreads, 0);
+        const int numThreads = forLoop.getNumThreads();
+        std::vector<Index_t> hitsPerLocationPerThread(threadlocoffset * numThreads, 0);
 
         forLoop(
             Index_t(0), 
@@ -874,13 +878,16 @@ public:
             [&](Index_t begin, Index_t end, int threadId){                
                 Index_t* hitsptr = hitsPerLocationPerThread.data() + threadlocoffset * threadId;
                 for(Index_t i = begin; i < end; i++){
-                    int location = getLocation(indices[i]);
+                    const int location = getLocation(indices[i]);
+                    locationsOfIndices[i] = location;
+                    const Index_t localIndex = indices[i] - elementsPerLocationPS[location];
+                    localIndices[i] = localIndex;
                     hitsptr[location]++;
                 }
             }
         );
 
-        for(int k = 0; k < numCpuThreads; k++){
+        for(int k = 0; k < numThreads; k++){
             for(int l = 0; l < numLocations; l++){
                 hitsPerLocation[l] += hitsPerLocationPerThread[threadlocoffset * k + l];
             }
@@ -924,14 +931,12 @@ public:
     	std::partial_sum(hitsPerLocation.begin(), hitsPerLocation.end(), hitsPerLocationPrefixSum.begin()+1);
         std::fill(hitsPerLocation.begin(), hitsPerLocation.end(), 0);
 
-        std::vector<Index_t> permutationIndices(numIds);
-
         handle->pinnedLocalIndices.resize(numIds);
         handle->pinnedPermutationIndices.resize(numIds);
         for(Index_t i = 0; i < numIds; i++){
-    		int location = getLocation(indices[i]);
-            Index_t localIndex = indices[i] - elementsPerLocationPS[location];
-            Index_t tmpresultindex = hitsPerLocationPrefixSum[location] + hitsPerLocation[location];
+    		const int location = locationsOfIndices[i]; //getLocation(indices[i]);
+            const Index_t localIndex = localIndices[i]; //indices[i] - elementsPerLocationPS[location];
+            const Index_t tmpresultindex = hitsPerLocationPrefixSum[location] + hitsPerLocation[location];
             handle->pinnedPermutationIndices[i] = tmpresultindex;
 
             handle->pinnedLocalIndices[tmpresultindex] = localIndex;
