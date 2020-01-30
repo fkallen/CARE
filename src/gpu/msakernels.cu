@@ -335,10 +335,6 @@ namespace gpu{
         }
     }
 
-
-
-
-    //template<bool candidatesAreTransposed>
     __global__
     void msaAddSequencesSmemWithSmallIfIntUnrolledQualitiesUnrolledKernel(
                 char* __restrict__ consensus,
@@ -482,7 +478,9 @@ namespace gpu{
 
                             for(int k = 0; k < 4; k++){
                                 char currentFourQualities[4];
-                                *((int*)&currentFourQualities[0]) = ((const int*)queryQualityScore)[intIndex * 4 + k];
+                                if(canUseQualityScores){
+                                    *((int*)&currentFourQualities[0]) = ((const int*)queryQualityScore)[intIndex * 4 + k];
+                                }
 
                                 //#pragma unroll
                                 for(int l = 0; l < 4; l++){
