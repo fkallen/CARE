@@ -506,7 +506,7 @@ struct Minhasher {
 
         
 
-
+        std::vector<Value_t> contiguousDataOfRanges;
         std::vector<Range_t> multiranges;
 		std::vector<Value_t> multiallUniqueResults;
         std::vector<std::uint64_t> multiminhashSignatures;

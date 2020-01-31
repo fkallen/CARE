@@ -622,6 +622,27 @@ namespace care{
         //     }
         // }
 
+        handle.contiguousDataOfRanges.resize(maxNumResults);
+
+        // copy the data identified by the ranges, which may be scattered across the whole hash tables, 
+        // into a contiguous chunk of memory
+        {
+            auto currentBegin = handle.contiguousDataOfRanges.begin();
+            auto currentEnd = handle.contiguousDataOfRanges.begin();
+            for(int i = 0; i < numSequences; i++){
+                auto myranges = &handle.multiranges[i * minparams.maps];
+                const int numRangesForSequence = minparams.maps;
+                for(int r = 0; r < numRangesForSequence; r++){
+                    auto& range = myranges[r];
+                    currentEnd = std::copy(range.first, range.second, currentBegin);
+                    range.first = &(*currentBegin);
+                    range.second = &(*currentEnd);
+                    currentBegin = currentEnd;
+                }
+            }
+        }
+
+        //for each queried sequence, perform set union of all its ranges
         auto currentBegin = handle.multiallUniqueResults.begin();
         auto currentEnd = handle.multiallUniqueResults.begin();
         for(int i = 0; i < numSequences; i++){
