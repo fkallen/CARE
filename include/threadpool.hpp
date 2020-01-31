@@ -340,7 +340,7 @@ struct ParallelForLoopExecutor{
     }
 
     int getNumThreads() const{
-        return threadPool->getConcurrency();
+        return threadPool->getConcurrency()+1;
     }
 
     ThreadPool* threadPool;
