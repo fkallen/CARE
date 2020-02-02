@@ -513,7 +513,7 @@ public:
 
 
 
-        bool hasQualityScores() const{
+        bool canUseQualityScores() const{
             return useQualityScores;
         }
 
@@ -523,6 +523,14 @@ public:
 
         int getMaximumAllowedSequenceBytes() const{
             return sequenceDataPitchInInts * sizeof(unsigned int);
+        }
+
+        int getSequenceLengthLowerBound() const{
+            return sequenceLengthLowerBound;
+        }
+
+        int getSequenceLengthUpperBound() const{
+            return sequenceLengthUpperBound;
         }
 
         void saveToFile(const std::string& filename) const{
