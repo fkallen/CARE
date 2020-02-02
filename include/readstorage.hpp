@@ -348,11 +348,11 @@ public:
                 GatherHandle& handle,
                 GatherType gatherType,
                 const T* source,
-                int sourcePitchElements,
+                size_t sourcePitchElements,
                 const read_number* readIds,
                 int numReadIds,
                 T* destination,
-                int destinationPitchElements) const noexcept{
+                size_t destinationPitchElements) const noexcept{
             
             if(numReadIds == 0){
                 return;
