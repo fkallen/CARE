@@ -706,6 +706,8 @@ namespace cpu{
                     length
                 );
             }
+
+            
             
             if(0) /*if(task.subjectReadId == 1)*/{
                 for(int i = 0; i < task.numFilteredCandidates; i++){
@@ -992,6 +994,7 @@ namespace cpu{
                 const std::uint8_t* correctionStatusFlagsPerRead){            
                
             if(task.active){
+                
                 if(task.subjectCorrection.isCorrected){
                     auto& correctedSequenceString = task.subjectCorrection.correctedSequence;
                     const int correctedlength = correctedSequenceString.length();
@@ -1019,8 +1022,6 @@ namespace cpu{
                     tmp.readId = task.subjectReadId;
                     tmp.sequence = std::move(correctedSequenceString); 
                     
-                    //std::cerr << "subject " << tmp << "\n";
-                    
                     data.outputData.anchorCorrections.emplace_back(std::move(tmp));
                 }
                 
@@ -1043,9 +1044,14 @@ namespace cpu{
                         tmp.type = TempCorrectedSequence::Type::Candidate;
                         tmp.readId = candidateId;
                         tmp.shift = correctedCandidate.shift;
-                        if(task.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward){
+
+                        const bool candidateIsForward = task.bestAlignmentFlags[correctedCandidate.index] == BestAlignment_t::Forward;
+
+                        if(candidateIsForward){
                             tmp.sequence = std::move(correctedCandidate.sequence);
                         }else{
+                            //if input candidate for correction is reverse complement, corrected candidate is also reverse complement
+                            //get forward sequence
                             std::string fwd;
                             fwd.resize(correctedCandidate.sequence.length());
                             reverseComplementString(
@@ -1068,19 +1074,36 @@ namespace cpu{
                             
                             const int maxEdits = correctedCandidateLength / 7;
                             int edits = 0;
-                            for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
-                                if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
-                                    tmp.edits.emplace_back(pos, tmp.sequence[pos]);
-                                    edits++;
+                            if(candidateIsForward){
+                                for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
+                                    if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
+                                        tmp.edits.emplace_back(pos, tmp.sequence[pos]);
+                                        edits++;
+                                    }
+                                }
+                            }else{
+                                //tmp.sequence is forward sequence, but uncorrectedCandidate is reverse complement
+                                std::string fwduncorrected;
+                                fwduncorrected.resize(uncorrectedCandidateLength);
+                                reverseComplementString(
+                                    &fwduncorrected[0], 
+                                    uncorrectedCandidate, 
+                                    uncorrectedCandidateLength
+                                );
+
+                                for(int pos = 0; pos < correctedCandidateLength && edits <= maxEdits; pos++){
+                                    if(tmp.sequence[pos] != fwduncorrected[pos]){
+                                        tmp.edits.emplace_back(pos, tmp.sequence[pos]);
+                                        edits++;
+                                    }
                                 }
                             }
+                            
                             
                             tmp.useEdits = edits <= maxEdits;
                         }else{
                             tmp.useEdits = false;
                         }
-                        
-                        //std::cerr << "candidate " << tmp << "\n";
                         
                         data.outputData.candidateCorrections.emplace_back(std::move(tmp));
                     }

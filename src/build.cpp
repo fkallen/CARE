@@ -26,8 +26,8 @@
 
 
 
-#define VALIDATE_READSTORAGE
-#define VALIDATE_MINHASHER
+// #define VALIDATE_READSTORAGE
+// #define VALIDATE_MINHASHER
 
 namespace care{
 
@@ -109,7 +109,7 @@ namespace care{
                         std::cerr << "got      " << h_lengths[i] << "\n";
                     } 
     
-                    std::string seqstring = get2BitString(h_sequences.data() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
+                    const std::string seqstring = get2BitString(h_sequences.data() + i * sequencePitchInInts, readsBuffer[i].sequence.size());
     
                     for(int k = 0; k < readsBuffer[i].sequence.size() && ok; k++){  
 
