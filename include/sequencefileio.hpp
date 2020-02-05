@@ -4,6 +4,8 @@
 #include <config.hpp>
 #include <memoryfile.hpp>
 
+#include <hpc_helpers.cuh>
+
 #include <cstdint>
 #include <fstream>
 #include <string>
@@ -14,6 +16,8 @@
 
 #include <fcntl.h> // open
 #include <zlib.h> //gzFile
+
+
 
 namespace care{
 
@@ -282,13 +286,17 @@ struct TempCorrectedSequence{
     struct Edit{
         char base;
         int pos;
+
         Edit() = default;
+        HOSTDEVICEQUALIFIER
         Edit(int p, char b) : base(b), pos(p){}
 
+        HOSTDEVICEQUALIFIER
         bool operator==(const Edit& rhs) const{
             return base == rhs.base && pos == rhs.pos;
         }
 
+        HOSTDEVICEQUALIFIER
         bool operator!=(const Edit& rhs) const{
             return !(operator==(rhs));
         }

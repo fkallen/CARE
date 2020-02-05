@@ -5,6 +5,9 @@
 #include "bestalignment.hpp"
 #include "msa.hpp"
 #include "utility_kernels.cuh"
+
+#include <sequencefileio.hpp>
+
 //#include <gpu/thrust_custom_allocators.hpp>
 #include <gpu/simpleallocation.cuh>
 #include <gpu/kernels.hpp>
@@ -487,6 +490,19 @@ struct DataArrays {
         d_num_indices = std::move(SimpleAllocationDevice<int>{});
         d_num_indices_tmp = std::move(SimpleAllocationDevice<int>{});
 
+        d_indices_of_corrected_subjects = std::move(SimpleAllocationDevice<int>{});
+        d_num_indices_of_corrected_subjects = std::move(SimpleAllocationDevice<int>{});
+
+
+        h_editsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<TempCorrectedSequence::Edit>{});
+        h_numEditsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<int>{});
+        h_anchorContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
+
+        d_editsPerCorrectedSubject = std::move(SimpleAllocationDevice<TempCorrectedSequence::Edit>{});
+        d_numEditsPerCorrectedSubject = std::move(SimpleAllocationDevice<int>{});
+        d_anchorContainsN = std::move(SimpleAllocationDevice<bool>{});
+
+
         d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
 
         d_canExecute = std::move(SimpleAllocationDevice<bool>{});
@@ -555,6 +571,11 @@ struct DataArrays {
         bytes += f(h_indices_per_subject_prefixsum);
         bytes += f(h_num_indices);
 
+        bytes += f(h_editsPerCorrectedSubject);
+        bytes += f(h_numEditsPerCorrectedSubject);
+        bytes += f(h_anchorContainsN);
+
+
         return bytes;
 	}
 
@@ -611,6 +632,13 @@ struct DataArrays {
         bytes += f(d_indices_per_subject_prefixsum);
         bytes += f(d_num_indices);
         bytes += f(d_num_indices_tmp);
+
+        bytes += f(d_indices_of_corrected_subjects);
+        bytes += f(d_num_indices_of_corrected_subjects);
+
+        bytes += f(d_editsPerCorrectedSubject);
+        bytes += f(d_numEditsPerCorrectedSubject);
+        bytes += f(d_anchorContainsN);
 
         bytes += f(d_cub_temp_storage);
 
@@ -670,6 +698,13 @@ struct DataArrays {
         bytes += f(h_indices_per_subject_prefixsum);
         bytes += f(h_num_indices);
 
+        bytes += f(h_editsPerCorrectedSubject);
+        bytes += f(h_numEditsPerCorrectedSubject);
+        bytes += f(h_anchorContainsN);
+
+
+
+
         return bytes;
 	}
 
@@ -726,6 +761,12 @@ struct DataArrays {
         bytes += f(d_indices_per_subject_prefixsum);
         bytes += f(d_num_indices);
         bytes += f(d_num_indices_tmp);
+
+        bytes += f(d_indices_of_corrected_subjects);
+        bytes += f(d_num_indices_of_corrected_subjects);
+        bytes += f(d_editsPerCorrectedSubject);
+        bytes += f(d_numEditsPerCorrectedSubject);
+        bytes += f(d_anchorContainsN);
 
         bytes += f(d_cub_temp_storage);
 
@@ -803,6 +844,20 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_num_indices;
     SimpleAllocationDevice<int> d_num_indices_tmp;
 
+    SimpleAllocationPinnedHost<int> h_indices_of_corrected_subjects;
+    SimpleAllocationPinnedHost<int> h_num_indices_of_corrected_subjects;
+
+    SimpleAllocationDevice<int> d_indices_of_corrected_subjects;
+    SimpleAllocationDevice<int> d_num_indices_of_corrected_subjects;
+
+
+    SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
+    SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedSubject;
+    SimpleAllocationPinnedHost<bool> h_anchorContainsN;
+
+    SimpleAllocationDevice<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
+    SimpleAllocationDevice<int> d_numEditsPerCorrectedSubject;
+    SimpleAllocationDevice<bool> d_anchorContainsN;
 
 
     ReadQualitiesPointers getHostQualityPointers() const{

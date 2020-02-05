@@ -5,6 +5,7 @@
 //#include <gpu/bestalignment.hpp>
 #include <bestalignment.hpp>
 #include <msa.hpp>
+#include <sequencefileio.hpp>
 
 #include <config.hpp>
 
@@ -108,6 +109,7 @@ enum class KernelId {
     MSAFindConsensusImplicit,
     MSACorrectSubjectImplicit,
     MSAFindCandidatesOfDifferentRegion,
+    ConstructAnchorResults
 };
 
 struct KernelLaunchConfig {
@@ -362,6 +364,25 @@ void call_msa_correct_candidates_kernel_async(
             KernelLaunchHandle& handle);
 
 
+
+
+
+void callConstructAnchorResultsKernelAsync(
+            TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedSubject,
+            int* __restrict__ d_numEditsPerCorrectedSubject,
+            int doNotUseEditsValue,
+            const int* __restrict__ d_indicesOfCorrectedSubjects,
+            const int* __restrict__ d_numIndicesOfCorrectedSubjects,
+            const bool* __restrict__ d_readContainsN,
+            const unsigned int* __restrict__ d_uncorrectedSubjects,
+            const int* __restrict__ d_subjectLengths,
+            const char* __restrict__ d_correctedSubjects,
+            int numEditsThreshold,
+            size_t encodedSequencePitchInInts,
+            size_t decodedSequencePitchInBytes,
+            int numSubjects,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
 
 
 
