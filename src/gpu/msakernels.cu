@@ -477,7 +477,10 @@ namespace gpu{
                             const unsigned int currentDataInt = ((unsigned int*)query)[intIndex * (candidatesAreTransposed ? n_queries : 1)];
 
                             for(int k = 0; k < 4; k++){
-                                char currentFourQualities[4];
+                                alignas(4) char currentFourQualities[4];
+
+                                assert(size_t(&currentFourQualities[0]) % 4 == 0);
+
                                 if(canUseQualityScores){
                                     *((int*)&currentFourQualities[0]) = ((const int*)queryQualityScore)[intIndex * 4 + k];
                                 }
