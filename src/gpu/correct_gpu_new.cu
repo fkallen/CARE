@@ -2345,15 +2345,15 @@ namespace test{
                 tmp.readId = readId;
                 tmp.sequence = std::string{my_corrected_subject_data, my_corrected_subject_data + subject_length};
 
-                const int numUncorrectedPositions = rawResults.h_num_uncorrected_positions_per_subject[subject_index];
+                // const int numUncorrectedPositions = rawResults.h_num_uncorrected_positions_per_subject[subject_index];
 
-                if(numUncorrectedPositions > 0){
-                    tmp.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
-                    std::copy_n(rawResults.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
-                                numUncorrectedPositions,
-                                tmp.uncorrectedPositionsNoConsensus.begin());
+                // if(numUncorrectedPositions > 0){
+                //     tmp.uncorrectedPositionsNoConsensus.resize(numUncorrectedPositions);
+                //     std::copy_n(rawResults.h_uncorrected_positions_per_subject + subject_index * transFuncData.sequenceFileProperties.maxSequenceLength,
+                //                 numUncorrectedPositions,
+                //                 tmp.uncorrectedPositionsNoConsensus.begin());
 
-                }
+                // }
 
                 auto isValidSequence = [](const std::string& s){
                     return std::all_of(s.begin(), s.end(), [](char c){
@@ -2365,8 +2365,37 @@ namespace test{
                     std::cerr << tmp.sequence << "\n";
                 }
 
-                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
+                
                 tmp.edits.clear();
+
+#if 1                
+                
+
+                const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
+                if(numEdits != doNotUseEditsValue){
+                    tmp.edits.resize(numEdits);
+                    const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
+                    std::copy_n(gpuedits, numEdits, tmp.edits.begin());
+                    tmp.useEdits = true;
+                }else{
+                    tmp.useEdits = false;
+                }
+                
+#else              
+
+                TempCorrectedSequence debugresult;
+
+                const int numEdits = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
+                if(numEdits != doNotUseEditsValue){
+                    debugresult.edits.resize(numEdits);
+                    const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
+                    std::copy_n(gpuedits, numEdits, debugresult.edits.begin());
+                    debugresult.useEdits = true;
+                }else{
+                    debugresult.useEdits = false;
+                }
+
+                const bool originalReadContainsN = transFuncData.readStorage->readContainsN(readId);
                 if(!originalReadContainsN){
                     const std::string originalSubjectString = rawResults.decodedSubjectStrings[subject_index];
 
@@ -2384,19 +2413,23 @@ namespace test{
                     tmp.useEdits = false;
                 }
 
+                assert(tmp.useEdits == debugresult.useEdits && debugresult.edits == tmp.edits);
+
+#endif                
+#if 0 // validity check of gpu data
                 if(tmp.useEdits){
                     const int gpures = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
                     const int cpures = tmp.edits.size();
                     if(gpures != cpures){
                         std::cerr << "gpures " << gpures << ", cpures " << cpures << "\n";
                     }else{
-                        // const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
-                        // for(int k = 0; k < cpures; k++){
-                        //     if(tmp.edits[k] != gpuedits[k]){
-                        //         std::cerr << "error " << positionInVector << " " << k << "\n";
-                        //         std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << gpuedits[k].pos << " " << gpuedits[k].base << "\n";
-                        //     }
-                        // }
+                        const auto* gpuedits = rawResults.h_editsPerCorrectedSubject + positionInVector * rawResults.maxNumEditsPerSequence;
+                        for(int k = 0; k < cpures; k++){
+                            if(tmp.edits[k] != gpuedits[k]){
+                                std::cerr << "error " << positionInVector << " " << k << "\n";
+                                std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << gpuedits[k].pos << " " << gpuedits[k].base << "\n";
+                            }
+                        }
                     }
                 }else{
                     const int gpures = rawResults.h_numEditsPerCorrectedSubject[positionInVector];
@@ -2404,7 +2437,7 @@ namespace test{
                         std::cerr << "!useEdits, but gpures = " << gpures << "\n";
                     }
                 }
-
+#endif
                 tmpencoded = tmp.encode();
 
                 // if(readId == 4537685){
