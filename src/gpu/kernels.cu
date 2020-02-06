@@ -1357,6 +1357,211 @@ namespace gpu{
 
 
 
+    template<int BLOCKSIZE, int groupsize>
+    __global__
+    void msa_correct_candidates_with_group_kernel(
+                MSAPointers d_msapointers,
+                AlignmentResultPointers d_alignmentresultpointers,
+                ReadSequencesPointers d_sequencePointers,
+                CorrectionResultPointers d_correctionResultPointers,
+                const int* __restrict__ d_indices,
+                const int* __restrict__ d_indices_per_subject,
+                const int* __restrict__ d_indices_per_subject_prefixsum,
+                const int* __restrict__ d_candidates_per_hq_subject_prefixsum, // inclusive, with leading zero
+                //int* __restrict__ globalCommBuffer, // at least n_subjects elements, must be zero'd
+                int n_subjects,
+                int n_queries,
+                const int* __restrict__ d_num_indices,
+                int encodedSequencePitchInInts,
+                size_t sequence_pitch,
+                size_t msa_pitch,
+                size_t msa_weights_pitch,
+                size_t dynamicsmemPitchInInts,
+                float min_support_threshold,
+                float min_coverage_threshold,
+                int new_columns_to_correct){
+
+        /*
+            Use groupsize threads per candidate to perform correction
+        */
+        static_assert(BLOCKSIZE % groupsize == 0, "BLOCKSIZE % groupsize != 0");
+        constexpr int groupsPerBlock = BLOCKSIZE / groupsize;
+
+
+        auto make_unpacked_reverse_complement_inplace = [] (std::uint8_t* sequence, int sequencelength){
+            return reverseComplementStringInplace((char*)sequence, sequencelength);
+        };
+
+        auto decodedReverseComplementInplaceGroup = [](auto group, char* sequence, int sequencelength){
+            auto make_reverse_complement_nuc = [](char in){
+                switch(in){
+                    case 'A': return 'T';
+                    case 'C': return 'G';
+                    case 'G': return 'C';
+                    case 'T': return 'A';
+                    default :return 'F';
+                }
+            };
+    
+            for(int i = group.thread_rank(); i < sequencelength/2; i += group.size()){
+                const std::uint8_t front = make_reverse_complement_nuc(sequence[i]);
+                const std::uint8_t back = make_reverse_complement_nuc(sequence[sequencelength - 1 - i]);
+                sequence[i] = back;
+                sequence[sequencelength - 1 - i] = front;
+            }
+    
+            if(sequencelength % 2 == 1 && group.thread_rank() == 0){
+                const int middleindex = sequencelength/2;
+                sequence[middleindex] = make_reverse_complement_nuc(sequence[middleindex]);
+            }
+        };
+
+        auto to_nuc = [](char c){
+            constexpr char A_enc = 0x00;
+            constexpr char C_enc = 0x01;
+            constexpr char G_enc = 0x02;
+            constexpr char T_enc = 0x03;
+
+            switch(c){
+            case A_enc: return 'A';
+            case C_enc: return 'C';
+            case G_enc: return 'G';
+            case T_enc: return 'T';
+            default: return 'F';
+            }
+        };
+
+        using BlockReduceInt = cub::BlockReduce<int, BLOCKSIZE>;
+
+
+
+        __shared__ int shared_destinationIndex[groupsPerBlock];
+        extern __shared__ int dynamicsmem[];
+
+
+
+        auto tgroup = cg::tiled_partition<32>(cg::this_thread_block());
+
+        const int numGroups = (gridDim.x * blockDim.x) / groupsize;
+        const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
+        const int groupIdInBlock = threadIdx.x / groupsize;
+
+        char* const shared_correctedCandidate = (char*)(dynamicsmem + dynamicsmemPitchInInts * groupIdInBlock);
+
+
+        const size_t msa_weights_pitch_floats = msa_weights_pitch / sizeof(float);
+        const int num_high_quality_subject_indices = *d_correctionResultPointers.numHighQualitySubjectIndices;
+        const int num_candidates_of_hq_subjects = d_candidates_per_hq_subject_prefixsum[num_high_quality_subject_indices];
+
+        for(int candidateHQid = groupId;
+                candidateHQid < num_candidates_of_hq_subjects;
+                candidateHQid +=  numGroups){
+
+            if(candidateHQid < num_candidates_of_hq_subjects){
+
+                const int hqsubjectIndex = thrust::distance(d_candidates_per_hq_subject_prefixsum,
+                    thrust::lower_bound(
+                        thrust::seq,
+                        d_candidates_per_hq_subject_prefixsum,
+                        d_candidates_per_hq_subject_prefixsum + num_high_quality_subject_indices + 1,
+                        candidateHQid + 1))-1;
+
+                const int subjectIndex = d_correctionResultPointers.highQualitySubjectIndices[hqsubjectIndex];
+                const int local_candidate_index = candidateHQid - d_candidates_per_hq_subject_prefixsum[hqsubjectIndex];
+
+                const bool canHandleCandidate = checkIfCandidateShouldBeCorrected(
+                                                        d_msapointers,
+                                                        d_alignmentresultpointers,
+                                                        d_sequencePointers,
+                                                        d_correctionResultPointers,
+                                                        d_indices,
+                                                        d_indices_per_subject_prefixsum,
+                                                        msa_weights_pitch_floats,
+                                                        min_support_threshold,
+                                                        min_coverage_threshold,
+                                                        new_columns_to_correct,
+                                                        subjectIndex,
+                                                        local_candidate_index);
+
+                if(canHandleCandidate) {
+                    if(tgroup.thread_rank() == 0){                        
+                        shared_destinationIndex[groupIdInBlock] = atomicAdd(d_correctionResultPointers.numCorrectedCandidates + subjectIndex, 1);
+                    }
+                    tgroup.sync();
+                    
+
+                    const char* const my_consensus = d_msapointers.consensus + msa_pitch  * subjectIndex;
+                    const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                    char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
+                    int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + d_indices_per_subject_prefixsum[subjectIndex];
+
+                    const int global_candidate_index = my_indices[local_candidate_index];
+                    const int candidate_length = d_sequencePointers.candidateSequencesLength[global_candidate_index];
+                    const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
+
+                    const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
+                    //const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
+                    //const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
+                    const int queryColumnsBegin_incl = subjectColumnsBegin_incl + shift;
+                    const int queryColumnsEnd_excl = subjectColumnsBegin_incl + shift + candidate_length;
+
+                    const int copyposbegin = queryColumnsBegin_incl; //max(queryColumnsBegin_incl, subjectColumnsBegin_incl);
+                    const int copyposend = queryColumnsEnd_excl; //min(queryColumnsEnd_excl, subjectColumnsEnd_excl);
+                    assert(copyposend - copyposbegin == candidate_length);
+
+                    for(int i = copyposbegin + tgroup.thread_rank(); i < copyposend; i += tgroup.size()) {
+                        shared_correctedCandidate[i - queryColumnsBegin_incl] = my_consensus[i];
+                        //my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+                    }
+
+                    const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
+                    const unsigned int* candidate = d_sequencePointers.candidateSequencesData + std::size_t(global_candidate_index) * encodedSequencePitchInInts;
+
+                    // for(int i = copyposbegin; i < copyposend; i += 1) {
+                    //     //assert(my_consensus[i] == 'A' || my_consensus[i] == 'C' || my_consensus[i] == 'G' || my_consensus[i] == 'T');
+                    //     if(my_support[i] > 0.90f){
+                    //         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = my_consensus[i];
+                    //     }else{
+                    //         const char encodedBase = get(candidate, queryColumnsEnd_excl- queryColumnsBegin_incl, i - queryColumnsBegin_incl);
+                    //         const char base = to_nuc(encodedBase);
+                    //         my_corrected_candidates[destinationindex * sequence_pitch + (i - queryColumnsBegin_incl)] = base;
+                    //     }
+                    // }
+
+                    const BestAlignment_t bestAlignmentFlag = d_alignmentresultpointers.bestAlignmentFlags[global_candidate_index];
+
+                    //the forward strand will be returned -> make reverse complement again
+                    if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
+                        //make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + destinationindex * sequence_pitch), candidate_length);
+                        tgroup.sync(); // threads may access elements in shared memory which were written by another thread
+                        decodedReverseComplementInplaceGroup(tgroup, shared_correctedCandidate, candidate_length);
+                    }
+
+                    //copy from smem to global output
+                    for(int i = tgroup.thread_rank(); i < candidate_length; i += tgroup.size()) {
+                        const int destinationindex = shared_destinationIndex[groupIdInBlock];
+                        my_corrected_candidates[destinationindex * sequence_pitch + i] = shared_correctedCandidate[i];
+                    }
+
+                    if(tgroup.thread_rank() == 0){
+                        const int destinationindex = shared_destinationIndex[groupIdInBlock];
+                        my_indices_of_corrected_candidates[destinationindex] = global_candidate_index;
+                    }
+                    tgroup.sync();
+
+                    //compare corrected candidate with uncorrected candidate, calcualte edits
+                    
+                    
+                    //printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
+                }
+
+            }
+        }
+    }
+
+
+
+
 
 
 
@@ -2464,7 +2669,6 @@ namespace gpu{
         // set number of corrected candidates per subject to 0
         cudaMemsetAsync(d_correctionResultPointers.numCorrectedCandidates, 0, sizeof(int) * n_subjects, stream); CUERR;
 
-
     	const std::size_t smem = 0;
 
     	int max_blocks_per_device = 1;
@@ -2484,7 +2688,7 @@ namespace gpu{
     		kernelLaunchConfig.smem = 0; \
     		KernelProperties kernelProperties; \
     		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-    					msa_correct_candidates_kernel<(blocksize)>, \
+                        msa_correct_candidates_kernel<(blocksize)>, \
     					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
     		mymap[kernelLaunchConfig] = kernelProperties; \
     }
@@ -2529,12 +2733,175 @@ namespace gpu{
             encodedSequencePitchInInts, \
     		sequence_pitch, \
     		msa_pitch, \
-    		msa_weights_pitch, \
+            msa_weights_pitch, \
     		min_support_threshold, \
     		min_coverage_threshold, \
     		new_columns_to_correct); CUERR;
 
     	assert(blocksize > 0 && blocksize <= max_block_size);
+
+    	switch(blocksize) {
+    	case 32: mycall(32); break;
+    	case 64: mycall(64); break;
+    	case 96: mycall(96); break;
+    	case 128: mycall(128); break;
+    	case 160: mycall(160); break;
+    	case 192: mycall(192); break;
+    	case 224: mycall(224); break;
+    	case 256: mycall(256); break;
+    	default: mycall(256); break;
+    	}
+
+    		#undef mycall
+
+        cubCachingAllocator.DeviceFree(d_candidatesPerHQAnchorPrefixSum);  CUERR;
+    }
+
+
+
+
+    void callCorrectCandidatesWithGroupKernel_async(
+                MSAPointers d_msapointers,
+                AlignmentResultPointers d_alignmentresultpointers,
+                ReadSequencesPointers d_sequencePointers,
+                CorrectionResultPointers d_correctionResultPointers,
+    			const int* d_indices,
+    			const int* d_indices_per_subject,
+    			const int* d_indices_per_subject_prefixsum,
+    			int n_subjects,
+    			int n_queries,
+    			const int* d_num_indices,
+                int encodedSequencePitchInInts,
+    			size_t sequence_pitch,
+    			size_t msa_pitch,
+    			size_t msa_weights_pitch,
+    			float min_support_threshold,
+    			float min_coverage_threshold,
+    			int new_columns_to_correct,
+    			int maximum_sequence_length,
+    			cudaStream_t stream,
+    			KernelLaunchHandle& handle){
+
+        const int* d_highQualitySubjectIndices =  d_correctionResultPointers.highQualitySubjectIndices;
+
+        auto getCandidatesPerHQAnchor = [=] __device__(int hqIndex){
+            const int subjectIndex = d_highQualitySubjectIndices[hqIndex];
+            return d_indices_per_subject[subjectIndex];
+        };
+
+        // auto getTilesPerHQAnchor = [=] __device__ (int hqIndex){
+        //     const int numCandidatesOfAnchor = getCandidatesPerHQAnchor(hqIndex);
+        //     return SDIV(numCandidatesOfAnchor, tilesize);
+        // };
+
+        using CperHQA_t = decltype(getCandidatesPerHQAnchor);
+        //using TperHQA_t = decltype(getTilesPerHQAnchor);
+        using CountIt = cub::CountingInputIterator<int>;
+
+        void* tempstorage = nullptr;
+        size_t tempstoragesize = 0;
+
+        //const int numHQSubjects = *(h_correctionResultPointers.numHighQualitySubjectIndices);
+
+
+        //make prefixsum of number of candidates per high quality subject
+        int* d_candidatesPerHQAnchorPrefixSum = nullptr;
+        cubCachingAllocator.DeviceAllocate((void**)&d_candidatesPerHQAnchorPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+
+        cub::TransformInputIterator<int, CperHQA_t, CountIt> transformIter(CountIt{0}, getCandidatesPerHQAnchor);
+
+        //calculate prefixsum of candidatesPerHQAnchor. 
+        //only the first d_correctionResultPointersnumHighQualitySubjectIndices+1 entries will contain valid data.
+        cub::DeviceScan::InclusiveSum(nullptr, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, n_subjects, stream);
+        cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+        cub::DeviceScan::InclusiveSum(tempstorage, tempstoragesize, transformIter, d_candidatesPerHQAnchorPrefixSum+1, n_subjects, stream);
+        cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+
+        call_set_kernel_async(d_candidatesPerHQAnchorPrefixSum, 0, 0, stream);
+
+        // set number of corrected candidates per subject to 0
+        cudaMemsetAsync(d_correctionResultPointers.numCorrectedCandidates, 0, sizeof(int) * n_subjects, stream); CUERR;
+
+
+        constexpr int blocksize = 128;
+        constexpr int groupsize = 32;
+        constexpr int numGroupsPerBlock = blocksize / groupsize;
+
+        const size_t dynamicsmemPitchInInts = SDIV(maximum_sequence_length, sizeof(int));
+    	const std::size_t smem = numGroupsPerBlock * sizeof(int) * dynamicsmemPitchInInts;
+
+    	int max_blocks_per_device = 1;
+
+    	KernelLaunchConfig kernelLaunchConfig;
+    	kernelLaunchConfig.threads_per_block = blocksize;
+    	kernelLaunchConfig.smem = smem;
+
+    	auto iter = handle.kernelPropertiesMap.find(KernelId::MSACorrectCandidates);
+    	if(iter == handle.kernelPropertiesMap.end()) {
+
+    		std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+    	    #define getProp(blocksize) { \
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = numGroupsPerBlock * sizeof(char) * (SDIV(maximum_sequence_length, 4) * 4); \
+                KernelProperties kernelProperties; \
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                            msa_correct_candidates_with_group_kernel<(blocksize), groupsize>, \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                mymap[kernelLaunchConfig] = kernelProperties; \
+            }
+
+    		getProp(32);
+    		getProp(64);
+    		getProp(96);
+    		getProp(128);
+    		getProp(160);
+    		getProp(192);
+    		getProp(224);
+    		getProp(256);
+
+    		const auto& kernelProperties = mymap[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+    		handle.kernelPropertiesMap[KernelId::MSACorrectCandidates] = std::move(mymap);
+
+    	    #undef getProp
+    	}else{
+    		std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+    		const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+    		max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+    	}
+
+    	dim3 block(blocksize, 1, 1);
+        dim3 grid(std::min(max_blocks_per_device, n_subjects * numGroupsPerBlock));
+        
+        assert(smem % sizeof(int) == 0);
+
+        
+
+    	#define mycall(blocksize) msa_correct_candidates_with_group_kernel<(blocksize), groupsize> \
+    	        <<<grid, block, smem, stream>>>( \
+            d_msapointers, \
+            d_alignmentresultpointers, \
+            d_sequencePointers, \
+            d_correctionResultPointers, \
+    		d_indices, \
+    		d_indices_per_subject, \
+    		d_indices_per_subject_prefixsum, \
+            d_candidatesPerHQAnchorPrefixSum, \
+    		n_subjects, \
+    		n_queries, \
+    		d_num_indices, \
+            encodedSequencePitchInInts, \
+    		sequence_pitch, \
+    		msa_pitch, \
+            msa_weights_pitch, \
+            dynamicsmemPitchInInts, \
+    		min_support_threshold, \
+    		min_coverage_threshold, \
+    		new_columns_to_correct); CUERR;
+
 
     	switch(blocksize) {
     	case 32: mycall(32); break;

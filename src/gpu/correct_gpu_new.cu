@@ -136,6 +136,7 @@ namespace test{
         SimpleAllocationPinnedHost<int> h_candidates_per_subject;
         SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
         SimpleAllocationPinnedHost<bool> h_anchorContainsN;
+        SimpleAllocationPinnedHost<bool> h_candidateContainsN;
 
         SimpleAllocationDevice<unsigned int> d_subject_sequences_data;
         SimpleAllocationDevice<int> d_subject_sequences_lengths;
@@ -144,6 +145,7 @@ namespace test{
         SimpleAllocationDevice<int> d_candidates_per_subject;
         SimpleAllocationDevice<int> d_candidates_per_subject_prefixsum;
         SimpleAllocationDevice<bool> d_anchorContainsN;
+        SimpleAllocationDevice<bool> d_candidateContainsN;
 
         int n_subjects = -1;
         std::atomic<int> n_queries{-1};
@@ -305,6 +307,7 @@ namespace test{
             std::swap(dataArrays.d_candidates_per_subject, data.d_candidates_per_subject);
             std::swap(dataArrays.d_candidates_per_subject_prefixsum, data.d_candidates_per_subject_prefixsum);
             std::swap(dataArrays.d_anchorContainsN, data.d_anchorContainsN);
+            std::swap(dataArrays.d_candidateContainsN, data.d_candidateContainsN);
 
 
             std::swap(decodedSubjectStrings, data.decodedSubjectStrings);
@@ -510,7 +513,7 @@ namespace test{
         nextData.h_subject_read_ids.resize(batchsize);
         nextData.d_subject_read_ids.resize(batchsize);
         nextData.h_anchorContainsN.resize(batchsize);
-        nextData.d_anchorContainsN.resize(batchsize);
+        nextData.d_anchorContainsN.resize(batchsize);        
 
         read_number* const readIdsBegin = nextData.h_subject_read_ids.get();
         read_number* const readIdsEnd = transFuncData.readIdGenerator->next_n_into_buffer(batchsize, readIdsBegin);
@@ -566,7 +569,6 @@ namespace test{
             nextData.stream
         ); CUERR;
 
-
         for(int i = 0; i < nextData.n_subjects; i++){
             const read_number anchorReadId = nextData.h_subject_read_ids[i];
             const bool containsN = readStorage.readContainsN(anchorReadId);
@@ -577,13 +579,17 @@ namespace test{
             nextData.d_anchorContainsN,
             nextData.h_anchorContainsN,
             nextData.h_anchorContainsN.sizeInBytes(),
-            D2H,
+            H2D,
             nextData.stream
         ); CUERR;
         
     }
 
-    void determineCandidateReadIdsOfNextIteration(Batch& batchData, const Minhasher& minhasher){
+    void determineCandidateReadIdsOfNextIteration(
+            Batch& batchData, 
+            const Minhasher& minhasher, 
+            const DistributedReadStorage& readStorage){
+
         NextIterationData& nextData = batchData.nextIterationData;
 
         //minhash the retrieved anchors to find candidate ids
@@ -690,7 +696,9 @@ namespace test{
         nextData.h_candidates_per_subject.resize(nextData.n_subjects);
         nextData.d_candidates_per_subject.resize(nextData.n_subjects);
         nextData.h_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);
-        nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);       
+        nextData.d_candidates_per_subject_prefixsum.resize(nextData.n_subjects+1);  
+        nextData.h_candidateContainsN.resize(nextData.n_queries);
+        nextData.d_candidateContainsN.resize(nextData.n_queries);
 
         //copy candidate ids to pinned buffer, then to gpu
         auto destbegin = nextData.h_candidate_read_ids.get();
@@ -749,6 +757,20 @@ namespace test{
             H2D,
             nextData.stream
         ); CUERR;
+
+        for(int i = 0; i < nextData.n_queries; i++){
+            const read_number candidateReadId = nextData.h_candidate_read_ids[i];
+            const bool containsN = readStorage.readContainsN(candidateReadId);
+            nextData.h_candidateContainsN[i] = containsN;
+        }
+
+        cudaMemcpyAsync(
+            nextData.d_candidateContainsN,
+            nextData.h_candidateContainsN,
+            nextData.h_candidateContainsN.sizeInBytes(),
+            H2D,
+            nextData.stream
+        ); CUERR;    
     }
 
 
@@ -770,7 +792,8 @@ namespace test{
             if(batchptr->nextIterationData.n_subjects > 0){
                 determineCandidateReadIdsOfNextIteration(
                     *batchptr, 
-                    *batchptr->transFuncData->minhasher
+                    *batchptr->transFuncData->minhasher,
+                    *batchptr->transFuncData->readStorage
                 );
                 cudaStreamSynchronize(batchptr->nextIterationData.stream); CUERR;
                 batchptr->nextIterationData.syncFlag.signal();
@@ -2125,7 +2148,7 @@ namespace test{
         //wait for transfer of h_indices_per_subject to host
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
         //cudaEventSynchronize(events[indices_transfer_finished_event_index]); CUERR;
-
+#if 0
         call_msa_correct_candidates_kernel_async(
                 dataArrays.getDeviceMSAPointers(),
                 dataArrays.getDeviceAlignmentResultPointers(),
@@ -2147,6 +2170,32 @@ namespace test{
                 transFuncData.sequenceFileProperties.maxSequenceLength,
                 streams[primary_stream_index],
                 batch.kernelLaunchHandle);
+#else 
+        callCorrectCandidatesWithGroupKernel_async(
+            dataArrays.getDeviceMSAPointers(),
+            dataArrays.getDeviceAlignmentResultPointers(),
+            dataArrays.getDeviceSequencePointers(),
+            dataArrays.getDeviceCorrectionResultPointers(),
+            dataArrays.d_indices,
+            dataArrays.d_indices_per_subject,
+            dataArrays.d_indices_per_subject_prefixsum,
+            batch.n_subjects,
+            batch.n_queries,
+            dataArrays.d_num_indices,
+            batch.encodedSequencePitchInInts,
+            batch.decodedSequencePitchInBytes,
+            batch.msa_pitch,
+            batch.msa_weights_pitch,
+            min_support_threshold,
+            min_coverage_threshold,
+            new_columns_to_correct,
+            transFuncData.sequenceFileProperties.maxSequenceLength,
+            streams[primary_stream_index],
+            batch.kernelLaunchHandle
+        );
+#endif
+
+                
 
 
         cudaMemcpyAsync(dataArrays.h_corrected_candidates,
@@ -2222,32 +2271,6 @@ namespace test{
 
         subjectIndicesToProcess.reserve(rawResults.n_subjects);
         candidateIndicesToProcess.reserve(16 * rawResults.n_subjects);
-
-        /*
-        struct UnprocessedCorrectionResults{
-            int n_subjects;
-            int n_queries;
-            int decodedSequencePitchInBytes;
-            int encodedSequencePitchInInts;
-
-            std::vector<std::string> decodedSubjectStrings;
-            SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
-            SimpleAllocationPinnedHost<bool> h_subject_is_corrected;
-            SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
-            SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
-            SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
-            SimpleAllocationPinnedHost<int>h_indices_per_subject_prefixsum;
-            SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
-            SimpleAllocationPinnedHost<char> h_corrected_subjects;
-            SimpleAllocationPinnedHost<char> h_corrected_candidates;
-            SimpleAllocationPinnedHost<int> h_subject_sequences_lengths;
-            SimpleAllocationPinnedHost<int> h_num_uncorrected_positions_per_subject;
-            SimpleAllocationPinnedHost<int> h_uncorrected_positions_per_subject;
-            SimpleAllocationPinnedHost<int> h_candidate_sequences_lengths;
-            SimpleAllocationPinnedHost<int> h_alignment_shifts;
-            SimpleAllocationPinnedHost<unsigned int> h_candidate_sequences_data;
-        };
-        */
 
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
             const read_number readId = rawResults.h_subject_read_ids[subject_index];

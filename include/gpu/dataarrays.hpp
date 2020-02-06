@@ -497,10 +497,12 @@ struct DataArrays {
         h_editsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<TempCorrectedSequence::Edit>{});
         h_numEditsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<int>{});
         h_anchorContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
+        h_candidateContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
 
         d_editsPerCorrectedSubject = std::move(SimpleAllocationDevice<TempCorrectedSequence::Edit>{});
         d_numEditsPerCorrectedSubject = std::move(SimpleAllocationDevice<int>{});
         d_anchorContainsN = std::move(SimpleAllocationDevice<bool>{});
+        d_candidateContainsN = std::move(SimpleAllocationDevice<bool>{});
 
 
         d_cub_temp_storage = std::move(SimpleAllocationDevice<char>{});
@@ -574,6 +576,7 @@ struct DataArrays {
         bytes += f(h_editsPerCorrectedSubject);
         bytes += f(h_numEditsPerCorrectedSubject);
         bytes += f(h_anchorContainsN);
+        bytes += f(h_candidateContainsN);
 
 
         return bytes;
@@ -639,6 +642,7 @@ struct DataArrays {
         bytes += f(d_editsPerCorrectedSubject);
         bytes += f(d_numEditsPerCorrectedSubject);
         bytes += f(d_anchorContainsN);
+        bytes += f(d_candidateContainsN);
 
         bytes += f(d_cub_temp_storage);
 
@@ -701,7 +705,7 @@ struct DataArrays {
         bytes += f(h_editsPerCorrectedSubject);
         bytes += f(h_numEditsPerCorrectedSubject);
         bytes += f(h_anchorContainsN);
-
+        bytes += f(h_candidateContainsN);
 
 
 
@@ -767,6 +771,7 @@ struct DataArrays {
         bytes += f(d_editsPerCorrectedSubject);
         bytes += f(d_numEditsPerCorrectedSubject);
         bytes += f(d_anchorContainsN);
+        bytes += f(d_candidateContainsN);
 
         bytes += f(d_cub_temp_storage);
 
@@ -854,10 +859,12 @@ struct DataArrays {
     SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
     SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedSubject;
     SimpleAllocationPinnedHost<bool> h_anchorContainsN;
+    SimpleAllocationPinnedHost<bool> h_candidateContainsN;
 
     SimpleAllocationDevice<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
     SimpleAllocationDevice<int> d_numEditsPerCorrectedSubject;
     SimpleAllocationDevice<bool> d_anchorContainsN;
+    SimpleAllocationDevice<bool> d_candidateContainsN;
 
 
     ReadQualitiesPointers getHostQualityPointers() const{
