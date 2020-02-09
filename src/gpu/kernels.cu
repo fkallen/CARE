@@ -1364,6 +1364,11 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
+                TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
+                int* __restrict__ d_numEditsPerCorrectedCandidate,
+                const bool* __restrict__ d_candidateContainsN,
+                int doNotUseEditsValue,
+                int numEditsThreshold,
                 const int* __restrict__ d_indices,
                 const int* __restrict__ d_indices_per_subject,
                 const int* __restrict__ d_indices_per_subject_prefixsum,
@@ -1416,6 +1421,10 @@ namespace gpu{
             }
         };
 
+        auto getEncodedNucFromInt2Bit = [](unsigned int data, int pos){
+            return ((data >> (30 - 2*pos)) & 0x00000003);
+        };
+
         auto to_nuc = [](char c){
             constexpr char A_enc = 0x00;
             constexpr char C_enc = 0x01;
@@ -1436,6 +1445,7 @@ namespace gpu{
 
 
         __shared__ int shared_destinationIndex[groupsPerBlock];
+        __shared__ int shared_numEditsOfCandidate[groupsPerBlock];
         extern __shared__ int dynamicsmem[];
 
 
@@ -1486,6 +1496,7 @@ namespace gpu{
                 if(canHandleCandidate) {
                     if(tgroup.thread_rank() == 0){                        
                         shared_destinationIndex[groupIdInBlock] = atomicAdd(d_correctionResultPointers.numCorrectedCandidates + subjectIndex, 1);
+                        shared_numEditsOfCandidate[groupIdInBlock] = 0;
                     }
                     tgroup.sync();
                     
@@ -1532,9 +1543,9 @@ namespace gpu{
 
                     //the forward strand will be returned -> make reverse complement again
                     if(bestAlignmentFlag == BestAlignment_t::ReverseComplement) {
-                        //make_unpacked_reverse_complement_inplace((std::uint8_t*)(my_corrected_candidates + destinationindex * sequence_pitch), candidate_length);
                         tgroup.sync(); // threads may access elements in shared memory which were written by another thread
                         decodedReverseComplementInplaceGroup(tgroup, shared_correctedCandidate, candidate_length);
+                        tgroup.sync();
                     }
 
                     //copy from smem to global output
@@ -1547,10 +1558,103 @@ namespace gpu{
                         const int destinationindex = shared_destinationIndex[groupIdInBlock];
                         my_indices_of_corrected_candidates[destinationindex] = global_candidate_index;
                     }
-                    tgroup.sync();
-
-                    //compare corrected candidate with uncorrected candidate, calcualte edits
                     
+
+                    //compare corrected candidate with uncorrected candidate, calculate edits
+                    //const int numIntsOfSequence = getEncodedNumInts2Bit(candidate_length);
+
+                    const bool thisSequenceContainsN = d_candidateContainsN[global_candidate_index];            
+                    int* const myNumEdits = d_numEditsPerCorrectedCandidate + global_candidate_index;
+
+                    if(thisSequenceContainsN){
+                        if(tgroup.thread_rank() == 0){
+                            *myNumEdits = doNotUseEditsValue;
+                        }
+                    }else{
+
+                        TempCorrectedSequence::Edit* const myEdits = d_editsPerCorrectedCandidate + numEditsThreshold * global_candidate_index;
+
+                        const int maxEdits = min(candidate_length / 7, numEditsThreshold);
+
+                        const int fullInts = candidate_length / 16;
+                        const unsigned int* const encUncorrectedCandidate = d_sequencePointers.candidateSequencesData 
+                                + std::size_t(global_candidate_index) * encodedSequencePitchInInts;
+
+                        for(int i = 0; i < fullInts; i++){
+                            const unsigned int encodedDataInt = encUncorrectedCandidate[i];
+
+                            //compare with 16 bases of corrected sequence
+
+                            for(int k = tgroup.thread_rank(); k < 16; k += tgroup.size()){
+                                const int posInInt = k;
+                                const int posInSequence = i * 16 + posInInt;
+                                const char encodedUncorrectedNuc = getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                                const char correctedNuc = shared_correctedCandidate[posInSequence];
+
+                                if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
+                                    cg::coalesced_group g = cg::coalesced_threads();
+
+                                    int currentNumEdits = 0;
+                                    if(g.thread_rank() == 0){
+                                        currentNumEdits = atomicAdd(&shared_numEditsOfCandidate[groupIdInBlock], g.size());
+                                    }
+                                    currentNumEdits = g.shfl(currentNumEdits, 0);
+
+                                    if(currentNumEdits + g.size() <= maxEdits){
+                                        const int myEditOutputPos = g.thread_rank() + currentNumEdits;
+                                        myEdits[myEditOutputPos] = TempCorrectedSequence::Edit{posInSequence, correctedNuc};
+                                    }
+                                }
+                            }
+
+                            tgroup.sync();
+
+                            if(shared_numEditsOfCandidate[groupIdInBlock] > maxEdits){
+                                break;
+                            }
+                        }
+
+                        //process remaining positions
+                        if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
+                            const int remainingPositions = candidate_length - 16 * fullInts;
+                            if(remainingPositions > 0){
+                                const unsigned int encodedDataInt = encUncorrectedCandidate[fullInts];
+                                for(int posInInt = tgroup.thread_rank(); posInInt < remainingPositions; posInInt += tgroup.size()){
+                                    const int posInSequence = fullInts * 16 + posInInt;
+                                    const char encodedUncorrectedNuc = getEncodedNucFromInt2Bit(encodedDataInt, posInInt);
+                                    const char correctedNuc = shared_correctedCandidate[posInSequence];
+
+                                    if(correctedNuc != to_nuc(encodedUncorrectedNuc)){
+                                        cg::coalesced_group g = cg::coalesced_threads();
+                                        
+                                        int currentNumEdits = 0;
+                                        if(g.thread_rank() == 0){
+                                            currentNumEdits = atomicAdd(&shared_numEditsOfCandidate[groupIdInBlock], g.size());
+                                        }
+                                        currentNumEdits = g.shfl(currentNumEdits, 0);
+
+                                        if(currentNumEdits + g.size() <= maxEdits){
+                                            const int myEditOutputPos = g.thread_rank() + currentNumEdits;
+                                            myEdits[myEditOutputPos] = TempCorrectedSequence::Edit{posInSequence, correctedNuc};
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        tgroup.sync();
+
+                        if(tgroup.thread_rank() == 0){                            
+                            if(shared_numEditsOfCandidate[groupIdInBlock] <= maxEdits){
+                                *myNumEdits = shared_numEditsOfCandidate[groupIdInBlock];
+                            }else{
+                                *myNumEdits = doNotUseEditsValue;
+                            }
+                        }
+                    }
+                    
+
+                    tgroup.sync(); //sync before handling next candidate
                     
                     //printf("subjectIndex %d global_candidate_index %d\n", subjectIndex, global_candidate_index);
                 }
@@ -2765,6 +2869,11 @@ namespace gpu{
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
                 CorrectionResultPointers d_correctionResultPointers,
+                TempCorrectedSequence::Edit* __restrict__ d_editsPerCorrectedCandidate,
+                int* __restrict__ d_numEditsPerCorrectedCandidate,
+                const bool* __restrict__ d_candidateContainsN,
+                int doNotUseEditsValue,
+                int numEditsThreshold,
     			const int* d_indices,
     			const int* d_indices_per_subject,
     			const int* d_indices_per_subject_prefixsum,
@@ -2878,14 +2987,17 @@ namespace gpu{
         
         assert(smem % sizeof(int) == 0);
 
-        
-
     	#define mycall(blocksize) msa_correct_candidates_with_group_kernel<(blocksize), groupsize> \
     	        <<<grid, block, smem, stream>>>( \
             d_msapointers, \
             d_alignmentresultpointers, \
             d_sequencePointers, \
             d_correctionResultPointers, \
+            d_editsPerCorrectedCandidate, \
+            d_numEditsPerCorrectedCandidate, \
+            d_candidateContainsN, \
+            doNotUseEditsValue, \
+            numEditsThreshold, \
     		d_indices, \
     		d_indices_per_subject, \
     		d_indices_per_subject_prefixsum, \

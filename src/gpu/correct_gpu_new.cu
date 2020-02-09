@@ -190,6 +190,9 @@ namespace test{
         SimpleAllocationPinnedHost<int> h_indices_of_corrected_subjects;
         SimpleAllocationPinnedHost<int> h_num_indices_of_corrected_subjects;
 
+        SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
+        SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedCandidate;
+
     };
 
     struct OutputData{
@@ -349,6 +352,10 @@ namespace test{
 
             std::swap(dataArrays.h_editsPerCorrectedSubject, rawResults.h_editsPerCorrectedSubject);
             std::swap(dataArrays.h_numEditsPerCorrectedSubject, rawResults.h_numEditsPerCorrectedSubject);
+
+            std::swap(dataArrays.h_editsPerCorrectedCandidate, rawResults.h_editsPerCorrectedCandidate);
+            std::swap(dataArrays.h_numEditsPerCorrectedCandidate, rawResults.h_numEditsPerCorrectedCandidate);
+
             std::swap(dataArrays.h_indices_of_corrected_subjects, rawResults.h_indices_of_corrected_subjects);
             std::swap(dataArrays.h_num_indices_of_corrected_subjects, rawResults.h_num_indices_of_corrected_subjects);
         }
@@ -904,11 +911,19 @@ namespace test{
 
         dataArrays.h_editsPerCorrectedSubject.resize(batchData.n_subjects * batchData.maxNumEditsPerSequence);
         dataArrays.h_numEditsPerCorrectedSubject.resize(batchData.n_subjects);
-        dataArrays.d_anchorContainsN.resize(batchData.n_subjects);
+        dataArrays.h_anchorContainsN.resize(batchData.n_subjects);
 
         dataArrays.d_editsPerCorrectedSubject.resize(batchData.n_subjects * batchData.maxNumEditsPerSequence);
         dataArrays.d_numEditsPerCorrectedSubject.resize(batchData.n_subjects);
         dataArrays.d_anchorContainsN.resize(batchData.n_subjects);
+
+        dataArrays.h_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
+        dataArrays.h_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
+        dataArrays.h_candidateContainsN.resize(batchData.n_queries);
+
+        dataArrays.d_editsPerCorrectedCandidate.resize(batchData.n_queries * batchData.maxNumEditsPerSequence);
+        dataArrays.d_numEditsPerCorrectedCandidate.resize(batchData.n_queries);
+        dataArrays.d_candidateContainsN.resize(batchData.n_queries);
 
 
 
@@ -2176,6 +2191,11 @@ namespace test{
             dataArrays.getDeviceAlignmentResultPointers(),
             dataArrays.getDeviceSequencePointers(),
             dataArrays.getDeviceCorrectionResultPointers(),
+            dataArrays.d_editsPerCorrectedCandidate.get(),
+            dataArrays.d_numEditsPerCorrectedCandidate.get(),
+            dataArrays.d_candidateContainsN.get(),
+            doNotUseEditsValue,
+            batch.maxNumEditsPerSequence,
             dataArrays.d_indices,
             dataArrays.d_indices_per_subject,
             dataArrays.d_indices_per_subject_prefixsum,
@@ -2193,10 +2213,25 @@ namespace test{
             streams[primary_stream_index],
             batch.kernelLaunchHandle
         );
+
 #endif
 
                 
+        cudaMemcpyAsync(
+            dataArrays.h_editsPerCorrectedCandidate,
+            dataArrays.d_editsPerCorrectedCandidate,
+            dataArrays.d_editsPerCorrectedCandidate.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
 
+        cudaMemcpyAsync(
+            dataArrays.h_numEditsPerCorrectedCandidate,
+            dataArrays.d_numEditsPerCorrectedCandidate,
+            dataArrays.d_numEditsPerCorrectedCandidate.sizeInBytes(),
+            D2H,
+            streams[primary_stream_index]
+        ); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_corrected_candidates,
                         dataArrays.d_corrected_candidates,
@@ -2528,25 +2563,34 @@ namespace test{
                 const bool originalReadContainsN = transFuncData.readStorage->readContainsN(candidate_read_id);
                 
                 tmp.edits.clear();
-                if(!originalReadContainsN){
-                    //TIMERSTARTCPU(edits);
-                    const unsigned int* ptr = &rawResults.h_candidate_sequences_data[global_candidate_index * rawResults.encodedSequencePitchInInts];
-                    const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
-
-                    const int maxEdits = candidate_length / 7;
-                    int edits = 0;
-                    for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
-                        if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
-                            tmp.edits.emplace_back(pos, tmp.sequence[pos]);
-                            edits++;
-                        }
-                    }
-
-                    tmp.useEdits = edits <= maxEdits;
-                    //TIMERSTOPCPU(edits);
+                const int numEdits = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
+                if(numEdits != doNotUseEditsValue){
+                    tmp.edits.resize(numEdits);
+                    const auto* gpuedits = rawResults.h_editsPerCorrectedCandidate + global_candidate_index * rawResults.maxNumEditsPerSequence;
+                    std::copy_n(gpuedits, numEdits, tmp.edits.begin());
+                    tmp.useEdits = true;
                 }else{
                     tmp.useEdits = false;
                 }
+                // if(!originalReadContainsN){
+                //     //TIMERSTARTCPU(edits);
+                //     const unsigned int* ptr = &rawResults.h_candidate_sequences_data[global_candidate_index * rawResults.encodedSequencePitchInInts];
+                //     const std::string uncorrectedCandidate = get2BitString((const unsigned int*)ptr, candidate_length);
+
+                //     const int maxEdits = candidate_length / 7;
+                //     int edits = 0;
+                //     for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
+                //         if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
+                //             tmp.edits.emplace_back(pos, tmp.sequence[pos]);
+                //             edits++;
+                //         }
+                //     }
+
+                //     tmp.useEdits = edits <= maxEdits;
+                //     //TIMERSTOPCPU(edits);
+                // }else{
+                //     tmp.useEdits = false;
+                // }
 
                 //TIMERSTARTCPU(encode);
                 tmpencoded = tmp.encode();
@@ -2575,6 +2619,7 @@ namespace test{
             batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
             });
+            //unpackcandidates(0, numCorrectedCandidates);
             batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedCandidates, [=](auto begin, auto end, auto /*threadId*/){
                 unpackcandidates(begin, end);
             });

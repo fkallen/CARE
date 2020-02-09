@@ -496,11 +496,15 @@ struct DataArrays {
 
         h_editsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<TempCorrectedSequence::Edit>{});
         h_numEditsPerCorrectedSubject = std::move(SimpleAllocationPinnedHost<int>{});
+        h_editsPerCorrectedCandidate = std::move(SimpleAllocationPinnedHost<TempCorrectedSequence::Edit>{});
+        h_numEditsPerCorrectedCandidate = std::move(SimpleAllocationPinnedHost<int>{});
         h_anchorContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
         h_candidateContainsN = std::move(SimpleAllocationPinnedHost<bool>{});
 
         d_editsPerCorrectedSubject = std::move(SimpleAllocationDevice<TempCorrectedSequence::Edit>{});
         d_numEditsPerCorrectedSubject = std::move(SimpleAllocationDevice<int>{});
+        d_editsPerCorrectedCandidate = std::move(SimpleAllocationDevice<TempCorrectedSequence::Edit>{});
+        d_numEditsPerCorrectedCandidate = std::move(SimpleAllocationDevice<int>{});
         d_anchorContainsN = std::move(SimpleAllocationDevice<bool>{});
         d_candidateContainsN = std::move(SimpleAllocationDevice<bool>{});
 
@@ -575,6 +579,8 @@ struct DataArrays {
 
         bytes += f(h_editsPerCorrectedSubject);
         bytes += f(h_numEditsPerCorrectedSubject);
+        bytes += f(h_editsPerCorrectedCandidate);
+        bytes += f(h_numEditsPerCorrectedCandidate);
         bytes += f(h_anchorContainsN);
         bytes += f(h_candidateContainsN);
 
@@ -641,6 +647,8 @@ struct DataArrays {
 
         bytes += f(d_editsPerCorrectedSubject);
         bytes += f(d_numEditsPerCorrectedSubject);
+        bytes += f(d_editsPerCorrectedCandidate);
+        bytes += f(d_numEditsPerCorrectedCandidate);
         bytes += f(d_anchorContainsN);
         bytes += f(d_candidateContainsN);
 
@@ -704,6 +712,8 @@ struct DataArrays {
 
         bytes += f(h_editsPerCorrectedSubject);
         bytes += f(h_numEditsPerCorrectedSubject);
+        bytes += f(h_editsPerCorrectedCandidate);
+        bytes += f(h_numEditsPerCorrectedCandidate);
         bytes += f(h_anchorContainsN);
         bytes += f(h_candidateContainsN);
 
@@ -770,6 +780,8 @@ struct DataArrays {
         bytes += f(d_num_indices_of_corrected_subjects);
         bytes += f(d_editsPerCorrectedSubject);
         bytes += f(d_numEditsPerCorrectedSubject);
+        bytes += f(d_editsPerCorrectedCandidate);
+        bytes += f(d_numEditsPerCorrectedCandidate);
         bytes += f(d_anchorContainsN);
         bytes += f(d_candidateContainsN);
 
@@ -858,11 +870,15 @@ struct DataArrays {
 
     SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedSubject;
     SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedSubject;
+    SimpleAllocationPinnedHost<TempCorrectedSequence::Edit> h_editsPerCorrectedCandidate;
+    SimpleAllocationPinnedHost<int> h_numEditsPerCorrectedCandidate;
     SimpleAllocationPinnedHost<bool> h_anchorContainsN;
     SimpleAllocationPinnedHost<bool> h_candidateContainsN;
 
     SimpleAllocationDevice<TempCorrectedSequence::Edit> d_editsPerCorrectedSubject;
     SimpleAllocationDevice<int> d_numEditsPerCorrectedSubject;
+    SimpleAllocationDevice<TempCorrectedSequence::Edit> d_editsPerCorrectedCandidate;
+    SimpleAllocationDevice<int> d_numEditsPerCorrectedCandidate;
     SimpleAllocationDevice<bool> d_anchorContainsN;
     SimpleAllocationDevice<bool> d_candidateContainsN;
 
