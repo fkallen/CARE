@@ -2572,6 +2572,8 @@ namespace test{
                 }else{
                     tmp.useEdits = false;
                 }
+
+                // TempCorrectedSequence old;
                 // if(!originalReadContainsN){
                 //     //TIMERSTARTCPU(edits);
                 //     const unsigned int* ptr = &rawResults.h_candidate_sequences_data[global_candidate_index * rawResults.encodedSequencePitchInInts];
@@ -2581,16 +2583,44 @@ namespace test{
                 //     int edits = 0;
                 //     for(int pos = 0; pos < candidate_length && edits <= maxEdits; pos++){
                 //         if(tmp.sequence[pos] != uncorrectedCandidate[pos]){
-                //             tmp.edits.emplace_back(pos, tmp.sequence[pos]);
+                //             old.edits.emplace_back(pos, tmp.sequence[pos]);
                 //             edits++;
                 //         }
                 //     }
 
-                //     tmp.useEdits = edits <= maxEdits;
+                //     old.useEdits = edits <= maxEdits;
                 //     //TIMERSTOPCPU(edits);
                 // }else{
-                //     tmp.useEdits = false;
+                //     old.useEdits = false;
                 // }
+#if 0 // validity check of gpu data
+                std::cerr  << global_candidate_index << " " << tmp.sequence << "\n";
+
+
+                if(old.useEdits){
+                    const int gpures = tmp.edits.size();
+                    const int cpures = old.edits.size();
+                    if(gpures != cpures || global_candidate_index == 749){
+                        std::cerr << "gpures " << gpures << ", cpures " << cpures << "\n";
+                        std::cerr << "subject_index " << subject_index << ", candidateIndex " << candidateIndex << ", subjectReadId = " << subjectReadId << ", \ncorrected candidate sequence = " << tmp.sequence << "\n";
+                        assert(0);
+                    }else{
+                        for(int k = 0; k < cpures; k++){
+                            if(tmp.edits[k] != old.edits[k]){
+                                std::cerr << "error " << positionInVector << " " << k << "\n";
+                                std::cerr << tmp.edits[k].pos << " " << tmp.edits[k].base << ", " << old.edits[k].pos << " " << old.edits[k].base << "\n";
+                                assert(0);
+                            }
+                        }
+                    }
+                }else{
+                    const int gpures = rawResults.h_numEditsPerCorrectedCandidate[global_candidate_index];
+                    if(gpures != doNotUseEditsValue){
+                        std::cerr << "!useEdits, but gpures = " << gpures << "\n";
+                        assert(0);
+                    }
+                }
+#endif
 
                 //TIMERSTARTCPU(encode);
                 tmpencoded = tmp.encode();
@@ -2615,14 +2645,21 @@ namespace test{
                 unpackAnchors(begin, end);
             });
         }else{
-            //unpackAnchors(0, numCorrectedAnchors);
+#if 0            
+            unpackAnchors(0, numCorrectedAnchors);
+#else            
             batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedAnchors, [=](auto begin, auto end, auto /*threadId*/){
                 unpackAnchors(begin, end);
             });
-            //unpackcandidates(0, numCorrectedCandidates);
+#endif 
+
+#if 0
+            unpackcandidates(0, numCorrectedCandidates);
+#else            
             batch.threadPool->parallelFor(batch.pforHandle, 0, numCorrectedCandidates, [=](auto begin, auto end, auto /*threadId*/){
                 unpackcandidates(begin, end);
             });
+#endif            
         }
 
     }
