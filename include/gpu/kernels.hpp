@@ -96,6 +96,7 @@ enum class KernelId {
     Conversion2BitTo2BitHiLoNT,
     Conversion2BitTo2BitHiLoTT,
     PopcountSHDTiled,
+    PopcountSHDTiledPitch8,
 	FindBestAlignmentExp,
 	FilterAlignmentsByMismatchRatio,
 	MSAInitExp,
