@@ -78,7 +78,7 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    int getEncodedNumInts2Bit(int sequenceLength){
+    constexpr int getEncodedNumInts2Bit(int sequenceLength){
         return SDIV(sequenceLength, basesPerInt2Bit);
     }
 
@@ -263,7 +263,7 @@ namespace care{
 
     HOSTDEVICEQUALIFIER
     __inline__
-    int getEncodedNumInts2BitHiLo(int sequenceLength){
+    constexpr int getEncodedNumInts2BitHiLo(int sequenceLength){
         return int(2 * SDIV(sequenceLength, sizeof(unsigned int) * 8));
     }
 
