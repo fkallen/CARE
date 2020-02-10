@@ -1450,7 +1450,7 @@ namespace gpu{
 
 
 
-        auto tgroup = cg::tiled_partition<32>(cg::this_thread_block());
+        auto tgroup = cg::tiled_partition<groupsize>(cg::this_thread_block());
 
         const int numGroups = (gridDim.x * blockDim.x) / groupsize;
         const int groupId = (threadIdx.x + blockIdx.x * blockDim.x) / groupsize;
