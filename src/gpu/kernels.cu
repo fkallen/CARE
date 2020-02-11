@@ -128,7 +128,7 @@ namespace gpu{
         unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
         unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
 
-        for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2; logicalTileId += tiles){
+        for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2 ; logicalTileId += tiles){
             const bool isReverseComplement = logicalTileId >= requiredTiles;
             const int forwardTileId = isReverseComplement ? logicalTileId - requiredTiles : logicalTileId;
 
@@ -211,6 +211,18 @@ namespace gpu{
                                             shiftptr_size,
                                             otherptr_hi, otherptr_lo, transfunc2);
 
+                        
+
+                        // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
+
+                        // printf("%d %d %d %d | %d %d %d %d --- ", 
+                        //     shiftptr_hi[transfunc1(0)], shiftptr_hi[transfunc1(1)], shiftptr_hi[transfunc1(2)], shiftptr_hi[transfunc1(3)],
+                        //     shiftptr_lo[transfunc1(0)], shiftptr_lo[transfunc1(1)], shiftptr_lo[transfunc1(2)], shiftptr_lo[transfunc1(3)]);
+
+                        // printf("%d %d %d %d | %d %d %d %d\n", 
+                        //     otherptr_hi[transfunc2(0)], otherptr_hi[transfunc2(1)], otherptr_hi[transfunc2(2)], otherptr_hi[transfunc2(3)],
+                        //     otherptr_lo[transfunc2(0)], otherptr_lo[transfunc2(1)], otherptr_lo[transfunc2(2)], otherptr_lo[transfunc2(3)]);
+
                         score = (score < max_errors_excl ?
                                 score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
                                 : std::numeric_limits<int>::max()); // too many errors, discard
@@ -222,6 +234,7 @@ namespace gpu{
 
                         return true;
                     }else{
+                        //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
                         return false;
                     }
                 };
@@ -289,7 +302,7 @@ namespace gpu{
 
 
 
-    template<int blocksize, int tilesize, int encodedSequencePitchInInts2BitHiLo>
+    template<int blocksize, int tilesize, int maxValidIntsPerSequence>
     __global__
     void
     popcount_shifted_hamming_distance_ctpitch_kernel(
@@ -301,23 +314,14 @@ namespace gpu{
                 const int* __restrict__ tiles_per_subject_prefixsum,
                 int n_subjects,
                 int n_candidates,
+                size_t encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
                 float min_overlap_ratio){
 
+        static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
+
         constexpr int tilesPerBlock = blocksize / tilesize;
-
-        auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
-            reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
-        };
-
-        auto no_bank_conflict_index_tile = [&](int logical_index) -> int {
-            return logical_index * tilesize;
-        };
-
-        auto no_bank_conflict_index = [](int logical_index) -> int {
-            return logical_index * blocksize;
-        };
 
         auto identity = [](auto logical_index){
             return logical_index;
@@ -325,27 +329,89 @@ namespace gpu{
 
         auto popcount = [](auto i){return __popc(i);};
 
-        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
-                                    unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                    int shiftptr_size,
-                                    const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                    auto transfunc2){
+        auto hammingdistanceHiLoReg = [&](
+                            const auto& lhi,
+                            const auto& llo,
+                            const auto& rhi,
+                            const auto& rlo,
+                            int lhi_bitcount,
+                            int rhi_bitcount,
+                            int max_errors){
 
-            if(doShift){
-                shiftBitArrayLeftBy<1>(shiftptr_hi, shiftptr_size / 2, transfunc1);
-                shiftBitArrayLeftBy<1>(shiftptr_lo, shiftptr_size / 2, transfunc1);
+            constexpr int N = maxValidIntsPerSequence / 2;
+
+            const int overlap_bitcount = std::min(lhi_bitcount, rhi_bitcount);
+
+            if(overlap_bitcount == 0)
+                return max_errors+1;
+
+            const int partitions = SDIV(overlap_bitcount, (8 * sizeof(unsigned int)));
+            const int remaining_bitcount = partitions * sizeof(unsigned int) * 8 - overlap_bitcount;
+
+            int result = 0;
+
+            #pragma unroll 
+            for(int i = 0; i < N - 1; i++){
+                if(i < partitions - 1 && result < max_errors){
+                    const unsigned int hixor = lhi[i] ^ rhi[i];
+                    const unsigned int loxor = llo[i] ^ rlo[i];
+                    const unsigned int bits = hixor | loxor;
+                    result += popcount(bits);
+                }
             }
 
-            const int score = hammingdistanceHiLo(shiftptr_hi,
+            if(result >= max_errors)
+                return result;
+
+            // i == partitions - 1
+
+            #pragma unroll 
+            for(int i = N-1; i >= 0; i--){
+                if(partitions - 1 == i){
+                    const unsigned int mask = remaining_bitcount == 0 ? 0xFFFFFFFF : 0xFFFFFFFF << (remaining_bitcount);
+                    const unsigned int hixor = lhi[i] ^ rhi[i];
+                    const unsigned int loxor = llo[i] ^ rlo[i];
+                    const unsigned int bits = hixor | loxor;
+                    result += popcount(bits & mask);
+                }
+            }
+
+            return result;
+        };
+
+        auto shiftBitArrayLeftBy1 = [](auto& uintarray){
+            constexpr int shift = 1;
+            static_assert(shift < 32, "");
+
+            constexpr int N = maxValidIntsPerSequence / 2;    
+            #pragma unroll
+            for(int i = 0; i < N - 1; i += 1) {
+                const unsigned int a = uintarray[i];
+                const unsigned int b = uintarray[i+1];
+    
+                uintarray[i] = (a << shift) | (b >> (8 * sizeof(unsigned int) - shift));
+            }
+    
+            uintarray[N-1] <<= shift;
+        };
+
+        auto hammingDistanceWithShift = [&](bool doShift, int overlapsize, int max_errors,
+                                    auto& shiftptr_hi, auto& shiftptr_lo,
+                                    const auto& otherptr_hi, const auto& otherptr_lo
+                                    ){
+
+            if(doShift){
+                shiftBitArrayLeftBy1(shiftptr_hi);
+                shiftBitArrayLeftBy1(shiftptr_lo);
+            }
+
+            const int score = hammingdistanceHiLoReg(shiftptr_hi,
                                                 shiftptr_lo,
                                                 otherptr_hi,
                                                 otherptr_lo,
                                                 overlapsize,
                                                 overlapsize,
-                                                max_errors,
-                                                transfunc1,
-                                                transfunc2,
-                                                popcount);
+                                                max_errors);
 
             return score;
         };
@@ -358,17 +424,70 @@ namespace gpu{
         const int laneInTile = threadIdx.x % tilesize;
         const int requiredTiles = tiles_per_subject_prefixsum[n_subjects];
 
-        __shared__ unsigned int shared_subjectBackup[encodedSequencePitchInInts2BitHiLo * tilesPerBlock];
-        __shared__ unsigned int shared_queryBackups[encodedSequencePitchInInts2BitHiLo * blocksize];
-        __shared__ unsigned int shared_mySequences[encodedSequencePitchInInts2BitHiLo * blocksize];
+        unsigned int subjectBackupHi[maxValidIntsPerSequence / 2];
+        unsigned int subjectBackupLo[maxValidIntsPerSequence / 2];
+        unsigned int queryBackupHi[maxValidIntsPerSequence / 2];
+        unsigned int queryBackupLo[maxValidIntsPerSequence / 2];
+        unsigned int mySequenceHi[maxValidIntsPerSequence / 2];
+        unsigned int mySequenceLo[maxValidIntsPerSequence / 2];
 
-        unsigned int* const subjectBackupsBegin = shared_subjectBackup; // per tile shared memory to store subject
-        unsigned int* const queryBackupsBegin = shared_queryBackups; // per thread shared memory to store query
-        unsigned int* const mySequencesBegin = shared_mySequences; // per thread shared memory to store shifted sequence
+        auto reverseComplementQuery = [&](int querylength, int validInts){
+            auto reverse_complement_int = [](auto n) {
+                n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xaaaaaaaa);
+                n = ((n >> 2) & 0x33333333) | ((n << 2) & 0xcccccccc);
+                n = ((n >> 4) & 0x0f0f0f0f) | ((n << 4) & 0xf0f0f0f0);
+                n = ((n >> 8) & 0x00ff00ff) | ((n << 8) & 0xff00ff00);
+                n = ((n >> 16) & 0x0000ffff) | ((n << 16) & 0xffff0000);
+                return ~n;
+            };
 
-        unsigned int* const subjectBackup = subjectBackupsBegin + encodedSequencePitchInInts2BitHiLo * localTileId; // accesed via identity
-        unsigned int* const queryBackup = queryBackupsBegin + threadIdx.x; // accesed via no_bank_conflict_index
-        unsigned int* const mySequence = mySequencesBegin + threadIdx.x; // accesed via no_bank_conflict_index
+            constexpr int N = maxValidIntsPerSequence / 2;
+
+            #pragma unroll
+            for(int i = 0; i < N/2; ++i){
+                const unsigned int hifront = reverse_complement_int(queryBackupHi[i]);
+                const unsigned int hiback = reverse_complement_int(queryBackupHi[N - 1 - i]);
+                queryBackupHi[i] = hiback;
+                queryBackupHi[N - 1 - i] = hifront;
+    
+                const unsigned int lofront = reverse_complement_int(queryBackupLo[i]);
+                const unsigned int loback = reverse_complement_int(queryBackupLo[N - 1 - i]);
+                queryBackupLo[i] = loback;
+                queryBackupLo[N - 1 - i] = lofront;
+            }
+
+            if(N % 2 == 1){
+                constexpr int middleindex = N/2;
+                queryBackupHi[middleindex] = reverse_complement_int(queryBackupHi[middleindex]);
+                queryBackupLo[middleindex] = reverse_complement_int(queryBackupLo[middleindex]);
+            }
+
+            //fix unused data
+
+            const int unusedInts = N - getEncodedNumInts2BitHiLo(querylength) / 2;
+            if(unusedInts > 0){
+                for(int iter = 0; iter < unusedInts; iter++){
+                    #pragma unroll
+                    for(int i = 0; i < N-1; ++i){
+                        queryBackupHi[i] = queryBackupHi[i+1];
+                        queryBackupLo[i] = queryBackupLo[i+1];
+                    }
+                }
+            }
+
+            const int unusedBitsInt = SDIV(querylength, 8 * sizeof(unsigned int)) * 8 * sizeof(unsigned int) - querylength;
+
+            if(unusedBitsInt != 0){
+                #pragma unroll
+                for(int i = 0; i < N - 1; ++i){
+                    queryBackupHi[i] = (queryBackupHi[i] << unusedBitsInt) | (queryBackupHi[i+1] >> (8 * sizeof(unsigned int) - unusedBitsInt));
+                    queryBackupLo[i] = (queryBackupLo[i] << unusedBitsInt) | (queryBackupLo[i+1] >> (8 * sizeof(unsigned int) - unusedBitsInt));
+                }
+    
+                queryBackupHi[N-1] <<= unusedBitsInt;
+                queryBackupLo[N-1] <<= unusedBitsInt;
+            }
+        };
 
         for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2; logicalTileId += tiles){
             const bool isReverseComplement = logicalTileId >= requiredTiles;
@@ -392,14 +511,11 @@ namespace gpu{
 
             const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * encodedSequencePitchInInts2BitHiLo;
 
-            //save subject in shared memory (in parallel, per tile)
-            for(int lane = laneInTile; lane < encodedSequencePitchInInts2BitHiLo; lane += tilesize) {
-                subjectBackup[identity(lane)] = subjectptr[lane];
-                //transposed
-                //subjectBackup[identity(lane)] = ((unsigned int*)(subjectptr))[lane * n_subjects];
+            #pragma unroll 
+            for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                subjectBackupHi[i] = subjectptr[i];
+                subjectBackupLo[i] = subjectptr[i + maxValidIntsPerSequence / 2];
             }
-
-            cg::tiled_partition<tilesize>(cg::this_thread_block()).sync();
 
 
             if(queryIndex < maxCandidateIndex_excl){
@@ -408,17 +524,12 @@ namespace gpu{
 
                 const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
-                //save query in shared memory
-                #pragma unroll
-                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                    //queryBackup[no_bank_conflict_index(i)] = ((unsigned int*)(candidateptr))[i];
-                    //transposed
-                    queryBackup[no_bank_conflict_index(i)] = candidateptr[i * n_candidates];
-                }
-
-                //queryIndex != resultIndex -> reverse complement
-                if(isReverseComplement) {
-                    make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
+                //save query in reg
+ 
+                #pragma unroll 
+                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                    queryBackupHi[i] = candidateptr[i * n_candidates];
+                    queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
                 }
 
                 //begin SHD algorithm
@@ -428,20 +539,17 @@ namespace gpu{
                 const int totalbases = subjectbases + querybases;
                 const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
-
-                const unsigned int* const subjectBackup_hi = subjectBackup;
-                const unsigned int* const subjectBackup_lo = subjectBackup + identity(subjectints/2);
-                const unsigned int* const queryBackup_hi = queryBackup;
-                const unsigned int* const queryBackup_lo = queryBackup + no_bank_conflict_index(queryints/2);
+                //queryIndex != resultIndex -> reverse complement
+                if(isReverseComplement){
+                    reverseComplementQuery(querybases, queryints);
+                }
 
                 int bestScore = totalbases;                 // score is number of mismatches
                 int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
 
                 auto handle_shift = [&](int shift, int overlapsize,
-                                            unsigned int* shiftptr_hi, unsigned int* shiftptr_lo, auto transfunc1,
-                                            int shiftptr_size,
-                                            const unsigned int* otherptr_hi, const unsigned int* otherptr_lo,
-                                            auto transfunc2){
+                                        auto& shiftptr_hi, auto& shiftptr_lo,
+                                        const auto& otherptr_hi, const auto& otherptr_lo){
 
                     //const int max_errors = int(float(overlapsize) * maxErrorRate);
                     const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
@@ -450,9 +558,19 @@ namespace gpu{
                     if(max_errors_excl > 0){
 
                         int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                            shiftptr_hi,shiftptr_lo, transfunc1,
-                                            shiftptr_size,
-                                            otherptr_hi, otherptr_lo, transfunc2);
+                                            shiftptr_hi, shiftptr_lo,
+                                            otherptr_hi, otherptr_lo);
+
+                        
+                        // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
+
+                        // printf("%d %d %d %d | %d %d %d %d --- ", 
+                        //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
+                        //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
+
+                        // printf("%d %d %d %d | %d %d %d %d\n", 
+                        //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
+                        //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
 
                         score = (score < max_errors_excl ?
                                 score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
@@ -465,47 +583,46 @@ namespace gpu{
 
                         return true;
                     }else{
+                        //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
+
                         return false;
                     }
                 };
 
-                //initialize threadlocal smem array with subject
-                #pragma unroll
-                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                    mySequence[no_bank_conflict_index(i)] = subjectBackup[identity(i)];
+                #pragma unroll 
+                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                    mySequenceHi[i] = subjectBackupHi[i];
+                    mySequenceLo[i] = subjectBackupLo[i];
                 }
-
-                unsigned int* mySequence_hi = mySequence;
-                unsigned int* mySequence_lo = mySequence + no_bank_conflict_index(subjectints / 2);
 
                 for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
                     const int overlapsize = min(subjectbases - shift, querybases);
 
-                    bool b = handle_shift(shift, overlapsize,
-                                    mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                    subjectints,
-                                    queryBackup_hi, queryBackup_lo, no_bank_conflict_index);
+                    bool b = handle_shift(
+                        shift, overlapsize,
+                        mySequenceHi, mySequenceLo,
+                        queryBackupHi, queryBackupLo
+                    );
                     if(!b){
                         break;
                     }
                 }
 
                 //initialize threadlocal smem array with query
-                #pragma unroll
-                for(int i = 0; i < encodedSequencePitchInInts2BitHiLo; i += 1) {
-                    mySequence[no_bank_conflict_index(i)] = queryBackup[no_bank_conflict_index(i)];
+                #pragma unroll 
+                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                    mySequenceHi[i] = queryBackupHi[i];
+                    mySequenceLo[i] = queryBackupLo[i];
                 }
-
-                mySequence_hi = mySequence;
-                mySequence_lo = mySequence + no_bank_conflict_index(queryints / 2);
 
                 for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
                     const int overlapsize = min(subjectbases, querybases + shift);
 
-                    bool b = handle_shift(shift, overlapsize,
-                                    mySequence_hi, mySequence_lo, no_bank_conflict_index,
-                                    queryints,
-                                    subjectBackup_hi, subjectBackup_lo, identity);
+                    bool b = handle_shift(
+                        shift, overlapsize,
+                        mySequenceHi, mySequenceLo,
+                        subjectBackupHi, subjectBackupLo
+                    );
                     if(!b){
                         break;
                     }
@@ -2603,6 +2720,7 @@ namespace gpu{
             //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
 
             if(intsPerSequence2BitHiLo == 8){
+                constexpr int maxValidIntsPerSequence = 8;
                 int max_blocks_per_device = 1;
 
                 KernelLaunchConfig kernelLaunchConfig;
@@ -2617,7 +2735,7 @@ namespace gpu{
                     KernelProperties kernelProperties;
                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                         &kernelProperties.max_blocks_per_SM,
-                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, tilesize, 8>,
+                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, tilesize, maxValidIntsPerSequence>,
                         kernelLaunchConfig.threads_per_block, 
                         kernelLaunchConfig.smem
                     ); CUERR;
@@ -2635,7 +2753,7 @@ namespace gpu{
                 dim3 block(blocksize, 1, 1);
                 dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
 
-                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, tilesize, 8>
+                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, tilesize, maxValidIntsPerSequence>
                     <<<grid, block, 0, stream>>>(
                         d_subjectDataHiLo,
                         d_candidateDataHiLoTransposed,
@@ -2645,6 +2763,7 @@ namespace gpu{
                         d_tiles_per_subject_prefixsum,
                         n_subjects,
                         n_queries,
+                        intsPerSequence2BitHiLo, 
                         min_overlap,
                         maxErrorRate,
                         min_overlap_ratio
@@ -2715,7 +2834,6 @@ namespace gpu{
 
                 dim3 block(blocksize, 1, 1);
                 dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
-                //dim3 grid(1,1,1);
 
                 mycall;
 
@@ -2725,6 +2843,9 @@ namespace gpu{
             cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
             cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
             cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
+
+            // cudaDeviceSynchronize();
+            // std::exit(0);
     }
 
 
