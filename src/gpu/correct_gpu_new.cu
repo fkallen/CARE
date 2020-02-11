@@ -1253,10 +1253,7 @@ namespace test{
                         dataArrays.d_num_indices,
                         sizeof(int),
                         D2H,
-                        streams[primary_stream_index]); CUERR;
-
-        cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
-        cudaStreamWaitEvent(streams[secondary_stream_index], events[num_indices_transfered_event_index], 0); CUERR;
+                        streams[secondary_stream_index]); CUERR;
 
         cudaMemcpyAsync(dataArrays.h_indices,
                         dataArrays.d_indices,
@@ -1463,19 +1460,19 @@ namespace test{
 
             cudaEventRecord(events[quality_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
 
-            cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+            // cudaStreamWaitEvent(streams[secondary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
 
-            cudaMemcpyAsync(dataArrays.h_subject_qualities,
-                            dataArrays.d_subject_qualities,
-                            dataArrays.d_subject_qualities.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]);
+            // cudaMemcpyAsync(dataArrays.h_subject_qualities,
+            //                 dataArrays.d_subject_qualities,
+            //                 dataArrays.d_subject_qualities.sizeInBytes(),
+            //                 D2H,
+            //                 streams[secondary_stream_index]);
 
-            cudaMemcpyAsync(dataArrays.h_candidate_qualities,
-                            dataArrays.d_candidate_qualities,
-                            dataArrays.d_candidate_qualities.sizeInBytes(),
-                            D2H,
-                            streams[secondary_stream_index]);
+            // cudaMemcpyAsync(dataArrays.h_candidate_qualities,
+            //                 dataArrays.d_candidate_qualities,
+            //                 dataArrays.d_candidate_qualities.sizeInBytes(),
+            //                 D2H,
+            //                 streams[secondary_stream_index]);
         }
 
         //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
@@ -1493,9 +1490,9 @@ namespace test{
 
         DataArrays& dataArrays = batch.dataArrays;
 
-        if(transFuncData.correctionOptions.useQualityScores){
-		     cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
-        }
+        // if(transFuncData.correctionOptions.useQualityScores){
+		//      cudaStreamWaitEvent(streams[primary_stream_index], events[quality_transfer_finished_event_index], 0); CUERR;
+        // }
 
 		const float desiredAlignmentMaxErrorRate = transFuncData.goodAlignmentProperties.maxErrorRate;
         //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
@@ -1743,9 +1740,6 @@ namespace test{
             }
 
             std::swap(dataArrays.d_num_indices_tmp, dataArrays.d_num_indices);
-
-            //cudaMemcpyAsync(dataArrays.h_num_indices, dataArrays.d_num_indices, sizeof(int), D2H, streams[primary_stream_index]);  CUERR;
-            //cudaEventRecord(events[num_indices_transfered_event_index], streams[primary_stream_index]); CUERR;
 
             build_msa_async(dataArrays.getDeviceMSAPointers(),
                             dataArrays.getDeviceAlignmentResultPointers(),
