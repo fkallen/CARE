@@ -142,6 +142,7 @@ void call_popcount_shifted_hamming_distance_kernel_async(
             const int* d_candidates_per_subject_prefixsum,
             const int* h_candidates_per_subject,
             const int* d_candidates_per_subject,
+            const int* d_anchorIndicesOfCandidates,
             int n_subjects,
             int n_queries,
             int maximumSequenceLength,

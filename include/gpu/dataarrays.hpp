@@ -541,6 +541,7 @@ struct DataArrays {
         bytes += f(h_candidates_per_subject_prefixsum);
         bytes += f(h_subject_read_ids);
         bytes += f(h_candidate_read_ids);
+        bytes += f(h_anchorIndicesOfCandidates);
 
         bytes += f(h_subject_qualities);
         bytes += f(h_candidate_qualities);
@@ -603,6 +604,7 @@ struct DataArrays {
         bytes += f(d_candidates_per_subject_prefixsum);
         bytes += f(d_subject_read_ids);
         bytes += f(d_candidate_read_ids);
+        bytes += f(d_anchorIndicesOfCandidates);
 
         bytes += f(d_subject_qualities);
         bytes += f(d_candidate_qualities);
@@ -674,6 +676,7 @@ struct DataArrays {
         bytes += f(h_candidates_per_subject_prefixsum);
         bytes += f(h_subject_read_ids);
         bytes += f(h_candidate_read_ids);
+        bytes += f(h_anchorIndicesOfCandidates);
 
         bytes += f(h_subject_qualities);
         bytes += f(h_candidate_qualities);
@@ -737,6 +740,7 @@ struct DataArrays {
         bytes += f(d_candidates_per_subject_prefixsum);
         bytes += f(d_subject_read_ids);
         bytes += f(d_candidate_read_ids);
+        bytes += f(d_anchorIndicesOfCandidates);
 
         bytes += f(d_subject_qualities);
         bytes += f(d_candidate_qualities);
@@ -837,6 +841,7 @@ struct DataArrays {
     SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
     SimpleAllocationPinnedHost<read_number> h_subject_read_ids;
     SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
+    SimpleAllocationPinnedHost<int> h_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
 
     SimpleAllocationDevice<unsigned int> d_subject_sequences_data;
     SimpleAllocationDevice<unsigned int> d_candidate_sequences_data;
@@ -847,6 +852,7 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_candidates_per_subject_prefixsum;
     SimpleAllocationDevice<read_number> d_subject_read_ids;
     SimpleAllocationDevice<read_number> d_candidate_read_ids;
+    SimpleAllocationDevice<int> d_anchorIndicesOfCandidates; // candidate i belongs to anchor anchorIndicesOfCandidates[i]
 
 	//indices
 
@@ -1101,6 +1107,7 @@ struct DataArrays {
         handlearray(indices_per_subject);
         handlearray(indices_per_subject_prefixsum);
         handlearray(num_indices);
+        handlearray(anchorIndicesOfCandidates);
 
         handlearray(subject_qualities);
         handlearray(candidate_qualities);
@@ -1168,6 +1175,8 @@ struct DataArrays {
         handlearray(indices_per_subject_prefixsum);
         handlearray(num_indices);
 
+        handlearray(anchorIndicesOfCandidates);
+
         handlearray(subject_qualities);
         handlearray(candidate_qualities);
 
@@ -1232,6 +1241,8 @@ struct DataArrays {
         handlearray(indices_per_subject);
         handlearray(indices_per_subject_prefixsum);
         handlearray(num_indices);
+
+        handlearray(anchorIndicesOfCandidates);
 
         handlearray(subject_qualities);
         handlearray(candidate_qualities);

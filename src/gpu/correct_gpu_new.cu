@@ -868,12 +868,16 @@ namespace test{
         dataArrays.h_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
         dataArrays.h_subject_sequences_lengths.resize(batchData.n_subjects);
         dataArrays.h_candidate_sequences_lengths.resize(batchData.n_queries);
+        dataArrays.h_anchorIndicesOfCandidates.resize(batchData.n_queries);
 
         dataArrays.d_subject_sequences_data.resize(batchData.n_subjects * batchData.encodedSequencePitchInInts);
         dataArrays.d_candidate_sequences_data.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
         dataArrays.d_transposedCandidateSequencesData.resize(batchData.n_queries * batchData.encodedSequencePitchInInts);
         dataArrays.d_subject_sequences_lengths.resize(batchData.n_subjects);
         dataArrays.d_candidate_sequences_lengths.resize(batchData.n_queries);
+        dataArrays.d_anchorIndicesOfCandidates.resize(batchData.n_queries);
+
+        
 
         //alignment output
 
@@ -1149,7 +1153,31 @@ namespace test{
 
 		DataArrays& dataArrays = batch.dataArrays;
 		std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-		std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
+
+        {
+            int n_queries = batch.n_queries;
+            int n_anchors = batch.n_subjects;
+            int* d_anchorIndicesOfCandidates = dataArrays.d_anchorIndicesOfCandidates.get();
+            int* d_candidates_per_subject = dataArrays.d_candidates_per_subject.get();
+            int* d_candidates_per_subject_prefixsum = dataArrays.d_candidates_per_subject_prefixsum.get();
+
+            generic_kernel
+                <<<256, 128, 0, streams[primary_stream_index]>>>
+            ([=] __device__ {
+                for(int anchorIndex = blockIdx.x; anchorIndex < n_anchors; anchorIndex += 256){
+                    const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
+                    const int numCandidatesOfAnchor = d_candidates_per_subject[anchorIndex];
+                    int* const beginptr = &d_anchorIndicesOfCandidates[offset];
+
+                    for(int localindex = threadIdx.x; localindex < numCandidatesOfAnchor; localindex += 128){
+                        beginptr[localindex] = anchorIndex;
+                    }
+                }
+                
+            });
+
+        }
 
         //cudaStreamWaitEvent(streams[primary_stream_index], events[alignment_data_transfer_h2d_finished_event_index], 0); CUERR;
         
@@ -1159,6 +1187,7 @@ namespace test{
                     dataArrays.d_candidates_per_subject_prefixsum,
                     dataArrays.h_candidates_per_subject,
                     dataArrays.d_candidates_per_subject,
+                    dataArrays.d_anchorIndicesOfCandidates.get(),
                     batch.n_subjects,
                     batch.n_queries,
                     transFuncData.sequenceFileProperties.maxSequenceLength,

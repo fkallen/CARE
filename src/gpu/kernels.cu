@@ -302,7 +302,7 @@ namespace gpu{
 
 
 
-    template<int blocksize, int tilesize, int maxValidIntsPerSequence>
+    template<int blocksize, int maxValidIntsPerSequence>
     __global__
     void
     popcount_shifted_hamming_distance_ctpitch_kernel(
@@ -310,8 +310,7 @@ namespace gpu{
                 const unsigned int* candidateDataHiLoTransposed,
                 AlignmentResultPointers d_alignmentresultpointers,
                 ReadSequencesPointers d_sequencePointers,
-                const int* __restrict__ candidates_per_subject_prefixsum,
-                const int* __restrict__ tiles_per_subject_prefixsum,
+                const int* __restrict__ d_anchorIndicesOfCandidates,
                 int n_subjects,
                 int n_candidates,
                 size_t encodedSequencePitchInInts2BitHiLo,
@@ -320,8 +319,6 @@ namespace gpu{
                 float min_overlap_ratio){
 
         static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
-
-        constexpr int tilesPerBlock = blocksize / tilesize;
 
         auto identity = [](auto logical_index){
             return logical_index;
@@ -418,12 +415,6 @@ namespace gpu{
 
         //set up shared memory pointers
 
-        const int tiles = (blocksize * gridDim.x) / tilesize;
-        const int globalTileId = (blocksize * blockIdx.x + threadIdx.x) / tilesize;
-        const int localTileId = (threadIdx.x) / tilesize;
-        const int laneInTile = threadIdx.x % tilesize;
-        const int requiredTiles = tiles_per_subject_prefixsum[n_subjects];
-
         unsigned int subjectBackupHi[maxValidIntsPerSequence / 2];
         unsigned int subjectBackupLo[maxValidIntsPerSequence / 2];
         unsigned int queryBackupHi[maxValidIntsPerSequence / 2];
@@ -489,23 +480,13 @@ namespace gpu{
             }
         };
 
-        for(int logicalTileId = globalTileId; logicalTileId < requiredTiles * 2; logicalTileId += tiles){
-            const bool isReverseComplement = logicalTileId >= requiredTiles;
-            const int forwardTileId = isReverseComplement ? logicalTileId - requiredTiles : logicalTileId;
-
-            const int subjectIndex = thrust::distance(tiles_per_subject_prefixsum,
-                                                    thrust::lower_bound(
-                                                        thrust::seq,
-                                                        tiles_per_subject_prefixsum,
-                                                        tiles_per_subject_prefixsum + n_subjects + 1,
-                                                        forwardTileId + 1))-1;
-
-            const int candidatesBeforeThisSubject = candidates_per_subject_prefixsum[subjectIndex];
-            const int maxCandidateIndex_excl = candidates_per_subject_prefixsum[subjectIndex+1];
-            //const int tilesForThisSubject = tiles_per_subject_prefixsum[subjectIndex + 1] - tiles_per_subject_prefixsum[subjectIndex];
-            const int tileForThisSubject = forwardTileId - tiles_per_subject_prefixsum[subjectIndex];
-            const int queryIndex = candidatesBeforeThisSubject + tileForThisSubject * tilesize + laneInTile;
+        for(int logicalTileId = threadIdx.x + blocksize * blockIdx.x; logicalTileId < n_candidates * 2; logicalTileId += blocksize * gridDim.x){
+            const bool isReverseComplement = logicalTileId >= n_candidates;
+            const int queryIndex = isReverseComplement ? logicalTileId - n_candidates : logicalTileId;
             const int resultIndex = isReverseComplement ? queryIndex + n_candidates : queryIndex;
+
+            const int subjectIndex = d_anchorIndicesOfCandidates[queryIndex];
+            
 
             const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
 
@@ -518,133 +499,130 @@ namespace gpu{
             }
 
 
-            if(queryIndex < maxCandidateIndex_excl){
+            const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
 
-                const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
+            const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
-                const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
+            //save query in reg
 
-                //save query in reg
- 
-                #pragma unroll 
-                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                    queryBackupHi[i] = candidateptr[i * n_candidates];
-                    queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
-                }
-
-                //begin SHD algorithm
-
-                const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
-                const int queryints = getEncodedNumInts2BitHiLo(querybases);
-                const int totalbases = subjectbases + querybases;
-                const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
-
-                //queryIndex != resultIndex -> reverse complement
-                if(isReverseComplement){
-                    reverseComplementQuery(querybases, queryints);
-                }
-
-                int bestScore = totalbases;                 // score is number of mismatches
-                int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
-
-                auto handle_shift = [&](int shift, int overlapsize,
-                                        auto& shiftptr_hi, auto& shiftptr_lo,
-                                        const auto& otherptr_hi, const auto& otherptr_lo){
-
-                    //const int max_errors = int(float(overlapsize) * maxErrorRate);
-                    const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                                                    bestScore - totalbases + 2*overlapsize);
-
-                    if(max_errors_excl > 0){
-
-                        int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
-                                            shiftptr_hi, shiftptr_lo,
-                                            otherptr_hi, otherptr_lo);
-
-                        
-                        // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
-
-                        // printf("%d %d %d %d | %d %d %d %d --- ", 
-                        //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
-                        //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
-
-                        // printf("%d %d %d %d | %d %d %d %d\n", 
-                        //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
-                        //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
-
-                        score = (score < max_errors_excl ?
-                                score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
-                                : std::numeric_limits<int>::max()); // too many errors, discard
-
-                        if(score < bestScore){
-                            bestScore = score;
-                            bestShift = shift;
-                        }
-
-                        return true;
-                    }else{
-                        //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
-
-                        return false;
-                    }
-                };
-
-                #pragma unroll 
-                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                    mySequenceHi[i] = subjectBackupHi[i];
-                    mySequenceLo[i] = subjectBackupLo[i];
-                }
-
-                for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
-                    const int overlapsize = min(subjectbases - shift, querybases);
-
-                    bool b = handle_shift(
-                        shift, overlapsize,
-                        mySequenceHi, mySequenceLo,
-                        queryBackupHi, queryBackupLo
-                    );
-                    if(!b){
-                        break;
-                    }
-                }
-
-                //initialize threadlocal smem array with query
-                #pragma unroll 
-                for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                    mySequenceHi[i] = queryBackupHi[i];
-                    mySequenceLo[i] = queryBackupLo[i];
-                }
-
-                for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
-                    const int overlapsize = min(subjectbases, querybases + shift);
-
-                    bool b = handle_shift(
-                        shift, overlapsize,
-                        mySequenceHi, mySequenceLo,
-                        subjectBackupHi, subjectBackupLo
-                    );
-                    if(!b){
-                        break;
-                    }
-                }
-
-                const int queryoverlapbegin_incl = max(-bestShift, 0);
-                const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-                const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-                const int opnr = bestScore - totalbases + 2*overlapsize;
-
-                int* const alignment_scores = d_alignmentresultpointers.scores;
-                int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
-                int* const alignment_shifts = d_alignmentresultpointers.shifts;
-                int* const alignment_nOps = d_alignmentresultpointers.nOps;
-                bool* const alignment_isValid = d_alignmentresultpointers.isValid;
-
-                alignment_scores[resultIndex] = bestScore;
-                alignment_overlaps[resultIndex] = overlapsize;
-                alignment_shifts[resultIndex] = bestShift;
-                alignment_nOps[resultIndex] = opnr;
-                alignment_isValid[resultIndex] = (bestShift != -querybases);
+            #pragma unroll 
+            for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                queryBackupHi[i] = candidateptr[i * n_candidates];
+                queryBackupLo[i] = candidateptr[(i + maxValidIntsPerSequence / 2) * n_candidates];
             }
+
+            //begin SHD algorithm
+
+            const int subjectints = getEncodedNumInts2BitHiLo(subjectbases);
+            const int queryints = getEncodedNumInts2BitHiLo(querybases);
+            const int totalbases = subjectbases + querybases;
+            const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
+
+            //queryIndex != resultIndex -> reverse complement
+            if(isReverseComplement){
+                reverseComplementQuery(querybases, queryints);
+            }
+
+            int bestScore = totalbases;                 // score is number of mismatches
+            int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
+
+            auto handle_shift = [&](int shift, int overlapsize,
+                                    auto& shiftptr_hi, auto& shiftptr_lo,
+                                    const auto& otherptr_hi, const auto& otherptr_lo){
+
+                //const int max_errors = int(float(overlapsize) * maxErrorRate);
+                const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
+                                                bestScore - totalbases + 2*overlapsize);
+
+                if(max_errors_excl > 0){
+
+                    int score = hammingDistanceWithShift(shift != 0, overlapsize, max_errors_excl,
+                                        shiftptr_hi, shiftptr_lo,
+                                        otherptr_hi, otherptr_lo);
+
+                    
+                    // printf("%d, %d %d %d --- ", queryIndex, shift, overlapsize, score);
+
+                    // printf("%d %d %d %d | %d %d %d %d --- ", 
+                    //     shiftptr_hi[0], shiftptr_hi[1], shiftptr_hi[2], shiftptr_hi[3],
+                    //     shiftptr_lo[0], shiftptr_lo[1], shiftptr_lo[2], shiftptr_lo[3]);
+
+                    // printf("%d %d %d %d | %d %d %d %d\n", 
+                    //     otherptr_hi[0], otherptr_hi[1], otherptr_hi[2], otherptr_hi[3],
+                    //     otherptr_lo[0], otherptr_lo[1], otherptr_lo[2], otherptr_lo[3]);
+
+                    score = (score < max_errors_excl ?
+                            score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
+                            : std::numeric_limits<int>::max()); // too many errors, discard
+
+                    if(score < bestScore){
+                        bestScore = score;
+                        bestShift = shift;
+                    }
+
+                    return true;
+                }else{
+                    //printf("%d, %d %d %d max_errors_excl\n", queryIndex, shift, overlapsize, max_errors_excl);
+
+                    return false;
+                }
+            };
+
+            #pragma unroll 
+            for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                mySequenceHi[i] = subjectBackupHi[i];
+                mySequenceLo[i] = subjectBackupLo[i];
+            }
+
+            for(int shift = 0; shift < subjectbases - minoverlap + 1; shift += 1) {
+                const int overlapsize = min(subjectbases - shift, querybases);
+
+                bool b = handle_shift(
+                    shift, overlapsize,
+                    mySequenceHi, mySequenceLo,
+                    queryBackupHi, queryBackupLo
+                );
+                if(!b){
+                    break;
+                }
+            }
+
+            //initialize threadlocal smem array with query
+            #pragma unroll 
+            for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
+                mySequenceHi[i] = queryBackupHi[i];
+                mySequenceLo[i] = queryBackupLo[i];
+            }
+
+            for(int shift = -1; shift >= -querybases + minoverlap; shift -= 1) {
+                const int overlapsize = min(subjectbases, querybases + shift);
+
+                bool b = handle_shift(
+                    shift, overlapsize,
+                    mySequenceHi, mySequenceLo,
+                    subjectBackupHi, subjectBackupLo
+                );
+                if(!b){
+                    break;
+                }
+            }
+
+            const int queryoverlapbegin_incl = max(-bestShift, 0);
+            const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
+            const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
+            const int opnr = bestScore - totalbases + 2*overlapsize;
+
+            int* const alignment_scores = d_alignmentresultpointers.scores;
+            int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
+            int* const alignment_shifts = d_alignmentresultpointers.shifts;
+            int* const alignment_nOps = d_alignmentresultpointers.nOps;
+            bool* const alignment_isValid = d_alignmentresultpointers.isValid;
+
+            alignment_scores[resultIndex] = bestScore;
+            alignment_overlaps[resultIndex] = overlapsize;
+            alignment_shifts[resultIndex] = bestShift;
+            alignment_nOps[resultIndex] = opnr;
+            alignment_isValid[resultIndex] = (bestShift != -querybases);
         }
     }
 
@@ -2613,6 +2591,7 @@ namespace gpu{
     			const int* d_candidates_per_subject_prefixsum,
                 const int* h_candidates_per_subject,
                 const int* d_candidates_per_subject,
+                const int* d_anchorIndicesOfCandidates,
     			int n_subjects,
     			int n_queries,
                 int maximumSequenceLength,
@@ -2663,64 +2642,9 @@ namespace gpu{
                 handle
             );
 
-            constexpr int tilesize = 16;
-
-            int* d_tiles_per_subject_prefixsum;
-            cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
-
-            // calculate blocks per subject prefixsum
-            auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
-                return SDIV(candidates_for_subject, tilesize);
-            };
-            cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
-                d_tiles_per_subject(d_candidates_per_subject,
-                              getTilesPerSubject);
-
-            void* tempstorage = nullptr;
-            size_t tempstoragesize = 0;
-
-            cub::DeviceScan::InclusiveSum(nullptr,
-                        tempstoragesize,
-                        d_tiles_per_subject,
-                        d_tiles_per_subject_prefixsum+1,
-                        n_subjects,
-                        stream); CUERR;
-
-            cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
-
-            cub::DeviceScan::InclusiveSum(tempstorage,
-                        tempstoragesize,
-                        d_tiles_per_subject,
-                        d_tiles_per_subject_prefixsum+1,
-                        n_subjects,
-                        stream); CUERR;
-
-            cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
-
-            call_set_kernel_async(d_tiles_per_subject_prefixsum,
-                                    0,
-                                    0,
-                                    stream);
-
-
-
-
-        	constexpr int blocksize = 128;
-            constexpr int tilesPerBlock = blocksize / tilesize;
-
-            //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
-
-            int requiredTiles = 0;
-            for(int i = 0; i < n_subjects;i++){
-                requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
-            }
-
-            const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
-
-            //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
-
             if(intsPerSequence2BitHiLo == 8){
                 constexpr int maxValidIntsPerSequence = 8;
+                constexpr int blocksize = 128;
                 int max_blocks_per_device = 1;
 
                 KernelLaunchConfig kernelLaunchConfig;
@@ -2735,7 +2659,7 @@ namespace gpu{
                     KernelProperties kernelProperties;
                     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                         &kernelProperties.max_blocks_per_SM,
-                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, tilesize, maxValidIntsPerSequence>,
+                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>,
                         kernelLaunchConfig.threads_per_block, 
                         kernelLaunchConfig.smem
                     ); CUERR;
@@ -2751,16 +2675,16 @@ namespace gpu{
                 }
 
                 dim3 block(blocksize, 1, 1);
-                dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);
+                const int numBlocks = SDIV(n_queries, blocksize);
+                dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
-                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, tilesize, maxValidIntsPerSequence>
+                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
                     <<<grid, block, 0, stream>>>(
                         d_subjectDataHiLo,
                         d_candidateDataHiLoTransposed,
                         d_alignmentresultpointers,
                         d_sequencePointers,
-                        d_candidates_per_subject_prefixsum,
-                        d_tiles_per_subject_prefixsum,
+                        d_anchorIndicesOfCandidates,
                         n_subjects,
                         n_queries,
                         intsPerSequence2BitHiLo, 
@@ -2770,6 +2694,62 @@ namespace gpu{
                 ); CUERR;
 
             }else{
+
+                constexpr int tilesize = 16;
+
+                int* d_tiles_per_subject_prefixsum;
+                cubCachingAllocator.DeviceAllocate((void**)&d_tiles_per_subject_prefixsum, sizeof(int) * (n_subjects+1), stream);  CUERR;
+
+                // calculate blocks per subject prefixsum
+                auto getTilesPerSubject = [=] __device__ (int candidates_for_subject){
+                    return SDIV(candidates_for_subject, tilesize);
+                };
+                cub::TransformInputIterator<int,decltype(getTilesPerSubject), const int*>
+                    d_tiles_per_subject(d_candidates_per_subject,
+                                getTilesPerSubject);
+
+                void* tempstorage = nullptr;
+                size_t tempstoragesize = 0;
+
+                cub::DeviceScan::InclusiveSum(nullptr,
+                            tempstoragesize,
+                            d_tiles_per_subject,
+                            d_tiles_per_subject_prefixsum+1,
+                            n_subjects,
+                            stream); CUERR;
+
+                cubCachingAllocator.DeviceAllocate((void**)&tempstorage, tempstoragesize, stream);  CUERR;
+
+                cub::DeviceScan::InclusiveSum(tempstorage,
+                            tempstoragesize,
+                            d_tiles_per_subject,
+                            d_tiles_per_subject_prefixsum+1,
+                            n_subjects,
+                            stream); CUERR;
+
+                cubCachingAllocator.DeviceFree(tempstorage);  CUERR;
+
+                call_set_kernel_async(d_tiles_per_subject_prefixsum,
+                                        0,
+                                        0,
+                                        stream);
+
+
+
+
+                constexpr int blocksize = 128;
+                constexpr int tilesPerBlock = blocksize / tilesize;
+
+                //const int requiredTiles = h_tiles_per_subject_prefixsum[n_subjects];
+
+                int requiredTiles = 0;
+                for(int i = 0; i < n_subjects;i++){
+                    requiredTiles += SDIV(h_candidates_per_subject[i], tilesize);
+                }
+
+                const int requiredBlocks = SDIV(requiredTiles, tilesPerBlock);
+
+                //printf("n_subjects %d, n_queries %d\n", n_subjects, n_queries);
 
 
                 const std::size_t smem = sizeof(char) * (bytesPerSequence2BitHilo * tilesPerBlock + bytesPerSequence2BitHilo * blocksize * 2);
@@ -2838,9 +2818,11 @@ namespace gpu{
                 mycall;
 
                 #undef mycall
+
+                cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
             }
 
-            cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
+            
             cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
             cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
 
