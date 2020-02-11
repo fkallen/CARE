@@ -306,10 +306,15 @@ namespace gpu{
     __global__
     void
     popcount_shifted_hamming_distance_ctpitch_kernel(
-                const unsigned int* subjectDataHiLo,
-                const unsigned int* candidateDataHiLoTransposed,
-                AlignmentResultPointers d_alignmentresultpointers,
-                ReadSequencesPointers d_sequencePointers,
+                const unsigned int* __restrict__ subjectDataHiLoTransposed,
+                const unsigned int* __restrict__ candidateDataHiLoTransposed,
+                const int* __restrict__ subjectSequencesLength,
+                const int* __restrict__ candidateSequencesLength,
+                int* __restrict__ alignment_scores,
+                int* __restrict__ alignment_overlaps,
+                int* __restrict__ alignment_shifts,
+                int* __restrict__ alignment_nOps,
+                bool* __restrict__ alignment_isValid,
                 const int* __restrict__ d_anchorIndicesOfCandidates,
                 int n_subjects,
                 int n_candidates,
@@ -488,18 +493,18 @@ namespace gpu{
             const int subjectIndex = d_anchorIndicesOfCandidates[queryIndex];
             
 
-            const int subjectbases = d_sequencePointers.subjectSequencesLength[subjectIndex];
+            const int subjectbases = subjectSequencesLength[subjectIndex];
 
-            const unsigned int* subjectptr = subjectDataHiLo + std::size_t(subjectIndex) * encodedSequencePitchInInts2BitHiLo;
+            const unsigned int* subjectptr = subjectDataHiLoTransposed + std::size_t(subjectIndex);
 
             #pragma unroll 
             for(int i = 0; i < maxValidIntsPerSequence / 2; i++){
-                subjectBackupHi[i] = subjectptr[i];
-                subjectBackupLo[i] = subjectptr[i + maxValidIntsPerSequence / 2];
+                subjectBackupHi[i] = subjectptr[(i) * n_subjects];
+                subjectBackupLo[i] = subjectptr[(i + maxValidIntsPerSequence / 2) * n_subjects];
             }
 
 
-            const int querybases = d_sequencePointers.candidateSequencesLength[queryIndex];
+            const int querybases = candidateSequencesLength[queryIndex];
 
             const unsigned int* candidateptr = candidateDataHiLoTransposed + std::size_t(queryIndex);
 
@@ -611,12 +616,6 @@ namespace gpu{
             const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
             const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
             const int opnr = bestScore - totalbases + 2*overlapsize;
-
-            int* const alignment_scores = d_alignmentresultpointers.scores;
-            int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
-            int* const alignment_shifts = d_alignmentresultpointers.shifts;
-            int* const alignment_nOps = d_alignmentresultpointers.nOps;
-            bool* const alignment_isValid = d_alignmentresultpointers.isValid;
 
             alignment_scores[resultIndex] = bestScore;
             alignment_overlaps[resultIndex] = overlapsize;
@@ -2605,7 +2604,7 @@ namespace gpu{
             const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
             const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
 
-            unsigned int* d_subjectDataHiLo = nullptr;
+            
             unsigned int* d_candidateDataHiLoTransposed = nullptr;
 
             cubCachingAllocator.DeviceAllocate(
@@ -2624,26 +2623,32 @@ namespace gpu{
                 stream,
                 handle
             );
-
-            cubCachingAllocator.DeviceAllocate(
-                (void**)&d_subjectDataHiLo, 
-                sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
-                stream
-            ); CUERR;
-
-            callConversionKernel2BitTo2BitHiLoNN(
-                d_sequencePointers.subjectSequencesData,
-                encodedSequencePitchInInts2Bit,
-                d_subjectDataHiLo,
-                intsPerSequence2BitHiLo,
-                d_sequencePointers.subjectSequencesLength,
-                n_subjects,
-                stream,
-                handle
-            );
+            
 
             if(intsPerSequence2BitHiLo == 8){
+               
                 constexpr int maxValidIntsPerSequence = 8;
+
+                unsigned int* d_subjectDataHiLoTransposed = nullptr;
+
+                cubCachingAllocator.DeviceAllocate(
+                    (void**)&d_subjectDataHiLoTransposed, 
+                    sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
+                    stream
+                ); CUERR;
+
+                callConversionKernel2BitTo2BitHiLoNT(
+                    d_sequencePointers.subjectSequencesData,
+                    encodedSequencePitchInInts2Bit,
+                    d_subjectDataHiLoTransposed,
+                    intsPerSequence2BitHiLo,
+                    d_sequencePointers.subjectSequencesLength,
+                    n_subjects,
+                    stream,
+                    handle
+                );
+
+
                 constexpr int blocksize = 128;
                 int max_blocks_per_device = 1;
 
@@ -2678,12 +2683,26 @@ namespace gpu{
                 const int numBlocks = SDIV(n_queries, blocksize);
                 dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
+                int* const alignment_scores = d_alignmentresultpointers.scores;
+                int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
+                int* const alignment_shifts = d_alignmentresultpointers.shifts;
+                int* const alignment_nOps = d_alignmentresultpointers.nOps;
+                bool* const alignment_isValid = d_alignmentresultpointers.isValid;
+
+                const int* const subjectSequencesLength = d_sequencePointers.subjectSequencesLength;
+                const int* const candidateSequencesLength = d_sequencePointers.candidateSequencesLength;
+
                 popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
                     <<<grid, block, 0, stream>>>(
-                        d_subjectDataHiLo,
+                        d_subjectDataHiLoTransposed,
                         d_candidateDataHiLoTransposed,
-                        d_alignmentresultpointers,
-                        d_sequencePointers,
+                        subjectSequencesLength,
+                        candidateSequencesLength,
+                        alignment_scores,
+                        alignment_overlaps,
+                        alignment_shifts,
+                        alignment_nOps,
+                        alignment_isValid,
                         d_anchorIndicesOfCandidates,
                         n_subjects,
                         n_queries,
@@ -2693,7 +2712,28 @@ namespace gpu{
                         min_overlap_ratio
                 ); CUERR;
 
+                cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;
+
             }else{
+
+                unsigned int* d_subjectDataHiLo = nullptr;
+
+                cubCachingAllocator.DeviceAllocate(
+                    (void**)&d_subjectDataHiLo, 
+                    sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
+                    stream
+                ); CUERR;
+
+                callConversionKernel2BitTo2BitHiLoNN(
+                    d_sequencePointers.subjectSequencesData,
+                    encodedSequencePitchInInts2Bit,
+                    d_subjectDataHiLo,
+                    intsPerSequence2BitHiLo,
+                    d_sequencePointers.subjectSequencesLength,
+                    n_subjects,
+                    stream,
+                    handle
+                );
 
                 constexpr int tilesize = 16;
 
@@ -2820,10 +2860,12 @@ namespace gpu{
                 #undef mycall
 
                 cubCachingAllocator.DeviceFree(d_tiles_per_subject_prefixsum);  CUERR;
+
+                cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
             }
 
             
-            cubCachingAllocator.DeviceFree(d_subjectDataHiLo);  CUERR;
+            
             cubCachingAllocator.DeviceFree(d_candidateDataHiLoTransposed);  CUERR;
 
             // cudaDeviceSynchronize();
