@@ -1279,6 +1279,9 @@ namespace test{
                     batch.n_subjects,
                     streams[primary_stream_index]); CUERR;
 
+        cudaEventRecord(events[indices_transfer_finished_event_index], streams[primary_stream_index]); CUERR;
+        cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+
         cudaMemcpyAsync(dataArrays.h_num_indices,
                         dataArrays.d_num_indices,
                         sizeof(int),
@@ -1305,6 +1308,86 @@ namespace test{
 
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
         //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
+
+
+        // cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
+        //     dataArrays.d_alignment_best_alignment_flags,
+        //     dataArrays.d_alignment_best_alignment_flags.sizeInBytes(),
+        //     D2H,
+        //     streams[secondary_stream_index]); CUERR;
+
+        // int* d_indicesOfGoodCandidates;
+        // int* d_numIndicesPerAnchor;
+        // int* d_totalNumIndices;
+
+        // cudaMallocManaged(&d_indicesOfGoodCandidates, sizeof(int) * batch.n_queries); CUERR;
+        // cudaMallocManaged(&d_numIndicesPerAnchor, sizeof(int) * batch.n_subjects); CUERR;
+        // cudaMallocManaged(&d_totalNumIndices, sizeof(int)); CUERR;
+
+        // cudaMemsetAsync(d_indicesOfGoodCandidates, 0, sizeof(int) * batch.n_queries); CUERR;
+        // cudaMemsetAsync(d_numIndicesPerAnchor, 0, sizeof(int) * batch.n_subjects); CUERR;
+        // cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int)); CUERR;
+
+        // callSelectIndicesOfGoodCandidatesKernelAsync(
+        //     d_indicesOfGoodCandidates,
+        //     d_numIndicesPerAnchor,
+        //     d_totalNumIndices,
+        //     dataArrays.d_alignment_best_alignment_flags.get(),
+        //     dataArrays.d_candidates_per_subject.get(),
+        //     dataArrays.d_candidates_per_subject_prefixsum.get(),
+        //     dataArrays.d_anchorIndicesOfCandidates.get(),
+        //     batch.n_subjects,
+		// 	batch.n_queries,
+        //     streams[primary_stream_index],
+		// 	batch.kernelLaunchHandle
+        // );
+
+        // cudaDeviceSynchronize(); CUERR;
+
+        // std::cerr << *d_totalNumIndices << " " << *dataArrays.h_num_indices << "\n";
+
+        // for(int i = 0; i < batch.n_subjects; i++){
+        //     std::cerr << d_numIndicesPerAnchor[i] << " " << dataArrays.h_indices_per_subject[i] << "\n";
+        // }
+
+        // auto flagsptr = dataArrays.h_alignment_best_alignment_flags.get();
+        // auto oldindicesptr = dataArrays.h_indices.get();
+        // auto newindicesptr = d_indicesOfGoodCandidates;
+
+        // for(int i = 0; i < batch.n_subjects; i++){
+        //     //if(i == 3){
+        //         for(int k = 0; k < dataArrays.h_candidates_per_subject[i]; k++){
+        //             std::cerr << int(flagsptr[k]) << " ";
+        //         }
+        //         std::cerr << "\n";
+
+        //         std::cerr << d_numIndicesPerAnchor[i] << " " << dataArrays.h_indices_per_subject[i] << "\n";
+        //         std::cerr << "old indices\n";
+
+        //         for(int k = 0; k < dataArrays.h_indices_per_subject[i]; k++){
+        //             std::cerr << oldindicesptr[k] << " ";
+        //         }
+        //         std::cerr << "\n";
+
+
+        //         std::cerr << "new indices\n";
+
+        //         for(int k = 0; k < d_numIndicesPerAnchor[i]; k++){
+        //             std::cerr << newindicesptr[k] << " ";
+        //         }
+        //         std::cerr << "\n";
+
+        //         flagsptr += dataArrays.h_candidates_per_subject[i];
+        //         oldindicesptr += dataArrays.h_indices_per_subject[i];
+        //         newindicesptr += dataArrays.h_candidates_per_subject[i];
+        //     //}
+
+        //     if(i >= 4) break;
+        // }
+
+       // std::exit(0);
+
+
 
         // {
         //     cudaDeviceSynchronize(); CUERR;
