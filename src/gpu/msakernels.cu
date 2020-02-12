@@ -42,7 +42,7 @@ namespace gpu{
                 ReadSequencesPointers d_sequencePointers,
                 const int* __restrict__ indices,
                 const int* __restrict__ indices_per_subject,
-                const int* __restrict__ indices_per_subject_prefixsum,
+                const int* __restrict__ candidatesPerSubjectPrefixSum,
                 int n_subjects,
                 const bool* __restrict__ canExecute){
 
@@ -54,30 +54,34 @@ namespace gpu{
                 typename BlockReduceInt::TempStorage reduce;
             } temp_storage;
 
-            for(unsigned subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
+            for(int subjectIndex = blockIdx.x; subjectIndex < n_subjects; subjectIndex += gridDim.x) {
                 MSAColumnProperties* const properties_ptr = d_msapointers.msaColumnProperties + subjectIndex;
 
                 // We only want to consider the candidates with good alignments. the indices of those were determined in a previous step
                 const int num_indices_for_this_subject = indices_per_subject[subjectIndex];
 
                 if(num_indices_for_this_subject > 0){
-                    const int* const indices_for_this_subject = indices + indices_per_subject_prefixsum[subjectIndex];
+                    const int globalOffset = candidatesPerSubjectPrefixSum[subjectIndex];
+
+                    const int* const myIndicesPtr = indices + globalOffset;
+                    const int* const myShiftsPtr = d_alignmentresultpointers.shifts + globalOffset;
+                    const BestAlignment_t* const myAlignmentFlagsPtr = d_alignmentresultpointers.bestAlignmentFlags + globalOffset;
+                    const int* const myCandidateLengthsPtr = d_sequencePointers.candidateSequencesLength + globalOffset;
 
                     const int subjectLength = d_sequencePointers.subjectSequencesLength[subjectIndex];
                     int startindex = 0;
-                    int endindex = d_sequencePointers.subjectSequencesLength[subjectIndex];
+                    int endindex = subjectLength;
 
-                    for(int index = threadIdx.x; index < num_indices_for_this_subject; index += BLOCKSIZE) {
-                        const int queryIndex = indices_for_this_subject[index];
+                    for(int k = threadIdx.x; k < num_indices_for_this_subject; k += BLOCKSIZE) {
+                        const int localCandidateIndex = myIndicesPtr[k];
 
-                        const int shift = d_alignmentresultpointers.shifts[queryIndex];
-                        const BestAlignment_t flag = d_alignmentresultpointers.bestAlignmentFlags[queryIndex];
-                        const int queryLength = d_sequencePointers.candidateSequencesLength[queryIndex];
+                        const int shift = myShiftsPtr[localCandidateIndex];
+                        const BestAlignment_t flag = myAlignmentFlagsPtr[localCandidateIndex];
+                        const int queryLength = myCandidateLengthsPtr[localCandidateIndex];
 
                         assert(flag != BestAlignment_t::None);
 
                         const int queryEndsAt = queryLength + shift;
-                        //printf("s %d QL %d: %d\n", subjectIndex, queryIndex, queryLength);
                         startindex = min(startindex, shift);
                         endindex = max(endindex, queryEndsAt);
                     }
@@ -168,7 +172,7 @@ namespace gpu{
         }
     }
 
-
+    //TODO fix indices
     __global__
     void msa_add_sequences_kernel_implicit_global(
                 MSAPointers d_msapointers,
@@ -358,7 +362,6 @@ namespace gpu{
                 const int* __restrict__ d_candidates_per_subject_prefixsum,
                 const int* __restrict__ d_indices,
                 const int* __restrict__ d_indices_per_subject,
-                const int* __restrict__ d_indices_per_subject_prefixsum,
                 const int* __restrict__ blocks_per_subject_prefixsum,
                 int n_subjects,
                 int n_queries,
@@ -412,7 +415,8 @@ namespace gpu{
 
                     const int blockForThisSubject = logicalBlockId - blocks_per_subject_prefixsum[subjectIndex];
 
-                    const int* const indices_for_this_subject = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+                    const int* const indices_for_this_subject = d_indices + globalOffset;
                     const int id = blockForThisSubject * blockDim.x + threadIdx.x;
                     const int maxid_excl = d_indices_per_subject[subjectIndex];
 
@@ -446,11 +450,10 @@ namespace gpu{
                             atomicAdd(shared_weights + ptrOffset + globalIndex, weight);
                             atomicAdd(my_coverage + globalIndex, 1);
                         }
-
                     }
 
                     if(id < maxid_excl){
-                        const int queryIndex = indices_for_this_subject[id];
+                        const int queryIndex = indices_for_this_subject[id] + globalOffset;
                         const int shift = shifts[queryIndex];
                         const BestAlignment_t flag = bestAlignmentFlags[queryIndex];
                         const int defaultcolumnoffset = subjectColumnsBegin_incl + shift;
@@ -1201,7 +1204,7 @@ namespace gpu{
                 ReadSequencesPointers d_sequencePointers,
     			const int* d_indices,
     			const int* d_indices_per_subject,
-    			const int* d_indices_per_subject_prefixsum,
+    			const int* d_candidates_per_subject_prefixsum,
     			int n_subjects,
                 int n_queries,
                 const bool* d_canExecute,
@@ -1256,7 +1259,7 @@ namespace gpu{
     	}
 
     	dim3 block(blocksize, 1, 1);
-    	dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1);
+        dim3 grid(std::min(max_blocks_per_device, n_subjects), 1, 1);
 
 		#define mycall(blocksize) msaInitKernel<(blocksize)> \
                 <<<grid, block, 0, stream>>>(d_msapointers, \
@@ -1264,7 +1267,7 @@ namespace gpu{
                                                d_sequencePointers, \
                                                d_indices, \
                                                d_indices_per_subject, \
-                                               d_indices_per_subject_prefixsum, \
+                                               d_candidates_per_subject_prefixsum, \
                                                n_subjects, \
                                                d_canExecute); CUERR;
 
@@ -1657,7 +1660,6 @@ namespace gpu{
             d_candidates_per_subject_prefixsum,
             d_indices,
             d_indices_per_subject,
-            d_indices_per_subject_prefixsum,
             d_blocksPerSubjectPrefixSum,
             n_subjects,
             n_queries,

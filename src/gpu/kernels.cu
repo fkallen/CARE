@@ -1047,7 +1047,6 @@ namespace gpu{
 
 
 
-
     template<int BLOCKSIZE>
     __global__
     void msa_correct_subject_implicit_kernel(
@@ -1057,7 +1056,7 @@ namespace gpu{
                             CorrectionResultPointers d_correctionResultPointers,
                             const int* __restrict__ d_indices,
                             const int* __restrict__ d_indices_per_subject,
-                            const int* __restrict__ d_indices_per_subject_prefixsum,
+                            const int* __restrict__ d_candidates_per_subject_prefixsum,
                             int n_subjects,
                             int encodedSequencePitchInInts,
                             size_t sequence_pitch,
@@ -1237,10 +1236,12 @@ namespace gpu{
 
                             bool goodOrigOverlapExists = false;
 
-                            const int* myIndices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+                            const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+
+                            const int* myIndices = d_indices + globalOffset;
 
                             for(int candidatenr = 0; candidatenr < myNumIndices; candidatenr++){
-                                const int arrayindex = myIndices[candidatenr];
+                                const int arrayindex = myIndices[candidatenr] + globalOffset;
 
                                 const unsigned int* candidateptr = getCandidatePtr(arrayindex);
                                 const int candidateLength = getCandidateLength(arrayindex);
@@ -1409,9 +1410,7 @@ namespace gpu{
                             AlignmentResultPointers alignmentresultpointers,
                             ReadSequencesPointers d_sequencePointers,
                             CorrectionResultPointers d_correctionResultPointers,
-                            const int* __restrict__ d_indices,
                             const int* __restrict__ d_indices_per_subject,
-                            const int* __restrict__ d_indices_per_subject_prefixsum,
                             int n_subjects,
                             int encodedSequencePitchInInts,
                             size_t sequence_pitch,
@@ -3443,9 +3442,7 @@ namespace gpu{
                                     d_alignmentresultpointers, \
                                     d_sequencePointers, \
                                     d_correctionResultPointers, \
-                                    d_indices, \
                                     d_indices_per_subject, \
-                                    d_indices_per_subject_prefixsum, \
                                     n_subjects, \
                                     encodedSequencePitchInInts, \
                                     sequence_pitch, \

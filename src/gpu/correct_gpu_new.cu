@@ -57,7 +57,7 @@
 #define MSA_IMPLICIT
 
 //#define REARRANGE_INDICES
-#define USE_MSA_MINIMIZATION
+//#define USE_MSA_MINIMIZATION
 
 //#define DO_PROFILE
 
@@ -435,7 +435,7 @@ namespace test{
                 d_sequencePointers,
                 d_indices,
                 d_indices_per_subject,
-                d_indices_per_subject_prefixsum,
+                d_candidates_per_subject_prefixsum,
                 n_subjects,
                 n_queries,
                 d_canExecute,
@@ -1046,24 +1046,17 @@ namespace test{
             true,
             streams[primary_stream_index]
         );
+
+        call_set_kernel_async(
+            dataArrays.d_indices_per_subject_prefixsum.get(),
+            0,
+            0,
+            streams[primary_stream_index]
+        );
     }
 
 
-    void getAnchorReadIds(Batch& batchData, int batchsize){
 
-    }
-
-    void getAnchorData(Batch& batchData, const DistributedReadStorage& readStorage){
-
-    }
-
-    void calculateAnchorMinhashSignature(Batch& batchData){
-
-    }
-
-    void determineCandidateReadIds(Batch& batchData){
-
-    }
 
 
     void getCandidateSequenceData(Batch& batchData, const DistributedReadStorage& readStorage){
@@ -1232,46 +1225,23 @@ namespace test{
 					batch.kernelLaunchHandle);
 
 
-        //initialize indices with -1. this allows to calculate the histrogram later on
-        //without knowing the number of valid indices
-        call_fill_kernel_async(dataArrays.d_indices.get(), batch.n_queries, -1, streams[primary_stream_index]);
-
-        auto select_op = [] __device__ (const BestAlignment_t& flag){
-            return flag != BestAlignment_t::None;
-        };
-
-        cub::TransformInputIterator<bool,decltype(select_op), BestAlignment_t*>
-            d_isGoodAlignment(dataArrays.d_alignment_best_alignment_flags,
-                            select_op);
-
-        //Writes indices of candidates with alignmentflag != None to d_indices
-        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-        cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-                                    cubTempSize,
-                                    cub::CountingInputIterator<int>(0),
-                                    d_isGoodAlignment,
-                                    dataArrays.d_indices.get(),
-                                    dataArrays.d_num_indices.get(),
-                                    batch.n_queries,
-                                    streams[primary_stream_index]); CUERR;
-
-        //calculate indices_per_subject
-        cub::DeviceHistogram::HistogramRange(dataArrays.d_cub_temp_storage.get(),
-                    cubTempSize,
-                    dataArrays.d_indices.get(),
-                    dataArrays.d_indices_per_subject.get(),
-                    batch.n_subjects+1,
-                    dataArrays.d_candidates_per_subject_prefixsum.get(),
-                    batch.n_queries,
-                    streams[primary_stream_index]); CUERR;
+        callSelectIndicesOfGoodCandidatesKernelAsync(
+            dataArrays.d_indices.get(),
+            dataArrays.d_indices_per_subject.get(),
+            dataArrays.d_num_indices.get(),
+            dataArrays.d_alignment_best_alignment_flags.get(),
+            dataArrays.d_candidates_per_subject.get(),
+            dataArrays.d_candidates_per_subject_prefixsum.get(),
+            dataArrays.d_anchorIndicesOfCandidates.get(),
+            batch.n_subjects,
+			batch.n_queries,
+            streams[primary_stream_index],
+			batch.kernelLaunchHandle
+        );
 
         //calculate indices_per_subject_prefixsum
-        call_set_kernel_async(dataArrays.d_indices_per_subject_prefixsum.get(),
-                                0,
-                                0,
-                                streams[primary_stream_index]);
-
+        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
+        
         cub::DeviceScan::InclusiveSum(dataArrays.d_cub_temp_storage.get(),
                     cubTempSize,
                     dataArrays.d_indices_per_subject.get(),
@@ -1307,120 +1277,7 @@ namespace test{
                         streams[secondary_stream_index]); CUERR;
 
         cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-        //cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
-
-
-        // cudaMemcpyAsync(dataArrays.h_alignment_best_alignment_flags,
-        //     dataArrays.d_alignment_best_alignment_flags,
-        //     dataArrays.d_alignment_best_alignment_flags.sizeInBytes(),
-        //     D2H,
-        //     streams[secondary_stream_index]); CUERR;
-
-        // int* d_indicesOfGoodCandidates;
-        // int* d_numIndicesPerAnchor;
-        // int* d_totalNumIndices;
-
-        // cudaMallocManaged(&d_indicesOfGoodCandidates, sizeof(int) * batch.n_queries); CUERR;
-        // cudaMallocManaged(&d_numIndicesPerAnchor, sizeof(int) * batch.n_subjects); CUERR;
-        // cudaMallocManaged(&d_totalNumIndices, sizeof(int)); CUERR;
-
-        // cudaMemsetAsync(d_indicesOfGoodCandidates, 0, sizeof(int) * batch.n_queries); CUERR;
-        // cudaMemsetAsync(d_numIndicesPerAnchor, 0, sizeof(int) * batch.n_subjects); CUERR;
-        // cudaMemsetAsync(d_totalNumIndices, 0, sizeof(int)); CUERR;
-
-        // callSelectIndicesOfGoodCandidatesKernelAsync(
-        //     d_indicesOfGoodCandidates,
-        //     d_numIndicesPerAnchor,
-        //     d_totalNumIndices,
-        //     dataArrays.d_alignment_best_alignment_flags.get(),
-        //     dataArrays.d_candidates_per_subject.get(),
-        //     dataArrays.d_candidates_per_subject_prefixsum.get(),
-        //     dataArrays.d_anchorIndicesOfCandidates.get(),
-        //     batch.n_subjects,
-		// 	batch.n_queries,
-        //     streams[primary_stream_index],
-		// 	batch.kernelLaunchHandle
-        // );
-
-        // cudaDeviceSynchronize(); CUERR;
-
-        // std::cerr << *d_totalNumIndices << " " << *dataArrays.h_num_indices << "\n";
-
-        // for(int i = 0; i < batch.n_subjects; i++){
-        //     std::cerr << d_numIndicesPerAnchor[i] << " " << dataArrays.h_indices_per_subject[i] << "\n";
-        // }
-
-        // auto flagsptr = dataArrays.h_alignment_best_alignment_flags.get();
-        // auto oldindicesptr = dataArrays.h_indices.get();
-        // auto newindicesptr = d_indicesOfGoodCandidates;
-
-        // for(int i = 0; i < batch.n_subjects; i++){
-        //     //if(i == 3){
-        //         for(int k = 0; k < dataArrays.h_candidates_per_subject[i]; k++){
-        //             std::cerr << int(flagsptr[k]) << " ";
-        //         }
-        //         std::cerr << "\n";
-
-        //         std::cerr << d_numIndicesPerAnchor[i] << " " << dataArrays.h_indices_per_subject[i] << "\n";
-        //         std::cerr << "old indices\n";
-
-        //         for(int k = 0; k < dataArrays.h_indices_per_subject[i]; k++){
-        //             std::cerr << oldindicesptr[k] << " ";
-        //         }
-        //         std::cerr << "\n";
-
-
-        //         std::cerr << "new indices\n";
-
-        //         for(int k = 0; k < d_numIndicesPerAnchor[i]; k++){
-        //             std::cerr << newindicesptr[k] << " ";
-        //         }
-        //         std::cerr << "\n";
-
-        //         flagsptr += dataArrays.h_candidates_per_subject[i];
-        //         oldindicesptr += dataArrays.h_indices_per_subject[i];
-        //         newindicesptr += dataArrays.h_candidates_per_subject[i];
-        //     //}
-
-        //     if(i >= 4) break;
-        // }
-
-       // std::exit(0);
-
-
-
-        // {
-        //     cudaDeviceSynchronize(); CUERR;
-        //     unsigned int* d_candidateDataTmp = nullptr;
-        //     unsigned int* d_candidateData = (unsigned int*)dataArrays.d_candidate_sequences_data.get();
-
-        //     const int nIndices = dataArrays.h_num_indices[0];
-        //     const int* d_indices = dataArrays.d_indices.get();
-        //     const int numCols = batch.encodedSequencePitchInInts;
-            
-
-
-
-        //     cubCachingAllocator.DeviceAllocate((void**)&d_candidateDataTmp,
-        //                                         sizeof(unsigned int) * nIndices,
-        //                                         streams[primary_stream_index]); CUERR;
-
-        //     dim3 block(256,1,1);
-        //     dim3 grid(std::min(65535, SDIV(nIndices * numCols, 256)),1,1);
-
-        //     generic_kernel<<<grid, block, 0, streams[primary_stream_index]>>>([=] __device__ (){
-        //         for(size_t i = threadIdx.x + size_t(blockIdx.x) * 256; i < nIndices * numCols; i += size_t(256) * gridDim.x){
-        //             const int outputrow = i / numCols;
-        //             const int inputrow = d_indices[outputrow];
-        //             const int col = i % numCols;
-        //             d_candidateDataTmp[size_t(outputrow) * numCols + col] 
-        //                     = d_candidateData[size_t(inputrow) * numCols + col];
-        //         }
-        //     }); CUERR;
-
-        //     cubCachingAllocator.DeviceFree(d_candidateDataTmp); CUERR;
-
-        // }
+       
 
         
 
@@ -1429,107 +1286,6 @@ namespace test{
         //std::cerr << "After alignment: " << *dataArrays.h_num_indices << " / " << dataArrays.n_queries << "\n";
 	}
 
-    void rearrangeIndices(Batch& batch){
-
-        cudaSetDevice(batch.deviceId); CUERR;
-
-        const auto& transFuncData = *batch.transFuncData;
-
-        DataArrays& dataArrays = batch.dataArrays;
-        std::array<cudaStream_t, nStreamsPerBatch>& streams = batch.streams;
-        std::array<cudaEvent_t, nEventsPerBatch>& events = batch.events;
-
-#if 0
-
-
-
-        int* d_indices_segmented_partitioned;
-        BestAlignment_t* d_alignment_best_alignment_flags_compact;
-        BestAlignment_t* d_alignment_best_alignment_flags_discardedoutput;
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_indices_segmented_partitioned,
-                                            sizeof(int) * batch.n_queries,
-                                            streams[primary_stream_index]); CUERR;
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_compact,
-                                            sizeof(BestAlignment_t) * batch.n_queries,
-                                            streams[primary_stream_index]); CUERR;
-
-        cubCachingAllocator.DeviceAllocate((void**)&d_alignment_best_alignment_flags_discardedoutput,
-                                            sizeof(BestAlignment_t) * batch.n_queries,
-                                            streams[primary_stream_index]); CUERR;
-
-        //compact alignment flags according to indices
-        call_compact_kernel_async(d_alignment_best_alignment_flags_compact,
-                                dataArrays.d_alignment_best_alignment_flags,
-                                dataArrays.d_indices,
-                                dataArrays.h_num_indices[0],
-                                streams[primary_stream_index]);
-
-        //partition d_indices according to d_alignment_best_alignment_flags
-        //with this partitioning branch divergence in kernels is reduced
-
-        //segmented partitioning of indices is achieved by using segmented radix sort of pairs,
-        //where each pair is composed of (key: d_alignment_best_alignment_flags[d_indices[i]], value: d_indices[i])
-        static_assert(sizeof(char) == sizeof(BestAlignment_t), "");
-
-        size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-        cub::DeviceSegmentedRadixSort::SortPairs(dataArrays.d_cub_temp_storage.get(),
-                                                cubTempSize,
-                                                (const char*) d_alignment_best_alignment_flags_compact,
-                                                (char*)d_alignment_best_alignment_flags_discardedoutput,
-                                                dataArrays.d_indices,
-                                                d_indices_segmented_partitioned,
-                                                dataArrays.h_num_indices[0],
-                                                batch.n_subjects,
-                                                dataArrays.d_indices_per_subject_prefixsum,
-                                                dataArrays.d_indices_per_subject_prefixsum+1,
-                                                0,
-                                                3,
-                                                streams[primary_stream_index]);
-
-        cudaMemcpyAsync(dataArrays.d_indices, d_indices_segmented_partitioned, sizeof(int) * (dataArrays.h_num_indices[0]), D2D, streams[primary_stream_index]); CUERR;
-
-        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_compact);
-        cubCachingAllocator.DeviceFree(d_alignment_best_alignment_flags_discardedoutput);
-        cubCachingAllocator.DeviceFree(d_indices_segmented_partitioned);
-#endif
-
-        cudaEventRecord(events[indices_calculated_event_index], streams[primary_stream_index]); CUERR;
-
-        //copy indices of usable candidates. these are required on the host for coping quality scores, and for creating results.
-        cudaStreamWaitEvent(streams[secondary_stream_index], events[indices_calculated_event_index], 0); CUERR;
-
-        cudaMemcpyAsync(dataArrays.h_num_indices,
-                        dataArrays.d_num_indices,
-                        dataArrays.d_num_indices.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.h_indices,
-                        dataArrays.d_indices,
-                        dataArrays.d_indices.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject,
-                        dataArrays.d_indices_per_subject,
-                        dataArrays.d_indices_per_subject.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-        cudaMemcpyAsync(dataArrays.h_indices_per_subject_prefixsum,
-                        dataArrays.d_indices_per_subject_prefixsum,
-                        dataArrays.d_indices_per_subject_prefixsum.sizeInBytes(),
-                        D2H,
-                        streams[secondary_stream_index]); CUERR;
-
-        cudaEventRecord(events[indices_transfer_finished_event_index], streams[secondary_stream_index]); CUERR;
-        cudaStreamWaitEvent(streams[primary_stream_index], events[indices_transfer_finished_event_index], 0); CUERR;
-
-        //cudaStreamSynchronize(streams[primary_stream_index]); CUERR;
-    }
 
     void getQualities(Batch& batch){
 
