@@ -90,7 +90,16 @@ namespace gpu{
 
 
 
+    /*
 
+        For each candidate, compute the alignment of anchor|candidate and anchor|revc-candidate
+        Compares both alignments and keeps the better one
+
+        Sequences are stored in dynamic sized shared memory.
+        To reduce shared memory usage, the candidates belonging to the same anchor
+        are processed by a set of tiles. Each tile only computes alignments for a single anchor.
+        This anchor is stored in shared memory and shared by all threads within a tile
+    */
 
     template<int tilesize>
     __global__
@@ -390,6 +399,12 @@ namespace gpu{
 
 
 
+    /*
+        Uses 1 thread per candidate to compute the alignment of anchor|candidate and anchor|revc-candidate
+        Compares both alignments and keeps the better one
+
+        Sequences are stored in registers
+    */
 
     template<int blocksize, int maxValidIntsPerSequence>
     __global__
@@ -399,6 +414,7 @@ namespace gpu{
                 const unsigned int* __restrict__ candidateDataHiLoTransposed,
                 const int* __restrict__ subjectSequencesLength,
                 const int* __restrict__ candidateSequencesLength,
+                BestAlignment_t* __restrict__ bestAlignmentFlags,
                 int* __restrict__ alignment_scores,
                 int* __restrict__ alignment_overlaps,
                 int* __restrict__ alignment_shifts,
@@ -410,7 +426,8 @@ namespace gpu{
                 size_t encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
-                float min_overlap_ratio){
+                float min_overlap_ratio,
+                float estimatedNucleotideErrorRate){
 
         static_assert(maxValidIntsPerSequence % 2 == 0, ""); //2bithilo has even number of ints
 
@@ -505,6 +522,30 @@ namespace gpu{
                                                 max_errors);
 
             return score;
+        };
+
+        auto alignmentComparator = [&] (int fwd_alignment_overlap,
+            int revc_alignment_overlap,
+            int fwd_alignment_nops,
+            int revc_alignment_nops,
+            bool fwd_alignment_isvalid,
+            bool revc_alignment_isvalid,
+            int subjectlength,
+            int querylength)->BestAlignment_t{
+
+            return choose_best_alignment(
+                fwd_alignment_overlap,
+                revc_alignment_overlap,
+                fwd_alignment_nops,
+                revc_alignment_nops,
+                fwd_alignment_isvalid,
+                revc_alignment_isvalid,
+                subjectlength,
+                querylength,
+                min_overlap_ratio,
+                min_overlap,
+                estimatedNucleotideErrorRate * 4.0f
+            );
         };
 
 
@@ -604,17 +645,21 @@ namespace gpu{
             const int totalbases = subjectbases + querybases;
             const int minoverlap = max(min_overlap, int(float(subjectbases) * min_overlap_ratio));
 
+            int bestScore[2];
+            int bestShift[2];
+            int overlapsize[2];
+            int opnr[2];
+
             #pragma unroll
             for(int orientation = 0; orientation < 2; orientation++){
                 const bool isReverseComplement = orientation == 1;
-                const int resultIndex = isReverseComplement ? candidateIndex + n_candidates : candidateIndex;
 
                 if(isReverseComplement){
                     reverseComplementQuery(querybases, queryints);
                 }
 
-                int bestScore = totalbases;                 // score is number of mismatches
-                int bestShift = -querybases;                 // shift of query relative to subject. shift < 0 if query begins before subject
+                bestScore[orientation] = totalbases;     // score is number of mismatches
+                bestShift[orientation] = -querybases;    // shift of query relative to subject. shift < 0 if query begins before subject
 
                 auto handle_shift = [&](int shift, int overlapsize,
                                         auto& shiftptr_hi, auto& shiftptr_lo,
@@ -622,7 +667,7 @@ namespace gpu{
 
                     //const int max_errors = int(float(overlapsize) * maxErrorRate);
                     const int max_errors_excl = min(int(float(overlapsize) * maxErrorRate),
-                                                    bestScore - totalbases + 2*overlapsize);
+                                                    bestScore[orientation] - totalbases + 2*overlapsize);
 
                     if(max_errors_excl > 0){
 
@@ -645,9 +690,9 @@ namespace gpu{
                                 score + totalbases - 2*overlapsize // non-overlapping regions count as mismatches
                                 : std::numeric_limits<int>::max()); // too many errors, discard
 
-                        if(score < bestScore){
-                            bestScore = score;
-                            bestShift = shift;
+                        if(score < bestScore[orientation]){
+                            bestScore[orientation] = score;
+                            bestShift[orientation] = shift;
                         }
 
                         return true;
@@ -697,17 +742,30 @@ namespace gpu{
                     }
                 }
 
-                const int queryoverlapbegin_incl = max(-bestShift, 0);
-                const int queryoverlapend_excl = min(querybases, subjectbases - bestShift);
-                const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-                const int opnr = bestScore - totalbases + 2*overlapsize;
-
-                alignment_scores[resultIndex] = bestScore;
-                alignment_overlaps[resultIndex] = overlapsize;
-                alignment_shifts[resultIndex] = bestShift;
-                alignment_nOps[resultIndex] = opnr;
-                alignment_isValid[resultIndex] = (bestShift != -querybases);
+                const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
+                const int queryoverlapend_excl = min(querybases, subjectbases - bestShift[orientation]);
+                overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
+                opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
             }
+
+            const BestAlignment_t flag = alignmentComparator(
+                overlapsize[0],
+                overlapsize[1],
+                opnr[0],
+                opnr[1],
+                bestShift[0] != -querybases,
+                bestShift[1] != -querybases,
+                subjectbases,
+                querybases
+            );
+
+            bestAlignmentFlags[candidateIndex] = flag;
+            //scores are unused in the program
+            //d_alignment_scores[candidateIndex] = flag == BestAlignment_t::Forward ? bestScore[0] : bestScore[1];
+            alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
+            alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
+            alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
+            alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
         }
     }
 
@@ -2712,7 +2770,7 @@ namespace gpu{
             );
             
 
-            if(false && intsPerSequence2BitHiLo == 8){
+            if(maximumSequenceLength <= 128){
                
                 constexpr int maxValidIntsPerSequence = 8;
 
@@ -2770,6 +2828,7 @@ namespace gpu{
                 const int numBlocks = SDIV(n_queries, blocksize);
                 dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
+                BestAlignment_t* const bestAlignmentFlags = d_alignmentresultpointers.bestAlignmentFlags;
                 int* const alignment_scores = d_alignmentresultpointers.scores;
                 int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
                 int* const alignment_shifts = d_alignmentresultpointers.shifts;
@@ -2785,6 +2844,7 @@ namespace gpu{
                         d_candidateDataHiLoTransposed,
                         subjectSequencesLength,
                         candidateSequencesLength,
+                        bestAlignmentFlags,
                         alignment_scores,
                         alignment_overlaps,
                         alignment_shifts,
@@ -2796,7 +2856,8 @@ namespace gpu{
                         intsPerSequence2BitHiLo, 
                         min_overlap,
                         maxErrorRate,
-                        min_overlap_ratio
+                        min_overlap_ratio,
+                        estimatedNucleotideErrorRate
                 ); CUERR;
 
                 cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;
@@ -2989,15 +3050,14 @@ namespace gpu{
     		std::map<KernelLaunchConfig, KernelProperties> mymap;
 
     	    #define getProp(blocksize) { \
-    		KernelLaunchConfig kernelLaunchConfig; \
-    		kernelLaunchConfig.threads_per_block = (blocksize); \
-    		kernelLaunchConfig.smem = 0; \
-    		KernelProperties kernelProperties; \
-    		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-    					cuda_find_best_alignment_kernel_exp, \
-    					kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
-    		mymap[kernelLaunchConfig] = kernelProperties; \
-    }
+                KernelLaunchConfig kernelLaunchConfig; \
+                kernelLaunchConfig.threads_per_block = (blocksize); \
+                kernelLaunchConfig.smem = 0; \
+                KernelProperties kernelProperties; \
+                cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
+                            cuda_find_best_alignment_kernel_exp, \
+                            kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
+                mymap[kernelLaunchConfig] = kernelProperties; }
 
     		getProp(32);
     		getProp(64);
