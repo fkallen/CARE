@@ -170,7 +170,18 @@ void call_cuda_find_best_alignment_kernel_async_exp(
             KernelLaunchHandle& handle,
             read_number debugsubjectreadid = read_number(-1));
 
-
+void callSelectIndicesOfGoodCandidatesKernelAsync(
+            int* d_indicesOfGoodCandidates,
+            int* d_numIndicesPerAnchor,
+            int* d_totalNumIndices,
+            const BestAlignment_t* d_alignmentFlags,
+            const int* d_candidates_per_subject,
+            const int* d_candidates_per_subject_prefixsum,
+            const int* d_anchorIndicesOfCandidates,
+            int numAnchors,
+            int numCandidates,
+            cudaStream_t stream,
+            KernelLaunchHandle& handle);
 
 void call_cuda_filter_alignments_by_mismatchratio_kernel_async(
             AlignmentResultPointers d_alignmentresultpointers,

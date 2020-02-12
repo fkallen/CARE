@@ -40,43 +40,75 @@ namespace gpu{
     }
 
 
-    template<int blocksize>
+    template<int blocksize, int tilesize>
     __global__
     void selectIndicesOfGoodCandidatesKernel(
             int* __restrict__ d_indicesOfGoodCandidates,
             int* __restrict__ d_numIndicesPerAnchor,
             int* __restrict__ d_totalNumIndices,
             const BestAlignment_t* __restrict__ d_alignmentFlags,
+            const int* __restrict__ d_candidates_per_subject,
             const int* __restrict__ d_candidates_per_subject_prefixsum,
             const int* __restrict__ d_anchorIndicesOfCandidates,
+            int numAnchors,
             int numCandidates){
 
+        static_assert(blocksize % tilesize == 0);
+        static_assert(tilesize == 32);
+
+        constexpr int numTilesPerBlock = blocksize / tilesize;
+
+        const int numTiles = (gridDim.x * blocksize) / tilesize;
+        const int tileId = (threadIdx.x + blockIdx.x * blocksize) / tilesize;
+        const int tileIdInBlock = threadIdx.x / tilesize;
+
         __shared__ int totalIndices;
+        __shared__ int counts[numTilesPerBlock];
 
         if(threadIdx.x == 0){
             totalIndices = 0;
         }
         __syncthreads();
 
-        for(int index = threadIdx.x + blockIdx.x * blocksize; index < numCandidates; index += gridDim.x * blocksize){
-            const int anchorIndex = d_anchorIndicesOfCandidates[index];
+        auto tile = cg::tiled_partition<tilesize>(cg::this_thread_block());
+
+        for(int anchorIndex = tileId; anchorIndex < numAnchors; anchorIndex += numTiles){
+
             const int offset = d_candidates_per_subject_prefixsum[anchorIndex];
             int* const indicesPtr = d_indicesOfGoodCandidates + offset;
             int* const numIndicesPtr = d_numIndicesPerAnchor + anchorIndex;
+            const BestAlignment_t* const myAlignmentFlagsPtr = d_alignmentFlags + offset;
 
-            const int localCandidateIndex = index - offset;
-            BestAlignment_t alignmentflag = d_alignmentFlags[index];
+            const int numCandidatesForAnchor = d_candidates_per_subject[anchorIndex];
 
-            if(alignmentflag != BestAlignment_t::None){
-                cg::coalesced_group g = cg::coalesced_threads();
-                int outputPos;
-                if (g.thread_rank() == 0) {
-                    outputPos = atomicAdd(numIndicesPtr, g.size());
-                    atomicAdd(&totalIndices, g.size());
-                }
-                outputPos = g.thread_rank() + g.shfl(outputPos, 0);
-                indicesPtr[outputPos] = localCandidateIndex;
+            if(tile.thread_rank() == 0){
+                counts[tileIdInBlock] = 0;
             }
+            tile.sync();
+
+            for(int localCandidateIndex = tile.thread_rank(); 
+                    localCandidateIndex < numCandidatesForAnchor; 
+                    localCandidateIndex += tile.size()){
+                
+                const BestAlignment_t alignmentflag = myAlignmentFlagsPtr[localCandidateIndex];
+
+                if(alignmentflag != BestAlignment_t::None){
+                    cg::coalesced_group g = cg::coalesced_threads();
+                    int outputPos;
+                    if (g.thread_rank() == 0) {
+                        outputPos = atomicAdd(&counts[tileIdInBlock], g.size());
+                        atomicAdd(&totalIndices, g.size());
+                    }
+                    outputPos = g.thread_rank() + g.shfl(outputPos, 0);
+                    indicesPtr[outputPos] = localCandidateIndex;
+                }
+            }
+
+            tile.sync();
+            if(tile.thread_rank() == 0){
+                atomicAdd(numIndicesPtr, counts[tileIdInBlock]);
+            }
+
         }
 
         __syncthreads();
@@ -3244,6 +3276,7 @@ namespace gpu{
             int* d_numIndicesPerAnchor,
             int* d_totalNumIndices,
             const BestAlignment_t* d_alignmentFlags,
+            const int* d_candidates_per_subject,
             const int* d_candidates_per_subject_prefixsum,
             const int* d_anchorIndicesOfCandidates,
             int numAnchors,
@@ -3251,7 +3284,8 @@ namespace gpu{
             cudaStream_t stream,
             KernelLaunchHandle& handle){
 
-        const int blocksize = 128;
+        constexpr int blocksize = 128;
+        constexpr int tilesize = 32;
 
         const std::size_t smem = 0;
 
@@ -3272,7 +3306,7 @@ namespace gpu{
                 kernelLaunchConfig.smem = 0; \
                 KernelProperties kernelProperties; \
                 cudaOccupancyMaxActiveBlocksPerMultiprocessor(&kernelProperties.max_blocks_per_SM, \
-                    selectIndicesOfGoodCandidatesKernel<(blocksize)>, \
+                    selectIndicesOfGoodCandidatesKernel<(blocksize), tilesize>, \
                                                                 kernelLaunchConfig.threads_per_block, kernelLaunchConfig.smem); CUERR; \
                 mymap[kernelLaunchConfig] = kernelProperties; \
             }
@@ -3303,13 +3337,15 @@ namespace gpu{
         dim3 block(blocksize, 1, 1);
         dim3 grid(std::min(SDIV(numCandidates, blocksize), max_blocks_per_device));
 
-        selectIndicesOfGoodCandidatesKernel<blocksize><<<grid, block, 0, stream>>>(
+        selectIndicesOfGoodCandidatesKernel<blocksize, tilesize><<<grid, block, 0, stream>>>(
             d_indicesOfGoodCandidates,
             d_numIndicesPerAnchor,
             d_totalNumIndices,
             d_alignmentFlags,
+            d_candidates_per_subject,
             d_candidates_per_subject_prefixsum,
             d_anchorIndicesOfCandidates,
+            numAnchors,
             numCandidates
         );
     }
