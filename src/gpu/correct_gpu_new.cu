@@ -1195,6 +1195,7 @@ namespace test{
                     transFuncData.goodAlignmentProperties.min_overlap,
                     transFuncData.goodAlignmentProperties.maxErrorRate,
                     transFuncData.goodAlignmentProperties.min_overlap_ratio,
+                    transFuncData.correctionOptions.estimatedErrorrate,
                     //batch.maxSubjectLength,
                     streams[primary_stream_index],
                     batch.kernelLaunchHandle);
@@ -1204,18 +1205,18 @@ namespace test{
 		//Compare each forward alignment with the correspoding reverse complement alignment and keep the best, if any.
 		//    If reverse complement is the best, it is copied into the first half, replacing the forward alignment
 
-        call_cuda_find_best_alignment_kernel_async_exp(
-                    dataArrays.getDeviceAlignmentResultPointers(),
-                    dataArrays.getDeviceSequencePointers(),
-                    dataArrays.d_candidates_per_subject_prefixsum.get(),
-                    batch.n_subjects,
-					batch.n_queries,
-                    transFuncData.goodAlignmentProperties.min_overlap_ratio,
-                    transFuncData.goodAlignmentProperties.min_overlap,
-                    transFuncData.correctionOptions.estimatedErrorrate,
-                    streams[primary_stream_index],
-                    batch.kernelLaunchHandle,
-                    dataArrays.h_subject_read_ids[0]);
+        // call_cuda_find_best_alignment_kernel_async_exp(
+        //             dataArrays.getDeviceAlignmentResultPointers(),
+        //             dataArrays.getDeviceSequencePointers(),
+        //             dataArrays.d_candidates_per_subject_prefixsum.get(),
+        //             batch.n_subjects,
+		// 			batch.n_queries,
+        //             transFuncData.goodAlignmentProperties.min_overlap_ratio,
+        //             transFuncData.goodAlignmentProperties.min_overlap,
+        //             transFuncData.correctionOptions.estimatedErrorrate,
+        //             streams[primary_stream_index],
+        //             batch.kernelLaunchHandle,
+        //             dataArrays.h_subject_read_ids[0]);
 
 		//choose the most appropriate subset of alignments from the good alignments.
 		//This sets d_alignment_best_alignment_flags[i] = BestAlignment_t::None for all non-appropriate alignments

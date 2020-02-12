@@ -107,7 +107,8 @@ namespace gpu{
                 int encodedSequencePitchInInts2BitHiLo,
                 int min_overlap,
                 float maxErrorRate,
-                float min_overlap_ratio){
+                float min_overlap_ratio,
+                float estimatedNucleotideErrorRate){
 
         auto make_reverse_complement_inplace = [&](unsigned int* sequence, int sequencelength, auto indextrafo){
             reverseComplementInplace2BitHiLo((unsigned int*)sequence, sequencelength, indextrafo);
@@ -150,6 +151,31 @@ namespace gpu{
                                                 popcount);
 
             return score;
+        };
+
+
+        auto alignmentComparator = [&] (int fwd_alignment_overlap,
+            int revc_alignment_overlap,
+            int fwd_alignment_nops,
+            int revc_alignment_nops,
+            bool fwd_alignment_isvalid,
+            bool revc_alignment_isvalid,
+            int subjectlength,
+            int querylength)->BestAlignment_t{
+
+            return choose_best_alignment(
+                fwd_alignment_overlap,
+                revc_alignment_overlap,
+                fwd_alignment_nops,
+                revc_alignment_nops,
+                fwd_alignment_isvalid,
+                revc_alignment_isvalid,
+                subjectlength,
+                querylength,
+                min_overlap_ratio,
+                min_overlap,
+                estimatedNucleotideErrorRate * 4.0f
+            );
         };
 
         // sizeof(char) * (max_sequence_bytes * num_tiles   // tiles share the subject
@@ -226,12 +252,12 @@ namespace gpu{
 
                 int bestScore[2];
                 int bestShift[2];
-
+                int overlapsize[2];
+                int opnr[2];
 
                 #pragma unroll
                 for(int orientation = 0; orientation < 2; orientation++){
                     const bool isReverseComplement = orientation == 1;
-                    const int resultIndex = isReverseComplement ? candidateIndex + n_candidates : candidateIndex;
 
                     if(isReverseComplement) {
                         make_reverse_complement_inplace(queryBackup, querybases, no_bank_conflict_index);
@@ -329,60 +355,35 @@ namespace gpu{
 
                     const int queryoverlapbegin_incl = max(-bestShift[orientation], 0);
                     const int queryoverlapend_excl = min(querybases, subjectbases - bestShift[orientation]);
-                    const int overlapsize = queryoverlapend_excl - queryoverlapbegin_incl;
-                    const int opnr = bestScore[orientation] - totalbases + 2*overlapsize;
-
-                    int* const alignment_scores = d_alignmentresultpointers.scores;
-                    int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
-                    int* const alignment_shifts = d_alignmentresultpointers.shifts;
-                    int* const alignment_nOps = d_alignmentresultpointers.nOps;
-                    bool* const alignment_isValid = d_alignmentresultpointers.isValid;
-
-                    alignment_scores[resultIndex] = bestScore[orientation];
-                    alignment_overlaps[resultIndex] = overlapsize;
-                    alignment_shifts[resultIndex] = bestShift[orientation];
-                    alignment_nOps[resultIndex] = opnr;
-                    alignment_isValid[resultIndex] = (bestShift[orientation] != -querybases);
+                    overlapsize[orientation] = queryoverlapend_excl - queryoverlapbegin_incl;
+                    opnr[orientation] = bestScore[orientation] - totalbases + 2*overlapsize[orientation];
                 }
 
-                // auto comp = [&] (int fwd_alignment_overlap,
-                //     int revc_alignment_overlap,
-                //     int fwd_alignment_nops,
-                //     int revc_alignment_nops,
-                //     bool fwd_alignment_isvalid,
-                //     bool revc_alignment_isvalid,
-                //     int subjectlength,
-                //     int querylength)->BestAlignment_t{
+                const BestAlignment_t flag = alignmentComparator(
+                    overlapsize[0],
+                    overlapsize[1],
+                    opnr[0],
+                    opnr[1],
+                    bestShift[0] != -querybases,
+                    bestShift[1] != -querybases,
+                    subjectbases,
+                    querybases
+                );
 
-                //     return choose_best_alignment(fwd_alignment_overlap,
-                //                 revc_alignment_overlap,
-                //                 fwd_alignment_nops,
-                //                 revc_alignment_nops,
-                //                 fwd_alignment_isvalid,
-                //                 revc_alignment_isvalid,
-                //                 subjectlength,
-                //                 querylength,
-                //                 min_overlap_ratio,
-                //                 min_overlap,
-                //                 estimatedErrorrate * 4.0f);
-                // };
+                //int* const d_alignment_scores = d_alignmentresultpointers.scores;
+                int* const d_alignment_overlaps = d_alignmentresultpointers.overlaps;
+                int* const d_alignment_shifts = d_alignmentresultpointers.shifts;
+                int* const d_alignment_nOps = d_alignmentresultpointers.nOps;
+                bool* const d_alignment_isValid = d_alignmentresultpointers.isValid;
+                BestAlignment_t* const d_alignment_best_alignment_flags = d_alignmentresultpointers.bestAlignmentFlags;
 
-                // const BestAlignment_t flag = comp(fwd_alignment_overlap,
-                //     revc_alignment_overlap,
-                //     fwd_alignment_nops,
-                //     revc_alignment_nops,
-                //     fwd_alignment_isvalid,
-                //     revc_alignment_isvalid,
-                //     subjectlength,
-                //     querylength);
-
-                // d_alignment_best_alignment_flags[resultIndex] = flag;
-
-                // d_alignment_scores[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_score : revc_alignment_score;
-                // d_alignment_overlaps[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_overlap : revc_alignment_overlap;
-                // d_alignment_shifts[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_shift : revc_alignment_shift;
-                // d_alignment_nOps[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_nops : revc_alignment_nops;
-                // d_alignment_isValid[resultIndex] = flag == BestAlignment_t::Forward ? fwd_alignment_isvalid : revc_alignment_isvalid;
+                d_alignment_best_alignment_flags[candidateIndex] = flag;
+                //scores are unused in the program
+                //d_alignment_scores[candidateIndex] = flag == BestAlignment_t::Forward ? bestScore[0] : bestScore[1];
+                d_alignment_overlaps[candidateIndex] = flag == BestAlignment_t::Forward ? overlapsize[0] : overlapsize[1];
+                d_alignment_shifts[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] : bestShift[1];
+                d_alignment_nOps[candidateIndex] = flag == BestAlignment_t::Forward ? opnr[0] : opnr[1];
+                d_alignment_isValid[candidateIndex] = flag == BestAlignment_t::Forward ? bestShift[0] != -querybases : bestShift[1] != -querybases;
             }
         }
     }
@@ -2682,7 +2683,8 @@ namespace gpu{
                 int encodedSequencePitchInInts2Bit,
     			int min_overlap,
     			float maxErrorRate,
-    			float min_overlap_ratio,
+                float min_overlap_ratio,
+                float estimatedNucleotideErrorRate,
     			cudaStream_t stream,
     			KernelLaunchHandle& handle){
 
@@ -2935,7 +2937,8 @@ namespace gpu{
                                                     intsPerSequence2BitHiLo, \
                                                     min_overlap, \
                                                     maxErrorRate, \
-                                                    min_overlap_ratio); CUERR;
+                                                    min_overlap_ratio, \
+                                                    estimatedNucleotideErrorRate); CUERR;
 
                 dim3 block(blocksize, 1, 1);
                 dim3 grid(std::min(requiredBlocks, max_blocks_per_device), 1, 1);

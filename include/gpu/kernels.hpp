@@ -151,6 +151,7 @@ void call_popcount_shifted_hamming_distance_kernel_async(
             int min_overlap,
             float maxErrorRate,
             float min_overlap_ratio,
+            float estimatedNucleotideErrorRate,
             cudaStream_t stream,
             KernelLaunchHandle& handle);
 
