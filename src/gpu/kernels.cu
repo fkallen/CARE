@@ -1615,24 +1615,26 @@ namespace gpu{
                         const ReadSequencesPointers& d_sequencePointers,
                         const CorrectionResultPointers& d_correctionResultPointers,
                         const int* __restrict__ d_indices,
-                        const int* __restrict__ d_indices_per_subject_prefixsum,
+                        const int* __restrict__ d_candidates_per_subject_prefixsum,
                         size_t msa_weights_pitch_floats,
                         float min_support_threshold,
                         float min_coverage_threshold,
                         int new_columns_to_correct,
                         int subjectIndex,
-                        int local_candidate_index){
+                        int local_goodcandidate_index){
 
         const float* const my_support = d_msapointers.support + msa_weights_pitch_floats * subjectIndex;
         const int* const my_coverage = d_msapointers.coverage + msa_weights_pitch_floats * subjectIndex;
 
-        const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
+        const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
+        const int* const my_indices = d_indices + globalOffset;
 
         const int subjectColumnsBegin_incl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsBegin_incl;
         const int subjectColumnsEnd_excl = d_msapointers.msaColumnProperties[subjectIndex].subjectColumnsEnd_excl;
         const int lastColumn_excl = d_msapointers.msaColumnProperties[subjectIndex].lastColumn_excl;
 
-        const int global_candidate_index = my_indices[local_candidate_index];
+        const int localCandidateIndex = my_indices[local_goodcandidate_index];
+        const int global_candidate_index = localCandidateIndex + globalOffset;
 
         const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
         const int candidate_length = d_sequencePointers.candidateSequencesLength[global_candidate_index];
@@ -1688,7 +1690,7 @@ namespace gpu{
                 CorrectionResultPointers d_correctionResultPointers,
                 const int* __restrict__ d_indices,
                 const int* __restrict__ d_indices_per_subject,
-                const int* __restrict__ d_indices_per_subject_prefixsum,
+                const int* __restrict__ d_candidates_per_subject_prefixsum,
                 const int* __restrict__ d_candidates_per_hq_subject_prefixsum, // inclusive, with leading zero
                 //int* __restrict__ globalCommBuffer, // at least n_subjects elements, must be zero'd
                 int n_subjects,
@@ -1805,7 +1807,7 @@ namespace gpu{
             if(candidateHQid < num_candidates_of_hq_subjects){
 
                 const int subjectIndex = d_correctionResultPointers.highQualitySubjectIndices[hqsubjectIndex];
-                const int local_candidate_index = candidateHQid - d_candidates_per_hq_subject_prefixsum[hqsubjectIndex];
+                const int local_goodcandidate_index = candidateHQid - d_candidates_per_hq_subject_prefixsum[hqsubjectIndex];
 
                 const bool canHandleCandidate = checkIfCandidateShouldBeCorrected(
                                                         d_msapointers,
@@ -1813,13 +1815,13 @@ namespace gpu{
                                                         d_sequencePointers,
                                                         d_correctionResultPointers,
                                                         d_indices,
-                                                        d_indices_per_subject_prefixsum,
+                                                        d_candidates_per_subject_prefixsum,
                                                         msa_weights_pitch_floats,
                                                         min_support_threshold,
                                                         min_coverage_threshold,
                                                         new_columns_to_correct,
                                                         subjectIndex,
-                                                        local_candidate_index);
+                                                        local_goodcandidate_index);
 
                 if(canHandleCandidate) {
 
@@ -1829,13 +1831,15 @@ namespace gpu{
                     //atomicAdd(numCorrectedCandidatesForSubjectInThisBlockShared + (hqsubjectIndex - smallestHqsubjectIndexInBlock), 1);
 
                     const int destinationindex = atomicAdd(d_correctionResultPointers.numCorrectedCandidates + subjectIndex, 1);
-
+//TODO FIX INDICES
+                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
                     const char* const my_consensus = d_msapointers.consensus + msa_pitch  * subjectIndex;
-                    const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-                    char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
-                    int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + d_indices_per_subject_prefixsum[subjectIndex];
+                    const int* const my_indices = d_indices + globalOffset;
+                    char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + globalOffset * sequence_pitch;
+                    int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + globalOffset;
 
-                    const int global_candidate_index = my_indices[local_candidate_index];
+                    const int localCandidateIndex = my_indices[local_goodcandidate_index];
+                    const int global_candidate_index = localCandidateIndex;
                     const int candidate_length = d_sequencePointers.candidateSequencesLength[global_candidate_index];
                     const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
 
@@ -1898,7 +1902,7 @@ namespace gpu{
                 int numEditsThreshold,
                 const int* __restrict__ d_indices,
                 const int* __restrict__ d_indices_per_subject,
-                const int* __restrict__ d_indices_per_subject_prefixsum,
+                const int* __restrict__ d_candidates_per_subject_prefixsum,
                 const int* __restrict__ d_candidates_per_hq_subject_prefixsum, // inclusive, with leading zero
                 //int* __restrict__ globalCommBuffer, // at least n_subjects elements, must be zero'd
                 int n_subjects,
@@ -2004,7 +2008,7 @@ namespace gpu{
                         candidateHQid + 1))-1;
 
                 const int subjectIndex = d_correctionResultPointers.highQualitySubjectIndices[hqsubjectIndex];
-                const int local_candidate_index = candidateHQid - d_candidates_per_hq_subject_prefixsum[hqsubjectIndex];
+                const int local_goodcandidate_index = candidateHQid - d_candidates_per_hq_subject_prefixsum[hqsubjectIndex];
 
                 const bool canHandleCandidate = checkIfCandidateShouldBeCorrected(
                                                         d_msapointers,
@@ -2012,13 +2016,13 @@ namespace gpu{
                                                         d_sequencePointers,
                                                         d_correctionResultPointers,
                                                         d_indices,
-                                                        d_indices_per_subject_prefixsum,
+                                                        d_candidates_per_subject_prefixsum,
                                                         msa_weights_pitch_floats,
                                                         min_support_threshold,
                                                         min_coverage_threshold,
                                                         new_columns_to_correct,
                                                         subjectIndex,
-                                                        local_candidate_index);
+                                                        local_goodcandidate_index);
 
                 if(canHandleCandidate) {
                     if(tgroup.thread_rank() == 0){                        
@@ -2026,14 +2030,17 @@ namespace gpu{
                         shared_numEditsOfCandidate[groupIdInBlock] = 0;
                     }
                     tgroup.sync();
+
+                    const int globalOffset = d_candidates_per_subject_prefixsum[subjectIndex];
                     
 
-                    const char* const my_consensus = d_msapointers.consensus + msa_pitch  * subjectIndex;
-                    const int* const my_indices = d_indices + d_indices_per_subject_prefixsum[subjectIndex];
-                    char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + d_indices_per_subject_prefixsum[subjectIndex] * sequence_pitch;
-                    int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + d_indices_per_subject_prefixsum[subjectIndex];
+                    const char* const my_consensus = d_msapointers.consensus + msa_pitch * subjectIndex;
+                    const int* const my_indices = d_indices + globalOffset;
+                    char* const my_corrected_candidates = d_correctionResultPointers.correctedCandidates + globalOffset * sequence_pitch;
+                    int* const my_indices_of_corrected_candidates = d_correctionResultPointers.indicesOfCorrectedCandidates + globalOffset;
 
-                    const int global_candidate_index = my_indices[local_candidate_index];
+                    const int localCandidateIndex = my_indices[local_goodcandidate_index];
+                    const int global_candidate_index = localCandidateIndex + globalOffset;
                     const int candidate_length = d_sequencePointers.candidateSequencesLength[global_candidate_index];
                     const int shift = d_alignmentresultpointers.shifts[global_candidate_index];
 
@@ -2083,7 +2090,7 @@ namespace gpu{
 
                     if(tgroup.thread_rank() == 0){
                         const int destinationindex = shared_destinationIndex[groupIdInBlock];
-                        my_indices_of_corrected_candidates[destinationindex] = global_candidate_index;
+                        my_indices_of_corrected_candidates[destinationindex] = localCandidateIndex;
                     }
                     
 
@@ -3483,7 +3490,7 @@ namespace gpu{
                 CorrectionResultPointers d_correctionResultPointers,
     			const int* d_indices,
     			const int* d_indices_per_subject,
-    			const int* d_indices_per_subject_prefixsum,
+    			const int* d_candidates_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -3598,7 +3605,7 @@ namespace gpu{
             d_correctionResultPointers, \
     		d_indices, \
     		d_indices_per_subject, \
-    		d_indices_per_subject_prefixsum, \
+    		d_candidates_per_subject_prefixsum, \
             d_candidatesPerHQAnchorPrefixSum, \
     		n_subjects, \
     		n_queries, \
@@ -3645,7 +3652,7 @@ namespace gpu{
                 int numEditsThreshold,
     			const int* d_indices,
     			const int* d_indices_per_subject,
-    			const int* d_indices_per_subject_prefixsum,
+    			const int* d_candidates_per_subject_prefixsum,
     			int n_subjects,
     			int n_queries,
     			const int* d_num_indices,
@@ -3662,17 +3669,17 @@ namespace gpu{
 
         const int* d_highQualitySubjectIndices =  d_correctionResultPointers.highQualitySubjectIndices;
 
-        auto getCandidatesPerHQAnchor = [=] __device__(int hqIndex){
+        auto getNumGoodCandidatesPerHQAnchor = [=] __device__(int hqIndex){
             const int subjectIndex = d_highQualitySubjectIndices[hqIndex];
             return d_indices_per_subject[subjectIndex];
         };
 
         // auto getTilesPerHQAnchor = [=] __device__ (int hqIndex){
-        //     const int numCandidatesOfAnchor = getCandidatesPerHQAnchor(hqIndex);
+        //     const int numCandidatesOfAnchor = getNumGoodCandidatesPerHQAnchor(hqIndex);
         //     return SDIV(numCandidatesOfAnchor, tilesize);
         // };
 
-        using CperHQA_t = decltype(getCandidatesPerHQAnchor);
+        using CperHQA_t = decltype(getNumGoodCandidatesPerHQAnchor);
         //using TperHQA_t = decltype(getTilesPerHQAnchor);
         using CountIt = cub::CountingInputIterator<int>;
 
@@ -3686,7 +3693,7 @@ namespace gpu{
         int* d_candidatesPerHQAnchorPrefixSum = nullptr;
         cubCachingAllocator.DeviceAllocate((void**)&d_candidatesPerHQAnchorPrefixSum, sizeof(int) * (n_subjects+1), stream);  CUERR;
 
-        cub::TransformInputIterator<int, CperHQA_t, CountIt> transformIter(CountIt{0}, getCandidatesPerHQAnchor);
+        cub::TransformInputIterator<int, CperHQA_t, CountIt> transformIter(CountIt{0}, getNumGoodCandidatesPerHQAnchor);
 
         //calculate prefixsum of candidatesPerHQAnchor. 
         //only the first d_correctionResultPointersnumHighQualitySubjectIndices+1 entries will contain valid data.
@@ -3769,7 +3776,7 @@ namespace gpu{
             numEditsThreshold, \
     		d_indices, \
     		d_indices_per_subject, \
-    		d_indices_per_subject_prefixsum, \
+    		d_candidates_per_subject_prefixsum, \
             d_candidatesPerHQAnchorPrefixSum, \
     		n_subjects, \
     		n_queries, \

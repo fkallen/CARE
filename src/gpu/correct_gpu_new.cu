@@ -57,7 +57,7 @@
 #define MSA_IMPLICIT
 
 //#define REARRANGE_INDICES
-//#define USE_MSA_MINIMIZATION
+#define USE_MSA_MINIMIZATION
 
 //#define DO_PROFILE
 
@@ -174,7 +174,7 @@ namespace test{
         SimpleAllocationPinnedHost<AnchorHighQualityFlag> h_is_high_quality_subject;
         SimpleAllocationPinnedHost<int> h_num_corrected_candidates;
         SimpleAllocationPinnedHost<int> h_indices_of_corrected_candidates;
-        SimpleAllocationPinnedHost<int>h_indices_per_subject_prefixsum;
+        SimpleAllocationPinnedHost<int> h_candidates_per_subject_prefixsum;
         SimpleAllocationPinnedHost<read_number> h_candidate_read_ids;
         SimpleAllocationPinnedHost<char> h_corrected_subjects;
         SimpleAllocationPinnedHost<char> h_corrected_candidates;
@@ -339,7 +339,7 @@ namespace test{
             std::swap(dataArrays.h_is_high_quality_subject, rawResults.h_is_high_quality_subject);
             std::swap(dataArrays.h_num_corrected_candidates, rawResults.h_num_corrected_candidates);
             std::swap(dataArrays.h_indices_of_corrected_candidates, rawResults.h_indices_of_corrected_candidates);
-            std::swap(dataArrays.h_indices_per_subject_prefixsum, rawResults.h_indices_per_subject_prefixsum);
+            std::swap(dataArrays.h_candidates_per_subject_prefixsum, rawResults.h_candidates_per_subject_prefixsum);
             std::swap(dataArrays.h_candidate_read_ids, rawResults.h_candidate_read_ids);
             std::swap(dataArrays.h_corrected_subjects, rawResults.h_corrected_subjects);
             std::swap(dataArrays.h_corrected_candidates, rawResults.h_corrected_candidates);
@@ -2061,7 +2061,7 @@ namespace test{
             batch.maxNumEditsPerSequence,
             dataArrays.d_indices,
             dataArrays.d_indices_per_subject,
-            dataArrays.d_indices_per_subject_prefixsum,
+            dataArrays.d_candidates_per_subject_prefixsum,
             batch.n_subjects,
             batch.n_queries,
             dataArrays.d_num_indices,
@@ -2203,12 +2203,15 @@ namespace test{
 
         for(int subject_index = 0; subject_index < rawResults.n_subjects; subject_index++){
 
+            const int globalOffset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
+
             const int n_corrected_candidates = rawResults.h_num_corrected_candidates[subject_index];
             const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
-                                                + rawResults.h_indices_per_subject_prefixsum[subject_index];
+                                                + globalOffset;
 
             for(int i = 0; i < n_corrected_candidates; ++i) {
-                const int global_candidate_index = my_indices_of_corrected_candidates[i];
+                const int localCandidateIndex = my_indices_of_corrected_candidates[i];
+                const int global_candidate_index = globalOffset + localCandidateIndex;
 
                 const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
@@ -2395,14 +2398,15 @@ namespace test{
                 auto& tmp = outputData.candidateCorrections[positionInVector];
                 auto& tmpencoded = outputData.encodedCandidateCorrections[positionInVector];
 
-                const size_t offset = rawResults.h_indices_per_subject_prefixsum[subject_index];
+                const size_t offset = rawResults.h_candidates_per_subject_prefixsum[subject_index];
 
                 const char* const my_corrected_candidates_data = rawResults.h_corrected_candidates
                                                 + offset * rawResults.decodedSequencePitchInBytes;
                 const int* const my_indices_of_corrected_candidates = rawResults.h_indices_of_corrected_candidates
                                                 + offset;           
 
-                const int global_candidate_index = my_indices_of_corrected_candidates[candidateIndex];
+                const int localCandidateIndex = my_indices_of_corrected_candidates[candidateIndex];
+                const int global_candidate_index = offset + localCandidateIndex;
 
                 const read_number candidate_read_id = rawResults.h_candidate_read_ids[global_candidate_index];
 
