@@ -2749,7 +2749,7 @@ namespace gpu{
             const int intsPerSequence2BitHiLo = getEncodedNumInts2BitHiLo(maximumSequenceLength);
             const int bytesPerSequence2BitHilo = intsPerSequence2BitHiLo * sizeof(unsigned int);
 
-            
+            unsigned int* d_subjectDataHiLoTransposed = nullptr;
             unsigned int* d_candidateDataHiLoTransposed = nullptr;
 
             cubCachingAllocator.DeviceAllocate(
@@ -2769,13 +2769,7 @@ namespace gpu{
                 handle
             );
             
-
-            if(maximumSequenceLength <= 128){
-               
-                constexpr int maxValidIntsPerSequence = 8;
-
-                unsigned int* d_subjectDataHiLoTransposed = nullptr;
-
+            if(maximumSequenceLength){
                 cubCachingAllocator.DeviceAllocate(
                     (void**)&d_subjectDataHiLoTransposed, 
                     sizeof(unsigned int) * intsPerSequence2BitHiLo * n_subjects, 
@@ -2792,7 +2786,12 @@ namespace gpu{
                     stream,
                     handle
                 );
+            }
+            
 
+            if(maximumSequenceLength <= 128){
+               
+                constexpr int maxValidIntsPerSequence = 8;
 
                 constexpr int blocksize = 128;
                 int max_blocks_per_device = 1;
@@ -2828,28 +2827,80 @@ namespace gpu{
                 const int numBlocks = SDIV(n_queries, blocksize);
                 dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
-                BestAlignment_t* const bestAlignmentFlags = d_alignmentresultpointers.bestAlignmentFlags;
-                int* const alignment_scores = d_alignmentresultpointers.scores;
-                int* const alignment_overlaps = d_alignmentresultpointers.overlaps;
-                int* const alignment_shifts = d_alignmentresultpointers.shifts;
-                int* const alignment_nOps = d_alignmentresultpointers.nOps;
-                bool* const alignment_isValid = d_alignmentresultpointers.isValid;
+                popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
+                    <<<grid, block, 0, stream>>>(
+                        d_subjectDataHiLoTransposed,
+                        d_candidateDataHiLoTransposed,
+                        d_sequencePointers.subjectSequencesLength,
+                        d_sequencePointers.candidateSequencesLength,
+                        d_alignmentresultpointers.bestAlignmentFlags,
+                        d_alignmentresultpointers.scores,
+                        d_alignmentresultpointers.overlaps,
+                        d_alignmentresultpointers.shifts,
+                        d_alignmentresultpointers.nOps,
+                        d_alignmentresultpointers.isValid,
+                        d_anchorIndicesOfCandidates,
+                        n_subjects,
+                        n_queries,
+                        intsPerSequence2BitHiLo, 
+                        min_overlap,
+                        maxErrorRate,
+                        min_overlap_ratio,
+                        estimatedNucleotideErrorRate
+                ); CUERR;
 
-                const int* const subjectSequencesLength = d_sequencePointers.subjectSequencesLength;
-                const int* const candidateSequencesLength = d_sequencePointers.candidateSequencesLength;
+                cubCachingAllocator.DeviceFree(d_subjectDataHiLoTransposed);  CUERR;
+
+            }else if(maximumSequenceLength <= 256){
+               
+                constexpr int maxValidIntsPerSequence = 16;
+
+                constexpr int blocksize = 128;
+                int max_blocks_per_device = 1;
+
+                KernelLaunchConfig kernelLaunchConfig;
+                kernelLaunchConfig.threads_per_block = blocksize;
+                kernelLaunchConfig.smem = 0;
+
+                auto iter = handle.kernelPropertiesMap.find(KernelId::PopcountSHDTiledPitch8);
+                if(iter == handle.kernelPropertiesMap.end()) {
+
+                    std::map<KernelLaunchConfig, KernelProperties> mymap;
+
+                    KernelProperties kernelProperties;
+                    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                        &kernelProperties.max_blocks_per_SM,
+                        popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>,
+                        kernelLaunchConfig.threads_per_block, 
+                        kernelLaunchConfig.smem
+                    ); CUERR;
+
+                    mymap[kernelLaunchConfig] = kernelProperties;
+                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+
+                    handle.kernelPropertiesMap[KernelId::PopcountSHDTiledPitch8] = std::move(mymap);
+                }else{
+                    std::map<KernelLaunchConfig, KernelProperties>& map = iter->second;
+                    const KernelProperties& kernelProperties = map[kernelLaunchConfig];
+                    max_blocks_per_device = handle.deviceProperties.multiProcessorCount * kernelProperties.max_blocks_per_SM;
+                }
+
+                dim3 block(blocksize, 1, 1);
+                const int numBlocks = SDIV(n_queries, blocksize);
+                dim3 grid(std::min(numBlocks, max_blocks_per_device), 1, 1);
 
                 popcount_shifted_hamming_distance_ctpitch_kernel<blocksize, maxValidIntsPerSequence>
                     <<<grid, block, 0, stream>>>(
                         d_subjectDataHiLoTransposed,
                         d_candidateDataHiLoTransposed,
-                        subjectSequencesLength,
-                        candidateSequencesLength,
-                        bestAlignmentFlags,
-                        alignment_scores,
-                        alignment_overlaps,
-                        alignment_shifts,
-                        alignment_nOps,
-                        alignment_isValid,
+                        d_sequencePointers.subjectSequencesLength,
+                        d_sequencePointers.candidateSequencesLength,
+                        d_alignmentresultpointers.bestAlignmentFlags,
+                        d_alignmentresultpointers.scores,
+                        d_alignmentresultpointers.overlaps,
+                        d_alignmentresultpointers.shifts,
+                        d_alignmentresultpointers.nOps,
+                        d_alignmentresultpointers.isValid,
                         d_anchorIndicesOfCandidates,
                         n_subjects,
                         n_queries,
