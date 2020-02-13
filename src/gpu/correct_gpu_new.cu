@@ -1442,36 +1442,23 @@ namespace test{
 
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 
-            // {
-            //     //Initialize d_shouldBeKept array
+            {
+                //Initialize d_shouldBeKept array
 
-            //     const int N = batch.n_queries;
-            //     const int* d_num_indices = dataArrays.d_num_indices.get();
-            
-            //     generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
-            //         [=] __device__ (){
-            //             const int index = threadIdx.x + blockIdx.x * 128;
-            //             const int maxValidIndex = *d_num_indices;
-            //             if(index < N){
-            //                 d_shouldBeKept[index] = false; //(index < maxValidIndex);
-            //             }
-            //         }
-            //     ); CUERR;
-            // }
+                const int N = batch.n_queries;
+                bool* d_canExecute = dataArrays.d_canExecute.get();
+                generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
+                    [=] __device__ (){
+                        if(*d_canExecute){
+                            const int index = threadIdx.x + blockIdx.x * 128;
+                            if(index < N){
+                                d_shouldBeKept[index] = false;
+                            }
+                        }
+                    }
+                ); CUERR;
+            }
 
-            // call_fill_kernel_async(
-            //     d_shouldBeKept,
-            //     batch.n_queries,
-            //     f,
-            //     streams[primary_stream_index]
-            // );
-
-            cudaMemsetAsync(
-                d_shouldBeKept, 
-                0, 
-                sizeof(bool) * batch.n_queries, 
-                streams[primary_stream_index]
-            ); CUERR;
 
             //select candidates which are to be removed
             call_msa_findCandidatesOfDifferentRegion_kernel_async(
@@ -1518,6 +1505,7 @@ namespace test{
 
                 int* d_indices_per_subject = dataArrays.d_indices_per_subject.get();
                 int* d_indices_per_subject_tmp = dataArrays.d_indices_per_subject_tmp.get();
+                bool* d_canExecute = dataArrays.d_canExecute.get();
                 const int n_subjects = batch.n_subjects;
                 cudaStream_t stream = streams[primary_stream_index];
 
@@ -1525,15 +1513,17 @@ namespace test{
                 dim3 grid(SDIV(batch.n_subjects, block.x),1,1);
                 generic_kernel<<<grid, block, 0, stream>>>(
                     [=] __device__ (){
-                        const int tid = threadIdx.x + blockDim.x * blockIdx.x;
-                        if(tid < n_subjects){
-                            const int oldValue = d_indices_per_subject[tid];
-                            const int newValue = d_indices_per_subject_tmp[tid];
+                        if(*d_canExecute){
+                            const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+                            if(tid < n_subjects){
+                                const int oldValue = d_indices_per_subject[tid];
+                                const int newValue = d_indices_per_subject_tmp[tid];
 
-                            d_indices_per_subject[tid] = newValue;
-                            
-                            if(oldValue == newValue){
-                                d_indices_per_subject_tmp[tid] = 0;
+                                d_indices_per_subject[tid] = newValue;
+                                
+                                if(oldValue == newValue){
+                                    d_indices_per_subject_tmp[tid] = 0;
+                                }
                             }
                         }
                     }
