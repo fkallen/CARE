@@ -488,6 +488,10 @@ struct DataArrays {
         d_indices_per_subject = std::move(SimpleAllocationDevice<int>{});
         d_indices_per_subject_prefixsum = std::move(SimpleAllocationDevice<int>{});
         d_num_indices = std::move(SimpleAllocationDevice<int>{});
+
+        d_indices_tmp = std::move(SimpleAllocationDevice<int>{});
+        d_indices_per_subject_tmp = std::move(SimpleAllocationDevice<int>{});
+        d_indices_per_subject_prefixsum_tmp = std::move(SimpleAllocationDevice<int>{});
         d_num_indices_tmp = std::move(SimpleAllocationDevice<int>{});
 
         d_indices_of_corrected_subjects = std::move(SimpleAllocationDevice<int>{});
@@ -642,6 +646,9 @@ struct DataArrays {
         bytes += f(d_indices_per_subject);
         bytes += f(d_indices_per_subject_prefixsum);
         bytes += f(d_num_indices);
+        bytes += f(d_indices_tmp);
+        bytes += f(d_indices_per_subject_tmp);
+        bytes += f(d_indices_per_subject_prefixsum_tmp);
         bytes += f(d_num_indices_tmp);
 
         bytes += f(d_indices_of_corrected_subjects);
@@ -776,8 +783,11 @@ struct DataArrays {
 
         bytes += f(d_indices);
         bytes += f(d_indices_per_subject);
-        bytes += f(d_indices_per_subject_prefixsum);
+        bytes += f(d_indices_per_subject_prefixsum);        
         bytes += f(d_num_indices);
+        bytes += f(d_indices_tmp);
+        bytes += f(d_indices_per_subject_tmp);
+        bytes += f(d_indices_per_subject_prefixsum_tmp);
         bytes += f(d_num_indices_tmp);
 
         bytes += f(d_indices_of_corrected_subjects);
@@ -865,6 +875,9 @@ struct DataArrays {
     SimpleAllocationDevice<int> d_indices_per_subject;
     SimpleAllocationDevice<int> d_indices_per_subject_prefixsum;
     SimpleAllocationDevice<int> d_num_indices;
+    SimpleAllocationDevice<int> d_indices_tmp;
+    SimpleAllocationDevice<int> d_indices_per_subject_tmp;
+    SimpleAllocationDevice<int> d_indices_per_subject_prefixsum_tmp;
     SimpleAllocationDevice<int> d_num_indices_tmp;
 
     SimpleAllocationPinnedHost<int> h_indices_of_corrected_subjects;

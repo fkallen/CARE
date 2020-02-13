@@ -904,6 +904,9 @@ namespace test{
         dataArrays.d_indices_per_subject.resize(batchData.n_subjects);
         dataArrays.d_indices_per_subject_prefixsum.resize((batchData.n_subjects + 1));
         dataArrays.d_num_indices.resize(1);
+        dataArrays.d_indices_tmp.resize(batchData.n_queries);
+        dataArrays.d_indices_per_subject_tmp.resize(batchData.n_subjects);
+        dataArrays.d_indices_per_subject_prefixsum_tmp.resize((batchData.n_subjects + 1));
         dataArrays.d_num_indices_tmp.resize(1);
 
         dataArrays.h_indices_of_corrected_subjects.resize(batchData.n_subjects);
@@ -1419,9 +1422,6 @@ namespace test{
         //const float desiredAlignmentMaxErrorRate = transFuncData.correctionOptions.estimatedErrorrate * 4.0f;
 
         bool* d_shouldBeKept = nullptr; //flag per candidate which shows whether the candidate should remain in the msa, or not.
-        int* d_shouldBeKept_positions = nullptr;
-        int* d_newIndices = nullptr;
-        int* d_indices_per_subject_tmp = nullptr;
 
         cubCachingAllocator.DeviceAllocate(
             (void**)&d_shouldBeKept, 
@@ -1429,67 +1429,55 @@ namespace test{
             streams[primary_stream_index]
         ); CUERR;
 
-        cubCachingAllocator.DeviceAllocate(
-            (void**)&d_shouldBeKept_positions, 
-            sizeof(int) * batch.n_queries, 
-            streams[primary_stream_index]
-        ); CUERR;
 
-        cubCachingAllocator.DeviceAllocate(
-            (void**)&d_newIndices, 
-            sizeof(int) * batch.n_queries, 
-            streams[primary_stream_index]
-        ); CUERR;
 
-        cubCachingAllocator.DeviceAllocate(
-            (void**)&d_indices_per_subject_tmp, 
-            sizeof(int) * batch.n_subjects, 
-            streams[primary_stream_index]
-        ); CUERR;
+        // int* fooindices;
+        // int* fooindicespersubject;
+        // int* foonumindices;
 
-        int* fooindices;
-        int* fooindicespersubject;
-        int* foonumindices;
-
-        cudaMallocManaged(&fooindices, sizeof(int) *batch.n_queries); CUERR;
-        cudaMallocManaged(&fooindicespersubject, sizeof(int) *batch.n_subjects); CUERR;
-        cudaMallocManaged(&foonumindices, sizeof(int)); CUERR;
+        // cudaMallocManaged(&fooindices, sizeof(int) *batch.n_queries); CUERR;
+        // cudaMallocManaged(&fooindicespersubject, sizeof(int) *batch.n_subjects); CUERR;
+        // cudaMallocManaged(&foonumindices, sizeof(int)); CUERR;
 
 
         for(int iteration = 0; iteration < max_num_minimizations; iteration++){
 
-            {
-                //Initialize d_shouldBeKept array
+            // {
+            //     //Initialize d_shouldBeKept array
 
-                const int N = batch.n_queries;
-                const int* d_num_indices = dataArrays.d_num_indices.get();
+            //     const int N = batch.n_queries;
+            //     const int* d_num_indices = dataArrays.d_num_indices.get();
             
-                generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
-                    [=] __device__ (){
-                        const int index = threadIdx.x + blockIdx.x * 128;
-                        const int maxValidIndex = *d_num_indices;
-                        if(index < N){
-                            d_shouldBeKept[index] = false; //(index < maxValidIndex);
-                        }
-                    }
-                ); CUERR;
-            }
+            //     generic_kernel<<<SDIV(batch.n_queries, 128), 128, 0, streams[primary_stream_index]>>>(
+            //         [=] __device__ (){
+            //             const int index = threadIdx.x + blockIdx.x * 128;
+            //             const int maxValidIndex = *d_num_indices;
+            //             if(index < N){
+            //                 d_shouldBeKept[index] = false; //(index < maxValidIndex);
+            //             }
+            //         }
+            //     ); CUERR;
+            // }
 
-            call_fill_kernel_async(
-                d_newIndices,
-                batch.n_queries,
-                -1,
+            // call_fill_kernel_async(
+            //     d_shouldBeKept,
+            //     batch.n_queries,
+            //     f,
+            //     streams[primary_stream_index]
+            // );
+
+            cudaMemsetAsync(
+                d_shouldBeKept, 
+                0, 
+                sizeof(bool) * batch.n_queries, 
                 streams[primary_stream_index]
-            );
+            ); CUERR;
 
             //select candidates which are to be removed
             call_msa_findCandidatesOfDifferentRegion_kernel_async(
-                // d_newIndices,
-                // d_indices_per_subject_tmp,
-                // dataArrays.d_num_indices_tmp.get(),
-                fooindices,
-                fooindicespersubject,
-                foonumindices,
+                dataArrays.d_indices_tmp.get(),
+                dataArrays.d_indices_per_subject_tmp.get(),
+                dataArrays.d_num_indices_tmp.get(),
                 dataArrays.getDeviceMSAPointers(),
                 dataArrays.getDeviceAlignmentResultPointers(),
                 dataArrays.getDeviceSequencePointers(),
@@ -1511,124 +1499,6 @@ namespace test{
                 false
             );  CUERR;
 
-            // call_fill_kernel_async(d_newIndices, batch.n_queries, -1, streams[primary_stream_index]);
-
-            // size_t cubTempSize2 = dataArrays.d_cub_temp_storage.sizeInBytes();
-
-            // cub::DeviceSelect::Flagged(dataArrays.d_cub_temp_storage.get(),
-            //             cubTempSize2,
-            //             cub::CountingInputIterator<int>{0},
-            //             d_shouldBeKept,
-            //             d_shouldBeKept_positions,
-            //             dataArrays.d_num_indices_tmp.get(),
-            //             batch.n_queries,
-            //             streams[primary_stream_index]); CUERR;
-
-            // call_compact_kernel_async(d_newIndices,
-            //     dataArrays.d_indices.get(),
-            //     d_shouldBeKept_positions,
-            //     dataArrays.d_num_indices_tmp.get(),
-            //     batch.n_queries,
-            //     streams[primary_stream_index]);
-
-            // cub::DeviceHistogram::HistogramRange(dataArrays.d_cub_temp_storage.get(),
-            //     cubTempSize2,
-            //     d_newIndices,
-            //     d_indices_per_subject_tmp,
-            //     batch.n_subjects+1,
-            //     dataArrays.d_candidates_per_subject_prefixsum.get(),
-            //     batch.n_queries,
-            //     streams[primary_stream_index]); CUERR;
-
-            cudaDeviceSynchronize(); CUERR;
-
-            auto shouldbekept = std::make_unique<bool[]>(batch.n_queries);
-            cudaMemcpy(shouldbekept.get(), d_shouldBeKept, sizeof(bool) * batch.n_queries, D2H); CUERR;
-
-            cudaDeviceSynchronize(); CUERR;
-
-            std::vector<int> updatedindices(batch.n_queries);
-            std::vector<int> updatedindicespersubject(batch.n_subjects);
-            std::vector<int> updatednumindices(1);
-
-            for(int i = 0; i < batch.n_subjects; i++){
-                const int offset = dataArrays.h_candidates_per_subject_prefixsum[i];
-                int* myindices = updatedindices.data() + offset;
-                int* myindicesPerSubject = updatedindicespersubject.data() + i;
-                const bool* keeparray = shouldbekept.get() + offset;
-
-                for(int k = 0; k < dataArrays.h_candidates_per_subject[i]; k++){
-                    if(keeparray[k]){
-                        *myindices = k;
-                        myindices++;
-                        (*myindicesPerSubject)++;
-                        updatednumindices[0]++;
-                    }
-                }
-            }
-            
-
-            
-            // cudaMemcpy(updatedindices.data(), d_newIndices, sizeof(int) * batch.n_queries, D2H); CUERR;
-
-            
-            // cudaMemcpy(updatedindicespersubject.data(), d_indices_per_subject_tmp, sizeof(int) * batch.n_subjects, D2H); CUERR;
-
-            
-            // cudaMemcpy(updatednumindices.data(), dataArrays.d_num_indices_tmp.get(), sizeof(int), D2H); CUERR;
-
-            
-
-            std::cerr << "old indices per subject: ";
-            for(int i = 0; i < 10; i++){
-                std::cerr << dataArrays.h_indices_per_subject[i] << " ";
-            }
-            std::cerr << "\n";
-
-            std::cerr << "old num indices: ";
-            std::cerr << *dataArrays.h_num_indices;
-            std::cerr << "\n";
-
-            std::cerr << "upd indices per subject: ";
-            for(int i = 0; i < 10; i++){
-                std::cerr << updatedindicespersubject[i] << " ";
-            }
-            std::cerr << "\n";
-
-            std::cerr << "upd num indices: ";
-            std::cerr << updatednumindices[0];
-            std::cerr << "\n";
-
-            std::cerr << "new indices per subject: ";
-            for(int i = 0; i < 10; i++){
-                std::cerr << fooindicespersubject[i] << " ";
-            }
-            std::cerr << "\n";            
-
-            std::cerr << "new num indices: ";
-            std::cerr << *foonumindices;
-            std::cerr << "\n";
-
-
-
-
-            std::exit(0);
-
-
-            cudaMemcpyAsync(dataArrays.d_indices_per_subject,
-                d_indices_per_subject_tmp,
-                sizeof(int) * batch.n_subjects,
-                D2D,
-                streams[primary_stream_index]
-            ); CUERR;
-
-            cudaMemcpyAsync(dataArrays.d_indices,
-                d_newIndices,
-                sizeof(int) * batch.n_queries,
-                D2D,
-                streams[primary_stream_index]
-            ); CUERR;
-
 
             size_t cubTempSize = dataArrays.d_cub_temp_storage.sizeInBytes();
 
@@ -1640,14 +1510,14 @@ namespace test{
                         streams[primary_stream_index]); CUERR;
 
             {
+
                 /*
-                    compare old indices_per_subject , which are stored in indices_per_subject_tmp
-                    to the new indices_per_subject.
-                    set value in indices_per_subject_tmp to 0 if old value and new value are equal, else the value is set to the new value.
-                    this prevents rebuilding the MSAs of subjects whose indices where not changed by minimization (all indices are kept)
+                    copy new indicesPerSubject (d_indices_per_subject_tmp) to old indicesPerSubject (d_indices_per_subject)
+                    if new value is equal to old value, set new value to 0
                 */
 
-                const int* d_indices_per_subject = dataArrays.d_indices_per_subject;
+                int* d_indices_per_subject = dataArrays.d_indices_per_subject.get();
+                int* d_indices_per_subject_tmp = dataArrays.d_indices_per_subject_tmp.get();
                 const int n_subjects = batch.n_subjects;
                 cudaStream_t stream = streams[primary_stream_index];
 
@@ -1655,11 +1525,15 @@ namespace test{
                 dim3 grid(SDIV(batch.n_subjects, block.x),1,1);
                 generic_kernel<<<grid, block, 0, stream>>>(
                     [=] __device__ (){
-                        for(int i = threadIdx.x + blockDim.x * blockIdx.x; i < n_subjects; i += blockDim.x * gridDim.x){
-                            if(d_indices_per_subject[i] == d_indices_per_subject_tmp[i]){
-                                d_indices_per_subject_tmp[i] = 0;
-                            }else{
-                                d_indices_per_subject_tmp[i] = d_indices_per_subject[i];
+                        const int tid = threadIdx.x + blockDim.x * blockIdx.x;
+                        if(tid < n_subjects){
+                            const int oldValue = d_indices_per_subject[tid];
+                            const int newValue = d_indices_per_subject_tmp[tid];
+
+                            d_indices_per_subject[tid] = newValue;
+                            
+                            if(oldValue == newValue){
+                                d_indices_per_subject_tmp[tid] = 0;
                             }
                         }
                     }
@@ -1691,6 +1565,8 @@ namespace test{
 
             }
 
+            
+            std::swap(dataArrays.d_indices, dataArrays.d_indices_tmp);
             std::swap(dataArrays.d_num_indices_tmp, dataArrays.d_num_indices);
 
             build_msa_async(dataArrays.getDeviceMSAPointers(),
@@ -1699,7 +1575,7 @@ namespace test{
                             dataArrays.getDeviceQualityPointers(),
                             dataArrays.d_candidates_per_subject_prefixsum,
                             dataArrays.d_indices,
-                            d_indices_per_subject_tmp,
+                            dataArrays.d_indices_per_subject_tmp,
                             batch.n_subjects,
                             batch.n_queries,
                             dataArrays.d_num_indices,
@@ -1717,9 +1593,6 @@ namespace test{
         }
 
         cubCachingAllocator.DeviceFree(d_shouldBeKept); CUERR;
-        cubCachingAllocator.DeviceFree(d_newIndices); CUERR;
-        cubCachingAllocator.DeviceFree(d_indices_per_subject_tmp); CUERR;
-        cubCachingAllocator.DeviceFree(d_shouldBeKept_positions); CUERR;
         
         {
             //std::cerr << "minimization finished\n";
